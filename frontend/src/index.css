@@ -86,4 +86,55 @@
   .badge-accent {
     @apply border-accent/30 bg-accent-muted text-accent-fg;
   }
+
+  /* 마크다운 프리뷰 */
+  .prose-twoems {
+    @apply text-[14px] leading-relaxed text-fg2;
+  }
+  .prose-twoems h1 {
+    @apply mb-2 mt-4 text-xl font-bold text-fg;
+  }
+  .prose-twoems h2 {
+    @apply mb-2 mt-4 text-lg font-bold text-fg;
+  }
+  .prose-twoems h3 {
+    @apply mb-1.5 mt-3 text-base font-semibold text-fg;
+  }
+  .prose-twoems p {
+    @apply my-2;
+  }
+  .prose-twoems ul {
+    @apply my-2 list-disc pl-5;
+  }
+  .prose-twoems ol {
+    @apply my-2 list-decimal pl-5;
+  }
+  .prose-twoems li {
+    @apply my-0.5;
+  }
+  .prose-twoems blockquote {
+    @apply my-2 border-l-2 border-accent pl-3 text-fg-muted;
+  }
+  .prose-twoems code {
+    @apply rounded bg-subtle px-1 py-0.5 font-mono text-[12.5px] text-accent-fg;
+  }
+  .prose-twoems pre {
+    @apply my-2 overflow-x-auto rounded-md border border-line bg-subtle p-3;
+  }
+  .prose-twoems pre code {
+    @apply bg-transparent p-0 text-fg2;
+  }
+  .prose-twoems a {
+    @apply text-info;
+  }
+  .prose-twoems table {
+    @apply my-2 w-full border-collapse text-[13px];
+  }
+  .prose-twoems th,
+  .prose-twoems td {
+    @apply border border-line px-2 py-1 text-left;
+  }
+  .prose-twoems hr {
+    @apply my-4 border-line;
+  }
 }

@@ -94,4 +94,33 @@ export const api = {
   },
   downloadUrl: (scope: Scope, path: string) =>
     `${BASE}/api/files/download?${q({ scope, path })}`,
+
+  // ── notes ──
+  noteList: (scope: Scope) =>
+    req<NoteSummary[]>(`/api/notes/list?${q({ scope })}`),
+  noteGet: (scope: Scope, path: string) =>
+    req<NoteDetail>(`/api/notes/get?${q({ scope, path })}`),
+  noteSave: (scope: Scope, path: string, content: string) =>
+    req<NoteSummary>(`/api/notes/save?${q({ scope })}`, jsonInit("PUT", { path, content })),
+  noteDelete: (scope: Scope, path: string) =>
+    req(`/api/notes/delete?${q({ scope, path })}`, { method: "DELETE" }),
+  noteGraph: (scope: Scope) =>
+    req<NotesGraph>(`/api/notes/graph?${q({ scope })}`),
 };
+
+export interface NoteSummary {
+  path: string;
+  title: string;
+  modified: number;
+}
+export interface NoteDetail {
+  path: string;
+  title: string;
+  content: string;
+  links: string[];
+  backlinks: string[];
+}
+export interface NotesGraph {
+  nodes: { id: string; title: string; path: string }[];
+  links: { source: string; target: string }[];
+}

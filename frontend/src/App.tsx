@@ -5,6 +5,8 @@ import { useAuth } from "./store/auth";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { Files } from "./pages/Files";
+import { Notes } from "./pages/Notes";
+import { Graph } from "./pages/Graph";
 import { Placeholder } from "./pages/Placeholder";
 import { Toaster } from "./components/ui/Toaster";
 
@@ -13,8 +15,8 @@ function AuthedRoutes() {
     <Routes>
       <Route path="/" element={<Dashboard />} />
       <Route path="/files" element={<Files />} />
-      <Route path="/notes" element={<Placeholder title="노트" />} />
-      <Route path="/graph" element={<Placeholder title="그래프" />} />
+      <Route path="/notes" element={<Notes />} />
+      <Route path="/graph" element={<Graph />} />
       <Route path="/calendar" element={<Placeholder title="캘린더" />} />
       <Route path="/assistant" element={<Placeholder title="AI 비서" />} />
       <Route path="/settings" element={<Placeholder title="설정" />} />

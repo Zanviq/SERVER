@@ -103,6 +103,22 @@ def test_upload_illegal_filename_sanitized():
     assert "re_port_.txt" in names
 
 
+def test_notes_wikilinks_and_graph():
+    _login()
+    client.put("/api/notes/save?scope=me", json={"path": "A", "content": "see [[B]] and [[C|alias]]"})
+    client.put("/api/notes/save?scope=me", json={"path": "B", "content": "back to [[A]]"})
+    client.put("/api/notes/save?scope=me", json={"path": "C", "content": "leaf"})
+    # A의 outgoing 링크 + backlinks
+    a = client.get("/api/notes/get?scope=me&path=A").json()
+    assert set(a["links"]) == {"B", "C"}
+    assert a["backlinks"] == ["B"]  # B가 A를 가리킴
+    # 그래프: 노드 3, 링크 A->B, A->C, B->A
+    g = client.get("/api/notes/graph?scope=me").json()
+    assert len(g["nodes"]) == 3
+    pairs = {(l["source"], l["target"]) for l in g["links"]}
+    assert ("A", "B") in pairs and ("A", "C") in pairs and ("B", "A") in pairs
+
+
 def test_scope_isolation():
     # tester가 개인(me) 스코프에 파일 업로드
     a = TestClient(app)
@@ -132,5 +148,6 @@ if __name__ == "__main__":
     test_file_lifecycle()
     test_path_traversal_blocked()
     test_upload_illegal_filename_sanitized()
+    test_notes_wikilinks_and_graph()
     test_scope_isolation()
     print("ALL SMOKE TESTS PASSED")
