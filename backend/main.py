@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 from .auth import require_session
 from .config import get_settings
-from .routers import ai, auth, calendar, files, notes, system
+from .routers import ai, auth, calendar, files, notes, settings as settings_router, system
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,6 +63,7 @@ app.include_router(files.router, dependencies=_PROTECTED)
 app.include_router(system.router, dependencies=_PROTECTED)
 app.include_router(notes.router, dependencies=_PROTECTED)
 app.include_router(calendar.router, dependencies=_PROTECTED)
+app.include_router(settings_router.router, dependencies=_PROTECTED)
 app.include_router(ai.router, dependencies=_PROTECTED)
 
 

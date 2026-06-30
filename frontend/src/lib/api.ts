@@ -121,7 +121,21 @@ export const api = {
     req<CalEvent>(`/api/calendar/events/${id}`, jsonInit("PUT", e)),
   calDelete: (id: string) =>
     req(`/api/calendar/events/${id}`, { method: "DELETE" }),
+
+  // ── settings ──
+  getSettings: () =>
+    req<{ settings: UserSettings; defaults: UserSettings }>("/api/settings"),
+  patchSettings: (changes: Record<string, unknown>) =>
+    req<{ settings: UserSettings }>("/api/settings", jsonInit("PATCH", { changes })),
 };
+
+export interface UserSettings {
+  ai: { tone: string; max_steps: number; confirm_mutations: boolean };
+  calendar: { default_color: string; default_view: string; week_start: number };
+  notes: { default_scope: string; autosave_ms: number };
+  files: { default_scope: string; confirm_delete: boolean };
+  display: { show_seconds_in_timer: boolean };
+}
 
 export interface CalEvent {
   id: string;

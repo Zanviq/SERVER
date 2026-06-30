@@ -8,6 +8,8 @@ import { Files } from "./pages/Files";
 import { Notes } from "./pages/Notes";
 import { Graph } from "./pages/Graph";
 import { Calendar } from "./pages/Calendar";
+import { Settings } from "./pages/Settings";
+import { Profile } from "./pages/Profile";
 import { Placeholder } from "./pages/Placeholder";
 import { Toaster } from "./components/ui/Toaster";
 
@@ -20,8 +22,8 @@ function AuthedRoutes() {
       <Route path="/graph" element={<Graph />} />
       <Route path="/calendar" element={<Calendar />} />
       <Route path="/assistant" element={<Placeholder title="AI 비서" />} />
-      <Route path="/settings" element={<Placeholder title="설정" />} />
-      <Route path="/profile" element={<Placeholder title="프로필" />} />
+      <Route path="/settings" element={<Settings />} />
+      <Route path="/profile" element={<Profile />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
