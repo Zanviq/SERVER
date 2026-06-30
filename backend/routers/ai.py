@@ -109,10 +109,17 @@ def search(req: SearchRequest):
     root = settings.storage_root
 
     # 저장소 전체 파일 목록 수집 (이름 기반, 최대 500개).
+    # 민감 키워드가 포함된 파일명은 외부(Gemini) 전송에서 제외.
+    def _is_sensitive(rel: str) -> bool:
+        low = rel.lower()
+        return any(kw.lower() in low for kw in SENSITIVE_KEYWORDS)
+
     files: list[str] = []
     for p in root.rglob("*"):
         if p.is_file():
-            files.append(to_rel(root, p))
+            rel = to_rel(root, p)
+            if not _is_sensitive(rel):
+                files.append(rel)
         if len(files) >= 500:
             break
 

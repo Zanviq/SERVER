@@ -90,9 +90,8 @@ async def upload(
         dest_dir.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         logger.exception("업로드 폴더 생성 실패: %s", dest_dir)
-        raise HTTPException(
-            status_code=500, detail=f"폴더 생성 실패 ({dest_dir}): {e}"
-        ) from e
+        detail = f"폴더 생성 실패: {e}" if settings.debug else "폴더 생성에 실패했습니다."
+        raise HTTPException(status_code=500, detail=detail) from e
 
     written = 0
     try:
@@ -107,12 +106,14 @@ async def upload(
     except HTTPException:
         raise
     except OSError as e:
-        # 권한/잘못된 파일명/디스크 가득참 등 — 실제 OS 메시지를 그대로 노출
+        # 서버 경로는 로그에만; 클라이언트엔 일반 메시지(운영) 또는 상세(DEBUG)
         logger.exception("파일 저장 실패: %s", dest)
-        raise HTTPException(
-            status_code=500,
-            detail=f"저장 실패 [{e.__class__.__name__}] {dest.name}: {e}",
-        ) from e
+        detail = (
+            f"저장 실패 [{e.__class__.__name__}] {dest.name}: {e}"
+            if settings.debug
+            else "파일 저장에 실패했습니다."
+        )
+        raise HTTPException(status_code=500, detail=detail) from e
 
     return MessageResponse(message=f"업로드 완료: {to_rel(settings.storage_root, dest)}")
 
