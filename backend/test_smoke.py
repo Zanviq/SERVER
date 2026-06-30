@@ -6,7 +6,10 @@ import tempfile
 
 os.environ["STORAGE_ROOT"] = tempfile.mkdtemp(prefix="twoems_test_")
 os.environ["AUTH_USERS"] = json.dumps(
-    [{"username": "tester", "password": "pw123", "display_name": "Tester"}]
+    [
+        {"username": "tester", "password": "pw123", "display_name": "Tester"},
+        {"username": "tester2", "password": "pw456", "display_name": "Tester2"},
+    ]
 )
 os.environ["SESSION_SECRET"] = "test-secret-please-change"
 os.environ["SESSION_TTL_SECONDS"] = "3600"
@@ -100,6 +103,25 @@ def test_upload_illegal_filename_sanitized():
     assert "re_port_.txt" in names
 
 
+def test_scope_isolation():
+    # tester가 개인(me) 스코프에 파일 업로드
+    a = TestClient(app)
+    a.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    r = a.post(
+        "/api/files/upload?scope=me&path=",
+        files={"file": ("secret.txt", io.BytesIO(b"mine"), "text/plain")},
+    )
+    assert r.status_code == 200, r.text
+    mine = [e["name"] for e in a.get("/api/files/list?scope=me").json()["entries"]]
+    assert "secret.txt" in mine
+
+    # tester2의 me 스코프에는 tester의 파일이 보이면 안 됨
+    b = TestClient(app)
+    b.post("/api/auth/login", json={"username": "tester2", "password": "pw456"})
+    other = [e["name"] for e in b.get("/api/files/list?scope=me").json()["entries"]]
+    assert "secret.txt" not in other
+
+
 if __name__ == "__main__":
     test_unauthenticated_blocked()
     test_login_and_session()
@@ -110,4 +132,5 @@ if __name__ == "__main__":
     test_file_lifecycle()
     test_path_traversal_blocked()
     test_upload_illegal_filename_sanitized()
+    test_scope_isolation()
     print("ALL SMOKE TESTS PASSED")

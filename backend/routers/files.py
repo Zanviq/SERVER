@@ -1,6 +1,7 @@
 """파일 관리 API: 목록·업로드·다운로드·삭제·폴더관리.
 
-모든 경로는 storage_root 기준 상대경로로 주고받는다.
+scope(common|me) + path(스코프 루트 기준 상대경로)로 동작.
+me 스코프는 항상 세션 사용자의 개인 폴더로만 해석된다(격리).
 """
 from __future__ import annotations
 
@@ -9,10 +10,11 @@ import re
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
-from ..config import get_settings
+from ..auth import SessionUser, require_session
+from ..config import Settings, get_settings
 from ..schemas import (
     FileEntry,
     ListResponse,
@@ -21,20 +23,16 @@ from ..schemas import (
     RenameRequest,
 )
 from ..security_paths import safe_join, to_rel
+from ..storage import resolve, scope_root
 
 logger = logging.getLogger("twoems.files")
 router = APIRouter(prefix="/api/files", tags=["files"])
 
-# Windows에서 파일명에 쓸 수 없는 문자 (다른 OS와의 호환을 위해 공통 차단)
 _ILLEGAL_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def _sanitize_filename(name: str) -> str:
-    """파일명에서 OS 금지 문자를 제거하고 안전한 단일 파일명으로 정규화.
-
-    정상적인 이름(예: 's-team.md')은 그대로 둔다.
-    """
-    base = Path(name).name  # 경로 구분자 제거
+    base = Path(name).name
     cleaned = _ILLEGAL_FILENAME.sub("_", base).strip().strip(".")
     return cleaned or "untitled"
 
@@ -52,39 +50,37 @@ def _entry(root: Path, p: Path) -> FileEntry:
 
 
 @router.get("/list", response_model=ListResponse)
-def list_dir(path: str = Query("", description="저장소 루트 기준 상대경로")):
-    """디렉토리 내용 나열. 폴더 먼저, 이름순 정렬."""
-    settings = get_settings()
-    target = safe_join(settings.storage_root, path)
-
+def list_dir(
+    scope: str = Query("common"),
+    path: str = Query(""),
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    root = scope_root(scope, user, settings)
+    target = resolve(scope, path, user, settings)
     if not target.exists():
         raise HTTPException(status_code=404, detail="경로를 찾을 수 없습니다.")
     if not target.is_dir():
         raise HTTPException(status_code=400, detail="디렉토리가 아닙니다.")
-
-    entries = [_entry(settings.storage_root, c) for c in target.iterdir()]
+    entries = [_entry(root, c) for c in target.iterdir()]
     entries.sort(key=lambda e: (not e.is_dir, e.name.lower()))
-    return ListResponse(path=to_rel(settings.storage_root, target), entries=entries)
+    return ListResponse(path=to_rel(root, target), entries=entries)
 
 
 @router.post("/upload", response_model=MessageResponse)
 async def upload(
     file: UploadFile = File(...),
-    path: str = Query("", description="업로드 대상 폴더 (저장소 루트 기준)"),
+    scope: str = Query("common"),
+    path: str = Query(""),
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
 ):
-    """파일 업로드. path 폴더 하위에 원본 파일명으로 저장."""
-    settings = get_settings()
-
     if not file.filename:
         raise HTTPException(status_code=400, detail="파일명이 없습니다.")
-
-    dest_dir = safe_join(settings.storage_root, path)
-    # 경로 구분자 + OS 금지 문자 제거 (정상 파일명은 변화 없음).
+    root = scope_root(scope, user, settings)
+    dest_dir = resolve(scope, path, user, settings)
     safe_name = _sanitize_filename(file.filename)
-    dest = safe_join(
-        settings.storage_root,
-        f"{to_rel(settings.storage_root, dest_dir)}/{safe_name}",
-    )
+    dest = safe_join(root, f"{to_rel(root, dest_dir)}/{safe_name}")
 
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -96,7 +92,7 @@ async def upload(
     written = 0
     try:
         with dest.open("wb") as out:
-            while chunk := await file.read(1024 * 1024):  # 1MB 청크 스트리밍
+            while chunk := await file.read(1024 * 1024):
                 written += len(chunk)
                 if written > settings.max_upload_bytes:
                     out.close()
@@ -106,7 +102,6 @@ async def upload(
     except HTTPException:
         raise
     except OSError as e:
-        # 서버 경로는 로그에만; 클라이언트엔 일반 메시지(운영) 또는 상세(DEBUG)
         logger.exception("파일 저장 실패: %s", dest)
         detail = (
             f"저장 실패 [{e.__class__.__name__}] {dest.name}: {e}"
@@ -115,63 +110,70 @@ async def upload(
         )
         raise HTTPException(status_code=500, detail=detail) from e
 
-    return MessageResponse(message=f"업로드 완료: {to_rel(settings.storage_root, dest)}")
+    return MessageResponse(message=f"업로드 완료: {to_rel(root, dest)}")
 
 
 @router.get("/download")
-def download(path: str = Query(..., description="다운로드할 파일 (저장소 루트 기준)")):
-    """파일 다운로드."""
-    settings = get_settings()
-    target = safe_join(settings.storage_root, path)
-
+def download(
+    scope: str = Query("common"),
+    path: str = Query(...),
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    target = resolve(scope, path, user, settings)
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
-
     return FileResponse(
         target, filename=target.name, media_type="application/octet-stream"
     )
 
 
 @router.post("/mkdir", response_model=MessageResponse)
-def make_dir(req: MakeDirRequest):
-    """폴더 생성."""
-    settings = get_settings()
-    target = safe_join(settings.storage_root, req.path)
+def make_dir(
+    req: MakeDirRequest,
+    scope: str = Query("common"),
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    root = scope_root(scope, user, settings)
+    target = resolve(scope, req.path, user, settings)
     if target.exists():
         raise HTTPException(status_code=409, detail="이미 존재합니다.")
     target.mkdir(parents=True)
-    return MessageResponse(message=f"폴더 생성: {to_rel(settings.storage_root, target)}")
+    return MessageResponse(message=f"폴더 생성: {to_rel(root, target)}")
 
 
 @router.post("/rename", response_model=MessageResponse)
-def rename(req: RenameRequest):
-    """파일/폴더 이동 또는 이름변경."""
-    settings = get_settings()
-    src = safe_join(settings.storage_root, req.src)
-    dst = safe_join(settings.storage_root, req.dst)
-
+def rename(
+    req: RenameRequest,
+    scope: str = Query("common"),
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    src = resolve(scope, req.src, user, settings)
+    dst = resolve(scope, req.dst, user, settings)
     if not src.exists():
         raise HTTPException(status_code=404, detail="원본을 찾을 수 없습니다.")
     if dst.exists():
         raise HTTPException(status_code=409, detail="대상이 이미 존재합니다.")
-
     dst.parent.mkdir(parents=True, exist_ok=True)
     src.rename(dst)
     return MessageResponse(message=f"이동: {req.src} -> {req.dst}")
 
 
 @router.delete("/delete", response_model=MessageResponse)
-def delete(path: str = Query(..., description="삭제할 파일/폴더 (저장소 루트 기준)")):
-    """파일 또는 폴더(재귀) 삭제."""
-    settings = get_settings()
-    target = safe_join(settings.storage_root, path)
-
-    # 루트 자체 삭제 방지.
-    if target == settings.storage_root:
+def delete(
+    scope: str = Query("common"),
+    path: str = Query(...),
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    root = scope_root(scope, user, settings)
+    target = resolve(scope, path, user, settings)
+    if target == root:
         raise HTTPException(status_code=400, detail="루트는 삭제할 수 없습니다.")
     if not target.exists():
         raise HTTPException(status_code=404, detail="대상을 찾을 수 없습니다.")
-
     if target.is_dir():
         shutil.rmtree(target)
     else:
