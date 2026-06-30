@@ -1,0 +1,37 @@
+services:
+  backend:
+    build: ./backend
+    container_name: twoems-backend
+    restart: unless-stopped
+    expose:
+      - "8000"
+    ports:
+      - "8000:8000" # 로컬/LAN 직접 접근용 (원하면 제거)
+    environment:
+      STORAGE_ROOT: /mnt/hdd
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
+    volumes:
+      - /mnt/hdd:/mnt/hdd
+
+  frontend:
+    build: ./frontend
+    container_name: twoems-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+  # 4단계: 포트포워딩 없이 외부 접속 (Cloudflare Tunnel)
+  # 사용하려면: 대시보드에서 터널 생성 후 토큰을 .env의 CF_TUNNEL_TOKEN에 넣고
+  #   docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: twoems-tunnel
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    depends_on:
+      - frontend

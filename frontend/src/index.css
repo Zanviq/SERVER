@@ -1,0 +1,130 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  /* 유동 루트 폰트: 뷰포트/줌에 따라 전체 rem 스케일이 부드럽게 반응 */
+  html {
+    font-size: clamp(13px, 0.45vw + 11.5px, 16.5px);
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-carbon-900 text-ash-100 font-sans antialiased;
+    /* iOS 노치/안전영역 + 가로 스크롤 차단 */
+    overflow-x: hidden;
+    background-image:
+      radial-gradient(
+        120% 80% at 80% -10%,
+        rgba(198, 244, 50, 0.06),
+        transparent 60%
+      ),
+      linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+    background-size: 100% 100%, 2.5rem 2.5rem, 2.5rem 2.5rem;
+    background-attachment: fixed;
+  }
+
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-carbon-500 rounded-full;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-ash-700;
+  }
+
+  ::selection {
+    background: rgba(198, 244, 50, 0.25);
+    color: #fff;
+  }
+
+  /* 키보드 포커스 가시화 (마우스 클릭 땐 숨김) */
+  :focus-visible {
+    outline: 2px solid rgba(198, 244, 50, 0.6);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* 모션 최소화 선호 존중 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-xl border border-white/[0.06] bg-carbon-800/80 shadow-panel backdrop-blur-sm;
+  }
+
+  .label-mono {
+    @apply font-mono text-[0.7rem] uppercase tracking-[0.18em] text-ash-500;
+  }
+
+  .btn {
+    @apply inline-flex min-h-[2.25rem] touch-manipulation items-center justify-center gap-2
+      rounded-lg px-3 py-2 font-mono text-xs uppercase tracking-wider transition-all duration-150
+      select-none border border-white/[0.07] bg-carbon-700 text-ash-300
+      hover:border-phosphor/40 hover:text-phosphor hover:bg-carbon-600
+      active:translate-y-px disabled:opacity-40 disabled:pointer-events-none;
+  }
+
+  .btn-accent {
+    @apply border-phosphor/50 bg-phosphor/10 text-phosphor hover:bg-phosphor/20 hover:shadow-glow;
+  }
+
+  /* 행 액션: 터치 기기엔 항상 표시, 마우스(hover) 기기엔 hover 시 노출 */
+  .row-actions {
+    @apply opacity-100 transition-opacity;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .row-actions {
+      @apply opacity-0;
+    }
+    .group:hover .row-actions,
+    .group:focus-within .row-actions {
+      @apply opacity-100;
+    }
+  }
+
+  /* 부드러운 관성 스크롤 (모바일) */
+  .scroll-y {
+    @apply overflow-y-auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+}
