@@ -4,7 +4,7 @@ import { useAuth } from "../store/auth";
 import { ThemeToggle } from "../components/layout/ThemeToggle";
 
 export function Login() {
-  const { login, error } = useAuth();
+  const { login, error, clearError } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -35,7 +35,10 @@ export function Login() {
           <input
             className="input mb-3"
             value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            onChange={(e) => {
+              setUsername(e.target.value);
+              if (error) clearError();
+            }}
             autoFocus
             autoComplete="username"
             placeholder="아이디"

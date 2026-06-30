@@ -76,11 +76,25 @@ export function EventDialog({
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="label mb-1 block">시작</label>
-            <input type={allDay ? "date" : "datetime-local"} className="input" value={allDay ? start.slice(0, 10) : start} onChange={(e) => setStart(allDay ? e.target.value : e.target.value)} />
+            <input
+              type={allDay ? "date" : "datetime-local"}
+              className="input"
+              value={allDay ? start.slice(0, 10) : start}
+              onChange={(e) =>
+                setStart(allDay ? `${e.target.value}T${start.slice(11) || "09:00"}` : e.target.value)
+              }
+            />
           </div>
           <div>
             <label className="label mb-1 block">종료</label>
-            <input type={allDay ? "date" : "datetime-local"} className="input" value={allDay ? end.slice(0, 10) : end} onChange={(e) => setEnd(e.target.value)} />
+            <input
+              type={allDay ? "date" : "datetime-local"}
+              className="input"
+              value={allDay ? end.slice(0, 10) : end}
+              onChange={(e) =>
+                setEnd(allDay ? `${e.target.value}T${end.slice(11) || "10:00"}` : e.target.value)
+              }
+            />
           </div>
         </div>
         <div>
@@ -88,8 +102,9 @@ export function EventDialog({
           <div className="flex flex-wrap gap-1.5">
             {Object.entries(GCAL_COLORS).map(([id, hex]) => (
               <button key={id} onClick={() => setColor(id)}
+                aria-label={`색상 ${id}`} aria-pressed={color === id} title={`색상 ${id}`}
                 className={`h-6 w-6 rounded-full border-2 ${color === id ? "border-fg" : "border-transparent"}`}
-                style={{ background: hex }} title={`색상 ${id}`} />
+                style={{ background: hex }} />
             ))}
           </div>
         </div>

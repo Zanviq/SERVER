@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api, ApiError, SessionInfo } from "../lib/api";
+import { toast } from "./toast";
 
 interface AuthState {
   session: SessionInfo | null;
@@ -9,6 +10,7 @@ interface AuthState {
   init: () => Promise<void>;
   login: (username: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
+  clearError: () => void;
   tick: () => void; // 1초 카운트다운
   refresh: () => Promise<void>; // 서버 기준 남은시간 재동기화
 }
@@ -40,6 +42,8 @@ export const useAuth = create<AuthState>((set, get) => ({
     }
   },
 
+  clearError: () => set({ error: null }),
+
   logout: async () => {
     try {
       await api.logout();
@@ -54,8 +58,9 @@ export const useAuth = create<AuthState>((set, get) => ({
     if (!session) return;
     const next = remaining - 1;
     if (next <= 0) {
-      // 만료 → 자동 로그아웃
+      // 만료 → 자동 로그아웃 (사용자에게 안내)
       set({ session: null, remaining: 0 });
+      toast.error("세션이 만료되어 로그아웃되었습니다. 다시 로그인해주세요.");
     } else {
       set({ remaining: next });
     }

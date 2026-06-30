@@ -74,7 +74,7 @@ export function SystemMonitor() {
             <HardDrive size={13} className="text-fg-muted" />
             <span className="label">디스크</span>
           </div>
-          <Gauge value={data?.disk_percent ?? 0} label="사용" max={112} />
+          <Gauge value={data?.disk_percent ?? 0} label="사용" />
           <div className="mt-3 space-y-1 text-center">
             <p className="font-mono text-[0.7rem] text-fg2">
               {data ? `${formatBytes(data.disk_used)} / ${formatBytes(data.disk_total)}` : "—"}

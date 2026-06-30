@@ -20,7 +20,8 @@ const NAV = [
   { to: "/assistant", icon: Bot, label: "AI 비서" },
 ];
 
-function Item({
+/** 데스크톱: 좌측 64px 아이콘 사이드바 (호버 툴팁 + aria-label) */
+function DesktopItem({
   to,
   icon: Icon,
   label,
@@ -35,6 +36,8 @@ function Item({
     <NavLink
       to={to}
       end={end}
+      aria-label={label}
+      title={label}
       className={({ isActive }) =>
         `group relative grid h-10 w-10 place-items-center rounded-md transition-colors ${
           isActive
@@ -54,29 +57,53 @@ function Item({
 export function Sidebar() {
   const session = useAuth((s) => s.session);
   const initial = (session?.display_name || "?").charAt(0).toUpperCase();
+
   return (
-    <aside className="flex w-16 shrink-0 flex-col items-center gap-1 border-r border-line/40 bg-sidebar py-3">
-      <div className="mb-2 grid h-9 w-9 place-items-center rounded-md bg-[var(--sidebar-icon-active)] font-mono text-sm font-bold text-sidebar-fg-active">
-        2E
-      </div>
-      <nav className="flex flex-1 flex-col items-center gap-1">
-        {NAV.map((n) => (
-          <Item key={n.to} {...n} />
-        ))}
+    <>
+      {/* 데스크톱 사이드바 */}
+      <aside className="hidden w-16 shrink-0 flex-col items-center gap-1 border-r border-line/40 bg-sidebar py-3 sm:flex">
+        <div className="mb-2 grid h-9 w-9 place-items-center rounded-md bg-[var(--sidebar-icon-active)] font-mono text-sm font-bold text-sidebar-fg-active">
+          2E
+        </div>
+        <nav className="flex flex-1 flex-col items-center gap-1">
+          {NAV.map((n) => (
+            <DesktopItem key={n.to} {...n} />
+          ))}
+        </nav>
+        <div className="flex flex-col items-center gap-1">
+          <DesktopItem to="/settings" icon={Settings} label="설정" />
+          <NavLink
+            to="/profile"
+            aria-label={`${session?.display_name} 프로필`}
+            title={`${session?.display_name} · 프로필`}
+            className="grid h-9 w-9 place-items-center rounded-full bg-accent text-[13px] font-bold text-accent-contrast"
+          >
+            {initial}
+          </NavLink>
+        </div>
+      </aside>
+
+      {/* 모바일 하단 탭바 (라벨 표시) */}
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch justify-around border-t border-line bg-sidebar px-1 py-1 sm:hidden">
+        {[...NAV, { to: "/settings", icon: Settings, label: "설정" }, { to: "/profile", icon: User, label: "프로필" }].map(
+          (n) => (
+            <NavLink
+              key={n.to}
+              to={n.to}
+              end={(n as { end?: boolean }).end}
+              aria-label={n.label}
+              className={({ isActive }) =>
+                `flex flex-1 flex-col items-center gap-0.5 rounded-md py-1.5 text-[10px] transition-colors ${
+                  isActive ? "text-sidebar-fg-active" : "text-sidebar-fg"
+                }`
+              }
+            >
+              <n.icon size={18} />
+              <span className="truncate">{n.label}</span>
+            </NavLink>
+          ),
+        )}
       </nav>
-      <div className="flex flex-col items-center gap-1">
-        <Item to="/settings" icon={Settings} label="설정" />
-        <NavLink
-          to="/profile"
-          className="group relative grid h-9 w-9 place-items-center rounded-full bg-accent text-[13px] font-bold text-accent-contrast"
-          title={session?.display_name}
-        >
-          {initial}
-          <span className="pointer-events-none absolute left-[calc(100%+12px)] bottom-0 z-50 whitespace-nowrap rounded-sm bg-fg px-2 py-1 text-xs font-medium text-bg opacity-0 shadow-md transition-opacity group-hover:opacity-100">
-            {session?.display_name} · 프로필
-          </span>
-        </NavLink>
-      </div>
-    </aside>
+    </>
   );
 }

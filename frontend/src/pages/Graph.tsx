@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import ForceGraph2D from "react-force-graph-2d";
 import { Users, User, Share2 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { api, NotesGraph, Scope } from "../lib/api";
 import { toast } from "../store/toast";
+import { useTheme } from "../store/theme";
 
 function cssVar(name: string): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -11,6 +13,8 @@ function cssVar(name: string): string {
 }
 
 export function Graph() {
+  const navigate = useNavigate();
+  const mode = useTheme((t) => t.mode); // 테마 변경 시 색상 재계산 트리거
   const [scope, setScope] = useState<Scope>("me");
   const [data, setData] = useState<NotesGraph>({ nodes: [], links: [] });
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -33,14 +37,14 @@ export function Graph() {
     return () => ro.disconnect();
   }, []);
 
-  // 색상은 테마에 따라 (마운트 시 1회 계산)
+  // 색상은 현재 테마에서 계산 (mode 변경 시 재계산)
   const colors = useMemo(
     () => ({
       node: cssVar("--accent"),
       label: cssVar("--fg"),
       link: cssVar("--line-strong"),
     }),
-    [data, size],
+    [mode],
   );
 
   const graphData = useMemo(
@@ -77,6 +81,9 @@ export function Graph() {
             height={size.h}
             backgroundColor="rgba(0,0,0,0)"
             nodeRelSize={5}
+            onNodeClick={(n: any) =>
+              navigate(`/notes?open=${encodeURIComponent(n.title)}`)
+            }
             linkColor={() => colors.link}
             linkWidth={1}
             nodeColor={() => colors.node}

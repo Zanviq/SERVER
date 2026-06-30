@@ -1,9 +1,9 @@
 import { ReactNode, useEffect, useState } from "react";
-import { User, Bot, CalendarDays, NotebookPen, Palette, Info, Loader2 } from "lucide-react";
+import { User, Bot, CalendarDays, NotebookPen, Palette, Info, Loader2, RefreshCw } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { ThemeToggle } from "../components/layout/ThemeToggle";
-import { api, UserSettings } from "../lib/api";
 import { useAuth } from "../store/auth";
+import { useSettings } from "../store/settings";
 import { toast } from "../store/toast";
 import { GCAL_COLORS } from "../components/calendar/EventDialog";
 
@@ -30,17 +30,16 @@ function Row({ label, desc, children }: { label: string; desc?: string; children
 
 export function Settings() {
   const { session, logout } = useAuth();
+  const { settings: s, loaded, error, load, patch } = useSettings();
   const [tab, setTab] = useState("account");
-  const [s, setS] = useState<UserSettings | null>(null);
 
   useEffect(() => {
-    api.getSettings().then((r) => setS(r.settings)).catch((e) => toast.error(e.message));
-  }, []);
+    if (!s) load();
+  }, [s, load]);
 
   const update = async (changes: Record<string, unknown>) => {
     try {
-      const r = await api.patchSettings(changes);
-      setS(r.settings);
+      await patch(changes);
       toast.ok("설정 저장됨");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "저장 실패");
@@ -50,9 +49,18 @@ export function Settings() {
   if (!s) {
     return (
       <Shell title="설정">
-        <div className="flex h-40 items-center justify-center text-fg-muted">
-          <Loader2 className="animate-spin" />
-        </div>
+        {loaded && error ? (
+          <div className="flex h-40 flex-col items-center justify-center gap-3 text-fg-muted">
+            <p className="text-[13px]">설정을 불러오지 못했습니다.</p>
+            <button onClick={() => load()} className="btn btn-secondary">
+              <RefreshCw size={14} /> 다시 시도
+            </button>
+          </div>
+        ) : (
+          <div className="flex h-40 items-center justify-center text-fg-muted">
+            <Loader2 className="animate-spin" />
+          </div>
+        )}
       </Shell>
     );
   }
@@ -99,10 +107,6 @@ export function Settings() {
                 <input type="number" min={1} max={16} className="input w-24" value={s.ai.max_steps}
                   onChange={(e) => update({ ai: { max_steps: Math.max(1, Math.min(16, +e.target.value)) } })} />
               </Row>
-              <Row label="변경 작업 확인" desc="파일/노트/일정 변경 전 확인">
-                <input type="checkbox" checked={s.ai.confirm_mutations}
-                  onChange={(e) => update({ ai: { confirm_mutations: e.target.checked } })} />
-              </Row>
             </div>
           )}
 
@@ -120,6 +124,7 @@ export function Settings() {
                 <div className="flex gap-1.5">
                   {Object.entries(GCAL_COLORS).slice(0, 6).map(([id, hex]) => (
                     <button key={id} onClick={() => update({ calendar: { default_color: id } })}
+                      aria-label={`색상 ${id}`} aria-pressed={s.calendar.default_color === id}
                       className={`h-6 w-6 rounded-full border-2 ${s.calendar.default_color === id ? "border-fg" : "border-transparent"}`}
                       style={{ background: hex }} />
                   ))}
@@ -146,7 +151,7 @@ export function Settings() {
               </Row>
               <Row label="자동 저장 지연" desc="입력 후 저장까지 (ms)">
                 <input type="number" min={300} max={5000} step={100} className="input w-24" value={s.notes.autosave_ms}
-                  onChange={(e) => update({ notes: { autosave_ms: +e.target.value } })} />
+                  onChange={(e) => update({ notes: { autosave_ms: Math.max(300, Math.min(5000, +e.target.value)) } })} />
               </Row>
             </div>
           )}

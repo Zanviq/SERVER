@@ -4,9 +4,11 @@ import { Shell } from "../components/layout/Shell";
 import { FileExplorer } from "../components/files/FileExplorer";
 import { Scope } from "../lib/api";
 import { toast } from "../store/toast";
+import { useSettings } from "../store/settings";
 
 export function Files() {
-  const [scope, setScope] = useState<Scope>("common");
+  const defaultScope = useSettings((s) => s.settings?.files.default_scope);
+  const [scope, setScope] = useState<Scope>((defaultScope as Scope) || "common");
   return (
     <Shell
       title="파일"

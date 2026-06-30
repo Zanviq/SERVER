@@ -1,4 +1,4 @@
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
@@ -11,14 +11,24 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, children, width = "max-w-lg" }: ModalProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    // 열릴 때 첫 입력 요소로 포커스 이동
+    const focusTimer = window.setTimeout(() => {
+      const el = panelRef.current?.querySelector<HTMLElement>(
+        "input, textarea, select, button:not([aria-label='닫기'])",
+      );
+      el?.focus();
+    }, 0);
     return () => {
       window.removeEventListener("keydown", onKey);
+      window.clearTimeout(focusTimer);
       document.body.style.overflow = prev;
     };
   }, [open, onClose]);
@@ -31,6 +41,10 @@ export function Modal({ open, onClose, title, children, width = "max-w-lg" }: Mo
       onMouseDown={onClose}
     >
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
         className={`card my-auto flex max-h-[92vh] w-full flex-col ${width} animate-in shadow-lg`}
         onMouseDown={(e) => e.stopPropagation()}
       >

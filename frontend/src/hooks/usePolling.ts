@@ -22,6 +22,8 @@ export function usePolling<T>(
   useEffect(() => {
     let alive = true;
     const tick = async () => {
+      // 탭이 숨겨져 있으면 네트워크 요청을 건너뜀 (Pi 부하 절감)
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
         const data = await fnRef.current();
         if (alive) setState({ data, error: null, loading: false });
@@ -36,9 +38,15 @@ export function usePolling<T>(
     };
     tick();
     const id = setInterval(tick, intervalMs);
+    // 다시 보일 때 즉시 갱신
+    const onVis = () => {
+      if (!document.hidden) tick();
+    };
+    document.addEventListener("visibilitychange", onVis);
     return () => {
       alive = false;
       clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, [intervalMs]);
 

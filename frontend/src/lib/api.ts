@@ -177,7 +177,7 @@ export async function aiChatStream(
 }
 
 export interface UserSettings {
-  ai: { tone: string; max_steps: number; confirm_mutations: boolean };
+  ai: { tone: string; max_steps: number };
   calendar: { default_color: string; default_view: string; week_start: number };
   notes: { default_scope: string; autosave_ms: number };
   files: { default_scope: string; confirm_delete: boolean };

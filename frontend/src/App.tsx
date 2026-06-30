@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "./store/auth";
+import { useSettings } from "./store/settings";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { Files } from "./pages/Files";
@@ -47,6 +48,11 @@ export default function App() {
   useEffect(() => {
     init();
   }, [init]);
+
+  // 로그인되면 개인 설정 로드
+  useEffect(() => {
+    if (session) useSettings.getState().load();
+  }, [session]);
 
   useEffect(() => {
     if (!session) return;

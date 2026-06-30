@@ -35,7 +35,7 @@ export function Shell({
           </div>
         </header>
         <main className="min-h-0 flex-1 overflow-auto">
-          <div className="mx-auto max-w-[1280px] px-5 py-6 md:px-8 md:py-8">
+          <div className="mx-auto max-w-[1280px] px-4 py-5 pb-24 sm:px-6 sm:pb-8 md:px-8 md:py-8">
             {children}
           </div>
         </main>

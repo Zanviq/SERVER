@@ -7,6 +7,8 @@ import {
 import { api, FileEntry, Scope } from "../../lib/api";
 import { formatBytes, formatTime, fileKind } from "../../lib/format";
 import { Modal } from "../ui/Modal";
+import { FileViewer } from "./FileViewer";
+import { useSettings } from "../../store/settings";
 
 const KIND_ICON: Record<string, typeof FileIcon> = {
   doc: FileText, code: FileCode, img: FileImage, arc: FileArchive, file: FileIcon,
@@ -30,6 +32,8 @@ export function FileExplorer({
   const [renaming, setRenaming] = useState<FileEntry | null>(null);
   const [renameVal, setRenameVal] = useState("");
   const [confirmDel, setConfirmDel] = useState<FileEntry | null>(null);
+  const [viewing, setViewing] = useState<FileEntry | null>(null);
+  const confirmDelete = useSettings((s) => s.settings?.files.confirm_delete ?? true);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(
@@ -52,7 +56,22 @@ export function FileExplorer({
     load("");
   }, [load]);
 
-  const open = (e: FileEntry) => (e.is_dir ? load(e.path) : undefined);
+  const open = (e: FileEntry) => (e.is_dir ? load(e.path) : setViewing(e));
+
+  const doDeleteEntry = async (e: FileEntry) => {
+    try {
+      await api.remove(scope, e.path);
+      onToast(`삭제됨: ${e.name}`);
+      setConfirmDel(null);
+      load(cwd);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "삭제 실패");
+    }
+  };
+
+  // 설정의 confirm_delete가 켜져 있으면 모달, 아니면 즉시 삭제
+  const askDelete = (e: FileEntry) =>
+    confirmDelete ? setConfirmDel(e) : doDeleteEntry(e);
 
   const doUpload = async (files: FileList | File[]) => {
     const arr = Array.from(files);
@@ -98,17 +117,7 @@ export function FileExplorer({
     }
   };
 
-  const doDelete = async () => {
-    if (!confirmDel) return;
-    try {
-      await api.remove(scope, confirmDel.path);
-      onToast(`삭제됨: ${confirmDel.name}`);
-      setConfirmDel(null);
-      load(cwd);
-    } catch (e) {
-      onError(e instanceof Error ? e.message : "삭제 실패");
-    }
-  };
+  const doDelete = () => confirmDel && doDeleteEntry(confirmDel);
 
   const crumbs = cwd ? cwd.split("/") : [];
 
@@ -197,8 +206,8 @@ export function FileExplorer({
               const Icon = e.is_dir ? Folder : (KIND_ICON[fileKind(e.name)] ?? FileIcon);
               return (
                 <li key={e.path} className="group flex items-center gap-2 px-4 py-2.5 hover:bg-hovered sm:gap-3 sm:px-5">
-                  <button onClick={() => open(e)} disabled={!e.is_dir}
-                    className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:cursor-default">
+                  <button onClick={() => open(e)}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left">
                     <Icon size={17} className={`shrink-0 ${e.is_dir ? "text-accent" : "text-fg-muted"}`} />
                     <span className="truncate text-[13.5px]">{e.name}</span>
                   </button>
@@ -219,8 +228,8 @@ export function FileExplorer({
                       className="grid h-8 w-8 place-items-center rounded-md text-fg-muted hover:bg-subtle hover:text-info" title="이름변경">
                       <Pencil size={15} />
                     </button>
-                    <button onClick={() => setConfirmDel(e)}
-                      className="grid h-8 w-8 place-items-center rounded-md text-fg-muted hover:bg-subtle hover:text-danger" title="삭제">
+                    <button onClick={() => askDelete(e)}
+                      className="grid h-8 w-8 place-items-center rounded-md text-fg-muted hover:bg-subtle hover:text-danger" title="삭제" aria-label="삭제">
                       <Trash2 size={15} />
                     </button>
                   </div>
@@ -237,6 +246,8 @@ export function FileExplorer({
         </span>
         <span className="label">/{cwd}</span>
       </footer>
+
+      <FileViewer scope={scope} file={viewing} onClose={() => setViewing(null)} onError={onError} />
 
       <Modal open={!!renaming} onClose={() => setRenaming(null)} title="이름 변경" width="max-w-sm">
         <div className="space-y-3">
