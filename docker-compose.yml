@@ -7,11 +7,12 @@ services:
       - "8000"
     ports:
       - "8000:8000" # 로컬/LAN 직접 접근용 (원하면 제거)
+    # .env 전체를 컨테이너로 전달 (AUTH_USERS/SESSION_SECRET/<id>_GOOGLE_* 포함)
+    env_file:
+      - .env
     environment:
+      # 컨테이너 내부 저장소 경로는 항상 마운트 지점으로 고정
       STORAGE_ROOT: /mnt/hdd
-      CORS_ORIGINS: ${CORS_ORIGINS:-*}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
     volumes:
       - /mnt/hdd:/mnt/hdd
 
