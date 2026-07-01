@@ -20,11 +20,14 @@ from http.cookies import SimpleCookie
 
 import websockets
 from itsdangerous import URLSafeTimedSerializer
+from urllib.parse import urlparse
 
 SECRET = os.getenv("SESSION_SECRET", "")
 SALT = "server-session-v1"
 TTL = int(os.getenv("SESSION_TTL_SECONDS", "3600"))
 ADMINS = {a.strip() for a in os.getenv("TERMINAL_ADMINS", "admin").split(",") if a.strip()}
+# CSWSH 방지: 허용 Origin 목록. 비어 있으면 요청 Host와 동일 출처만 허용.
+ALLOWED_ORIGINS = {o.strip() for o in os.getenv("TERMINAL_ORIGINS", "").split(",") if o.strip()}
 COOKIE_NAME = "server_session"
 PORT = int(os.getenv("TERMINAL_PORT", "7681"))
 
@@ -43,6 +46,24 @@ def _verify(token: str) -> str | None:
     return u if u in ADMINS else None
 
 
+def _origin_ok(headers) -> bool:
+    """Cross-Site WebSocket Hijacking 방지: 핸드셰이크 Origin 검증.
+
+    브라우저 요청엔 항상 Origin이 있으므로 없으면 거부.
+    TERMINAL_ORIGINS가 설정되면 그 목록만, 아니면 요청 Host와 동일 출처만 허용.
+    """
+    origin = headers.get("Origin", "")
+    if not origin:
+        return False
+    if ALLOWED_ORIGINS:
+        return origin in ALLOWED_ORIGINS
+    host = headers.get("Host", "")
+    try:
+        return bool(host) and urlparse(origin).netloc == host
+    except Exception:
+        return False
+
+
 def _cookie_token(header: str) -> str:
     if not header:
         return ""
@@ -56,7 +77,10 @@ def _cookie_token(header: str) -> str:
 
 
 async def handler(ws):
-    # ── 인증 ──
+    # ── Origin 검증 (CSWSH 방지) → 인증 ──
+    if not _origin_ok(ws.request.headers):
+        await ws.close(code=4403, reason="bad origin")
+        return
     cookie_header = ws.request.headers.get("Cookie", "")
     user = _verify(_cookie_token(cookie_header))
     if not user:

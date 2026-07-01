@@ -27,6 +27,12 @@ DEFAULTS: dict[str, Any] = {
         "default_scope": "common",
         "confirm_delete": True,
     },
+    "sync": {
+        # 텍스트/md 충돌 시 기본 동작: ask | local | web | merge
+        "text_conflict": "ask",
+        # 바이너리(.pdf/.png 등) 충돌 시: local | web
+        "binary_policy": "local",
+    },
     "display": {
         "show_seconds_in_timer": True,
     },

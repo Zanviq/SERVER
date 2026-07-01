@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "./store/auth";
 import { useSettings } from "./store/settings";
+import { useSync } from "./store/sync";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { Files } from "./pages/Files";
@@ -16,6 +17,9 @@ const Calendar = lazy(() => import("./pages/Calendar").then((m) => ({ default: m
 const Assistant = lazy(() => import("./pages/Assistant").then((m) => ({ default: m.Assistant })));
 const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
 const Profile = lazy(() => import("./pages/Profile").then((m) => ({ default: m.Profile })));
+const Trash = lazy(() => import("./pages/Trash").then((m) => ({ default: m.Trash })));
+const Sync = lazy(() => import("./pages/Sync").then((m) => ({ default: m.Sync })));
+const TerminalPage = lazy(() => import("./pages/Terminal").then((m) => ({ default: m.TerminalPage })));
 
 function Spinner() {
   return (
@@ -37,6 +41,9 @@ function AuthedRoutes() {
         <Route path="/assistant" element={<Assistant />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/profile" element={<Profile />} />
+        <Route path="/trash" element={<Trash />} />
+        <Route path="/sync" element={<Sync />} />
+        <Route path="/terminal" element={<TerminalPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
@@ -50,9 +57,12 @@ export default function App() {
     init();
   }, [init]);
 
-  // 로그인되면 개인 설정 로드
+  // 로그인되면 개인 설정 로드 + 로컬 연동 자동 시도
   useEffect(() => {
-    if (session) useSettings.getState().load();
+    if (session) {
+      useSettings.getState().load();
+      useSync.getState().init(session.username);
+    }
   }, [session]);
 
   useEffect(() => {

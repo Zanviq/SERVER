@@ -104,10 +104,38 @@ export const api = {
     req<NoteSummary>(`/api/notes/save?${q({ scope })}`, jsonInit("PUT", { path, content })),
   noteDelete: (scope: Scope, path: string) =>
     req(`/api/notes/delete?${q({ scope, path })}`, { method: "DELETE" }),
-  noteGraph: (scope: Scope) =>
-    req<NotesGraph>(`/api/notes/graph?${q({ scope })}`),
+  noteGraph: (scope: Scope, folder = "", mode: "links" | "folders" = "links") =>
+    req<NotesGraph>(`/api/notes/graph?${q({ scope, folder, mode })}`),
   noteSearch: (scope: Scope, query: string) =>
     req<NoteSearchHit[]>(`/api/notes/search?${q({ scope, q: query })}`),
+  noteTree: (scope: Scope) =>
+    req<NotesTree>(`/api/notes/tree?${q({ scope })}`),
+  noteFolderCreate: (scope: Scope, path: string) =>
+    req(`/api/notes/folder?${q({ scope })}`, jsonInit("POST", { path })),
+  noteFolderDelete: (scope: Scope, path: string) =>
+    req(`/api/notes/folder?${q({ scope, path })}`, { method: "DELETE" }),
+
+  // ── 휴지통 ──
+  trashList: () => req<TrashEntry[]>("/api/trash/list"),
+  trashRestore: (id: string) =>
+    req(`/api/trash/restore?${q({ id })}`, { method: "POST" }),
+  trashPurge: (id: string) => req(`/api/trash/purge?${q({ id })}`, { method: "DELETE" }),
+  trashEmpty: () => req("/api/trash/empty", { method: "DELETE" }),
+
+  // ── 로컬 연동(sync) ──
+  syncManifest: (scope: Scope, path: string) =>
+    req<SyncManifest>(`/api/sync/manifest?${q({ scope, path })}`),
+  syncUpload: (scope: Scope, path: string, rel: string, data: ArrayBuffer | Uint8Array) =>
+    req<{ ok: boolean; rel: string; hash: string }>(
+      `/api/sync/upload?${q({ scope, path, rel })}`,
+      { method: "POST", body: data as BodyInit },
+    ),
+  syncDownloadUrl: (scope: Scope, path: string, rel: string) =>
+    `${BASE}/api/sync/download?${q({ scope, path, rel })}`,
+
+  // ── 터미널 ──
+  terminalStatus: () =>
+    req<{ enabled: boolean; is_admin: boolean; available: boolean }>("/api/terminal/status"),
 
   // ── calendar ──
   calSource: () => req<{ source: string }>("/api/calendar/source"),
@@ -191,6 +219,7 @@ export interface UserSettings {
   calendar: { default_color: string; default_view: string; week_start: number };
   notes: { default_scope: string; autosave_ms: number };
   files: { default_scope: string; confirm_delete: boolean };
+  sync: { text_conflict: string; binary_policy: string };
   display: { show_seconds_in_timer: boolean };
 }
 
@@ -223,8 +252,26 @@ export interface NoteDetail {
   backlinks: string[];
 }
 export interface NotesGraph {
-  nodes: { id: string; title: string; path: string }[];
+  nodes: { id: string; title: string; path: string; type?: string; count?: number }[];
   links: { source: string; target: string }[];
+}
+export interface NotesTree {
+  folders: string[];
+  notes: NoteSummary[];
+}
+export interface TrashEntry {
+  id: string;
+  kind: string;
+  scope: string;
+  orig_rel: string;
+  name: string;
+  is_dir: boolean;
+  deleted_at: number;
+}
+export interface SyncManifest {
+  scope: string;
+  path: string;
+  files: { rel: string; size: number; mtime: number; hash: string }[];
 }
 export interface NoteSearchHit {
   path: string;

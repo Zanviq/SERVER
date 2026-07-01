@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  NotebookPen, Plus, Trash2, Save, Link2, Users, User, Loader2, FileText, Search, X,
+  NotebookPen, FolderPlus, FilePlus, Trash2, Save, Link2, Users, User, Loader2,
+  FileText, Search, X, Folder, ChevronRight, ChevronDown, Home,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { MarkdownView } from "../components/notes/MarkdownView";
@@ -10,18 +11,62 @@ import { api, NoteSummary, NoteDetail, NoteSearchHit, Scope } from "../lib/api";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
 
+interface TreeNode {
+  name: string;
+  path: string; // 폴더 상대경로
+  children: TreeNode[];
+  notes: NoteSummary[];
+}
+
+function buildTree(folders: string[], notes: NoteSummary[]): TreeNode {
+  const root: TreeNode = { name: "", path: "", children: [], notes: [] };
+  const byPath = new Map<string, TreeNode>([["", root]]);
+
+  const ensure = (path: string): TreeNode => {
+    if (byPath.has(path)) return byPath.get(path)!;
+    const parts = path.split("/");
+    const name = parts[parts.length - 1];
+    const parentPath = parts.slice(0, -1).join("/");
+    const parent = ensure(parentPath);
+    const node: TreeNode = { name, path, children: [], notes: [] };
+    parent.children.push(node);
+    byPath.set(path, node);
+    return node;
+  };
+
+  folders.forEach((f) => ensure(f));
+  notes.forEach((n) => {
+    const slash = n.path.lastIndexOf("/");
+    const parentPath = slash >= 0 ? n.path.slice(0, slash) : "";
+    ensure(parentPath).notes.push(n);
+  });
+
+  const sortNode = (node: TreeNode) => {
+    node.children.sort((a, b) => a.name.localeCompare(b.name));
+    node.notes.sort((a, b) => a.title.localeCompare(b.title));
+    node.children.forEach(sortNode);
+  };
+  sortNode(root);
+  return root;
+}
+
 export function Notes() {
   const prefs = useSettings((st) => st.settings?.notes);
   const [scope, setScope] = useState<Scope>((prefs?.default_scope as Scope) || "me");
-  const [list, setList] = useState<NoteSummary[]>([]);
+  const [folders, setFolders] = useState<string[]>([]);
+  const [notes, setNotes] = useState<NoteSummary[]>([]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [curFolder, setCurFolder] = useState(""); // 새 노트/폴더가 생성될 위치
   const [current, setCurrent] = useState<string | null>(null);
   const [content, setContent] = useState("");
   const [detail, setDetail] = useState<NoteDetail | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const [newOpen, setNewOpen] = useState(false);
+  const [newNoteOpen, setNewNoteOpen] = useState(false);
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [delOpen, setDelOpen] = useState(false);
+  const [delFolder, setDelFolder] = useState<string | null>(null);
   const saveTimer = useRef<number | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const [suggest, setSuggest] = useState<string[] | null>(null);
@@ -31,21 +76,25 @@ export function Notes() {
   const [params, setParams] = useSearchParams();
 
   const autosaveMs = prefs?.autosave_ms ?? 900;
+  const tree = useMemo(() => buildTree(folders, notes), [folders, notes]);
 
-  const reloadList = useCallback(async () => {
+  const reloadTree = useCallback(async () => {
     try {
-      setList(await api.noteList(scope));
+      const t = await api.noteTree(scope);
+      setFolders(t.folders);
+      setNotes(t.notes);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "목록 실패");
     }
   }, [scope]);
 
   useEffect(() => {
-    reloadList();
+    reloadTree();
     setCurrent(null);
     setContent("");
     setDetail(null);
-  }, [reloadList]);
+    setCurFolder("");
+  }, [reloadTree]);
 
   const openNote = useCallback(
     async (path: string) => {
@@ -55,6 +104,9 @@ export function Notes() {
         setContent(d.content);
         setDetail(d);
         setDirty(false);
+        // 열린 노트의 상위 폴더를 현재 폴더로
+        const slash = d.path.lastIndexOf("/");
+        setCurFolder(slash >= 0 ? d.path.slice(0, slash) : "");
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "노트 열기 실패");
       }
@@ -70,14 +122,14 @@ export function Notes() {
         setDirty(false);
         const d = await api.noteGet(scope, path);
         setDetail(d);
-        reloadList();
+        reloadTree();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "저장 실패");
       } finally {
         setSaving(false);
       }
     },
-    [scope, reloadList],
+    [scope, reloadTree],
   );
 
   const onEdit = (text: string) => {
@@ -94,7 +146,7 @@ export function Notes() {
       const m = before.match(/\[\[([^\[\]\n]*)$/);
       if (m) {
         const qstr = m[1].toLowerCase();
-        setSuggest(list.map((n) => n.title).filter((t) => t.toLowerCase().includes(qstr)).slice(0, 6));
+        setSuggest(notes.map((n) => n.title).filter((t) => t.toLowerCase().includes(qstr)).slice(0, 6));
       } else setSuggest(null);
     }
   };
@@ -109,14 +161,35 @@ export function Notes() {
     setTimeout(() => ta.focus(), 0);
   };
 
+  const joinPath = (folder: string, name: string) => (folder ? `${folder}/${name}` : name);
+
   const createNote = async () => {
     const name = newName.trim();
     if (!name) return;
-    setNewOpen(false);
+    setNewNoteOpen(false);
     setNewName("");
-    await save(name, `# ${name}\n\n`);
-    await reloadList();
-    openNote(`${name}.md`);
+    const path = joinPath(curFolder, name);
+    await save(path, `# ${name}\n\n`);
+    await reloadTree();
+    if (curFolder) setExpanded((s) => new Set(s).add(curFolder));
+    openNote(`${path}.md`);
+  };
+
+  const createFolder = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setNewFolderOpen(false);
+    setNewName("");
+    const path = joinPath(curFolder, name);
+    try {
+      await api.noteFolderCreate(scope, path);
+      await reloadTree();
+      setExpanded((s) => new Set(s).add(path));
+      setCurFolder(path);
+      toast.ok("폴더 생성됨");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "폴더 생성 실패");
+    }
   };
 
   const delNote = async () => {
@@ -127,10 +200,24 @@ export function Notes() {
       setCurrent(null);
       setContent("");
       setDetail(null);
-      reloadList();
-      toast.ok("노트 삭제됨");
+      reloadTree();
+      toast.ok("휴지통으로 이동됨");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "삭제 실패");
+    }
+  };
+
+  const doDelFolder = async () => {
+    if (!delFolder) return;
+    const target = delFolder;
+    setDelFolder(null);
+    try {
+      await api.noteFolderDelete(scope, target);
+      if (curFolder === target || curFolder.startsWith(target + "/")) setCurFolder("");
+      reloadTree();
+      toast.ok("폴더를 휴지통으로 이동했습니다");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "폴더 삭제 실패");
     }
   };
 
@@ -152,22 +239,74 @@ export function Notes() {
 
   const openByTitle = useCallback(
     (title: string) => {
-      const found = list.find((n) => n.title.toLowerCase() === title.toLowerCase());
+      const found = notes.find((n) => n.title.toLowerCase() === title.toLowerCase());
       if (found) openNote(found.path);
-      else save(title, `# ${title}\n\n`).then(() => reloadList().then(() => openNote(`${title}.md`)));
+      else save(title, `# ${title}\n\n`).then(() => reloadTree().then(() => openNote(`${title}.md`)));
     },
-    [list, openNote, save, reloadList],
+    [notes, openNote, save, reloadTree],
   );
 
-  // 그래프 등에서 ?open=제목 으로 진입 시 해당 노트 열기
   useEffect(() => {
     const open = params.get("open");
-    if (open && list.length) {
+    if (open && notes.length) {
       openByTitle(open);
       params.delete("open");
       setParams(params, { replace: true });
     }
-  }, [params, list, openByTitle, setParams]);
+  }, [params, notes, openByTitle, setParams]);
+
+  const toggleFolder = (path: string) => {
+    setCurFolder(path);
+    setExpanded((s) => {
+      const n = new Set(s);
+      n.has(path) ? n.delete(path) : n.add(path);
+      return n;
+    });
+  };
+
+  // 재귀 폴더 렌더
+  const renderNode = (node: TreeNode, depth: number): JSX.Element[] => {
+    const rows: JSX.Element[] = [];
+    for (const child of node.children) {
+      const isOpen = expanded.has(child.path);
+      const isCur = curFolder === child.path;
+      rows.push(
+        <li key={"f:" + child.path}>
+          <div
+            className={`group flex items-center gap-1 rounded-md pr-1 text-[13px] ${isCur ? "bg-accent-muted" : "hover:bg-hovered"}`}
+            style={{ paddingLeft: depth * 12 + 4 }}
+          >
+            <button onClick={() => toggleFolder(child.path)}
+              className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 text-left">
+              {isOpen ? <ChevronDown size={13} className="shrink-0 text-fg-muted" />
+                : <ChevronRight size={13} className="shrink-0 text-fg-muted" />}
+              <Folder size={14} className="shrink-0 text-warning" />
+              <span className="truncate font-medium">{child.name}</span>
+            </button>
+            <button onClick={() => setDelFolder(child.path)}
+              className="hidden shrink-0 rounded p-1 text-fg-muted hover:text-danger group-hover:block"
+              title="폴더 삭제" aria-label="폴더 삭제">
+              <Trash2 size={12} />
+            </button>
+          </div>
+        </li>,
+      );
+      if (isOpen) rows.push(...renderNode(child, depth + 1));
+    }
+    for (const n of node.notes) {
+      rows.push(
+        <li key={"n:" + n.path}>
+          <button onClick={() => openNote(n.path)}
+            className={`flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left text-[13px] ${current === n.path ? "bg-accent-muted text-accent-fg" : "hover:bg-hovered"}`}
+            style={{ paddingLeft: depth * 12 + 22 }}>
+            <FileText size={14} className="shrink-0 text-fg-muted" />
+            <span className="truncate">{n.title}</span>
+          </button>
+        </li>,
+      );
+    }
+    return rows;
+  };
 
   const crumbs = (
     <div className="inline-flex rounded-md border border-line bg-subtle p-0.5">
@@ -184,15 +323,31 @@ export function Notes() {
 
   return (
     <Shell title="노트" actions={crumbs}>
-      <div className="grid grid-cols-1 gap-4 lg:h-[calc(100vh-9rem)] lg:grid-cols-[220px_1fr_1fr]">
-        {/* 목록 */}
-        <div className="card flex max-h-72 flex-col overflow-hidden lg:max-h-none">
+      <div className="grid grid-cols-1 gap-4 lg:h-[calc(100vh-9rem)] lg:grid-cols-[240px_1fr_1fr]">
+        {/* 트리 */}
+        <div className="card flex max-h-80 flex-col overflow-hidden lg:max-h-none">
           <div className="flex items-center justify-between border-b border-line px-3 py-2">
-            <span className="label">노트 {list.length}</span>
-            <button onClick={() => setNewOpen(true)} className="btn btn-ghost h-7 px-2" title="새 노트" aria-label="새 노트">
-              <Plus size={15} />
-            </button>
+            <span className="label">노트 {notes.length}</span>
+            <div className="flex items-center gap-0.5">
+              <button onClick={() => { setNewName(""); setNewFolderOpen(true); }}
+                className="btn btn-ghost h-7 px-2" title="새 폴더" aria-label="새 폴더">
+                <FolderPlus size={15} />
+              </button>
+              <button onClick={() => { setNewName(""); setNewNoteOpen(true); }}
+                className="btn btn-ghost h-7 px-2" title="새 노트" aria-label="새 노트">
+                <FilePlus size={15} />
+              </button>
+            </div>
           </div>
+
+          {/* 현재 위치 */}
+          <button onClick={() => setCurFolder("")}
+            className="flex items-center gap-1 border-b border-line px-3 py-1.5 text-left text-[11.5px] text-fg-muted hover:text-accent"
+            title="루트로">
+            <Home size={12} className="shrink-0" />
+            <span className="truncate">위치: {curFolder || "루트"}</span>
+          </button>
+
           <div className="border-b border-line p-2">
             <div className="relative">
               <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-subtle" />
@@ -207,6 +362,7 @@ export function Notes() {
               )}
             </div>
           </div>
+
           <ul className="flex-1 overflow-auto p-1">
             {hits !== null ? (
               hits.length === 0 ? (
@@ -225,21 +381,10 @@ export function Notes() {
                   </li>
                 ))
               )
+            ) : notes.length === 0 && folders.length === 0 ? (
+              <li className="px-2 py-6 text-center text-[12px] text-fg-muted">노트가 없습니다</li>
             ) : (
-              <>
-                {list.map((n) => (
-                  <li key={n.path}>
-                    <button onClick={() => openNote(n.path)}
-                      className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] ${current === n.path ? "bg-accent-muted text-accent-fg" : "hover:bg-hovered"}`}>
-                      <FileText size={14} className="shrink-0 text-fg-muted" />
-                      <span className="truncate">{n.title}</span>
-                    </button>
-                  </li>
-                ))}
-                {list.length === 0 && (
-                  <li className="px-2 py-6 text-center text-[12px] text-fg-muted">노트가 없습니다</li>
-                )}
-              </>
+              renderNode(tree, 0)
             )}
           </ul>
         </div>
@@ -304,27 +449,53 @@ export function Notes() {
       </div>
 
       {/* 새 노트 모달 */}
-      <Modal open={newOpen} onClose={() => setNewOpen(false)} title="새 노트" width="max-w-sm">
+      <Modal open={newNoteOpen} onClose={() => setNewNoteOpen(false)} title={`새 노트${curFolder ? ` · ${curFolder}` : ""}`} width="max-w-sm">
         <div className="space-y-3">
           <input autoFocus className="input" value={newName} placeholder="노트 제목"
             onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") createNote(); if (e.key === "Escape") setNewOpen(false); }} />
+            onKeyDown={(e) => { if (e.key === "Enter") createNote(); if (e.key === "Escape") setNewNoteOpen(false); }} />
           <div className="flex justify-end gap-2">
-            <button onClick={() => setNewOpen(false)} className="btn btn-ghost">취소</button>
+            <button onClick={() => setNewNoteOpen(false)} className="btn btn-ghost">취소</button>
             <button onClick={createNote} className="btn btn-primary">만들기</button>
           </div>
         </div>
       </Modal>
 
-      {/* 삭제 확인 */}
+      {/* 새 폴더 모달 */}
+      <Modal open={newFolderOpen} onClose={() => setNewFolderOpen(false)} title={`새 폴더${curFolder ? ` · ${curFolder}` : ""}`} width="max-w-sm">
+        <div className="space-y-3">
+          <input autoFocus className="input" value={newName} placeholder="폴더 이름"
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") createFolder(); if (e.key === "Escape") setNewFolderOpen(false); }} />
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setNewFolderOpen(false)} className="btn btn-ghost">취소</button>
+            <button onClick={createFolder} className="btn btn-primary">만들기</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 노트 삭제 확인 */}
       <Modal open={delOpen} onClose={() => setDelOpen(false)} title="노트 삭제" width="max-w-sm">
         <div className="space-y-4">
           <p className="text-[13.5px] text-fg2">
-            <span className="font-mono text-danger">{current?.replace(/\.md$/, "")}</span> 노트를 삭제할까요? 되돌릴 수 없습니다.
+            <span className="font-mono text-danger">{current?.replace(/\.md$/, "")}</span> 노트를 휴지통으로 옮길까요? 휴지통에서 복원할 수 있습니다.
           </p>
           <div className="flex justify-end gap-2">
             <button onClick={() => setDelOpen(false)} className="btn btn-ghost">취소</button>
-            <button onClick={delNote} className="btn btn-danger"><Trash2 size={14} /> 삭제</button>
+            <button onClick={delNote} className="btn btn-danger"><Trash2 size={14} /> 휴지통으로</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 폴더 삭제 확인 */}
+      <Modal open={!!delFolder} onClose={() => setDelFolder(null)} title="폴더 삭제" width="max-w-sm">
+        <div className="space-y-4">
+          <p className="text-[13.5px] text-fg2">
+            <span className="font-mono text-danger">{delFolder}</span> 폴더를 하위 노트와 함께 휴지통으로 옮길까요?
+          </p>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setDelFolder(null)} className="btn btn-ghost">취소</button>
+            <button onClick={doDelFolder} className="btn btn-danger"><Trash2 size={14} /> 휴지통으로</button>
           </div>
         </div>
       </Modal>

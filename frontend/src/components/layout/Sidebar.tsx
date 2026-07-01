@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -8,8 +9,12 @@ import {
   Settings,
   User,
   Bot,
+  FolderSync,
+  Trash2,
+  TerminalSquare,
 } from "lucide-react";
 import { useAuth } from "../../store/auth";
+import { api } from "../../lib/api";
 
 const NAV = [
   { to: "/", icon: LayoutDashboard, label: "대시보드", end: true },
@@ -18,6 +23,8 @@ const NAV = [
   { to: "/graph", icon: Share2, label: "그래프" },
   { to: "/calendar", icon: CalendarDays, label: "캘린더" },
   { to: "/assistant", icon: Bot, label: "AI 비서" },
+  { to: "/sync", icon: FolderSync, label: "로컬 연동" },
+  { to: "/trash", icon: Trash2, label: "휴지통" },
 ];
 
 /** 데스크톱: 좌측 64px 아이콘 사이드바 (호버 툴팁 + aria-label) */
@@ -57,6 +64,15 @@ function DesktopItem({
 export function Sidebar() {
   const session = useAuth((s) => s.session);
   const initial = (session?.display_name || "?").charAt(0).toUpperCase();
+  const [termAvail, setTermAvail] = useState(false);
+
+  useEffect(() => {
+    api.terminalStatus().then((s) => setTermAvail(s.available)).catch(() => setTermAvail(false));
+  }, []);
+
+  const nav = termAvail
+    ? [...NAV, { to: "/terminal", icon: TerminalSquare, label: "터미널" }]
+    : NAV;
 
   return (
     <>
@@ -66,7 +82,7 @@ export function Sidebar() {
           SV
         </div>
         <nav className="flex flex-1 flex-col items-center gap-1">
-          {NAV.map((n) => (
+          {nav.map((n) => (
             <DesktopItem key={n.to} {...n} />
           ))}
         </nav>
@@ -85,7 +101,7 @@ export function Sidebar() {
 
       {/* 모바일 하단 탭바 (라벨 표시) */}
       <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch justify-around border-t border-line bg-sidebar px-1 py-1 sm:hidden">
-        {[...NAV, { to: "/settings", icon: Settings, label: "설정" }, { to: "/profile", icon: User, label: "프로필" }].map(
+        {[...nav, { to: "/settings", icon: Settings, label: "설정" }, { to: "/profile", icon: User, label: "프로필" }].map(
           (n) => (
             <NavLink
               key={n.to}
