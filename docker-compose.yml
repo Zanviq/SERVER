@@ -12,12 +12,14 @@ services:
     env_file:
       - .env
     environment:
-      # 컨테이너 내부 저장소 경로는 항상 마운트 지점으로 고정
-      STORAGE_ROOT: /mnt/hdd
+      # /mnt/hdd 는 다른 용도와 공유 → 이 서비스 데이터는 server/ 하위로 격리
+      # (하위에 common/ 과 users/<id>/ 생성)
+      STORAGE_ROOT: /mnt/hdd/server
       # 터널 토큰은 cloudflared 서비스만 사용 → 백엔드엔 노출하지 않음(최소권한)
       CF_TUNNEL_TOKEN: ""
     volumes:
-      - /mnt/hdd:/mnt/hdd
+      # 서비스 폴더만 마운트 → 컨테이너가 /mnt/hdd 전체를 보지 않음(최소권한)
+      - /mnt/hdd/server:/mnt/hdd/server
 
   frontend:
     build: ./frontend
