@@ -119,6 +119,36 @@ def test_notes_wikilinks_and_graph():
     assert ("A", "B") in pairs and ("A", "C") in pairs and ("B", "A") in pairs
 
 
+def test_calendar_recurrence_and_reminders():
+    _login()
+    # 매일 반복 이벤트 (알림 30분 전)
+    r = client.post(
+        "/api/calendar/events",
+        json={
+            "title": "데일리 스탠드업",
+            "start": "2026-08-03T09:00:00",
+            "end": "2026-08-03T09:15:00",
+            "recurrence": "daily",
+            "recur_until": "2026-08-09",
+            "remind_minutes": 30,
+        },
+    )
+    assert r.status_code == 200, r.text
+    # 8/3~8/9 조회 → 7개 인스턴스
+    got = client.get("/api/calendar/events?from=2026-08-03T00:00:00&to=2026-08-09T23:59:59").json()
+    daily = [e for e in got if e["title"] == "데일리 스탠드업"]
+    assert len(daily) == 7, len(daily)
+    # 단일 발생 삭제(예외)
+    inst_id = daily[2]["id"]  # id@2026-08-05
+    assert "@" in inst_id
+    assert client.delete(f"/api/calendar/events/{inst_id}").status_code == 200
+    got2 = client.get("/api/calendar/events?from=2026-08-03T00:00:00&to=2026-08-09T23:59:59").json()
+    daily2 = [e for e in got2 if e["title"] == "데일리 스탠드업"]
+    assert len(daily2) == 6
+    # 알림 due 엔드포인트 동작
+    assert isinstance(client.get("/api/calendar/reminders?within=100000").json(), list)
+
+
 def test_settings_get_patch():
     _login()
     s = client.get("/api/settings").json()
@@ -229,6 +259,7 @@ if __name__ == "__main__":
     test_upload_illegal_filename_sanitized()
     test_notes_wikilinks_and_graph()
     test_settings_get_patch()
+    test_calendar_recurrence_and_reminders()
     test_calendar_lifecycle()
     test_ai_react_chains_skills()
     test_ai_blocks_sensitive_files()

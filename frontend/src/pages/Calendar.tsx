@@ -67,8 +67,13 @@ export function Calendar() {
 
   const save = async (e: Partial<CalEvent>) => {
     try {
-      if (e.id) await api.calUpdate(e.id, e);
-      else await api.calCreate(e);
+      if (e.id) {
+        // 반복 일정 인스턴스 편집은 시리즈 메타만 수정(시작/종료시간 보존)
+        const payload = e.id.includes("@")
+          ? { ...e, start: undefined, end: undefined, allDay: undefined }
+          : e;
+        await api.calUpdate(e.id, payload);
+      } else await api.calCreate(e);
       setDialog(null);
       toast.ok("저장됨");
       reload();

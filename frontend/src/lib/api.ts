@@ -120,7 +120,9 @@ export const api = {
   calUpdate: (id: string, e: Partial<CalEvent>) =>
     req<CalEvent>(`/api/calendar/events/${id}`, jsonInit("PUT", e)),
   calDelete: (id: string) =>
-    req(`/api/calendar/events/${id}`, { method: "DELETE" }),
+    req(`/api/calendar/events/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  calReminders: (within = 1440) =>
+    req<CalEvent[]>(`/api/calendar/reminders?within=${within}`),
 
   // ── settings ──
   getSettings: () =>
@@ -198,6 +200,12 @@ export interface CalEvent {
   end: string;
   allDay: boolean;
   color: string;
+  recurrence?: string;
+  interval?: number;
+  recur_until?: string;
+  remind_minutes?: number;
+  remind_at?: string;
+  is_recurring?: boolean;
 }
 
 export interface NoteSummary {

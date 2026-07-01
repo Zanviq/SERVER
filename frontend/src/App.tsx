@@ -7,6 +7,7 @@ import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { Files } from "./pages/Files";
 import { Toaster } from "./components/ui/Toaster";
+import { ReminderPoller } from "./components/ReminderPoller";
 
 // 무거운 라우트는 코드 분할(지연 로드) — 초기 번들 축소
 const Notes = lazy(() => import("./pages/Notes").then((m) => ({ default: m.Notes })));
@@ -71,6 +72,7 @@ export default function App() {
       {session ? (
         <BrowserRouter>
           <AuthedRoutes />
+          <ReminderPoller />
         </BrowserRouter>
       ) : (
         <Login />

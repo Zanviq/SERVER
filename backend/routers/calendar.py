@@ -4,6 +4,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from datetime import datetime
+
 from .. import calendar_store
 from ..auth import SessionUser, require_session
 from ..calendar_google import get_google_calendar
@@ -19,6 +21,10 @@ class EventInput(BaseModel):
     end: str | None = None
     allDay: bool = False
     color: str = "2"
+    recurrence: str = "none"  # none|daily|weekly|monthly|yearly
+    interval: int = 1
+    recur_until: str = ""
+    remind_minutes: int = 0
 
 
 class EventPatch(BaseModel):
@@ -28,6 +34,10 @@ class EventPatch(BaseModel):
     end: str | None = None
     allDay: bool | None = None
     color: str | None = None
+    recurrence: str | None = None
+    interval: int | None = None
+    recur_until: str | None = None
+    remind_minutes: int | None = None
 
 
 @router.get("/source")
@@ -83,7 +93,20 @@ def delete_event(
 ):
     gc = get_google_calendar(settings)
     if gc:
-        gc.delete(eid)
+        gc.delete(eid.split("@", 1)[0])
     else:
         calendar_store.delete_event(user, settings, eid)
     return {"ok": True}
+
+
+@router.get("/reminders")
+def reminders(
+    within: int = Query(1440, description="지금부터 몇 분 이내"),
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """알림이 설정된 다가오는 일정 (내부 캘린더 전용)."""
+    if get_google_calendar(settings):
+        return []
+    now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    return calendar_store.due_reminders(user, settings, now, within)

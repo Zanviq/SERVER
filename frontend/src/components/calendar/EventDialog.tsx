@@ -32,6 +32,10 @@ export function EventDialog({
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [color, setColor] = useState("2");
+  const [recurrence, setRecurrence] = useState("none");
+  const [interval, setInterval] = useState(1);
+  const [until, setUntil] = useState("");
+  const [remind, setRemind] = useState(0);
 
   useEffect(() => {
     if (!initial) return;
@@ -41,6 +45,10 @@ export function EventDialog({
     setStart(toLocal(initial.start ?? ""));
     setEnd(toLocal(initial.end ?? initial.start ?? ""));
     setColor(initial.color ?? "2");
+    setRecurrence(initial.recurrence ?? "none");
+    setInterval(initial.interval ?? 1);
+    setUntil(initial.recur_until ?? "");
+    setRemind(initial.remind_minutes ?? 0);
   }, [initial]);
 
   const isEdit = !!initial?.id;
@@ -55,6 +63,10 @@ export function EventDialog({
       start: allDay ? start.slice(0, 10) : toIso(start),
       end: allDay ? end.slice(0, 10) || start.slice(0, 10) : toIso(end || start),
       color,
+      recurrence,
+      interval: Math.max(1, interval),
+      recur_until: until,
+      remind_minutes: remind,
     });
   };
 
@@ -108,6 +120,42 @@ export function EventDialog({
             ))}
           </div>
         </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="label mb-1 block">반복</label>
+            <select className="input" value={recurrence} onChange={(e) => setRecurrence(e.target.value)}>
+              <option value="none">안 함</option>
+              <option value="daily">매일</option>
+              <option value="weekly">매주</option>
+              <option value="monthly">매월</option>
+              <option value="yearly">매년</option>
+            </select>
+          </div>
+          <div>
+            <label className="label mb-1 block">알림</label>
+            <select className="input" value={remind} onChange={(e) => setRemind(+e.target.value)}>
+              <option value={0}>없음</option>
+              <option value={10}>10분 전</option>
+              <option value={30}>30분 전</option>
+              <option value={60}>1시간 전</option>
+              <option value={1440}>1일 전</option>
+            </select>
+          </div>
+        </div>
+        {recurrence !== "none" && (
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="label mb-1 block">간격</label>
+              <input type="number" min={1} max={99} className="input" value={interval}
+                onChange={(e) => setInterval(Math.max(1, +e.target.value))} />
+            </div>
+            <div>
+              <label className="label mb-1 block">종료일(선택)</label>
+              <input type="date" className="input" value={until} onChange={(e) => setUntil(e.target.value)} />
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-between pt-1">
           {isEdit && onDelete ? (
             <button onClick={() => onDelete(initial!.id!)} className="btn btn-danger">
