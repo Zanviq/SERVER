@@ -1,4 +1,4 @@
-"""TwoMES 홈서버 백엔드 진입점.
+"""SERVER 홈서버 백엔드 진입점.
 
 FastAPI 단일 게이트웨이. 인증 미들웨어로 전 API 보호.
 """
@@ -19,7 +19,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
-logger = logging.getLogger("twomes")
+logger = logging.getLogger("server")
 
 
 @asynccontextmanager
@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="TwoMES Home Server API",
+    title="SERVER Home Server API",
     description="라즈베리파이 5 홈서버 통합 API (멀티유저)",
     version="0.2.0",
     lifespan=lifespan,

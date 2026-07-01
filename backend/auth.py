@@ -2,7 +2,7 @@
 
 - .env(AUTH_USERS)의 계정만 로그인 가능.
 - 토큰은 itsdangerous로 서명(SESSION_SECRET) + 발급시각 포함 → TTL 만료 강제.
-- 토큰은 HttpOnly 쿠키(tw_session)로 전달.
+- 토큰은 HttpOnly 쿠키(server_session)로 전달.
 """
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from .config import Settings, get_settings
 
-COOKIE_NAME = "tw_session"
-_SALT = "twomes-session-v1"
+COOKIE_NAME = "server_session"
+_SALT = "server-session-v1"
 
 
 @dataclass

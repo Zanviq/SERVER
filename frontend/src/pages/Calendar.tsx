@@ -122,7 +122,7 @@ export function Calendar() {
       }
     >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-        <div className="card fc-twomes min-w-0 flex-1 p-4">
+        <div className="card fc-server min-w-0 flex-1 p-4">
           <FullCalendar
             plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
             initialView={defaultView}

@@ -25,7 +25,7 @@ from ..schemas import (
 from ..security_paths import safe_join, to_rel
 from ..storage import resolve, scope_root
 
-logger = logging.getLogger("twomes.files")
+logger = logging.getLogger("server.files")
 router = APIRouter(prefix="/api/files", tags=["files"])
 
 _ILLEGAL_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')

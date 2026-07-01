@@ -88,58 +88,58 @@
   }
 
   /* 마크다운 프리뷰 */
-  .prose-twomes {
+  .prose-server {
     @apply text-[14px] leading-relaxed text-fg2;
   }
-  .prose-twomes h1 {
+  .prose-server h1 {
     @apply mb-2 mt-4 text-xl font-bold text-fg;
   }
-  .prose-twomes h2 {
+  .prose-server h2 {
     @apply mb-2 mt-4 text-lg font-bold text-fg;
   }
-  .prose-twomes h3 {
+  .prose-server h3 {
     @apply mb-1.5 mt-3 text-base font-semibold text-fg;
   }
-  .prose-twomes p {
+  .prose-server p {
     @apply my-2;
   }
-  .prose-twomes ul {
+  .prose-server ul {
     @apply my-2 list-disc pl-5;
   }
-  .prose-twomes ol {
+  .prose-server ol {
     @apply my-2 list-decimal pl-5;
   }
-  .prose-twomes li {
+  .prose-server li {
     @apply my-0.5;
   }
-  .prose-twomes blockquote {
+  .prose-server blockquote {
     @apply my-2 border-l-2 border-accent pl-3 text-fg-muted;
   }
-  .prose-twomes code {
+  .prose-server code {
     @apply rounded bg-subtle px-1 py-0.5 font-mono text-[12.5px] text-accent-fg;
   }
-  .prose-twomes pre {
+  .prose-server pre {
     @apply my-2 overflow-x-auto rounded-md border border-line bg-subtle p-3;
   }
-  .prose-twomes pre code {
+  .prose-server pre code {
     @apply bg-transparent p-0 text-fg2;
   }
-  .prose-twomes a {
+  .prose-server a {
     @apply text-info;
   }
-  .prose-twomes table {
+  .prose-server table {
     @apply my-2 w-full border-collapse text-[13px];
   }
-  .prose-twomes th,
-  .prose-twomes td {
+  .prose-server th,
+  .prose-server td {
     @apply border border-line px-2 py-1 text-left;
   }
-  .prose-twomes hr {
+  .prose-server hr {
     @apply my-4 border-line;
   }
 
   /* FullCalendar 테마 매핑 */
-  .fc-twomes {
+  .fc-server {
     --fc-border-color: rgb(var(--line));
     --fc-page-bg-color: transparent;
     --fc-neutral-bg-color: rgb(var(--bg-subtle));
@@ -154,24 +154,24 @@
     --fc-event-text-color: #fff;
     --fc-now-indicator-color: rgb(var(--danger));
   }
-  .fc-twomes .fc {
+  .fc-server .fc {
     font-size: 13px;
   }
-  .fc-twomes .fc-toolbar-title {
+  .fc-server .fc-toolbar-title {
     @apply text-base font-bold;
   }
-  .fc-twomes .fc-button {
+  .fc-server .fc-button {
     @apply rounded-md text-[12px] font-medium capitalize shadow-none;
     padding: 4px 10px;
   }
-  .fc-twomes .fc-button-active {
+  .fc-server .fc-button-active {
     color: rgb(var(--accent-contrast)) !important;
   }
-  .fc-twomes .fc-col-header-cell-cushion,
-  .fc-twomes .fc-daygrid-day-number {
+  .fc-server .fc-col-header-cell-cushion,
+  .fc-server .fc-daygrid-day-number {
     @apply text-fg2 no-underline;
   }
-  .fc-twomes a {
+  .fc-server a {
     @apply no-underline;
   }
 }

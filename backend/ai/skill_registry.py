@@ -5,7 +5,7 @@ import logging
 
 from .skill_base import SkillBase, SkillContext, SkillResult
 
-logger = logging.getLogger("twomes.ai")
+logger = logging.getLogger("server.ai")
 
 
 class SkillRegistry:
