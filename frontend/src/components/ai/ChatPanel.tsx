@@ -141,7 +141,7 @@ export function ChatPanel({
         </div>
       )}
 
-      <div className="flex-1 space-y-4 overflow-auto pr-1">
+      <div className="flex-1 space-y-4 overflow-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {messages.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
             <div className="grid h-14 w-14 place-items-center rounded-xl bg-accent-muted text-accent">

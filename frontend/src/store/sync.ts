@@ -32,8 +32,12 @@ interface SyncState {
   supported: boolean;
   userId: string | null;
   mappings: MappingState[];
+  // 폴더를 고른 뒤 "어디에 풀지" 지정하기 전 대기 상태
+  pickPending: { handle: any; localName: string } | null;
   init: (userId: string) => Promise<void>;
-  addMapping: (scope: Scope, path: string) => Promise<void>;
+  beginAdd: () => Promise<void>;
+  confirmAdd: (scope: Scope, path: string) => Promise<void>;
+  cancelAdd: () => void;
   syncOne: (id: string) => Promise<void>;
   resumeOne: (id: string) => Promise<void>;
   resolveConflict: (id: string, rel: string, choice: "local" | "web" | "merge") => Promise<void>;
@@ -42,7 +46,6 @@ interface SyncState {
 
 const enc = (s: string): ArrayBuffer => new TextEncoder().encode(s).buffer as ArrayBuffer;
 const dec = (b: ArrayBuffer): string => new TextDecoder().decode(b);
-const joinPath = (base: string, rel: string) => (base ? `${base}/${rel}` : rel);
 
 async function fetchWebBuf(scope: Scope, path: string, rel: string): Promise<ArrayBuffer> {
   const res = await fetch(api.syncDownloadUrl(scope, path, rel), { credentials: "include" });
@@ -137,6 +140,7 @@ export const useSync = create<SyncState>((set, get) => {
     supported: fsSupported(),
     userId: null,
     mappings: [],
+    pickPending: null,
 
     init: async (userId) => {
       if (!fsSupported()) { set({ supported: false, userId }); return; }
@@ -150,15 +154,25 @@ export const useSync = create<SyncState>((set, get) => {
       }
     },
 
-    addMapping: async (scope, path) => {
+    // 1) 폴더 선택 (사용자 제스처) → 대기 상태로 두고 목적지 지정 대기
+    beginAdd: async () => {
+      const handle = await pickDirectory();
+      set({ pickPending: { handle, localName: handle.name } });
+    },
+
+    cancelAdd: () => set({ pickPending: null }),
+
+    // 2) 목적지(scope + 최종 경로) 확정 → 매핑 생성 + 동기화
+    confirmAdd: async (scope, path) => {
       const userId = get().userId;
-      if (!userId) return;
-      const handle = await pickDirectory(); // 사용자 제스처
-      // crypto.randomUUID는 브라우저 표준
-      const id = (crypto as any).randomUUID ? (crypto as any).randomUUID() : String(handle.name) + ":" + path + ":" + performance.now();
-      const rec: SyncMapping = { id, userId, handle, scope: scope as any, path, uploaded: [] };
+      const pending = get().pickPending;
+      if (!userId || !pending) return;
+      const id = (crypto as any).randomUUID
+        ? (crypto as any).randomUUID()
+        : `${pending.localName}:${path}:${performance.now()}`;
+      const rec: SyncMapping = { id, userId, handle: pending.handle, scope: scope as any, path, uploaded: [] };
       await saveMapping(rec);
-      set((s) => ({ mappings: [...s.mappings, toState(rec)] }));
+      set((s) => ({ mappings: [...s.mappings, toState(rec)], pickPending: null }));
       await runSync(id);
     },
 
@@ -197,9 +211,20 @@ export const useSync = create<SyncState>((set, get) => {
     disconnect: async (id, deleteUploaded) => {
       const m = get().mappings.find((x) => x.id === id);
       if (deleteUploaded && m) {
-        // 업로드했던 파일들을 웹에서 휴지통으로 이동 (파일 삭제 API = 휴지통 경유)
-        for (const rel of m.uploaded) {
-          await api.remove(m.scope, joinPath(m.path, rel)).catch(() => {});
+        if (m.path) {
+          // 전용 폴더에 풀었으면 폴더 통째로 휴지통 이동(파일 + 하위 폴더 모두)
+          await api.remove(m.scope, m.path).catch(() => {});
+        } else {
+          // 루트에 바로 푼 경우: 업로드한 파일 + 그 하위 폴더들을 깊은 것부터 삭제
+          for (const rel of m.uploaded) await api.remove(m.scope, rel).catch(() => {});
+          const dirs = new Set<string>();
+          for (const rel of m.uploaded) {
+            const parts = rel.split("/");
+            for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join("/"));
+          }
+          for (const d of [...dirs].sort((a, b) => b.length - a.length)) {
+            await api.remove(m.scope, d).catch(() => {});
+          }
         }
       }
       await deleteMapping(id).catch(() => {});

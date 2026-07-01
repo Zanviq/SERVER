@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   FolderSync, Loader2, RefreshCw, Link as LinkIcon, Unlink, AlertTriangle,
@@ -23,16 +23,33 @@ const STATUS: Record<string, { label: string; cls: string; icon: JSX.Element }> 
 
 export function Sync() {
   const st = useSync();
-  const [scope, setScope] = useState<Scope>("me");
-  const [path, setPath] = useState("");
   const [disc, setDisc] = useState<MappingState | null>(null);
+  // 목적지 지정 폼 (폴더 선택 후 모달)
+  const [scope, setScope] = useState<Scope>("me");
+  const [parent, setParent] = useState("");
+  const [wrap, setWrap] = useState(true);
+  const [wrapName, setWrapName] = useState("");
 
-  const add = async () => {
+  useEffect(() => {
+    if (st.pickPending) {
+      setScope("me");
+      setParent("");
+      setWrap(true);
+      setWrapName(st.pickPending.localName); // 기본: 로컬 폴더 이름으로 새 폴더
+    }
+  }, [st.pickPending]);
+
+  const finalPath = () => {
+    const p = parent.trim().replace(/^\/+|\/+$/g, "");
+    const w = wrapName.trim().replace(/\//g, "-");
+    return [p, wrap && w ? w : ""].filter(Boolean).join("/");
+  };
+
+  const beginAdd = async () => {
     try {
-      await st.addMapping(scope, path.trim());
-      setPath("");
+      await st.beginAdd();
     } catch (e) {
-      if ((e as Error).name !== "AbortError") toast.error(e instanceof Error ? e.message : "연동 실패");
+      if ((e as Error).name !== "AbortError") toast.error(e instanceof Error ? e.message : "폴더 선택 실패");
     }
   };
 
@@ -109,8 +126,23 @@ export function Sync() {
         })}
 
         {/* 새 연동 추가 */}
-        <div className="card space-y-3 p-4">
-          <p className="flex items-center gap-1.5 text-[13px] font-semibold"><Plus size={15} /> 새 폴더 연동</p>
+        <div className="card p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="flex items-center gap-1.5 text-[13px] font-semibold"><Plus size={15} /> 새 폴더 연동</p>
+              <p className="mt-1 text-[12px] text-fg-muted">로컬 폴더를 고르면 <b>어느 폴더에 풀지</b> 정할 수 있어요.</p>
+            </div>
+            <button onClick={beginAdd} disabled={!st.supported} className="btn btn-primary shrink-0">
+              <FolderSync size={15} /> 폴더 선택
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 목적지 지정 모달 (압축 풀 위치 선택) */}
+      <Modal open={!!st.pickPending} onClose={st.cancelAdd}
+        title={`「${st.pickPending?.localName ?? ""}」 폴더를 어디에 풀까요?`} width="max-w-md">
+        <div className="space-y-4">
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1">
               <span className="label">웹 위치</span>
@@ -121,19 +153,39 @@ export function Sync() {
               </select>
             </label>
             <label className="flex flex-1 flex-col gap-1">
-              <span className="label">폴더 경로 (비우면 루트)</span>
-              <input className="input" value={path} onChange={(e) => setPath(e.target.value)} placeholder="예: docs/sync" />
+              <span className="label">상위 폴더 (선택)</span>
+              <input className="input" value={parent} onChange={(e) => setParent(e.target.value)} placeholder="예: docs (비우면 최상위)" />
             </label>
-            <button onClick={add} disabled={!st.supported} className="btn btn-primary">
-              <FolderSync size={15} /> 폴더 선택 & 연동
+          </div>
+
+          <div className="space-y-2 rounded-md border border-line p-3">
+            <label className="flex items-center gap-2 text-[13px] font-medium">
+              <input type="radio" name="wrapmode" checked={wrap} onChange={() => setWrap(true)} />
+              새 폴더로 풀기 (권장)
+            </label>
+            {wrap && (
+              <input className="input ml-6 w-[calc(100%-1.5rem)]" value={wrapName}
+                onChange={(e) => setWrapName(e.target.value)} placeholder="새 폴더 이름" />
+            )}
+            <label className="flex items-center gap-2 text-[13px] font-medium">
+              <input type="radio" name="wrapmode" checked={!wrap} onChange={() => setWrap(false)} />
+              상위 폴더에 내용물 그대로 풀기
+            </label>
+          </div>
+
+          <p className="rounded-md bg-subtle px-3 py-2 text-[12.5px] text-fg2">
+            → <b className="text-accent">{webLabel(scope, finalPath())}</b> 에 동기화됩니다.
+            {scope === "notes" && <span className="text-fg-muted"> (노트 페이지에서도 보임)</span>}
+          </p>
+
+          <div className="flex justify-end gap-2">
+            <button onClick={st.cancelAdd} className="btn btn-ghost">취소</button>
+            <button onClick={() => st.confirmAdd(scope, finalPath())} disabled={wrap && !wrapName.trim()} className="btn btn-primary">
+              <FolderSync size={15} /> 연동 시작
             </button>
           </div>
-          <p className="rounded-md bg-subtle px-3 py-2 text-[12.5px] text-fg2">
-            → 선택한 로컬 폴더가 <b className="text-accent">{webLabel(scope, path.trim())}</b> 에 동기화됩니다.
-            {scope === "notes" && <span className="text-fg-muted"> (노트 페이지에서도 보입니다)</span>}
-          </p>
         </div>
-      </div>
+      </Modal>
 
       {/* 해제 확인 (업로드 파일 삭제 여부) */}
       <Modal open={!!disc} onClose={() => setDisc(null)} title="연동 해제" width="max-w-md">
@@ -142,8 +194,11 @@ export function Sync() {
             <p className="text-[13.5px] text-fg2">
               <span className="badge">{disc.localName}</span> 연동을 해제합니다.
               <br />
-              이 연동으로 <b className="text-accent">{disc.uploaded.length}개</b> 파일을 <b>{webLabel(disc.scope, disc.path)}</b> 에 업로드했습니다.
-              <br />업로드한 파일들도 <b>삭제(휴지통)</b> 하시겠습니까?
+              이 연동은 <b>{webLabel(disc.scope, disc.path)}</b> 에 파일 <b className="text-accent">{disc.uploaded.length}개</b>를 올렸습니다.
+              <br />
+              {disc.path
+                ? <>이 <b>폴더(하위 폴더 포함)</b>를 <b>삭제(휴지통)</b> 하시겠습니까?</>
+                : <>업로드한 <b>파일·폴더</b>를 <b>삭제(휴지통)</b> 하시겠습니까?</>}
             </p>
             <div className="flex flex-wrap justify-end gap-2">
               <button onClick={() => setDisc(null)} className="btn btn-ghost">취소</button>
