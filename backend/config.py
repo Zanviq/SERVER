@@ -85,14 +85,9 @@ class Settings:
         self.gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         self.ai_max_steps: int = int(os.getenv("AI_MAX_STEPS", "8"))
 
-        # ── Google Calendar (선택) ──
-        self.google_service_account_json: str = os.getenv(
-            "GOOGLE_SERVICE_ACCOUNT_JSON", ""
-        )
-        self.google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
-        self.google_client_secret: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
-        self.google_refresh_token: str = os.getenv("GOOGLE_REFRESH_TOKEN", "")
-        self.google_calendar_id: str = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+        # ── Google Calendar (선택, 유저별) ──
+        # 환경변수는 유저 아이디 접두사로 구분한다. 예) admin_GOOGLE_CLIENT_ID
+        # 접두사 없는 값은 사용하지 않음 → 유저별 캘린더 격리.
 
         # ── 운영/보안 ──
         self.debug: bool = os.getenv("DEBUG", "false").lower() in ("1", "true", "yes")
@@ -118,12 +113,27 @@ class Settings:
                 return u
         return None
 
-    @property
-    def google_enabled(self) -> bool:
-        return bool(
-            self.google_service_account_json
-            or (self.google_client_id and self.google_refresh_token)
-        )
+    def google_config(self, username: str) -> dict | None:
+        """유저별 Google Calendar 설정. `<username>_GOOGLE_*` 환경변수에서 읽는다.
+
+        설정이 없으면 None → 해당 유저는 내부 캘린더를 사용한다.
+        다른 유저의 설정에는 접근하지 않는다(격리).
+        """
+        p = f"{username}_"
+        sa = os.getenv(p + "GOOGLE_SERVICE_ACCOUNT_JSON", "")
+        cid = os.getenv(p + "GOOGLE_CLIENT_ID", "")
+        csec = os.getenv(p + "GOOGLE_CLIENT_SECRET", "")
+        rt = os.getenv(p + "GOOGLE_REFRESH_TOKEN", "")
+        calid = os.getenv(p + "GOOGLE_CALENDAR_ID", "primary")
+        if sa or (cid and rt):
+            return {
+                "service_account_json": sa,
+                "client_id": cid,
+                "client_secret": csec,
+                "refresh_token": rt,
+                "calendar_id": calid,
+            }
+        return None
 
     def ensure_storage(self) -> None:
         """공통 폴더 + 모든 사용자 개인 폴더 골격 생성."""

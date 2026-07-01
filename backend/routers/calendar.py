@@ -1,14 +1,13 @@
-"""캘린더 API: 내부 저장소 또는 Google Calendar(설정 시)."""
+"""캘린더 API: 유저별 내부 저장소 또는 Google Calendar."""
 from __future__ import annotations
+
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from datetime import datetime
-
-from .. import calendar_store
+from .. import calendar_service
 from ..auth import SessionUser, require_session
-from ..calendar_google import get_google_calendar
 from ..config import Settings, get_settings
 
 router = APIRouter(prefix="/api/calendar", tags=["calendar"])
@@ -41,9 +40,12 @@ class EventPatch(BaseModel):
 
 
 @router.get("/source")
-def source(settings: Settings = Depends(get_settings)):
-    """현재 캘린더 백엔드(google|internal)."""
-    return {"source": "google" if get_google_calendar(settings) else "internal"}
+def source(
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """현재 유저의 캘린더 백엔드(google|internal)."""
+    return {"source": calendar_service.backend_kind(user, settings)}
 
 
 @router.get("/events")
@@ -53,10 +55,7 @@ def list_events(
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    gc = get_google_calendar(settings)
-    if gc:
-        return gc.list(frm, to)
-    return calendar_store.list_events(user, settings, frm, to)
+    return calendar_service.list_events(user, settings, frm, to)
 
 
 @router.post("/events")
@@ -65,10 +64,7 @@ def create_event(
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    gc = get_google_calendar(settings)
-    if gc:
-        return gc.create(body.model_dump())
-    return calendar_store.create_event(user, settings, body.model_dump())
+    return calendar_service.create_event(user, settings, body.model_dump())
 
 
 @router.put("/events/{eid}")
@@ -79,10 +75,7 @@ def update_event(
     settings: Settings = Depends(get_settings),
 ):
     payload = {k: v for k, v in body.model_dump().items() if v is not None}
-    gc = get_google_calendar(settings)
-    if gc:
-        return gc.update(eid, payload)
-    return calendar_store.update_event(user, settings, eid, payload)
+    return calendar_service.update_event(user, settings, eid, payload)
 
 
 @router.delete("/events/{eid}")
@@ -91,11 +84,7 @@ def delete_event(
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    gc = get_google_calendar(settings)
-    if gc:
-        gc.delete(eid.split("@", 1)[0])
-    else:
-        calendar_store.delete_event(user, settings, eid)
+    calendar_service.delete_event(user, settings, eid)
     return {"ok": True}
 
 
@@ -106,7 +95,5 @@ def reminders(
     settings: Settings = Depends(get_settings),
 ):
     """알림이 설정된 다가오는 일정 (내부 캘린더 전용)."""
-    if get_google_calendar(settings):
-        return []
     now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-    return calendar_store.due_reminders(user, settings, now, within)
+    return calendar_service.due_reminders(user, settings, now, within)

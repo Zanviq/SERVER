@@ -1,42 +1,46 @@
-"""선택적 Google Calendar 어댑터.
+"""선택적 Google Calendar 어댑터 (유저별).
 
-env에 서비스계정 JSON 또는 OAuth refresh token이 있으면 활성화.
-interactive 로그인 없이 동작. 미설정/오류 시 None을 반환해 내부 캘린더로 폴백.
-
-내부 모델 {id,title,description,start,end,allDay,color} ↔ Google 이벤트 변환.
+각 유저의 `<username>_GOOGLE_*` 환경변수로 그 유저의 캘린더에 연결한다.
+설정이 없거나 오류면 None → 내부 캘린더로 폴백. 유저별로 완전히 분리된다.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 
 from .config import Settings
 
 logger = logging.getLogger("twoems.gcal")
 
-# Google colorId(1~11) 사용. 내부 color 필드를 그대로 colorId로 사용.
+
+def _read_maybe_file(value: str) -> str:
+    if os.path.exists(value):
+        with open(value, encoding="utf-8") as f:
+            return f.read()
+    return value
 
 
-def _build_service(settings: Settings):
+def _build_service(cfg: dict):
     """google-api-python-client 서비스 빌드. 실패 시 None."""
     try:
         from googleapiclient.discovery import build
 
-        if settings.google_service_account_json:
+        if cfg.get("service_account_json"):
             from google.oauth2 import service_account
 
-            info = json.loads(_read_maybe_file(settings.google_service_account_json))
+            info = json.loads(_read_maybe_file(cfg["service_account_json"]))
             creds = service_account.Credentials.from_service_account_info(
                 info, scopes=["https://www.googleapis.com/auth/calendar"]
             )
-        elif settings.google_client_id and settings.google_refresh_token:
+        elif cfg.get("client_id") and cfg.get("refresh_token"):
             from google.oauth2.credentials import Credentials
 
             creds = Credentials(
                 token=None,
-                refresh_token=settings.google_refresh_token,
-                client_id=settings.google_client_id,
-                client_secret=settings.google_client_secret,
+                refresh_token=cfg["refresh_token"],
+                client_id=cfg["client_id"],
+                client_secret=cfg.get("client_secret", ""),
                 token_uri="https://oauth2.googleapis.com/token",
                 scopes=["https://www.googleapis.com/auth/calendar"],
             )
@@ -46,16 +50,6 @@ def _build_service(settings: Settings):
     except Exception as e:  # pragma: no cover - 외부 의존
         logger.warning("Google Calendar 초기화 실패, 내부 캘린더로 폴백: %s", e)
         return None
-
-
-def _read_maybe_file(value: str) -> str:
-    """값이 파일 경로면 내용을, 아니면 그대로 반환(JSON 문자열 직접 주입 허용)."""
-    import os
-
-    if os.path.exists(value):
-        with open(value, encoding="utf-8") as f:
-            return f.read()
-    return value
 
 
 def _to_internal(g: dict) -> dict:
@@ -102,36 +96,40 @@ class GoogleCalendar:
             "maxResults": 500,
         }
         if frm:
-            params["timeMin"] = frm
+            params["timeMin"] = _rfc3339(frm)
         if to:
-            params["timeMax"] = to
+            params["timeMax"] = _rfc3339(to)
         items = self._svc.events().list(**params).execute().get("items", [])
         return [_to_internal(g) for g in items]
 
     def create(self, payload: dict) -> dict:
-        g = (
-            self._svc.events()
-            .insert(calendarId=self._cid, body=_to_google(payload))
-            .execute()
-        )
+        g = self._svc.events().insert(calendarId=self._cid, body=_to_google(payload)).execute()
         return _to_internal(g)
 
     def update(self, eid: str, payload: dict) -> dict:
-        g = (
-            self._svc.events()
-            .patch(calendarId=self._cid, eventId=eid, body=_to_google(payload))
-            .execute()
-        )
+        g = self._svc.events().patch(calendarId=self._cid, eventId=eid, body=_to_google(payload)).execute()
         return _to_internal(g)
 
     def delete(self, eid: str) -> None:
         self._svc.events().delete(calendarId=self._cid, eventId=eid).execute()
 
 
-def get_google_calendar(settings: Settings) -> GoogleCalendar | None:
-    if not settings.google_enabled:
+def _rfc3339(s: str) -> str:
+    """naive ISO를 timezone 포함 RFC3339로 (Google API용, KST 가정)."""
+    s = s.strip()
+    if s.endswith("Z") or "+" in s[10:]:
+        return s
+    if "T" not in s:
+        s = f"{s}T00:00:00"
+    return s + "+09:00"
+
+
+def get_google_calendar(settings: Settings, username: str) -> GoogleCalendar | None:
+    """해당 유저의 Google Calendar. 미설정/오류면 None(내부 폴백)."""
+    cfg = settings.google_config(username)
+    if not cfg:
         return None
-    svc = _build_service(settings)
+    svc = _build_service(cfg)
     if svc is None:
         return None
-    return GoogleCalendar(svc, settings.google_calendar_id)
+    return GoogleCalendar(svc, cfg.get("calendar_id", "primary"))

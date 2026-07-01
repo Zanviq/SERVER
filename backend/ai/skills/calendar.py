@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from ... import calendar_store
+from ... import calendar_service
 from ..skill_base import SkillBase, SkillResult
 
 
@@ -19,7 +19,7 @@ class ListCalendarEvents(SkillBase):
     }
 
     def run(self, args, ctx):
-        events = calendar_store.list_events(ctx.user, ctx.settings, args.get("from_date"), args.get("to_date"))
+        events = calendar_service.list_events(ctx.user, ctx.settings, args.get("from_date"), args.get("to_date"))
         return SkillResult(ok=True, message=f"{len(events)}개 일정", data={"events": events})
 
 
@@ -44,7 +44,7 @@ class CreateCalendarEvent(SkillBase):
     }
 
     def run(self, args, ctx):
-        ev = calendar_store.create_event(
+        ev = calendar_service.create_event(
             ctx.user,
             ctx.settings,
             {
@@ -92,7 +92,7 @@ class UpdateCalendarEvent(SkillBase):
         if args.get("remind_minutes") is not None:
             payload["remind_minutes"] = int(args["remind_minutes"])
         try:
-            ev = calendar_store.update_event(ctx.user, ctx.settings, args["event_id"], payload)
+            ev = calendar_service.update_event(ctx.user, ctx.settings, args["event_id"], payload)
         except Exception as e:  # HTTPException 등
             return SkillResult(ok=False, message=getattr(e, "detail", str(e)), error_code="error")
         return SkillResult(ok=True, message="일정 수정됨", data={"event": ev})
@@ -109,7 +109,7 @@ class DeleteCalendarEvent(SkillBase):
 
     def run(self, args, ctx):
         try:
-            calendar_store.delete_event(ctx.user, ctx.settings, args["event_id"])
+            calendar_service.delete_event(ctx.user, ctx.settings, args["event_id"])
         except Exception as e:
             return SkillResult(ok=False, message=getattr(e, "detail", str(e)), error_code="error")
         return SkillResult(ok=True, message="일정 삭제됨", data={})
@@ -135,7 +135,7 @@ class FindFreeSlots(SkillBase):
         ws = datetime.fromisoformat(f"{day}T{args.get('work_start', '09:00')}:00")
         we = datetime.fromisoformat(f"{day}T{args.get('work_end', '18:00')}:00")
 
-        events = calendar_store.list_events(
+        events = calendar_service.list_events(
             ctx.user, ctx.settings, f"{day}T00:00:00", f"{day}T23:59:59"
         )
         busy = []
@@ -143,10 +143,10 @@ class FindFreeSlots(SkillBase):
             if e.get("allDay"):
                 continue
             try:
-                s = datetime.fromisoformat(e["start"])
-                en = datetime.fromisoformat(e.get("end") or e["start"])
+                s = datetime.fromisoformat(e["start"]).replace(tzinfo=None)
+                en = datetime.fromisoformat(e.get("end") or e["start"]).replace(tzinfo=None)
                 busy.append((s, en))
-            except ValueError:
+            except (ValueError, TypeError):
                 continue
         busy.sort()
 
