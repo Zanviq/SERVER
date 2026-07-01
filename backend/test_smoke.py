@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 
-os.environ["STORAGE_ROOT"] = tempfile.mkdtemp(prefix="twoems_test_")
+os.environ["STORAGE_ROOT"] = tempfile.mkdtemp(prefix="twomes_test_")
 os.environ["AUTH_USERS"] = json.dumps(
     [
         {"username": "tester", "password": "pw123", "display_name": "Tester"},
@@ -77,12 +77,12 @@ def test_file_lifecycle():
     assert client.post("/api/files/mkdir", json={"path": "docs"}).status_code == 200
     r = client.post(
         "/api/files/upload?path=docs",
-        files={"file": ("hello.txt", io.BytesIO(b"hi twoems"), "text/plain")},
+        files={"file": ("hello.txt", io.BytesIO(b"hi twomes"), "text/plain")},
     )
     assert r.status_code == 200
     names = [e["name"] for e in client.get("/api/files/list?path=docs").json()["entries"]]
     assert "hello.txt" in names
-    assert client.get("/api/files/download?path=docs/hello.txt").content == b"hi twoems"
+    assert client.get("/api/files/download?path=docs/hello.txt").content == b"hi twomes"
     assert client.delete("/api/files/delete?path=docs/hello.txt").status_code == 200
 
 

@@ -11,7 +11,7 @@ import os
 
 from .config import Settings
 
-logger = logging.getLogger("twoems.gcal")
+logger = logging.getLogger("twomes.gcal")
 
 
 def _read_maybe_file(value: str) -> str:

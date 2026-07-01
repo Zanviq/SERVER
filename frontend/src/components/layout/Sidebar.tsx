@@ -63,7 +63,7 @@ export function Sidebar() {
       {/* 데스크톱 사이드바 */}
       <aside className="hidden w-16 shrink-0 flex-col items-center gap-1 border-r border-line/40 bg-sidebar py-3 sm:flex">
         <div className="mb-2 grid h-9 w-9 place-items-center rounded-md bg-[var(--sidebar-icon-active)] font-mono text-sm font-bold text-sidebar-fg-active">
-          2E
+          2M
         </div>
         <nav className="flex flex-1 flex-col items-center gap-1">
           {NAV.map((n) => (

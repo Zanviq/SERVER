@@ -113,7 +113,7 @@ export function Calendar() {
         </div>
       }
     >
-      <div className="card fc-twoems p-4">
+      <div className="card fc-twomes p-4">
         <FullCalendar
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
           initialView={defaultView}

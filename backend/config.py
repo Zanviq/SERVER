@@ -16,7 +16,7 @@ try:
 except Exception:  # pragma: no cover - dotenv 미설치 환경
     pass
 
-logger = logging.getLogger("twoems.config")
+logger = logging.getLogger("twomes.config")
 
 
 @dataclass(frozen=True)

@@ -18,7 +18,7 @@ export function MarkdownView({
   onWikiClick: (title: string) => void;
 }) {
   return (
-    <div className="prose-twoems">
+    <div className="prose-twomes">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{

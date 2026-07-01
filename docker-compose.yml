@@ -1,7 +1,7 @@
 services:
   backend:
     build: ./backend
-    container_name: twoems-backend
+    container_name: twomes-backend
     restart: unless-stopped
     expose:
       - "8000"
@@ -21,7 +21,7 @@ services:
 
   frontend:
     build: ./frontend
-    container_name: twoems-frontend
+    container_name: twomes-frontend
     restart: unless-stopped
     depends_on:
       - backend
@@ -33,7 +33,7 @@ services:
   #   docker compose --profile tunnel up -d
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: twoems-tunnel
+    container_name: twomes-tunnel
     restart: unless-stopped
     profiles: ["tunnel"]
     command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}

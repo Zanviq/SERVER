@@ -16,7 +16,7 @@ from .prompt_builder import build_system
 from .skill_base import SkillContext
 from .skill_registry import SkillRegistry, default_registry
 
-logger = logging.getLogger("twoems.ai")
+logger = logging.getLogger("twomes.ai")
 
 
 @dataclass

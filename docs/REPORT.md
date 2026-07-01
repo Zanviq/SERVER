@@ -1,4 +1,4 @@
-# TwoEMS v2 작업 보고서
+# TwoMES v2 작업 보고서
 
 작성일: 2026-07-01 · 작성: Claude (Opus 4.8)
 
@@ -8,7 +8,7 @@
 **멀티유저 개인 홈서버 워크스페이스**(v2)로 대대적으로 개편했다. Plant-Counselor의
 디자인·ReAct 아키텍처와 CalenMate의 캘린더를 레퍼런스로 분석·반영했다.
 
-작업은 9단계 계획(docs/superpowers/plans/2026-07-01-twoems-v2.md)에 따라
+작업은 9단계 계획(docs/superpowers/plans/2026-07-01-twomes-v2.md)에 따라
 **기능 하나당 커밋**하며 진행했고, 단계마다 자동 테스트 + 실제 브라우저 검증을 거쳤다.
 
 ## 2. 단계별 작업 내역 (무엇을 / 왜)

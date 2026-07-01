@@ -88,58 +88,58 @@
   }
 
   /* 마크다운 프리뷰 */
-  .prose-twoems {
+  .prose-twomes {
     @apply text-[14px] leading-relaxed text-fg2;
   }
-  .prose-twoems h1 {
+  .prose-twomes h1 {
     @apply mb-2 mt-4 text-xl font-bold text-fg;
   }
-  .prose-twoems h2 {
+  .prose-twomes h2 {
     @apply mb-2 mt-4 text-lg font-bold text-fg;
   }
-  .prose-twoems h3 {
+  .prose-twomes h3 {
     @apply mb-1.5 mt-3 text-base font-semibold text-fg;
   }
-  .prose-twoems p {
+  .prose-twomes p {
     @apply my-2;
   }
-  .prose-twoems ul {
+  .prose-twomes ul {
     @apply my-2 list-disc pl-5;
   }
-  .prose-twoems ol {
+  .prose-twomes ol {
     @apply my-2 list-decimal pl-5;
   }
-  .prose-twoems li {
+  .prose-twomes li {
     @apply my-0.5;
   }
-  .prose-twoems blockquote {
+  .prose-twomes blockquote {
     @apply my-2 border-l-2 border-accent pl-3 text-fg-muted;
   }
-  .prose-twoems code {
+  .prose-twomes code {
     @apply rounded bg-subtle px-1 py-0.5 font-mono text-[12.5px] text-accent-fg;
   }
-  .prose-twoems pre {
+  .prose-twomes pre {
     @apply my-2 overflow-x-auto rounded-md border border-line bg-subtle p-3;
   }
-  .prose-twoems pre code {
+  .prose-twomes pre code {
     @apply bg-transparent p-0 text-fg2;
   }
-  .prose-twoems a {
+  .prose-twomes a {
     @apply text-info;
   }
-  .prose-twoems table {
+  .prose-twomes table {
     @apply my-2 w-full border-collapse text-[13px];
   }
-  .prose-twoems th,
-  .prose-twoems td {
+  .prose-twomes th,
+  .prose-twomes td {
     @apply border border-line px-2 py-1 text-left;
   }
-  .prose-twoems hr {
+  .prose-twomes hr {
     @apply my-4 border-line;
   }
 
   /* FullCalendar 테마 매핑 */
-  .fc-twoems {
+  .fc-twomes {
     --fc-border-color: rgb(var(--line));
     --fc-page-bg-color: transparent;
     --fc-neutral-bg-color: rgb(var(--bg-subtle));
@@ -154,24 +154,24 @@
     --fc-event-text-color: #fff;
     --fc-now-indicator-color: rgb(var(--danger));
   }
-  .fc-twoems .fc {
+  .fc-twomes .fc {
     font-size: 13px;
   }
-  .fc-twoems .fc-toolbar-title {
+  .fc-twomes .fc-toolbar-title {
     @apply text-base font-bold;
   }
-  .fc-twoems .fc-button {
+  .fc-twomes .fc-button {
     @apply rounded-md text-[12px] font-medium capitalize shadow-none;
     padding: 4px 10px;
   }
-  .fc-twoems .fc-button-active {
+  .fc-twomes .fc-button-active {
     color: rgb(var(--accent-contrast)) !important;
   }
-  .fc-twoems .fc-col-header-cell-cushion,
-  .fc-twoems .fc-daygrid-day-number {
+  .fc-twomes .fc-col-header-cell-cushion,
+  .fc-twomes .fc-daygrid-day-number {
     @apply text-fg2 no-underline;
   }
-  .fc-twoems a {
+  .fc-twomes a {
     @apply no-underline;
   }
 }

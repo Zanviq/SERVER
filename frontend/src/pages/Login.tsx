@@ -26,7 +26,7 @@ export function Login() {
           <div className="mb-3 grid h-14 w-14 place-items-center rounded-xl bg-accent text-accent-contrast shadow-md">
             <ServerCog size={26} />
           </div>
-          <h1 className="text-xl font-bold tracking-tight">TwoEMS</h1>
+          <h1 className="text-xl font-bold tracking-tight">TwoMES</h1>
           <p className="mt-1 text-[13px] text-fg-muted">개인 홈서버 워크스페이스</p>
         </div>
 

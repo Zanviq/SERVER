@@ -1,4 +1,4 @@
-# TwoEMS Home Server v2
+# TwoMES Home Server v2
 
 라즈베리파이 5 기반 **멀티유저 개인 홈서버 워크스페이스**. 비밀번호 세션 로그인 위에
 파일 관리·노트(마크다운/위키링크/그래프)·캘린더·시스템 모니터링·**ReAct AI 비서**를
@@ -62,7 +62,7 @@ python -m backend.test_smoke   # 인증·스코프격리·파일·노트·그래
 ## 라즈베리파이 배포 (Docker)
 
 ```bash
-git clone <repo> && cd twoems-server
+git clone <repo> && cd twomes-server
 cp .env.example .env           # 값 채우기
 docker compose up -d --build           # backend + frontend(nginx)
 docker compose --profile tunnel up -d  # + Cloudflare Tunnel(외부 접속)
@@ -102,4 +102,4 @@ HDD 마운트가 선행되어야 함: `sudo mount /dev/sda1 /mnt/hdd` (NTFS면 n
 9. ✅ 최적화(코드분할) + 리팩토링 + 보고서
 
 자세한 작업 내역은 [docs/REPORT.md](docs/REPORT.md), 계획은
-[docs/superpowers/plans/2026-07-01-twoems-v2.md](docs/superpowers/plans/2026-07-01-twoems-v2.md) 참고.
+[docs/superpowers/plans/2026-07-01-twomes-v2.md](docs/superpowers/plans/2026-07-01-twomes-v2.md) 참고.

@@ -16,7 +16,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from .config import Settings, get_settings
 
 COOKIE_NAME = "tw_session"
-_SALT = "twoems-session-v1"
+_SALT = "twomes-session-v1"
 
 
 @dataclass
