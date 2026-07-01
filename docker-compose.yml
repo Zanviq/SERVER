@@ -7,12 +7,15 @@ services:
       - "8000"
     ports:
       - "8000:8000" # 로컬/LAN 직접 접근용 (원하면 제거)
-    # .env 전체를 컨테이너로 전달 (AUTH_USERS/SESSION_SECRET/<id>_GOOGLE_* 포함)
+    # .env 전체를 전달 (AUTH_USERS/SESSION_SECRET/<id>_GOOGLE_* 등 동적 키 포함).
+    # environment가 env_file보다 우선하므로, 백엔드에 불필요한 값은 여기서 덮어 제거.
     env_file:
       - .env
     environment:
       # 컨테이너 내부 저장소 경로는 항상 마운트 지점으로 고정
       STORAGE_ROOT: /mnt/hdd
+      # 터널 토큰은 cloudflared 서비스만 사용 → 백엔드엔 노출하지 않음(최소권한)
+      CF_TUNNEL_TOKEN: ""
     volumes:
       - /mnt/hdd:/mnt/hdd
 
