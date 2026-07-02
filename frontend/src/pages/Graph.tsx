@@ -7,9 +7,12 @@ import { api, NotesGraph, Scope } from "../lib/api";
 import { toast } from "../store/toast";
 import { useTheme } from "../store/theme";
 
-function cssVar(name: string): string {
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return v ? `rgb(${v})` : "#888";
+function tok(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+function rgb(name: string, a = 1): string {
+  const v = tok(name);
+  return v ? `rgb(${v} / ${a})` : "#888";
 }
 
 type Mode = "links" | "folders";
@@ -46,10 +49,14 @@ export function Graph() {
 
   const colors = useMemo(
     () => ({
-      note: cssVar("--accent"),
-      folder: cssVar("--warning"),
-      label: cssVar("--fg"),
-      link: cssVar("--line-strong"),
+      coreNote: rgb("--accent-muted"),
+      coreFolder: rgb("--accent"),
+      strokeNote: rgb("--accent"),
+      strokeFolder: rgb("--accent-fg"),
+      halo: rgb("--accent", 0.18),
+      label: rgb("--fg"),
+      labelMuted: rgb("--fg-muted"),
+      link: rgb("--line-strong", 0.85),
     }),
     [themeMode],
   );
@@ -139,18 +146,33 @@ export function Graph() {
             onNodeClick={onNodeClick}
             linkColor={() => colors.link}
             linkWidth={1}
-            nodeColor={(n: any) => (n.type === "folder" ? colors.folder : colors.note)}
-            nodeVal={(n: any) => (n.type === "folder" ? 3 + Math.min(6, n.count ?? 0) : 1)}
-            nodeCanvasObjectMode={() => "after"}
+            nodeVal={(n: any) => (n.type === "folder" ? 4 + Math.min(6, n.count ?? 0) : 1.6)}
+            nodeCanvasObjectMode={() => "replace"}
             nodeCanvasObject={(node: any, ctx, scale) => {
+              // Nodi 스타일: 소프트 글로우 헤일로 + 코어 원(밝은 채움 + 진한 테두리) + 하단 라벨
               const isFolder = node.type === "folder";
+              const r = isFolder ? 7 : 5;
+              // 헤일로(글로우)
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, r + 3, 0, 2 * Math.PI);
+              ctx.fillStyle = colors.halo;
+              ctx.fill();
+              // 코어
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+              ctx.fillStyle = isFolder ? colors.coreFolder : colors.coreNote;
+              ctx.fill();
+              ctx.lineWidth = 0.9;
+              ctx.strokeStyle = isFolder ? colors.strokeFolder : colors.strokeNote;
+              ctx.stroke();
+              // 라벨(노드 아래)
               const label = isFolder ? `${node.title}${node.count ? ` (${node.count})` : ""}` : node.title;
-              const fontSize = 12 / scale;
+              const fontSize = 11 / scale;
               ctx.font = `${isFolder ? "600 " : ""}${fontSize}px Pretendard, sans-serif`;
               ctx.textAlign = "center";
               ctx.textBaseline = "top";
-              ctx.fillStyle = colors.label;
-              ctx.fillText(label, node.x, node.y + 7 / scale);
+              ctx.fillStyle = isFolder ? colors.label : colors.labelMuted;
+              ctx.fillText(label, node.x, node.y + r + 3 / scale);
             }}
             cooldownTicks={80}
           />

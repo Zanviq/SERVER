@@ -1,79 +1,79 @@
-/* Plant-Counselor 영감 디자인 토큰 — 따뜻한 크림/올리브그린.
+/* 퍼스널 퍼플 디자인 토큰 — 라벤더 톤 + 바이올렛 액센트.
    값은 "R G B" 트리플렛(Tailwind opacity 수정자 지원). data-theme로 전환. */
 
 :root,
 [data-theme="light"] {
-  --bg: 245 242 235;
+  --bg: 246 244 251;
   --bg-elevated: 255 255 255;
-  --bg-subtle: 239 236 228;
-  --bg-muted: 232 228 219;
-  --bg-hover: 226 222 213;
-  --bg-overlay: rgba(40, 38, 30, 0.3);
+  --bg-subtle: 240 237 249;
+  --bg-muted: 233 229 245;
+  --bg-hover: 227 222 242;
+  --bg-overlay: rgba(38, 28, 56, 0.32);
 
-  --sidebar: 61 74 48;
-  --sidebar-fg: 197 205 184;
+  --sidebar: 60 45 92;
+  --sidebar-fg: 200 190 222;
   --sidebar-fg-active: 255 255 255;
   --sidebar-icon: rgba(255, 255, 255, 0.1);
-  --sidebar-icon-active: rgba(255, 255, 255, 0.18);
+  --sidebar-icon-active: rgba(255, 255, 255, 0.2);
 
-  --line: 221 217 206;
-  --line-strong: 200 195 181;
+  --line: 224 219 238;
+  --line-strong: 204 197 226;
 
-  --fg: 42 42 36;
-  --fg2: 74 74 64;
-  --fg-muted: 122 122 110;
-  --fg-subtle: 165 165 152;
+  --fg: 40 36 50;
+  --fg2: 71 64 86;
+  --fg-muted: 121 114 140;
+  --fg-subtle: 165 159 184;
 
-  --accent: 92 107 63;
-  --accent-hover: 77 90 51;
-  --accent-soft: 216 224 200;
-  --accent-muted: 237 241 228;
-  --accent-fg: 61 74 42;
+  --accent: 124 58 237;
+  --accent-hover: 109 40 217;
+  --accent-soft: 221 214 254;
+  --accent-muted: 237 233 254;
+  --accent-fg: 91 33 182;
   --accent-contrast: 255 255 255;
 
-  --positive: 92 107 63;
-  --warning: 196 154 42;
-  --danger: 181 74 58;
-  --info: 74 106 138;
+  --positive: 22 150 96;
+  --warning: 196 132 30;
+  --danger: 200 60 70;
+  --info: 74 96 176;
 
-  --shadow-sm: 0 1px 3px rgba(60, 50, 30, 0.06);
-  --shadow-md: 0 4px 12px rgba(60, 50, 30, 0.07);
-  --shadow-lg: 0 8px 24px rgba(60, 50, 30, 0.1);
+  --shadow-sm: 0 1px 3px rgba(60, 40, 90, 0.07);
+  --shadow-md: 0 4px 12px rgba(60, 40, 90, 0.09);
+  --shadow-lg: 0 8px 24px rgba(60, 40, 90, 0.13);
 }
 
 [data-theme="dark"] {
-  --bg: 26 29 22;
-  --bg-elevated: 34 38 28;
-  --bg-subtle: 40 44 34;
-  --bg-muted: 46 50 40;
-  --bg-hover: 53 58 46;
-  --bg-overlay: rgba(0, 0, 0, 0.55);
+  --bg: 24 21 33;
+  --bg-elevated: 32 28 45;
+  --bg-subtle: 39 34 53;
+  --bg-muted: 46 40 62;
+  --bg-hover: 55 48 72;
+  --bg-overlay: rgba(0, 0, 0, 0.6);
 
-  --sidebar: 22 26 16;
-  --sidebar-fg: 138 148 120;
-  --sidebar-fg-active: 216 224 200;
+  --sidebar: 20 17 30;
+  --sidebar-fg: 168 158 192;
+  --sidebar-fg-active: 233 230 250;
   --sidebar-icon: rgba(255, 255, 255, 0.06);
-  --sidebar-icon-active: rgba(255, 255, 255, 0.12);
+  --sidebar-icon-active: rgba(255, 255, 255, 0.14);
 
-  --line: 54 58 46;
-  --line-strong: 70 74 62;
+  --line: 52 46 70;
+  --line-strong: 71 63 92;
 
-  --fg: 232 228 219;
-  --fg2: 197 192 180;
-  --fg-muted: 138 138 126;
-  --fg-subtle: 90 90 80;
+  --fg: 233 230 246;
+  --fg2: 200 194 218;
+  --fg-muted: 150 143 172;
+  --fg-subtle: 100 94 122;
 
-  --accent: 139 170 90;
-  --accent-hover: 160 191 106;
-  --accent-soft: 42 51 32;
-  --accent-muted: 30 38 24;
-  --accent-fg: 197 216 160;
-  --accent-contrast: 26 29 22;
+  --accent: 167 139 250;
+  --accent-hover: 196 181 253;
+  --accent-soft: 56 48 82;
+  --accent-muted: 41 35 60;
+  --accent-fg: 221 214 254;
+  --accent-contrast: 24 21 33;
 
-  --positive: 139 170 90;
-  --warning: 212 170 58;
-  --danger: 208 96 80;
-  --info: 90 138 176;
+  --positive: 74 200 140;
+  --warning: 220 176 70;
+  --danger: 224 106 116;
+  --info: 122 156 224;
 
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
