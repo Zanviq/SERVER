@@ -175,24 +175,39 @@
     @apply no-underline;
   }
 
-  /* 더보기(+N) 팝오버: body로 포탈되어 .fc-server 밖에 렌더됨 → 전역 스타일 필요.
-     FC 기본 CSS가 --fc-page-bg-color(미정의)를 배경으로 써서 투명해지는 버그 수정. */
-  .fc-popover.fc-more-popover,
-  .fc-popover {
-    @apply overflow-hidden rounded-lg border border-line shadow-lg;
-    background: rgb(var(--surface)) !important;
-  }
-  .fc-popover .fc-popover-header {
-    @apply bg-subtle px-3 py-2 text-[12px] font-semibold text-fg;
-  }
-  .fc-popover .fc-popover-title {
-    @apply text-fg;
-  }
-  .fc-popover .fc-popover-close {
-    @apply cursor-pointer text-fg-muted opacity-70 hover:opacity-100;
-  }
-  .fc-popover .fc-popover-body {
-    @apply p-2;
-    background: rgb(var(--surface));
-  }
+}
+
+/* FullCalendar 더보기(+N) 팝오버.
+   주의: body로 포탈되며, Tailwind는 @layer components 안의 "미사용" 셀렉터(.fc-popover는
+   소스에 안 나타남)를 빌드에서 제거한다 → @layer 밖 '일반 CSS'로 작성해 항상 유지되게 한다.
+   (기존엔 규칙이 통째로 퍼지되어 배경이 투명하게 보이던 버그) */
+.fc-popover {
+  background: rgb(var(--bg-elevated)) !important;
+  border: 1px solid rgb(var(--line)) !important;
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  z-index: 40;
+}
+.fc-popover .fc-popover-header {
+  background: rgb(var(--bg-subtle)) !important;
+  color: rgb(var(--fg));
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.fc-popover .fc-popover-title {
+  color: rgb(var(--fg));
+}
+.fc-popover .fc-popover-close {
+  color: rgb(var(--fg-muted));
+  opacity: 0.7;
+  cursor: pointer;
+}
+.fc-popover .fc-popover-close:hover {
+  opacity: 1;
+}
+.fc-popover .fc-popover-body {
+  background: rgb(var(--bg-elevated)) !important;
+  padding: 8px;
 }
