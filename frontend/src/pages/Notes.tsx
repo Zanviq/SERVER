@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   NotebookPen, FolderPlus, FilePlus, Trash2, Save, Link2, Loader2,
-  FileText, Search, X, Folder, ChevronRight, ChevronDown, Home,
+  FileText, Search, X, Folder, ChevronRight, ChevronDown, Home, ArrowUpDown,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { MarkdownView } from "../components/notes/MarkdownView";
@@ -70,6 +70,9 @@ export function Notes() {
   const [delFolder, setDelFolder] = useState<string | null>(null);
   const saveTimer = useRef<number | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const syncingScroll = useRef(false);
+  const [scrollSync, setScrollSync] = useState(true); // 편집↔미리보기 스크롤 동기화(기본 켜짐)
   const [suggest, setSuggest] = useState<string[] | null>(null);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<NoteSearchHit[] | null>(null);
@@ -160,6 +163,19 @@ export function Notes() {
     setSuggest(null);
     onEdit(before + content.slice(pos));
     setTimeout(() => ta.focus(), 0);
+  };
+
+  // 편집 ↔ 미리보기 스크롤 비율 동기화 (피드백 루프 방지 플래그)
+  const syncScroll = (from: HTMLElement | null, to: HTMLElement | null) => {
+    if (!scrollSync || syncingScroll.current || !from || !to) return;
+    const fromMax = from.scrollHeight - from.clientHeight;
+    const toMax = to.scrollHeight - to.clientHeight;
+    if (fromMax <= 1) return;
+    syncingScroll.current = true;
+    to.scrollTop = (from.scrollTop / fromMax) * toMax;
+    requestAnimationFrame(() => {
+      syncingScroll.current = false;
+    });
   };
 
   const joinPath = (folder: string, name: string) => (folder ? `${folder}/${name}` : name);
@@ -363,7 +379,7 @@ export function Notes() {
     <select
       value={source}
       onChange={(e) => onSource(e.target.value)}
-      className="input h-8 w-40 py-0 text-[13px]"
+      className="h-8 cursor-pointer appearance-none rounded-md border border-line bg-subtle px-3 text-center text-[13px] font-medium text-accent outline-none transition-colors hover:border-line-strong focus:border-accent"
       title="편집할 위치 (노트 폴더 또는 파일 폴더 연결)"
     >
       <option value="notes:me">📓 내 노트</option>
@@ -461,6 +477,7 @@ export function Notes() {
           </div>
           {current ? (
             <textarea ref={taRef} value={content} onChange={(e) => onEdit(e.target.value)}
+              onScroll={() => syncScroll(taRef.current, previewRef.current)}
               placeholder="마크다운으로 작성… [[ 으로 다른 노트 링크"
               className="flex-1 resize-none bg-transparent p-4 font-mono text-[13.5px] leading-relaxed outline-none placeholder:text-fg-subtle" />
           ) : (
@@ -482,8 +499,23 @@ export function Notes() {
 
         {/* 프리뷰 + 백링크 */}
         <div className="card flex min-h-[30vh] flex-col overflow-hidden lg:min-h-0">
-          <div className="border-b border-line px-3 py-2"><span className="label">미리보기</span></div>
-          <div className="flex-1 overflow-auto p-4">
+          <div className="flex items-center justify-between border-b border-line px-3 py-2">
+            <span className="label">미리보기</span>
+            <button
+              onClick={() => setScrollSync((v) => !v)}
+              title="편집·미리보기 스크롤 동기화"
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                scrollSync ? "border-accent/40 bg-accent-muted text-accent-fg" : "border-line text-fg-muted hover:text-fg"
+              }`}
+            >
+              <ArrowUpDown size={11} /> 스크롤 동기화 {scrollSync ? "켜짐" : "꺼짐"}
+            </button>
+          </div>
+          <div
+            ref={previewRef}
+            onScroll={() => syncScroll(previewRef.current, taRef.current)}
+            className="flex-1 overflow-auto p-4"
+          >
             {current ? <MarkdownView content={content} onWikiClick={openByTitle} />
               : <p className="text-[13px] text-fg-muted">선택된 노트 없음</p>}
           </div>
