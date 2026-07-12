@@ -165,3 +165,91 @@ def get_history(settings, doc_id: str) -> list[dict]:
         return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
+
+
+def _update_path(conn, doc_id, storage_path, project=None, set_trash=None, orig_path=None):
+    sets = ["storage_path=?"]; vals = [storage_path]
+    sets.append("project=?"); vals.append(project)  # project는 명시적으로 갱신
+    if set_trash is not None:
+        sets.append("trashed=?"); vals.append(1 if set_trash else 0)
+    if orig_path is not None:
+        sets.append("orig_path=?"); vals.append(orig_path)
+    vals.append(doc_id)
+    conn.execute(f"UPDATE documents SET {','.join(sets)} WHERE id=?", vals)
+
+
+def move(settings, actor: Actor, doc_id: str, target_project=None, target_folder=None) -> dict:
+    conn = db.connect(settings)
+    try:
+        row = _get_row(conn, doc_id)
+        if target_folder:
+            allowed = ("knowledge", "templates", "archive", "inbox")
+            top = target_folder.split("/", 1)[0]
+            if top not in allowed:
+                raise BadRequest("허용되지 않은 폴더입니다.")
+            dir_rel = target_folder.strip("/"); project = None
+        else:
+            dir_rel = paths.new_doc_dir(settings, target_project)
+            project = target_project
+        fname = row["storage_path"].rsplit("/", 1)[-1]
+        existing = paths.list_existing_names(settings, dir_rel)
+        if fname in existing:
+            fname = ids.unique_filename(dir_rel, fname[:-3], existing)
+        dst = f"{dir_rel}/{fname}"
+        store.move_file(settings, row["storage_path"], dst)
+        _update_path(conn, doc_id, dst, project=project)
+        audit.log(conn, actor.name, "move_document", doc_id=doc_id, project=project,
+                  change_summary=f"{row['storage_path']} -> {dst}")
+        conn.commit()
+        out = _get_row(conn, doc_id)
+    finally:
+        conn.close()
+    meta = _row_to_meta(out); meta["content"] = store.read(settings, out["storage_path"]); return meta
+
+
+def trash(settings, actor: Actor, doc_id: str) -> dict:
+    conn = db.connect(settings)
+    try:
+        row = _get_row(conn, doc_id)
+        if row["trashed"]:
+            out = row
+        else:
+            fname = row["storage_path"].rsplit("/", 1)[-1]
+            dst = f"trash/{doc_id}/{fname}"
+            store.move_file(settings, row["storage_path"], dst)
+            _update_path(conn, doc_id, dst, project=row["project"], set_trash=True, orig_path=row["storage_path"])
+            audit.log(conn, actor.name, "trash_document", doc_id=doc_id, project=row["project"])
+            conn.commit()
+            out = _get_row(conn, doc_id)
+    finally:
+        conn.close()
+    meta = _row_to_meta(out); meta["content"] = store.read(settings, out["storage_path"]); return meta
+
+
+def restore(settings, actor: Actor, doc_id: str, version=None) -> dict:
+    if version is None:
+        conn = db.connect(settings)
+        try:
+            row = _get_row(conn, doc_id)
+            if not row["trashed"]:
+                raise BadRequest("휴지통 상태가 아닙니다.")
+            dst = row["orig_path"] or f"inbox/{row['storage_path'].rsplit('/',1)[-1]}"
+            existing = paths.list_existing_names(settings, dst.rsplit("/", 1)[0])
+            fname = dst.rsplit("/", 1)[-1]
+            if fname in existing:
+                fname = ids.unique_filename(dst.rsplit("/", 1)[0], fname[:-3], existing)
+                dst = f"{dst.rsplit('/',1)[0]}/{fname}"
+            # 원경로 project 복원: projects/<p>/... → <p>, 그 외 → None
+            parts = dst.split("/")
+            proj = parts[1] if len(parts) >= 2 and parts[0] == "projects" else None
+            store.move_file(settings, row["storage_path"], dst)
+            _update_path(conn, doc_id, dst, project=proj, set_trash=False, orig_path="")
+            audit.log(conn, actor.name, "restore_document", doc_id=doc_id, project=proj)
+            conn.commit()
+            out = _get_row(conn, doc_id)
+        finally:
+            conn.close()
+        meta = _row_to_meta(out); meta["content"] = store.read(settings, out["storage_path"]); return meta
+    # 특정 버전 내용으로 복원 = 새 버전 생성
+    hist = store.read(settings, f".history/{doc_id}/{int(version):04d}.md")
+    return _apply_new_content(settings, actor, doc_id, None, hist, f"restore v{version}")

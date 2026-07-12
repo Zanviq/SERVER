@@ -125,6 +125,21 @@ def test_schemas():
     assert u.expected_version == 3
 
 
+def test_service_move_trash_restore():
+    from backend.config import Settings
+    from backend.aidoc import db, paths, service
+    from backend.aidoc.schemas import CreateDoc
+    s = Settings(); db.init_db(s); paths.ensure_layout(s)
+    a = service.Actor("claude-code")
+    doc = service.create(s, a, CreateDoc(title="M", content="c\n"))  # inbox
+    moved = service.move(s, a, doc["id"], target_project="nodi", target_folder=None)
+    assert moved["storage_path"].startswith("projects/nodi/") and moved["project"] == "nodi"
+    tr = service.trash(s, a, doc["id"])
+    assert tr["trashed"] is True and tr["storage_path"].startswith("trash/")
+    rs = service.restore(s, a, doc["id"], version=None)  # 휴지통 복원
+    assert rs["trashed"] is False and rs["storage_path"].startswith("projects/nodi/")
+
+
 def test_service_update_conflict_and_append():
     from backend.config import Settings
     from backend.aidoc import db, paths, service
@@ -176,4 +191,5 @@ if __name__ == "__main__":
     test_schemas()
     test_service_create_get()
     test_service_update_conflict_and_append()
+    test_service_move_trash_restore()
     print("ALL AIDOC TESTS PASSED")
