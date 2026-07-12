@@ -85,6 +85,18 @@ def test_store_atomic_and_history():
     assert hrel == ".history/doc_TEST/0001.md"
 
 
+def test_audit():
+    from backend.config import Settings
+    from backend.aidoc import db, audit
+    s = Settings(); db.init_db(s)
+    conn = db.connect(s)
+    audit.log(conn, "tester", "create_document", doc_id="doc_A", project="nodi", to_version=1)
+    conn.commit()
+    rows = audit.list_logs(conn, limit=10)
+    assert rows[0]["action"] == "create_document" and rows[0]["actor"] == "tester"
+    conn.close()
+
+
 if __name__ == "__main__":
     test_settings_aidoc()
     test_ids()
@@ -92,4 +104,5 @@ if __name__ == "__main__":
     test_paths()
     test_db_init()
     test_store_atomic_and_history()
+    test_audit()
     print("ALL AIDOC TESTS PASSED")
