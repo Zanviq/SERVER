@@ -125,6 +125,22 @@ def test_schemas():
     assert u.expected_version == 3
 
 
+def test_service_create_get():
+    from backend.config import Settings
+    from backend.aidoc import db, paths, service
+    from backend.aidoc.schemas import CreateDoc
+    s = Settings(); db.init_db(s); paths.ensure_layout(s)
+    actor = service.Actor("claude-code")
+    doc = service.create(s, actor, CreateDoc(title="Nodi 설계", content="# Nodi\n본문", project="nodi", tags=["ai"]))
+    assert doc["id"].startswith("doc_") and doc["version"] == 1
+    assert doc["storage_path"].startswith("projects/nodi/")
+    got = service.get(s, doc["id"])
+    assert got["content"] == "# Nodi\n본문" and got["title"] == "Nodi 설계"
+    # inbox (project 없음)
+    d2 = service.create(s, actor, CreateDoc(title="임시", content="x"))
+    assert d2["storage_path"].startswith("inbox/") and d2["project"] is None
+
+
 if __name__ == "__main__":
     test_settings_aidoc()
     test_ids()
@@ -135,4 +151,5 @@ if __name__ == "__main__":
     test_audit()
     test_tokens()
     test_schemas()
+    test_service_create_get()
     print("ALL AIDOC TESTS PASSED")
