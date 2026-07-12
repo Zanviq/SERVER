@@ -36,9 +36,12 @@ export interface SystemStats {
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  // 문자열 detail 또는 구조화된 오류({error,message,...}) 원본. 409 충돌 등에서 사용.
+  detail: unknown;
+  constructor(status: number, message: string, detail?: unknown) {
     super(message);
     this.status = status;
+    this.detail = detail ?? message;
   }
 }
 
@@ -48,13 +51,18 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!res.ok) {
-    let detail = `${res.status}`;
+    let detail: unknown = `${res.status}`;
     try {
-      detail = (await res.json()).detail ?? detail;
+      const body = await res.json();
+      detail = body.detail ?? body;
     } catch {
       /* ignore */
     }
-    throw new ApiError(res.status, detail);
+    const msg =
+      typeof detail === "string"
+        ? detail
+        : (detail as { message?: string })?.message ?? `${res.status}`;
+    throw new ApiError(res.status, msg, detail);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -163,6 +171,31 @@ export const api = {
 
   // ── AI ──
   aiStatus: () => req<{ enabled: boolean; model: string }>("/api/ai/status"),
+
+  // ── AI 문서(aidoc) ── 세션(웹) 경로. 문서 API 경유(버전·감사·낙관적 잠금).
+  aidocList: (opts?: { project?: string; include_trashed?: boolean }) => {
+    const p: Record<string, string> = {};
+    if (opts?.project) p.project = opts.project;
+    if (opts?.include_trashed) p.include_trashed = "true";
+    return req<AidocMeta[]>(`/api/aidoc/documents?${q(p)}`);
+  },
+  aidocGet: (id: string) => req<AidocDetail>(`/api/aidoc/documents/${id}`),
+  aidocSearch: (query: string) =>
+    req<AidocSearchHit[]>(`/api/aidoc/documents/search?${q({ q: query })}`),
+  aidocCreate: (body: { title: string; content?: string; project?: string | null; tags?: string[] }) =>
+    req<AidocDetail>("/api/aidoc/documents", jsonInit("POST", body)),
+  aidocUpdate: (
+    id: string,
+    body: { expected_version: number; content?: string; title?: string; change_summary?: string },
+  ) => req<AidocDetail>(`/api/aidoc/documents/${id}`, jsonInit("PUT", body)),
+  aidocMove: (id: string, body: { target_project?: string | null; target_folder?: string | null }) =>
+    req<AidocDetail>(`/api/aidoc/documents/${id}/move`, jsonInit("POST", body)),
+  aidocTrash: (id: string) => req<AidocMeta>(`/api/aidoc/documents/${id}/trash`, { method: "POST" }),
+  aidocRestore: (id: string, version?: number | null) =>
+    req<AidocMeta>(`/api/aidoc/documents/${id}/restore`, jsonInit("POST", { version: version ?? null })),
+  aidocHistory: (id: string) => req<AidocVersion[]>(`/api/aidoc/documents/${id}/history`),
+  aidocProjects: () => req<string[]>("/api/aidoc/projects"),
+  aidocAudit: () => req<AidocAuditLog[]>("/api/aidoc/audit-logs"),
 };
 
 export interface AiEvent {
@@ -278,4 +311,56 @@ export interface NoteSearchHit {
   path: string;
   title: string;
   snippet: string;
+}
+
+// ── AI 문서(aidoc) ──
+export interface AidocMeta {
+  id: string;
+  title: string;
+  project: string | null;
+  category: string | null;
+  tags: string[];
+  status: string;
+  version: number;
+  storage_path?: string;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  trashed: boolean;
+}
+export interface AidocDetail extends AidocMeta {
+  content: string;
+}
+export interface AidocSearchHit extends AidocMeta {
+  snippet: string;
+}
+export interface AidocVersion {
+  doc_id: string;
+  version: number;
+  actor: string | null;
+  change_summary: string | null;
+  prev_hash: string | null;
+  new_hash: string | null;
+  history_path: string | null;
+  created_at: string;
+}
+export interface AidocAuditLog {
+  id: number;
+  actor: string | null;
+  action: string;
+  doc_id: string | null;
+  project: string | null;
+  from_version: number | null;
+  to_version: number | null;
+  change_summary: string | null;
+  ok: number;
+  detail: string | null;
+  timestamp: string;
+}
+export interface AidocConflict {
+  error: string;
+  message: string;
+  expected_version: number;
+  current_version: number;
 }

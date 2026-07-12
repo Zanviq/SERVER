@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { MarkdownView } from "../components/notes/MarkdownView";
+import { AidocWorkspace } from "../components/notes/AidocWorkspace";
 import { Modal } from "../components/ui/Modal";
 import { api, NoteSummary, NoteDetail, NoteSearchHit, Scope, NoteBase } from "../lib/api";
 import { toast } from "../store/toast";
@@ -54,6 +55,7 @@ export function Notes() {
   const prefs = useSettings((st) => st.settings?.notes);
   const [scope, setScope] = useState<Scope>((prefs?.default_scope as Scope) || "me");
   const [base, setBase] = useState<NoteBase>("notes"); // notes: 노트폴더 / files: 파일 저장소(hdd)
+  const [aiDocMode, setAiDocMode] = useState(false); // AI 문서(aidoc) 소스 선택 시
   const [folders, setFolders] = useState<string[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -83,6 +85,7 @@ export function Notes() {
   const tree = useMemo(() => buildTree(folders, notes), [folders, notes]);
 
   const reloadTree = useCallback(async () => {
+    if (aiDocMode) return; // AI 문서 모드에서는 노트 트리 미사용
     try {
       const t = await api.noteTree(scope, base);
       setFolders(t.folders);
@@ -90,7 +93,7 @@ export function Notes() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "목록 실패");
     }
-  }, [scope, base]);
+  }, [scope, base, aiDocMode]);
 
   useEffect(() => {
     reloadTree();
@@ -368,9 +371,14 @@ export function Notes() {
     return rows;
   };
 
-  // 소스 선택: 노트 폴더(내/공통) 또는 파일 저장소(내/공통)의 마크다운을 편집
-  const source = `${base}:${scope}`;
+  // 소스 선택: 노트 폴더 / 파일 저장소 / AI 문서
+  const source = aiDocMode ? "aidoc" : `${base}:${scope}`;
   const onSource = (v: string) => {
+    if (v === "aidoc") {
+      setAiDocMode(true);
+      return;
+    }
+    setAiDocMode(false);
     const [b, s] = v.split(":");
     setBase(b as NoteBase);
     setScope(s as Scope);
@@ -380,14 +388,23 @@ export function Notes() {
       value={source}
       onChange={(e) => onSource(e.target.value)}
       className="h-8 cursor-pointer appearance-none rounded-md border border-line bg-subtle px-3 text-center text-[13px] font-medium text-accent outline-none transition-colors hover:border-line-strong focus:border-accent"
-      title="편집할 위치 (노트 폴더 또는 파일 폴더 연결)"
+      title="편집할 위치 (노트 폴더 / 파일 폴더 / AI 문서)"
     >
       <option value="notes:me">📓 내 노트</option>
       <option value="notes:common">📓 공통 노트</option>
       <option value="files:me">📁 내 파일 폴더</option>
       <option value="files:common">📁 공통 파일 폴더</option>
+      <option value="aidoc">🤖 AI 문서</option>
     </select>
   );
+
+  if (aiDocMode) {
+    return (
+      <Shell title="노트" actions={crumbs}>
+        <AidocWorkspace />
+      </Shell>
+    );
+  }
 
   return (
     <Shell title="노트" actions={crumbs}>

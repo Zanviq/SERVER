@@ -247,6 +247,10 @@ def test_routers_web_and_token():
     assert r.status_code == 200, r.text
     did = r.json()["id"]
     assert c.get(f"/api/aidoc/documents/{did}").json()["content"] == "hi"
+    # 웹 UI(AidocWorkspace)가 쓰는 보조 엔드포인트
+    assert "nodi" in c.get("/api/aidoc/projects").json()
+    assert isinstance(c.get("/api/aidoc/audit-logs").json(), list)
+    assert c.get(f"/api/aidoc/documents/{did}/history").status_code == 200
 
     # 토큰(AI) 경로 — 헤더 인증
     h = {"Authorization": f"Bearer {raw}"}
