@@ -43,7 +43,14 @@ def _index_fts(conn, doc_id, title, content, tags, project, category) -> None:
     )
 
 
+def _check_id(doc_id: str) -> None:
+    """문서 id 형식 방어(경로 조작 차단). 잘못된 형식은 존재하지 않는 것으로 취급."""
+    if not ids.is_document_id(doc_id):
+        raise NotFound()
+
+
 def _get_row(conn, doc_id):
+    _check_id(doc_id)
     row = conn.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone()
     if not row:
         raise NotFound()
@@ -184,10 +191,13 @@ def move(settings, actor: Actor, doc_id: str, target_project=None, target_folder
         row = _get_row(conn, doc_id)
         if target_folder:
             allowed = ("knowledge", "templates", "archive", "inbox")
-            top = target_folder.split("/", 1)[0]
+            tf = target_folder.replace("\\", "/").strip("/")
+            if ".." in tf.split("/") or tf.startswith("/"):
+                raise BadRequest("허용되지 않은 폴더 경로입니다.")
+            top = tf.split("/", 1)[0]
             if top not in allowed:
                 raise BadRequest("허용되지 않은 폴더입니다.")
-            dir_rel = target_folder.strip("/"); project = None
+            dir_rel = tf; project = None
         else:
             dir_rel = paths.new_doc_dir(settings, target_project)
             project = target_project
@@ -227,6 +237,7 @@ def trash(settings, actor: Actor, doc_id: str) -> dict:
 
 
 def restore(settings, actor: Actor, doc_id: str, version=None) -> dict:
+    _check_id(doc_id)  # version 분기가 _get_row 이전에 .history 경로를 읽으므로 선검증
     if version is None:
         conn = db.connect(settings)
         try:

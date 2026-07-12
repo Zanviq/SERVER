@@ -22,6 +22,14 @@ def new_document_id() -> str:
     return "doc_" + _encode(ts, 10) + _encode(secrets.randbits(80), 16)
 
 
+_DOC_ID = re.compile(r"^doc_[0-9A-Z]{26}$")
+
+
+def is_document_id(value: str) -> bool:
+    """문서 id 형식 검증. 경로 조작 문자('/', '.', '..')를 원천 차단."""
+    return bool(_DOC_ID.match(value or ""))
+
+
 _ILLEGAL = re.compile(r"[^0-9a-z가-힣._-]+")
 
 

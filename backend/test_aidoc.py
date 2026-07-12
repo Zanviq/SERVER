@@ -195,6 +195,76 @@ def test_service_create_get():
     assert d2["storage_path"].startswith("inbox/") and d2["project"] is None
 
 
+def test_path_traversal_defense():
+    """doc_id/target_folder를 통한 경로 조작이 도메인 계층에서 차단되는지."""
+    from backend.config import Settings
+    from backend.aidoc import db, paths, service, ids
+    from backend.aidoc.schemas import CreateDoc
+    from backend.aidoc.errors import NotFound, BadRequest
+    s = Settings(); db.init_db(s); paths.ensure_layout(s)
+    a = service.Actor("x")
+    # id 형식 검증
+    assert ids.is_document_id("doc_" + "0" * 26)
+    assert not ids.is_document_id("../../etc/passwd")
+    assert not ids.is_document_id("doc_short")
+    # 조작 id는 NotFound(존재하지 않는 것으로 취급)
+    for bad in ("../../../../etc/passwd", "..%2f..%2fx", "doc_/../x"):
+        try:
+            service.get(s, bad); assert False
+        except NotFound:
+            pass
+        try:
+            service.restore(s, a, bad, version=1); assert False
+        except NotFound:
+            pass
+    # target_folder '..' 차단
+    doc = service.create(s, a, CreateDoc(title="t", content="c"))
+    try:
+        service.move(s, a, doc["id"], target_folder="knowledge/../../../etc"); assert False
+    except BadRequest:
+        pass
+
+
+def test_routers_web_and_token():
+    import hashlib, json, os
+    from fastapi.testclient import TestClient
+    from backend.config import Settings
+    from backend.aidoc import db, paths, tokens
+    from backend.main import app
+    s = Settings(); db.init_db(s); paths.ensure_layout(s)
+    # 토큰 파일 준비
+    raw = "tok-abc"
+    os.makedirs(os.path.dirname(s.aidoc_tokens_file), exist_ok=True)
+    json.dump([{"name": "codex-nodi", "token_sha256": hashlib.sha256(raw.encode()).hexdigest(),
+                "actor": "codex", "scopes": ["documents:read", "documents:create", "documents:update"],
+                "allowed_projects": ["nodi"]}], open(s.aidoc_tokens_file, "w"))
+    tokens.reload_cache()
+
+    # 세션(웹) 경로
+    c = TestClient(app)
+    c.post("/api/auth/login", json={"username": "tester", "password": "pw"})
+    r = c.post("/api/aidoc/documents", json={"title": "웹문서", "content": "hi", "project": "nodi"})
+    assert r.status_code == 200, r.text
+    did = r.json()["id"]
+    assert c.get(f"/api/aidoc/documents/{did}").json()["content"] == "hi"
+
+    # 토큰(AI) 경로 — 헤더 인증
+    h = {"Authorization": f"Bearer {raw}"}
+    a = TestClient(app)
+    cr = a.post("/mcp/api/documents", json={"title": "AI문서", "content": "x", "project": "nodi"}, headers=h)
+    assert cr.status_code == 200, cr.text
+    aid = cr.json()["id"]
+    # 권한 밖 프로젝트 → 403
+    bad = a.post("/mcp/api/documents", json={"title": "T", "content": "x", "project": "orchestra-room"}, headers=h)
+    assert bad.status_code == 403
+    # 버전 충돌 409
+    a.put(f"/mcp/api/documents/{aid}", json={"expected_version": 1, "content": "y"}, headers=h)
+    conflict = a.put(f"/mcp/api/documents/{aid}", json={"expected_version": 1, "content": "z"}, headers=h)
+    assert conflict.status_code == 409 and conflict.json()["detail"]["error"] == "DOCUMENT_VERSION_CONFLICT"
+    # 토큰 없음 → 401
+    assert a.get("/mcp/api/documents").status_code == 401
+
+
 if __name__ == "__main__":
     test_settings_aidoc()
     test_ids()
@@ -209,4 +279,6 @@ if __name__ == "__main__":
     test_service_update_conflict_and_append()
     test_service_move_trash_restore()
     test_service_list_search()
+    test_path_traversal_defense()
+    test_routers_web_and_token()
     print("ALL AIDOC TESTS PASSED")
