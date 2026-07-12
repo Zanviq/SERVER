@@ -25,6 +25,7 @@ class SkillResult:
 class SkillContext:
     user: SessionUser
     settings: Settings
+    today: str = ""  # 요청 기준 오늘(YYYY-MM-DD). 일정 기본 조회창 계산에 사용.
 
 
 class SkillBase(ABC):

@@ -284,6 +284,25 @@ def test_calendar_colors_names_and_prefs():
     assert r2.data["event"]["color"] == "10"  # 색 미지정 → 기본 색
 
 
+def test_calendar_list_default_window():
+    # 기간 미지정 조회는 '오늘 근처'로 한정되어 아주 오래된 일정은 제외됨
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    s = get_settings()
+    u = SessionUser(username="tester2", display_name="T2", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-07-12")
+    reg = default_registry()
+    reg.dispatch("create_calendar_event", {"title": "OLDEVT", "start": "2010-01-01T10:00:00"}, ctx)
+    reg.dispatch("create_calendar_event", {"title": "NOWEVT", "start": "2026-07-15T10:00:00"}, ctx)
+    r = reg.dispatch("list_calendar_events", {}, ctx)  # 기간 미지정
+    assert r.ok
+    titles = [e["title"] for e in r.data["events"]]
+    assert "NOWEVT" in titles
+    assert "OLDEVT" not in titles  # 기본창(오늘-30~+120) 밖
+
+
 def test_terminal_status_gate():
     _login()
     st = client.get("/api/terminal/status").json()
@@ -450,6 +469,7 @@ if __name__ == "__main__":
     test_notes_edit_files_base()
     test_google_allday_end_conversion()
     test_calendar_colors_names_and_prefs()
+    test_calendar_list_default_window()
     test_terminal_status_gate()
     test_settings_get_patch()
     test_calendar_recurrence_and_reminders()

@@ -16,20 +16,50 @@ def _cal_prefs(ctx) -> dict:
         return {}
 
 
+def _default_window(ctx) -> tuple[str, str]:
+    """기간 미지정 시 기본 조회창: 오늘-30일 ~ 오늘+120일.
+
+    기간 없이 조회하면 아주 오래된 반복 일정까지 딸려와 현재 일정을 못 찾으므로,
+    합리적인 최근~향후 범위로 한정한다.
+    """
+    base = ctx.today or ""
+    try:
+        today = datetime.fromisoformat(base[:10]) if base else datetime.now()
+    except ValueError:
+        today = datetime.now()
+    frm = (today - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00")
+    to = (today + timedelta(days=120)).strftime("%Y-%m-%dT23:59:59")
+    return frm, to
+
+
 class ListCalendarEvents(SkillBase):
     name = "list_calendar_events"
-    description = "기간 내 일정을 조회한다(반복 일정은 인스턴스로 확장). 충돌 확인 등."
+    description = (
+        "일정을 조회한다(반복 일정은 인스턴스로 확장). 충돌·삭제 대상 확인 등에 사용. "
+        "기간을 지정하지 않으면 최근 1달 전 ~ 향후 4달만 조회한다(오래된 반복일정 방지)."
+    )
     parameters = {
         "type": "object",
         "properties": {
-            "from_date": {"type": "string", "description": "ISO 날짜/시간 (예: 2026-07-01)"},
-            "to_date": {"type": "string"},
+            "from_date": {"type": "string", "description": "ISO 날짜/시간 (예: 2026-07-01). 미지정 시 오늘-30일."},
+            "to_date": {"type": "string", "description": "ISO 날짜/시간. 미지정 시 오늘+120일."},
         },
     }
 
     def run(self, args, ctx):
-        events = calendar_service.list_events(ctx.user, ctx.settings, args.get("from_date"), args.get("to_date"))
-        return SkillResult(ok=True, message=f"{len(events)}개 일정", data={"events": events})
+        frm = args.get("from_date")
+        to = args.get("to_date")
+        if not frm and not to:
+            frm, to = _default_window(ctx)  # 기간 미지정 → 현재 근처로 한정
+        try:
+            events = calendar_service.list_events(ctx.user, ctx.settings, frm, to)
+        except Exception as e:  # noqa: BLE001 - Google API 오류 등
+            return SkillResult(ok=False, message=f"일정 조회 실패: {getattr(e, 'detail', e)}", error_code="error")
+        return SkillResult(
+            ok=True,
+            message=f"{len(events)}개 일정 ({(frm or '')[:10]}~{(to or '')[:10]})",
+            data={"events": events},
+        )
 
 
 class CreateCalendarEvent(SkillBase):
@@ -59,22 +89,25 @@ class CreateCalendarEvent(SkillBase):
         # 알림: 명시하지 않으면 사용자 기본값(default_remind, 0=없음)
         remind = args.get("remind_minutes")
         remind = int(remind) if remind is not None else int(cal.get("default_remind", 0))
-        ev = calendar_service.create_event(
-            ctx.user,
-            ctx.settings,
-            {
-                "title": args["title"],
-                "start": args["start"],
-                "end": args.get("end", args["start"]),
-                "allDay": bool(args.get("all_day", False)),
-                "description": args.get("description", ""),
-                "color": color,
-                "recurrence": args.get("recurrence", "none"),
-                "interval": args.get("interval", 1),
-                "recur_until": args.get("recur_until", ""),
-                "remind_minutes": remind,
-            },
-        )
+        try:
+            ev = calendar_service.create_event(
+                ctx.user,
+                ctx.settings,
+                {
+                    "title": args["title"],
+                    "start": args["start"],
+                    "end": args.get("end", args["start"]),
+                    "allDay": bool(args.get("all_day", False)),
+                    "description": args.get("description", ""),
+                    "color": color,
+                    "recurrence": args.get("recurrence", "none"),
+                    "interval": args.get("interval", 1),
+                    "recur_until": args.get("recur_until", ""),
+                    "remind_minutes": remind,
+                },
+            )
+        except Exception as e:  # noqa: BLE001
+            return SkillResult(ok=False, message=f"일정 생성 실패: {getattr(e, 'detail', e)}", error_code="error")
         return SkillResult(ok=True, message=f"일정 '{ev['title']}' 생성됨", data={"event": ev})
 
 

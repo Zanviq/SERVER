@@ -79,7 +79,7 @@ def run(
     """
     registry = registry or default_registry()
     llm = llm or GeminiLLM(settings)
-    ctx = SkillContext(user=user, settings=settings)
+    ctx = SkillContext(user=user, settings=settings, today=today)
     catalog = registry.build_catalog()
 
     prefs = _user_ai_prefs(user, settings)

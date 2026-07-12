@@ -166,7 +166,6 @@ export function Calendar() {
             }
             composerTop={
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] text-fg-muted">색상:</span>
                 <button
                   onClick={() => setChatColor(null)}
                   title="자동(규칙/기본색)"
