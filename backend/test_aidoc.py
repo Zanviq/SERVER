@@ -20,6 +20,18 @@ def test_settings_aidoc():
     assert s.aidoc_max_bytes == 1048576
 
 
+def test_ids():
+    from backend.aidoc.ids import new_document_id, safe_slug, unique_filename
+    a, b = new_document_id(), new_document_id()
+    assert a.startswith("doc_") and len(a) == 30 and a != b
+    assert a[4:14] <= b[4:14]  # 시간정렬(ms 타임스탬프 prefix 단조 증가; 랜덤 접미사는 무관)
+    assert safe_slug("API 설계/문서: v2!") == "api-설계-문서-v2"
+    assert safe_slug("   ") == "untitled"
+    assert unique_filename("inbox", "note", set()) == "note.md"
+    assert unique_filename("inbox", "note", {"note.md"}) == "note-2.md"
+
+
 if __name__ == "__main__":
     test_settings_aidoc()
-    print("OK")
+    test_ids()
+    print("ALL AIDOC TESTS PASSED")
