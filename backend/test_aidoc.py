@@ -125,6 +125,22 @@ def test_schemas():
     assert u.expected_version == 3
 
 
+def test_service_list_search():
+    from backend.config import Settings
+    from backend.aidoc import db, paths, service
+    from backend.aidoc.schemas import CreateDoc
+    s = Settings(); db.init_db(s); paths.ensure_layout(s)
+    a = service.Actor("claude-code")
+    service.create(s, a, CreateDoc(title="WriteLock 처리", content="낙관적 잠금과 WriteLock 충돌", project="nodi", tags=["lock"]))
+    service.create(s, a, CreateDoc(title="다른 문서", content="관계 없음", project="orchestra-room"))
+    # 태그 필터로 격리(테스트들이 DB를 공유하므로 project만으로는 개수가 누적됨)
+    lst = service.list_docs(s, project="nodi", tag="lock")
+    assert len(lst) == 1 and lst[0]["title"] == "WriteLock 처리"
+    hits = service.search(s, "WriteLock")
+    assert any("WriteLock" in h["title"] or "WriteLock" in h["snippet"] for h in hits)
+    assert "nodi" in service.list_projects(s)
+
+
 def test_service_move_trash_restore():
     from backend.config import Settings
     from backend.aidoc import db, paths, service
@@ -192,4 +208,5 @@ if __name__ == "__main__":
     test_service_create_get()
     test_service_update_conflict_and_append()
     test_service_move_trash_restore()
+    test_service_list_search()
     print("ALL AIDOC TESTS PASSED")

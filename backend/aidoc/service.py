@@ -253,3 +253,66 @@ def restore(settings, actor: Actor, doc_id: str, version=None) -> dict:
     # 특정 버전 내용으로 복원 = 새 버전 생성
     hist = store.read(settings, f".history/{doc_id}/{int(version):04d}.md")
     return _apply_new_content(settings, actor, doc_id, None, hist, f"restore v{version}")
+
+
+def list_docs(settings, *, project=None, category=None, tag=None, status=None,
+              created_by=None, updated_by=None, include_trashed=False) -> list[dict]:
+    where = []; vals = []
+    if not include_trashed:
+        where.append("trashed=0")
+    for col, v in (("project", project), ("category", category), ("status", status),
+                   ("created_by", created_by), ("updated_by", updated_by)):
+        if v is not None:
+            where.append(f"{col}=?"); vals.append(v)
+    sql = "SELECT * FROM documents"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY updated_at DESC"
+    conn = db.connect(settings)
+    try:
+        rows = conn.execute(sql, vals).fetchall()
+    finally:
+        conn.close()
+    out = [_row_to_meta(r) for r in rows]
+    if tag:
+        out = [m for m in out if tag in m["tags"]]
+    return out
+
+
+def _snippet(text: str, q: str, width=80) -> str:
+    low = text.lower(); i = low.find(q.lower())
+    if i < 0:
+        return text[:width].replace("\n", " ").strip()
+    start = max(0, i - width // 2)
+    seg = text[start:start + width].replace("\n", " ").strip()
+    return ("…" if start > 0 else "") + seg + ("…" if start + width < len(text) else "")
+
+
+def search(settings, q: str, limit: int = 50) -> list[dict]:
+    conn = db.connect(settings)
+    try:
+        hits = []
+        if db.has_fts5(conn):
+            cur = conn.execute(
+                "SELECT d.*, snippet(documents_fts,2,'[',']','…',12) AS snip "
+                "FROM documents_fts f JOIN documents d ON d.id=f.doc_id "
+                "WHERE documents_fts MATCH ? AND d.trashed=0 LIMIT ?",
+                (q, int(limit)),
+            )
+            for r in cur.fetchall():
+                m = _row_to_meta(r); m["snippet"] = r["snip"] or ""; hits.append(m)
+        else:
+            ql = f"%{q.lower()}%"
+            cur = conn.execute(
+                "SELECT * FROM documents WHERE trashed=0 AND (lower(title) LIKE ?) LIMIT ?",
+                (ql, int(limit)),
+            )
+            for r in cur.fetchall():
+                m = _row_to_meta(r); m["snippet"] = _snippet(r["title"], q); hits.append(m)
+        return hits
+    finally:
+        conn.close()
+
+
+def list_projects(settings) -> list[str]:
+    return list(settings.aidoc_projects)
