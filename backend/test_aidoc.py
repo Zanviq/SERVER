@@ -39,8 +39,30 @@ def test_errors():
     assert NotFound("x").status == 404
 
 
+def test_paths():
+    from backend.config import Settings
+    from backend.aidoc import paths
+    from backend.aidoc.errors import BadRequest
+    s = Settings()
+    paths.ensure_layout(s)
+    for f in ("inbox", "projects", "knowledge", "templates", "archive", "trash", ".history"):
+        assert (s.document_root / f).is_dir()
+    assert paths.new_doc_dir(s, None) == "inbox"
+    assert paths.new_doc_dir(s, "orchestra-room") == "projects/orchestra-room"
+    try:
+        paths.new_doc_dir(s, "not-registered"); assert False
+    except BadRequest:
+        pass
+    # 경로 탈출 차단
+    try:
+        paths.resolve_rel(s, "../../etc/passwd"); assert False
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     test_settings_aidoc()
     test_ids()
     test_errors()
+    test_paths()
     print("ALL AIDOC TESTS PASSED")
