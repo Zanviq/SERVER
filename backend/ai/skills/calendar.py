@@ -3,8 +3,17 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from ... import calendar_service
+from ... import calendar_service, user_settings
+from ...calendar_colors import resolve_color
 from ..skill_base import SkillBase, SkillResult
+
+
+def _cal_prefs(ctx) -> dict:
+    """사용자의 캘린더 기본값(기본 색·기본 알림)."""
+    try:
+        return user_settings.load(ctx.user, ctx.settings).get("calendar", {})
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 class ListCalendarEvents(SkillBase):
@@ -34,16 +43,22 @@ class CreateCalendarEvent(SkillBase):
             "end": {"type": "string"},
             "all_day": {"type": "boolean"},
             "description": {"type": "string"},
-            "color": {"type": "string", "description": "Google colorId 1~11"},
+            "color": {"type": "string", "description": "색 이름(예: 보라, 하늘, 노랑) 또는 colorId 1~11"},
             "recurrence": {"type": "string", "enum": ["none", "daily", "weekly", "monthly", "yearly"]},
             "interval": {"type": "integer", "description": "반복 간격(기본 1)"},
             "recur_until": {"type": "string", "description": "반복 종료일 YYYY-MM-DD"},
-            "remind_minutes": {"type": "integer", "description": "시작 N분 전 알림 (0=없음)"},
+            "remind_minutes": {"type": "integer", "description": "시작 N분 전 알림. 사용자가 명시 요청할 때만."},
         },
         "required": ["title", "start"],
     }
 
     def run(self, args, ctx):
+        cal = _cal_prefs(ctx)
+        default_color = str(cal.get("default_color", "2"))
+        color = resolve_color(args.get("color"), default=default_color)
+        # 알림: 명시하지 않으면 사용자 기본값(default_remind, 0=없음)
+        remind = args.get("remind_minutes")
+        remind = int(remind) if remind is not None else int(cal.get("default_remind", 0))
         ev = calendar_service.create_event(
             ctx.user,
             ctx.settings,
@@ -53,11 +68,11 @@ class CreateCalendarEvent(SkillBase):
                 "end": args.get("end", args["start"]),
                 "allDay": bool(args.get("all_day", False)),
                 "description": args.get("description", ""),
-                "color": args.get("color", "2"),
+                "color": color,
                 "recurrence": args.get("recurrence", "none"),
                 "interval": args.get("interval", 1),
                 "recur_until": args.get("recur_until", ""),
-                "remind_minutes": args.get("remind_minutes", 0),
+                "remind_minutes": remind,
             },
         )
         return SkillResult(ok=True, message=f"일정 '{ev['title']}' 생성됨", data={"event": ev})
@@ -84,9 +99,11 @@ class UpdateCalendarEvent(SkillBase):
 
     def run(self, args, ctx):
         payload = {}
-        for k in ("title", "start", "end", "description", "color", "recurrence"):
+        for k in ("title", "start", "end", "description", "recurrence"):
             if args.get(k) is not None:
                 payload[k] = args[k]
+        if args.get("color") is not None:
+            payload["color"] = resolve_color(args["color"])
         if args.get("all_day") is not None:
             payload["allDay"] = bool(args["all_day"])
         if args.get("remind_minutes") is not None:

@@ -5,7 +5,7 @@ import { ThemeToggle } from "../components/layout/ThemeToggle";
 import { useAuth } from "../store/auth";
 import { useSettings } from "../store/settings";
 import { toast } from "../store/toast";
-import { GCAL_COLORS } from "../components/calendar/EventDialog";
+import { GCAL_COLORS, GCAL_COLOR_NAMES } from "../components/calendar/EventDialog";
 
 const TABS = [
   { id: "account", label: "계정", icon: User },
@@ -33,10 +33,16 @@ export function Settings() {
   const { session, logout } = useAuth();
   const { settings: s, loaded, error, load, patch } = useSettings();
   const [tab, setTab] = useState("account");
+  const [aiRules, setAiRules] = useState("");
 
   useEffect(() => {
     if (!s) load();
   }, [s, load]);
+
+  // AI 규칙 텍스트는 로컬 상태로 두고 blur 때 저장(키 입력마다 저장 방지)
+  useEffect(() => {
+    if (s) setAiRules(s.calendar.ai_rules ?? "");
+  }, [s?.calendar.ai_rules]);
 
   const update = async (changes: Record<string, unknown>) => {
     try {
@@ -121,11 +127,11 @@ export function Settings() {
                   <option value="timeGridDay">일</option>
                 </select>
               </Row>
-              <Row label="기본 색상">
-                <div className="flex gap-1.5">
-                  {Object.entries(GCAL_COLORS).slice(0, 6).map(([id, hex]) => (
+              <Row label="기본 색상" desc="AI·수동 일정 기본 색">
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(GCAL_COLORS).map(([id, hex]) => (
                     <button key={id} onClick={() => update({ calendar: { default_color: id } })}
-                      aria-label={`색상 ${id}`} aria-pressed={s.calendar.default_color === id}
+                      aria-label={GCAL_COLOR_NAMES[id]} title={GCAL_COLOR_NAMES[id]} aria-pressed={s.calendar.default_color === id}
                       className={`h-6 w-6 rounded-full border-2 ${s.calendar.default_color === id ? "border-fg" : "border-transparent"}`}
                       style={{ background: hex }} />
                   ))}
@@ -138,6 +144,32 @@ export function Settings() {
                   <option value={1}>월요일</option>
                 </select>
               </Row>
+              <Row label="AI 기본 알림" desc="AI가 만든 일정의 기본 알림(직접 요청 시 우선)">
+                <select className="input w-28" value={s.calendar.default_remind}
+                  onChange={(e) => update({ calendar: { default_remind: +e.target.value } })}>
+                  <option value={0}>없음</option>
+                  <option value={10}>10분 전</option>
+                  <option value={30}>30분 전</option>
+                  <option value={60}>1시간 전</option>
+                  <option value={1440}>1일 전</option>
+                </select>
+              </Row>
+              <div className="py-3">
+                <p className="text-[13.5px] font-medium">AI 캘린더 규칙</p>
+                <p className="mb-2 text-[12px] text-fg-muted">
+                  AI가 일정을 만들 때 <b>항상</b> 지킬 규칙 (예: “동아리는 보라색으로, 운동은 초록색으로”)
+                </p>
+                <textarea
+                  className="input h-auto w-full py-2 leading-relaxed"
+                  rows={3}
+                  value={aiRules}
+                  placeholder="예) 동아리 일정은 보라색. 시험은 빨간색으로."
+                  onChange={(e) => setAiRules(e.target.value)}
+                  onBlur={() => {
+                    if (aiRules !== (s.calendar.ai_rules ?? "")) update({ calendar: { ai_rules: aiRules } });
+                  }}
+                />
+              </div>
             </div>
           )}
 

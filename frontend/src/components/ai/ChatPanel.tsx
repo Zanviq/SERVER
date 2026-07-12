@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { Bot, Send, Loader2, CheckCircle2, XCircle, Sparkles } from "lucide-react";
 import { MarkdownView } from "../notes/MarkdownView";
 import { aiChatStream, api, AiEvent } from "../../lib/api";
@@ -63,6 +63,10 @@ interface ChatPanelProps {
   onToolSuccess?: (name: string) => void;
   /** 컨테이너 추가 클래스 (높이 등은 부모가 제어) */
   className?: string;
+  /** 입력창 바로 위에 렌더할 요소 (예: 색상 칩) */
+  composerTop?: ReactNode;
+  /** 전송 전 메시지 변환 (예: 색상 힌트 추가) */
+  transformMessage?: (text: string) => string;
 }
 
 /** 재사용 가능한 AI 채팅 패널 (AI 비서 페이지 + 캘린더 사이드 패널 공용) */
@@ -70,6 +74,8 @@ export function ChatPanel({
   suggestions = DEFAULT_SUGGESTIONS,
   onToolSuccess,
   className = "",
+  composerTop,
+  transformMessage,
 }: ChatPanelProps) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -94,8 +100,9 @@ export function ChatPanel({
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input]);
 
-  const send = async (text: string) => {
-    if (!text.trim() || busy) return;
+  const send = async (raw: string) => {
+    if (!raw.trim() || busy) return;
+    const text = transformMessage ? transformMessage(raw) : raw;
     setInput("");
     setBusy(true);
     // 직전까지의 대화(완료된 것만)를 멀티턴 컨텍스트로 전달
@@ -215,7 +222,8 @@ export function ChatPanel({
         <div ref={endRef} />
       </div>
 
-      <div className="mt-3 flex items-end gap-2">
+      {composerTop && <div className="mt-3">{composerTop}</div>}
+      <div className={`${composerTop ? "mt-2" : "mt-3"} flex items-end gap-2`}>
         <textarea
           ref={inputRef}
           value={input}

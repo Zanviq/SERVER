@@ -247,6 +247,43 @@ def test_google_allday_end_conversion():
     assert _to_internal(g2)["allDay"] is False
 
 
+def test_calendar_colors_names_and_prefs():
+    from backend.calendar_colors import resolve_color
+    assert resolve_color("보라") == "9"
+    assert resolve_color("보라색") == "9"
+    assert resolve_color("9") == "9"
+    assert resolve_color("동아리보라") == "9"          # 부분 포함
+    assert resolve_color(None, default="2") == "2"
+    assert resolve_color("헬로우", default="2") == "2"  # 미매칭 → 기본
+
+    # 사용자 필수 규칙 + 알림 정책이 시스템 프롬프트에 반영
+    from backend.ai.prompt_builder import build_system
+    from backend.auth import SessionUser
+    u = SessionUser(username="x", display_name="X", expires_at=0, remaining=0)
+    sysp = build_system(u, "assistant", "2026-07-01",
+                        {"default_color": "9", "default_remind": 0, "ai_rules": "동아리는 보라색"})
+    assert "동아리는 보라색" in sysp
+    assert "붙이지 마세요" in sysp  # 알림 자동부착 금지 지시
+
+    # create 스킬: 색 이름 → id, 기본 색/알림 적용
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.config import get_settings
+    from backend import user_settings
+    s = get_settings()
+    u2 = SessionUser(username="tester2", display_name="T2", expires_at=0, remaining=0)
+    user_settings.patch(u2, s, {"calendar": {"default_color": "10", "default_remind": 30}})
+    ctx = SkillContext(user=u2, settings=s)
+    reg = default_registry()
+    r = reg.dispatch("create_calendar_event",
+                     {"title": "동아리", "start": "2026-09-10T10:00:00", "color": "보라"}, ctx)
+    assert r.ok and r.data["event"]["color"] == "9"
+    assert r.data["event"]["remind_minutes"] == 30  # 미지정 시 기본 알림
+    r2 = reg.dispatch("create_calendar_event",
+                      {"title": "기타", "start": "2026-09-11T10:00:00"}, ctx)
+    assert r2.data["event"]["color"] == "10"  # 색 미지정 → 기본 색
+
+
 def test_terminal_status_gate():
     _login()
     st = client.get("/api/terminal/status").json()
@@ -412,6 +449,7 @@ if __name__ == "__main__":
     test_notes_scope_in_files()
     test_notes_edit_files_base()
     test_google_allday_end_conversion()
+    test_calendar_colors_names_and_prefs()
     test_terminal_status_gate()
     test_settings_get_patch()
     test_calendar_recurrence_and_reminders()

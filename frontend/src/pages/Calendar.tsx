@@ -7,7 +7,7 @@ import type { DateClickArg } from "@fullcalendar/interaction";
 import type { DatesSetArg, EventClickArg } from "@fullcalendar/core";
 import { Loader2, Bot } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
-import { EventDialog, GCAL_COLORS } from "../components/calendar/EventDialog";
+import { EventDialog, GCAL_COLORS, GCAL_COLOR_NAMES } from "../components/calendar/EventDialog";
 import { ChatPanel } from "../components/ai/ChatPanel";
 import { api, CalEvent } from "../lib/api";
 import { toast } from "../store/toast";
@@ -32,6 +32,7 @@ export function Calendar() {
   const [dialog, setDialog] = useState<Partial<CalEvent> | null>(null);
   const [source, setSource] = useState("internal");
   const [loading, setLoading] = useState(false);
+  const [chatColor, setChatColor] = useState<string | null>(null); // AI 채팅에서 지정할 색
   const range = useRef<{ from?: string; to?: string }>({});
 
   const defaultColor = s?.calendar.default_color ?? "2";
@@ -160,6 +161,31 @@ export function Calendar() {
             className="flex-1"
             suggestions={CAL_SUGGESTIONS}
             onToolSuccess={reload}
+            transformMessage={(t) =>
+              chatColor ? `${t}\n(이 일정의 색상은 '${GCAL_COLOR_NAMES[chatColor]}'으로 설정해줘)` : t
+            }
+            composerTop={
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] text-fg-muted">색상:</span>
+                <button
+                  onClick={() => setChatColor(null)}
+                  title="자동(규칙/기본색)"
+                  className={`rounded-full border px-2 py-0.5 text-[11px] ${chatColor === null ? "border-accent bg-accent-muted text-accent-fg" : "border-line text-fg-muted"}`}
+                >
+                  자동
+                </button>
+                {Object.entries(GCAL_COLORS).map(([id, hex]) => (
+                  <button
+                    key={id}
+                    onClick={() => setChatColor(id)}
+                    aria-label={GCAL_COLOR_NAMES[id]}
+                    title={GCAL_COLOR_NAMES[id]}
+                    className={`h-5 w-5 rounded-full border-2 ${chatColor === id ? "border-fg" : "border-transparent"}`}
+                    style={{ background: hex }}
+                  />
+                ))}
+              </div>
+            }
           />
         </div>
       </div>

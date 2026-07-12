@@ -9,6 +9,12 @@ export const GCAL_COLORS: Record<string, string> = {
   "9": "#3f51b5", "10": "#0b8043", "11": "#d50000",
 };
 
+// colorId → 한국어 이름 (백엔드 calendar_colors.py와 동일 팔레트)
+export const GCAL_COLOR_NAMES: Record<string, string> = {
+  "1": "라벤더", "2": "연두", "3": "자주", "4": "살구", "5": "노랑", "6": "주황",
+  "7": "하늘", "8": "회색", "9": "보라", "10": "초록", "11": "빨강",
+};
+
 // datetime-local 값 변환
 const toLocal = (iso: string) => (iso ? iso.slice(0, 16) : "");
 const toIso = (local: string) => (local ? `${local}:00` : "");
@@ -114,7 +120,7 @@ export function EventDialog({
           <div className="flex flex-wrap gap-1.5">
             {Object.entries(GCAL_COLORS).map(([id, hex]) => (
               <button key={id} onClick={() => setColor(id)}
-                aria-label={`색상 ${id}`} aria-pressed={color === id} title={`색상 ${id}`}
+                aria-label={GCAL_COLOR_NAMES[id]} aria-pressed={color === id} title={GCAL_COLOR_NAMES[id]}
                 className={`h-6 w-6 rounded-full border-2 ${color === id ? "border-fg" : "border-transparent"}`}
                 style={{ background: hex }} />
             ))}

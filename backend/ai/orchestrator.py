@@ -83,7 +83,7 @@ def run(
     catalog = registry.build_catalog()
 
     prefs = _user_ai_prefs(user, settings)
-    system = build_system(user, prefs["tone"], today)
+    system = build_system(user, prefs["tone"], today, prefs.get("calendar"))
     max_steps = max(1, min(16, int(prefs["max_steps"])))
 
     # 이전 대화(멀티턴): [{role: user|assistant, text}] → genai 형식
@@ -148,13 +148,15 @@ def _user_ai_prefs(user, settings: Settings) -> dict:
     try:
         from .. import user_settings
 
-        ai = user_settings.load(user, settings).get("ai", {})
+        loaded = user_settings.load(user, settings)
+        ai = loaded.get("ai", {})
         return {
             "tone": ai.get("tone", "assistant"),
             "max_steps": ai.get("max_steps", settings.ai_max_steps),
+            "calendar": loaded.get("calendar", {}),
         }
     except Exception:  # noqa: BLE001
-        return {"tone": "assistant", "max_steps": settings.ai_max_steps}
+        return {"tone": "assistant", "max_steps": settings.ai_max_steps, "calendar": {}}
 
 
 def _plain(obj):

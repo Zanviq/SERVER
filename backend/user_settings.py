@@ -18,6 +18,8 @@ DEFAULTS: dict[str, Any] = {
         "default_color": "2",
         "default_view": "dayGridMonth",  # dayGridMonth | timeGridWeek | timeGridDay
         "week_start": 0,  # 0=일요일
+        "default_remind": 0,  # AI 일정 기본 알림(분, 0=없음)
+        "ai_rules": "",  # AI가 일정 생성/수정 때 항상 적용할 필수 규칙(예: 동아리는 보라색)
     },
     "notes": {
         "default_scope": "me",  # common | me

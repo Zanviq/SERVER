@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ..auth import SessionUser
+from ..calendar_colors import COLOR_NAMES, color_table_text
 
 _TONE = {
     "counselor": "따뜻한 상담사 말투로, 공감을 곁들여 다정한 존댓말로 답한다.",
@@ -10,8 +11,30 @@ _TONE = {
 }
 
 
-def build_system(user: SessionUser, tone: str, today: str) -> str:
+def _calendar_section(cal: dict) -> str:
+    default_color = str(cal.get("default_color", "2"))
+    default_remind = int(cal.get("default_remind", 0) or 0)
+    rules = (cal.get("ai_rules") or "").strip()
+    remind_line = (
+        f"별도 요청이 없으면 알림을 시작 {default_remind}분 전으로 설정합니다."
+        if default_remind > 0
+        else "사용자가 명시적으로 요청하지 않는 한 알림(remind_minutes)을 붙이지 마세요."
+    )
+    section = f"""
+
+캘린더 색상·규칙:
+- 색상은 Google colorId(1~11)이며 이름은 다음과 같습니다. 사용자가 색을 말하면 이 표로 id를 정하세요.
+{color_table_text()}
+- 사용자가 색을 지정하지 않으면 기본 색 {default_color}({COLOR_NAMES.get(default_color, '')})을 사용하세요.
+- 알림: {remind_line}"""
+    if rules:
+        section += f"\n- ★ 사용자 필수 규칙(모든 일정 생성·수정에 항상 적용): {rules}"
+    return section
+
+
+def build_system(user: SessionUser, tone: str, today: str, cal: dict | None = None) -> str:
     tone_line = _TONE.get(tone, _TONE["assistant"])
+    cal_section = _calendar_section(cal or {})
     return f"""당신은 '{user.display_name}'님의 개인 홈서버 AI 비서입니다. 오늘은 {today}.
 
 원칙:
@@ -25,5 +48,6 @@ def build_system(user: SessionUser, tone: str, today: str) -> str:
 - 삭제 같은 되돌릴 수 없는 작업은 대상이 분명할 때만 실행하고, 애매하면 한 문장으로 확인하세요.
 - 정보가 부족할 때만 짧게 되묻고, 그 외에는 바로 실행하세요.
 - 모든 작업이 끝나면 결과를 한국어로 명확히 요약해 답하세요. 마크다운을 적절히 사용하세요.
+{cal_section}
 
 말투: {tone_line}"""

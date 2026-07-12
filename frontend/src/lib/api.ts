@@ -217,7 +217,7 @@ export async function aiChatStream(
 
 export interface UserSettings {
   ai: { tone: string; max_steps: number };
-  calendar: { default_color: string; default_view: string; week_start: number };
+  calendar: { default_color: string; default_view: string; week_start: number; default_remind: number; ai_rules: string };
   notes: { default_scope: string; autosave_ms: number };
   files: { default_scope: string; confirm_delete: boolean };
   sync: { text_conflict: string; binary_policy: string };
