@@ -125,6 +125,29 @@ def test_schemas():
     assert u.expected_version == 3
 
 
+def test_service_update_conflict_and_append():
+    from backend.config import Settings
+    from backend.aidoc import db, paths, service
+    from backend.aidoc.schemas import CreateDoc, UpdateDoc, AppendDoc
+    from backend.aidoc.errors import VersionConflict
+    s = Settings(); db.init_db(s); paths.ensure_layout(s)
+    a = service.Actor("claude-code")
+    doc = service.create(s, a, CreateDoc(title="C", content="one\n", project="nodi"))
+    up = service.update(s, service.Actor("codex"), doc["id"], UpdateDoc(expected_version=1, content="two\n", change_summary="교체"))
+    assert up["version"] == 2 and up["content"] == "two\n"
+    # 잘못된 기대버전 → 409
+    try:
+        service.update(s, a, doc["id"], UpdateDoc(expected_version=1, content="three\n")); assert False
+    except VersionConflict as e:
+        assert e.extra == {"expected_version": 1, "current_version": 2}
+    # history 보존
+    hist = service.get_history(s, doc["id"])
+    assert any(h["version"] == 1 for h in hist)
+    # append
+    ap = service.append(s, a, doc["id"], AppendDoc(content="added"))
+    assert ap["version"] == 3 and ap["content"].endswith("added")
+
+
 def test_service_create_get():
     from backend.config import Settings
     from backend.aidoc import db, paths, service
@@ -152,4 +175,5 @@ if __name__ == "__main__":
     test_tokens()
     test_schemas()
     test_service_create_get()
+    test_service_update_conflict_and_append()
     print("ALL AIDOC TESTS PASSED")
