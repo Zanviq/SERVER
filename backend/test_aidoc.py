@@ -97,6 +97,26 @@ def test_audit():
     conn.close()
 
 
+def test_tokens():
+    import hashlib, json, os
+    from backend.config import Settings
+    from backend.aidoc import tokens
+    s = Settings()
+    raw = "secrettoken123"
+    os.makedirs(os.path.dirname(s.aidoc_tokens_file), exist_ok=True)
+    with open(s.aidoc_tokens_file, "w", encoding="utf-8") as f:
+        json.dump([{"name": "codex-nodi", "token_sha256": hashlib.sha256(raw.encode()).hexdigest(),
+                    "actor": "codex", "scopes": ["documents:read", "documents:create"],
+                    "allowed_projects": ["nodi"]}], f)
+    tokens.reload_cache()
+    p = tokens.verify_bearer(s, raw)
+    assert p and p.actor == "codex"
+    assert p.can("documents:read") and not p.can("documents:trash")
+    assert p.project_ok("nodi") and not p.project_ok("orchestra-room")
+    assert p.project_ok(None)  # inbox 허용
+    assert tokens.verify_bearer(s, "wrong") is None
+
+
 if __name__ == "__main__":
     test_settings_aidoc()
     test_ids()
@@ -105,4 +125,5 @@ if __name__ == "__main__":
     test_db_init()
     test_store_atomic_and_history()
     test_audit()
+    test_tokens()
     print("ALL AIDOC TESTS PASSED")
