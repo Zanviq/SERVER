@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import JSONResponse
 
 from ..config import Settings, get_settings
-from ..aidoc import mcp_server, tokens
+from ..aidoc import cf_access, mcp_server, tokens
 from ..aidoc.errors import AidocError
 from ..aidoc.tokens import Principal
 
@@ -44,8 +44,17 @@ def _require_principal(settings: Settings, authorization: str) -> Principal | No
 async def mcp_endpoint(
     request: Request,
     authorization: str = Header(default=""),
+    cf_access_jwt: str = Header(default="", alias="Cf-Access-Jwt-Assertion"),
     settings: Settings = Depends(get_settings),
 ):
+    # 0) 선택적 Cloudflare Access 계층(설정 시)
+    if cf_access.enabled(settings) and cf_access.verify(settings, cf_access_jwt) is None:
+        return JSONResponse(
+            status_code=403,
+            content={"jsonrpc": "2.0", "id": None,
+                     "error": {"code": _INVALID_REQUEST, "message": "Cloudflare Access 검증 실패."}},
+        )
+
     # 1) Bearer 인증 (WWW-Authenticate 포함 401)
     principal = _require_principal(settings, authorization)
     if not principal:

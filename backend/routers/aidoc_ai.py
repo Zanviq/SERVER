@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from ..config import Settings, get_settings
-from ..aidoc import authz, service, tokens
+from ..aidoc import authz, cf_access, service, tokens
 from ..aidoc.errors import AidocError
 from ..aidoc.schemas import AppendDoc, CreateDoc, MoveDoc, RestoreDoc, UpdateDoc
 from ..aidoc.tokens import Principal
@@ -19,8 +19,12 @@ router = APIRouter(prefix="/mcp/api", tags=["aidoc-ai"])
 
 def require_principal(
     authorization: str = Header(default=""),
+    cf_access_jwt: str = Header(default="", alias="Cf-Access-Jwt-Assertion"),
     settings: Settings = Depends(get_settings),
 ) -> Principal:
+    # 선택적 Cloudflare Access 계층(설정 시): Access 정책까지 통과해야 함.
+    if cf_access.enabled(settings) and cf_access.verify(settings, cf_access_jwt) is None:
+        raise HTTPException(status_code=403, detail="Cloudflare Access 검증 실패.")
     token = authorization[7:] if authorization.lower().startswith("bearer ") else ""
     p = tokens.verify_bearer(settings, token)
     if not p:

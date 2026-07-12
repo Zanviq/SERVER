@@ -121,6 +121,10 @@ class Settings:
             ).split(",") if p.strip()
         ]
         self.aidoc_max_bytes: int = int(os.getenv("AIDOC_MAX_BYTES", str(1024 * 1024)))
+        # Cloudflare Access(선택): 둘 다 설정되면 /mcp·/mcp/api/* 에 Access JWT 검증을 추가.
+        # 미설정(기본)이면 Bearer 토큰만 사용(기존 동작 유지).
+        self.aidoc_access_team_domain: str = os.getenv("AIDOC_ACCESS_TEAM_DOMAIN", "").strip()
+        self.aidoc_access_aud: str = os.getenv("AIDOC_ACCESS_AUD", "").strip()
 
     # ── 저장소 경로 헬퍼 ──
     @property

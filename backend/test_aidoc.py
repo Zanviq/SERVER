@@ -391,6 +391,103 @@ def test_mcp_tools_call_roundtrip():
     assert miss["result"]["isError"] is True
 
 
+def _make_access_credentials(team: str, aud: str, *, exp_delta=300, iss=None):
+    """테스트용 RSA 자체서명 인증서 + 서명된 Access JWT를 만든다.
+
+    반환: (jwt_str, {kid: cert_pem}). 실제 Cloudflare 없이 검증 경로를 시험.
+    """
+    import datetime as dt
+    import time
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    from google.auth import crypt, jwt as gjwt
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    priv_pem = key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    )
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test-access")])
+    cert = (
+        x509.CertificateBuilder().subject_name(name).issuer_name(name)
+        .public_key(key.public_key()).serial_number(x509.random_serial_number())
+        .not_valid_before(dt.datetime.utcnow() - dt.timedelta(days=1))
+        .not_valid_after(dt.datetime.utcnow() + dt.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode("utf-8")
+    kid = "kid-test-1"
+    signer = crypt.RSASigner.from_string(priv_pem, key_id=kid)
+    now = int(time.time())
+    payload = {"aud": aud, "iss": iss or f"https://{team}", "exp": now + exp_delta, "iat": now, "email": "m@x"}
+    token = gjwt.encode(signer, payload)
+    return (token.decode("utf-8") if isinstance(token, bytes) else token), {kid: cert_pem}
+
+
+def test_cf_access_verify():
+    import os
+    from backend.config import Settings
+    from backend.aidoc import cf_access
+    team, aud = "testteam.cloudflareaccess.com", "aud-tag-123"
+    os.environ["AIDOC_ACCESS_TEAM_DOMAIN"] = team
+    os.environ["AIDOC_ACCESS_AUD"] = aud
+    try:
+        s = Settings()
+        assert cf_access.enabled(s)
+        good, certs = _make_access_credentials(team, aud)
+        assert cf_access.verify(s, good, certs=certs) is not None  # 정상
+        assert cf_access.verify(s, "", certs=certs) is None        # 빈 토큰
+        # 잘못된 aud (다른 aud로 서명)
+        bad_aud, c2 = _make_access_credentials(team, "other-aud")
+        assert cf_access.verify(s, bad_aud, certs=c2) is None
+        # 잘못된 iss
+        bad_iss, c3 = _make_access_credentials(team, aud, iss="https://evil.example")
+        assert cf_access.verify(s, bad_iss, certs=c3) is None
+        # 만료
+        expired, c4 = _make_access_credentials(team, aud, exp_delta=-10)
+        assert cf_access.verify(s, expired, certs=c4) is None
+        # 인증서 불일치(다른 키로 서명) → 서명 검증 실패
+        other_tok, _ = _make_access_credentials(team, aud)
+        assert cf_access.verify(s, other_tok, certs=certs) is None
+    finally:
+        os.environ.pop("AIDOC_ACCESS_TEAM_DOMAIN", None)
+        os.environ.pop("AIDOC_ACCESS_AUD", None)
+
+
+def test_cf_access_router_enforced():
+    import os
+    from fastapi.testclient import TestClient
+    from backend.config import get_settings
+    from backend.aidoc import cf_access
+    from backend.main import app
+    raw = _mcp_setup()
+    team, aud = "testteam.cloudflareaccess.com", "aud-tag-123"
+    os.environ["AIDOC_ACCESS_TEAM_DOMAIN"] = team
+    os.environ["AIDOC_ACCESS_AUD"] = aud
+    get_settings.cache_clear()  # 라우터의 Depends(get_settings)가 Access 설정을 보게
+    cf_access.reset_cache()
+    try:
+        c = TestClient(app)
+        h = {"Authorization": f"Bearer {raw}"}
+        # Access 헤더 없음 → 403 (Bearer가 유효해도 Access 미통과)
+        assert c.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"}, headers=h).status_code == 403
+        assert c.get("/mcp/api/documents", headers=h).status_code == 403
+        # 유효한 Access JWT 주입(인증서 캐시 사전 주입) → Access 통과 후 정상 처리
+        good, certs = _make_access_credentials(team, aud)
+        import time as _t
+        cf_access._cache[team] = (_t.time(), certs)
+        h2 = {**h, "Cf-Access-Jwt-Assertion": good}
+        assert c.get("/mcp/api/documents", headers=h2).status_code == 200
+        pong = c.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "ping"}, headers=h2)
+        assert pong.status_code == 200 and pong.json()["result"] == {}
+    finally:
+        os.environ.pop("AIDOC_ACCESS_TEAM_DOMAIN", None)
+        os.environ.pop("AIDOC_ACCESS_AUD", None)
+        cf_access.reset_cache()
+        get_settings.cache_clear()
+
+
 if __name__ == "__main__":
     test_settings_aidoc()
     test_ids()
@@ -410,4 +507,6 @@ if __name__ == "__main__":
     test_token_project_isolation()
     test_mcp_handshake_and_tools()
     test_mcp_tools_call_roundtrip()
+    test_cf_access_verify()
+    test_cf_access_router_enforced()
     print("ALL AIDOC TESTS PASSED")
