@@ -117,6 +117,14 @@ def test_tokens():
     assert tokens.verify_bearer(s, "wrong") is None
 
 
+def test_schemas():
+    from backend.aidoc.schemas import CreateDoc, UpdateDoc
+    c = CreateDoc(title="T", content="x", project="nodi")
+    assert c.status == "draft" and c.tags == []
+    u = UpdateDoc(expected_version=3, change_summary="s", content="y")
+    assert u.expected_version == 3
+
+
 if __name__ == "__main__":
     test_settings_aidoc()
     test_ids()
@@ -126,4 +134,5 @@ if __name__ == "__main__":
     test_store_atomic_and_history()
     test_audit()
     test_tokens()
+    test_schemas()
     print("ALL AIDOC TESTS PASSED")
