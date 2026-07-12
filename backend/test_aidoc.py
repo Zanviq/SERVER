@@ -307,6 +307,86 @@ def test_token_project_isolation():
     assert a.get("/mcp/api/projects", headers=h).json() == ["nodi"]
 
 
+def _mcp_setup():
+    import hashlib, json, os
+    from backend.config import Settings
+    from backend.aidoc import db, paths, tokens
+    s = Settings(); db.init_db(s); paths.ensure_layout(s)
+    raw = "mcp-tok"
+    os.makedirs(os.path.dirname(s.aidoc_tokens_file), exist_ok=True)
+    json.dump([{"name": "claude", "token_sha256": hashlib.sha256(raw.encode()).hexdigest(),
+                "actor": "claude-code",
+                "scopes": ["documents:read", "documents:create", "documents:update",
+                           "documents:append", "documents:move", "documents:trash"],
+                "allowed_projects": ["nodi"]}], open(s.aidoc_tokens_file, "w"))
+    tokens.reload_cache()
+    return raw
+
+
+def test_mcp_handshake_and_tools():
+    import json
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    raw = _mcp_setup()
+    c = TestClient(app)
+    h = {"Authorization": f"Bearer {raw}"}
+    # 토큰 없음 → 401
+    assert c.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"}).status_code == 401
+    # initialize
+    r = c.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                             "params": {"protocolVersion": "2025-06-18", "capabilities": {}}}, headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["result"]["serverInfo"]["name"] == "aidoc"
+    assert body["result"]["protocolVersion"] == "2025-06-18"
+    assert "tools" in body["result"]["capabilities"]
+    # notifications/initialized → 202, 본문 없음
+    n = c.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"}, headers=h)
+    assert n.status_code == 202
+    # tools/list → 11개 도구
+    tl = c.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, headers=h).json()
+    names = {t["name"] for t in tl["result"]["tools"]}
+    assert "create_document" in names and "search_documents" in names
+    assert len(tl["result"]["tools"]) == 11
+    # 알 수 없는 메서드 → -32601
+    err = c.post("/mcp", json={"jsonrpc": "2.0", "id": 3, "method": "no/such"}, headers=h).json()
+    assert err["error"]["code"] == -32601
+
+
+def test_mcp_tools_call_roundtrip():
+    import json
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    raw = _mcp_setup()
+    c = TestClient(app)
+    h = {"Authorization": f"Bearer {raw}"}
+    # create
+    cr = c.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                              "params": {"name": "create_document",
+                                         "arguments": {"title": "MCP문서", "content": "본문",
+                                                       "project": "nodi", "tags": ["x"]}}}, headers=h).json()
+    assert cr["result"]["isError"] is False
+    doc = json.loads(cr["result"]["content"][0]["text"])
+    did = doc["id"]
+    assert doc["version"] == 1 and doc["project"] == "nodi"
+    # get
+    g = c.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                             "params": {"name": "get_document", "arguments": {"document_id": did}}},
+               headers=h).json()
+    assert json.loads(g["result"]["content"][0]["text"])["content"] == "본문"
+    # 권한 밖 프로젝트 생성 → isError 텍스트에 FORBIDDEN
+    bad = c.post("/mcp", json={"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                               "params": {"name": "create_document",
+                                          "arguments": {"title": "T", "project": "orchestra-room"}}},
+                 headers=h).json()
+    assert bad["result"]["isError"] is True
+    assert "FORBIDDEN" in bad["result"]["content"][0]["text"]
+    # 필수 인자 누락 → isError
+    miss = c.post("/mcp", json={"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                                "params": {"name": "get_document", "arguments": {}}}, headers=h).json()
+    assert miss["result"]["isError"] is True
+
+
 if __name__ == "__main__":
     test_settings_aidoc()
     test_ids()
@@ -324,4 +404,6 @@ if __name__ == "__main__":
     test_path_traversal_defense()
     test_routers_web_and_token()
     test_token_project_isolation()
+    test_mcp_handshake_and_tools()
+    test_mcp_tools_call_roundtrip()
     print("ALL AIDOC TESTS PASSED")

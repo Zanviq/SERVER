@@ -20,6 +20,7 @@ from .routers import (
     auth,
     calendar,
     files,
+    mcp,
     notes,
     settings as settings_router,
     sync,
@@ -89,6 +90,9 @@ app.include_router(aidoc_web.router, dependencies=_PROTECTED)  # 세션 보호
 
 # AI(Bearer 토큰) 문서 라우터 — 자체 토큰 검증(세션 의존성 없음)
 app.include_router(aidoc_ai.router)
+
+# MCP 서버(Streamable-HTTP, JSON-RPC) — Bearer 자체 검증
+app.include_router(mcp.router)
 
 
 @app.get("/api/health", tags=["meta"])
