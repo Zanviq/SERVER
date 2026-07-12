@@ -31,7 +31,16 @@ def test_ids():
     assert unique_filename("inbox", "note", {"note.md"}) == "note-2.md"
 
 
+def test_errors():
+    from backend.aidoc.errors import VersionConflict, NotFound
+    e = VersionConflict(4, 5)
+    assert e.status == 409 and e.code == "DOCUMENT_VERSION_CONFLICT"
+    assert e.extra == {"expected_version": 4, "current_version": 5}
+    assert NotFound("x").status == 404
+
+
 if __name__ == "__main__":
     test_settings_aidoc()
     test_ids()
+    test_errors()
     print("ALL AIDOC TESTS PASSED")
