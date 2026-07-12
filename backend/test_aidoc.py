@@ -265,6 +265,48 @@ def test_routers_web_and_token():
     assert a.get("/mcp/api/documents").status_code == 401
 
 
+def test_token_project_isolation():
+    """교차 프로젝트 IDOR 방지: nodi 토큰이 orchestra-room 문서에 접근 못 함."""
+    import hashlib, json, os
+    from fastapi.testclient import TestClient
+    from backend.config import Settings
+    from backend.aidoc import db, paths, tokens
+    from backend.main import app
+    s = Settings(); db.init_db(s); paths.ensure_layout(s)
+    raw = "tok-nodi-only"
+    os.makedirs(os.path.dirname(s.aidoc_tokens_file), exist_ok=True)
+    json.dump([{"name": "codex-nodi", "token_sha256": hashlib.sha256(raw.encode()).hexdigest(),
+                "actor": "codex", "scopes": ["documents:read", "documents:create", "documents:update"],
+                "allowed_projects": ["nodi"]}], open(s.aidoc_tokens_file, "w"))
+    tokens.reload_cache()
+
+    # 웹(admin 세션)으로 orchestra-room + inbox 문서 생성
+    c = TestClient(app)
+    c.post("/api/auth/login", json={"username": "tester", "password": "pw"})
+    oid = c.post("/api/aidoc/documents", json={"title": "비밀", "content": "secret",
+                                               "project": "orchestra-room"}).json()["id"]
+    iid = c.post("/api/aidoc/documents", json={"title": "인박스", "content": "draft"}).json()["id"]
+
+    h = {"Authorization": f"Bearer {raw}"}
+    a = TestClient(app)
+    # 직접 조회/수정/삭제/이력 → 403 (타 프로젝트)
+    assert a.get(f"/mcp/api/documents/{oid}", headers=h).status_code == 403
+    assert a.put(f"/mcp/api/documents/{oid}", json={"expected_version": 1, "content": "x"},
+                 headers=h).status_code == 403
+    assert a.get(f"/mcp/api/documents/{oid}/history", headers=h).status_code == 403
+    # inbox(project 미지정) 문서도 스코프 토큰은 접근 불가 → 403
+    assert a.get(f"/mcp/api/documents/{iid}", headers=h).status_code == 403
+    # 목록/검색에 타 프로젝트·inbox 문서가 노출되지 않음
+    lst = a.get("/mcp/api/documents", headers=h).json()
+    assert all(d["project"] == "nodi" for d in lst)
+    hits = a.get("/mcp/api/documents/search?q=secret", headers=h).json()
+    assert all(d["project"] == "nodi" for d in hits)
+    # 명시적으로 타 프로젝트 목록 요청 → 403
+    assert a.get("/mcp/api/documents?project=orchestra-room", headers=h).status_code == 403
+    # projects 목록도 허용된 것만
+    assert a.get("/mcp/api/projects", headers=h).json() == ["nodi"]
+
+
 if __name__ == "__main__":
     test_settings_aidoc()
     test_ids()
@@ -281,4 +323,5 @@ if __name__ == "__main__":
     test_service_list_search()
     test_path_traversal_defense()
     test_routers_web_and_token()
+    test_token_project_isolation()
     print("ALL AIDOC TESTS PASSED")

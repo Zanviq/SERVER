@@ -100,6 +100,15 @@ def get(settings: Settings, doc_id: str) -> dict:
     return meta
 
 
+def get_project(settings: Settings, doc_id: str) -> str | None:
+    """문서의 실제 project 반환(권한 검사용). 없으면 NotFound."""
+    conn = db.connect(settings)
+    try:
+        return _get_row(conn, doc_id)["project"]
+    finally:
+        conn.close()
+
+
 def _apply_new_content(settings, actor, doc_id, new_title, new_content, change_summary) -> dict:
     if len(new_content.encode("utf-8")) > settings.aidoc_max_bytes:
         raise BadRequest("본문이 너무 큽니다.")
