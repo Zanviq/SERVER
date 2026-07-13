@@ -55,6 +55,14 @@ def reindex(user: SessionUser = Depends(require_session), settings: Settings = D
     return _mapped(lambda: embeddings.reindex(settings))
 
 
+@router.get("/graph")
+def graph(project: str = Query(None), threshold: float = Query(None), max_edges: int = Query(None),
+          user: SessionUser = Depends(require_session), settings: Settings = Depends(get_settings)):
+    from ..aidoc import graph as aidoc_graph
+    return _mapped(lambda: aidoc_graph.build_graph(
+        settings, project=project or None, threshold=threshold, max_edges=max_edges))
+
+
 @router.get("/documents/{doc_id}")
 def get_doc(doc_id: str, user: SessionUser = Depends(require_session),
             settings: Settings = Depends(get_settings)):

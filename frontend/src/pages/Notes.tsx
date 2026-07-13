@@ -56,6 +56,7 @@ export function Notes() {
   const [scope, setScope] = useState<Scope>((prefs?.default_scope as Scope) || "me");
   const [base, setBase] = useState<NoteBase>("notes"); // notes: 노트폴더 / files: 파일 저장소(hdd)
   const [aiDocMode, setAiDocMode] = useState(false); // AI 문서(aidoc) 소스 선택 시
+  const [aidocOpenId, setAidocOpenId] = useState<string | undefined>(); // 그래프에서 진입한 문서 id
   const [folders, setFolders] = useState<string[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -328,6 +329,14 @@ export function Notes() {
     const path = params.get("path");
     const edit = params.get("edit");
     const file = params.get("file");
+    const aidoc = params.get("aidoc");
+    if (aidoc) {
+      setAiDocMode(true);
+      setAidocOpenId(aidoc);
+      params.delete("aidoc");
+      setParams(params, { replace: true });
+      return;
+    }
     if (path) {
       openExactPath(path);
       params.delete("path");
@@ -430,7 +439,7 @@ export function Notes() {
   if (aiDocMode) {
     return (
       <Shell title="노트" actions={crumbs}>
-        <AidocWorkspace />
+        <AidocWorkspace openDocId={aidocOpenId} />
       </Shell>
     );
   }

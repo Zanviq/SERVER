@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import os
 import threading
+import time
 
 from ..config import Settings
 from .errors import NotFound, StorageError
@@ -29,7 +30,16 @@ def _atomic_write(target, content: str) -> None:
             f.write(content)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, target)
+        # os.replace는 POSIX에선 원자적이지만 Windows에선 대상 파일이 동시 읽기로 열려 있으면
+        # PermissionError(WinError 5)가 날 수 있어 짧게 재시도(리눅스에선 사실상 미발생).
+        for attempt in range(6):
+            try:
+                os.replace(tmp, target)
+                break
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.02)
     except OSError as e:
         try:
             tmp.unlink(missing_ok=True)

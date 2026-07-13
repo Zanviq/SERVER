@@ -23,7 +23,7 @@ function fmt(iso: string): string {
 
 /** AI 문서(aidoc) 작업 공간 — 노트 페이지에서 문서 API 경유로 열람·편집.
  *  버전 표시, 낙관적 잠금(409) 충돌 처리, 이력/복원, 휴지통, 감사 로그. */
-export function AidocWorkspace() {
+export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
   const [docs, setDocs] = useState<AidocMeta[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
   const [projectFilter, setProjectFilter] = useState<string>(""); // "" 전체
@@ -79,6 +79,11 @@ export function AidocWorkspace() {
       toast.error(e instanceof Error ? e.message : "문서 열기 실패");
     }
   }, []);
+
+  // 그래프 등에서 특정 문서로 진입(?aidoc=<id>)
+  useEffect(() => {
+    if (openDocId) open(openDocId);
+  }, [openDocId, open]);
 
   const save = useCallback(async () => {
     if (!current) return;

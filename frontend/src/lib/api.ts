@@ -196,6 +196,16 @@ export const api = {
   aidocHistory: (id: string) => req<AidocVersion[]>(`/api/aidoc/documents/${id}/history`),
   aidocProjects: () => req<string[]>("/api/aidoc/projects"),
   aidocAudit: () => req<AidocAuditLog[]>("/api/aidoc/audit-logs"),
+  aidocSemantic: (query: string, project?: string, limit = 10) => {
+    const p: Record<string, string> = { q: query, limit: String(limit) };
+    if (project) p.project = project;
+    return req<AidocSearchHit[]>(`/api/aidoc/documents/semantic-search?${q(p)}`);
+  },
+  aidocGraph: (project?: string) => {
+    const p: Record<string, string> = {};
+    if (project) p.project = project;
+    return req<AidocGraph>(`/api/aidoc/graph?${q(p)}`);
+  },
 };
 
 export interface AiEvent {
@@ -363,4 +373,21 @@ export interface AidocConflict {
   message: string;
   expected_version: number;
   current_version: number;
+}
+export interface AidocGraphNode {
+  id: string;
+  title: string;
+  project: string | null;
+  tags: string[];
+  version: number;
+}
+export interface AidocGraphLink {
+  source: string;
+  target: string;
+  weight: number;
+  kind: "similar" | "link";
+}
+export interface AidocGraph {
+  nodes: AidocGraphNode[];
+  links: AidocGraphLink[];
 }

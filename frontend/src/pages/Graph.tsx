@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ForceGraph2D from "react-force-graph-2d";
-import { Users, User, Share2, FolderTree, Link2, ChevronRight, Home } from "lucide-react";
+import { Users, User, Bot, Share2, FolderTree, Link2, ChevronRight, Home } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
-import { api, NotesGraph, Scope } from "../lib/api";
+import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { useTheme } from "../store/theme";
+
+type Source = "common" | "me" | "aidoc";
 
 function tok(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -20,24 +22,25 @@ type Mode = "links" | "folders";
 export function Graph() {
   const navigate = useNavigate();
   const themeMode = useTheme((t) => t.mode); // 테마 변경 시 색상 재계산 트리거
-  const [scope, setScope] = useState<Scope>("me");
+  const [source, setSource] = useState<Source>("me");
   const [mode, setMode] = useState<Mode>("links");
   const [folder, setFolder] = useState(""); // 현재 폴더(상대경로)
-  const [data, setData] = useState<NotesGraph>({ nodes: [], links: [] });
+  const [data, setData] = useState<{ nodes: any[]; links: any[] }>({ nodes: [], links: [] });
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 600, h: 600 });
+  const isAidoc = source === "aidoc";
 
   useEffect(() => {
-    api
-      .noteGraph(scope, folder, mode)
-      .then(setData)
-      .catch((e) => toast.error(e instanceof Error ? e.message : "그래프 로드 실패"));
-  }, [scope, folder, mode]);
+    const p = isAidoc
+      ? api.aidocGraph()
+      : api.noteGraph(source as "common" | "me", folder, mode);
+    p.then(setData).catch((e) => toast.error(e instanceof Error ? e.message : "그래프 로드 실패"));
+  }, [source, folder, mode, isAidoc]);
 
-  // 스코프 변경 시 루트로 복귀
+  // 소스 변경 시 루트로 복귀
   useEffect(() => {
     setFolder("");
-  }, [scope]);
+  }, [source]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -70,22 +73,28 @@ export function Graph() {
   const crumbPath = (i: number) => crumbs.slice(0, i + 1).join("/");
 
   const onNodeClick = (n: any) => {
-    if (n.type === "folder") {
+    if (isAidoc) {
+      navigate(`/notes?aidoc=${encodeURIComponent(n.id)}`); // AI 문서 편집기로
+    } else if (n.type === "folder") {
       setFolder(n.path); // 폴더로 진입(드릴다운)
     } else {
       navigate(`/notes?open=${encodeURIComponent(n.title)}`);
     }
   };
 
-  const scopeToggle = (
+  const sourceToggle = (
     <div className="inline-flex rounded-md border border-line bg-subtle p-0.5">
-      <button onClick={() => setScope("common")}
-        className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-[13px] font-medium ${scope === "common" ? "bg-surface text-accent shadow-sm" : "text-fg-muted hover:text-fg"}`}>
+      <button onClick={() => setSource("common")}
+        className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-[13px] font-medium ${source === "common" ? "bg-surface text-accent shadow-sm" : "text-fg-muted hover:text-fg"}`}>
         <Users size={14} /> 공통
       </button>
-      <button onClick={() => setScope("me")}
-        className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-[13px] font-medium ${scope === "me" ? "bg-surface text-accent shadow-sm" : "text-fg-muted hover:text-fg"}`}>
+      <button onClick={() => setSource("me")}
+        className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-[13px] font-medium ${source === "me" ? "bg-surface text-accent shadow-sm" : "text-fg-muted hover:text-fg"}`}>
         <User size={14} /> 내 노트
+      </button>
+      <button onClick={() => setSource("aidoc")}
+        className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-[13px] font-medium ${source === "aidoc" ? "bg-surface text-accent shadow-sm" : "text-fg-muted hover:text-fg"}`}>
+        <Bot size={14} /> AI 문서
       </button>
     </div>
   );
@@ -106,10 +115,10 @@ export function Graph() {
   return (
     <Shell
       title="그래프"
-      actions={<div className="flex items-center gap-2">{modeToggle}{scopeToggle}</div>}
+      actions={<div className="flex items-center gap-2">{!isAidoc && modeToggle}{sourceToggle}</div>}
     >
-      {/* 브레드크럼 (폴더 진입 시) */}
-      <div className="mb-3 flex items-center gap-1 text-[13px]">
+      {/* 브레드크럼 (노트 폴더 진입 시) — AI 문서는 미사용 */}
+      <div className={`mb-3 flex items-center gap-1 text-[13px] ${isAidoc ? "hidden" : ""}`}>
         <button onClick={() => setFolder("")}
           className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 ${folder ? "text-fg-muted hover:text-accent" : "font-semibold text-accent"}`}>
           <Home size={13} /> 루트
@@ -133,7 +142,9 @@ export function Graph() {
           <div className="flex h-full flex-col items-center justify-center gap-2 text-fg-muted">
             <Share2 size={30} className="text-accent" />
             <span className="text-[13px]">
-              {mode === "folders" ? "하위 폴더가 없습니다" : "노트와 [[링크]]를 만들면 그래프가 나타납니다"}
+              {isAidoc
+                ? "AI 문서를 만들면 임베딩 유사도로 연결된 그래프가 나타납니다"
+                : mode === "folders" ? "하위 폴더가 없습니다" : "노트와 [[링크]]를 만들면 그래프가 나타납니다"}
             </span>
           </div>
         ) : (
@@ -144,8 +155,8 @@ export function Graph() {
             backgroundColor="rgba(0,0,0,0)"
             nodeRelSize={5}
             onNodeClick={onNodeClick}
-            linkColor={() => colors.link}
-            linkWidth={1}
+            linkColor={(l: any) => (l.kind === "link" ? colors.strokeNote : colors.link)}
+            linkWidth={(l: any) => (l.kind === "similar" ? Math.max(0.6, (l.weight ?? 0.7) * 1.6) : 1)}
             nodeVal={(n: any) => (n.type === "folder" ? 4 + Math.min(6, n.count ?? 0) : 1.6)}
             nodeCanvasObjectMode={() => "replace"}
             nodeCanvasObject={(node: any, ctx, scale) => {

@@ -226,6 +226,31 @@ def test_semantic_search_ranking():
     assert isinstance(service.semantic_search(s, "gpu", limit=5), list)
 
 
+def test_aidoc_graph():
+    """그래프: 노드=문서, 엣지=임베딩 유사도 + [[제목]] 링크."""
+    from backend.config import Settings
+    from backend.aidoc import db, paths, service, embeddings, graph
+    from backend.aidoc.schemas import CreateDoc
+    s = Settings(); db.init_db(s); paths.ensure_layout(s)
+    a = service.Actor("t")
+    vocab = ("alpha", "beta", "gamma")
+    orig = embeddings.embed_text
+    embeddings.embed_text = lambda st, t: [float((t or "").lower().count(w)) for w in vocab]
+    try:
+        g1 = service.create(s, a, CreateDoc(title="GraphAlpha", content="alpha alpha alpha", project="nodi"))
+        service.create(s, a, CreateDoc(title="GraphAlpha2", content="alpha alpha", project="nodi"))
+        # 본문에 [[GraphAlpha]] 링크
+        service.create(s, a, CreateDoc(title="GraphLinker", content="beta [[GraphAlpha]] 참조", project="nodi"))
+        gr = graph.build_graph(s, project="nodi", threshold=0.5, max_edges=4)
+        node_ids = {n["id"] for n in gr["nodes"]}
+        assert g1["id"] in node_ids and len(gr["nodes"]) >= 3
+        kinds = {l["kind"] for l in gr["links"]}
+        assert "similar" in kinds  # 알파 문서끼리 유사도 엣지
+        assert any(l["kind"] == "link" and l["target"] == g1["id"] for l in gr["links"])  # [[링크]] 엣지
+    finally:
+        embeddings.embed_text = orig
+
+
 def test_service_move_trash_restore():
     from backend.config import Settings
     from backend.aidoc import db, paths, service
@@ -340,6 +365,11 @@ def test_routers_web_and_token():
     # 웹 검색이 특수문자 입력에도 500이 아니라 200(빈/결과 리스트)
     r = c.get("/api/aidoc/documents/search", params={"q": 'a:b "c AND'})
     assert r.status_code == 200 and isinstance(r.json(), list)
+    # Phase A/B 엔드포인트 배선 확인
+    assert c.get("/api/aidoc/documents/semantic-search", params={"q": "hi"}).status_code == 200
+    assert c.post("/api/aidoc/reindex").status_code == 200
+    gr = c.get("/api/aidoc/graph")
+    assert gr.status_code == 200 and "nodes" in gr.json() and "links" in gr.json()
 
     # 토큰(AI) 경로 — 헤더 인증
     h = {"Authorization": f"Bearer {raw}"}
@@ -600,6 +630,7 @@ if __name__ == "__main__":
     test_search_special_chars_safe()
     test_embeddings_math()
     test_semantic_search_ranking()
+    test_aidoc_graph()
     test_append_concurrent_no_loss()
     test_service_move_trash_restore()
     test_service_list_search()
