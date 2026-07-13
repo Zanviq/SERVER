@@ -227,6 +227,32 @@ def test_semantic_search_ranking():
     assert isinstance(service.semantic_search(s, "gpu", limit=5), list)
 
 
+def test_reindex_scoped():
+    """reindex: 누락분 임베딩 + 프로젝트 스코프 필터."""
+    from backend.config import Settings
+    from backend.aidoc import db, paths, service, embeddings
+    from backend.aidoc.schemas import CreateDoc
+    s = Settings(); db.init_db(s); paths.ensure_layout(s)
+    a = service.Actor("t")
+    # 임베딩 없이 문서 생성(가짜 임베더 미주입 상태 → 키 없어 embed None → 임베딩 저장 안 됨)
+    d_nodi = service.create(s, a, CreateDoc(title="R-nodi", content="reindex nodi", project="nodi"))
+    d_orc = service.create(s, a, CreateDoc(title="R-orc", content="reindex orc", project="orchestra-room"))
+    # 이제 가짜 임베더 주입 후 nodi만 재색인
+    orig = embeddings.embed_text
+    embeddings.embed_text = lambda st, t, task_type=None: [1.0, 0.0, 0.0]
+    try:
+        res = embeddings.reindex(s, projects=["nodi"])
+        assert res["indexed"] >= 1
+        # nodi 문서만 임베딩 됨(load_vectors에 nodi 포함, orchestra 미포함)
+        nodi_ids = {doc for doc, _ in embeddings.load_vectors(s, project="nodi")}
+        orc_ids = {doc for doc, _ in embeddings.load_vectors(s, project="orchestra-room")}
+        assert d_nodi["id"] in nodi_ids and d_orc["id"] not in orc_ids
+        # 빈 스코프 → 아무것도 안 함
+        assert embeddings.reindex(s, projects=[]) == {"indexed": 0, "skipped": 0, "failed": 0}
+    finally:
+        embeddings.embed_text = orig
+
+
 def test_aidoc_folders():
     """프로젝트 하위 폴더 생성 + 폴더 지정 생성 + 폴더로 이동 + 폴더 목록."""
     from backend.config import Settings
@@ -503,8 +529,8 @@ def test_mcp_handshake_and_tools():
     tl = c.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, headers=h).json()
     names = {t["name"] for t in tl["result"]["tools"]}
     assert "create_document" in names and "search_documents" in names
-    assert "semantic_search" in names
-    assert len(tl["result"]["tools"]) == 12
+    assert "semantic_search" in names and "reindex" in names
+    assert len(tl["result"]["tools"]) == 13
     # 알 수 없는 메서드 → -32601
     err = c.post("/mcp", json={"jsonrpc": "2.0", "id": 3, "method": "no/such"}, headers=h).json()
     assert err["error"]["code"] == -32601
@@ -663,6 +689,7 @@ if __name__ == "__main__":
     test_search_special_chars_safe()
     test_embeddings_math()
     test_semantic_search_ranking()
+    test_reindex_scoped()
     test_aidoc_folders()
     test_aidoc_graph()
     test_append_concurrent_no_loss()

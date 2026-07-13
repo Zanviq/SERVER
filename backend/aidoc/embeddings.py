@@ -126,15 +126,22 @@ def load_vectors(settings: Settings, *, project=None, include_trashed=False) -> 
     return [(r["doc_id"], unpack(r["vector"])) for r in rows]
 
 
-def reindex(settings: Settings) -> dict:
-    """임베딩 누락/본문 변경(content_hash 불일치) 문서를 일괄 임베딩."""
+def reindex(settings: Settings, projects: list[str] | None = None) -> dict:
+    """임베딩 누락/본문 변경(content_hash 불일치) 문서를 일괄 임베딩.
+
+    projects 지정 시 그 프로젝트들만(토큰 권한 격리). None이면 전체(세션/‘*’ 토큰).
+    """
+    if projects is not None and not projects:
+        return {"indexed": 0, "skipped": 0, "failed": 0}
     conn = db.connect(settings)
     try:
-        rows = conn.execute(
-            "SELECT d.id, d.title, d.storage_path, d.content_hash, e.content_hash AS emb_hash "
-            "FROM documents d LEFT JOIN document_embeddings e ON e.doc_id=d.id "
-            "WHERE d.trashed=0"
-        ).fetchall()
+        sql = ("SELECT d.id, d.title, d.storage_path, d.content_hash, e.content_hash AS emb_hash "
+               "FROM documents d LEFT JOIN document_embeddings e ON e.doc_id=d.id WHERE d.trashed=0")
+        vals: list = []
+        if projects is not None:
+            sql += f" AND d.project IN ({','.join('?' * len(projects))})"
+            vals = list(projects)
+        rows = conn.execute(sql, vals).fetchall()
     finally:
         conn.close()
     indexed = skipped = failed = 0

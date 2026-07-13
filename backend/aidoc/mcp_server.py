@@ -72,6 +72,10 @@ TOOLS = [
            "project": {"type": "string", "description": "범위 프로젝트(선택). 미지정=전체"},
            "limit": {"type": "integer", "description": "최대 결과 수(기본 10)"}},
           ["query"]),
+    _tool("reindex",
+          "임베딩이 없거나 본문이 바뀐 문서를 일괄 재색인(임베딩 갱신). "
+          "옛 문서를 의미검색·그래프에 포함시킬 때 사용. 권한 내 프로젝트만 처리.",
+          {}),
 ]
 
 _TOOL_NAMES = {t["name"] for t in TOOLS}
@@ -177,6 +181,12 @@ def call_tool(settings, p: Principal, name: str, args: dict):
         return authz.filter_allowed(
             p, service.semantic_search(settings, _require(args, "query"), project=project, limit=limit)
         )
+
+    if name == "reindex":
+        from . import embeddings
+        authz.need_scope(p, "documents:update")
+        scope = None if "*" in p.allowed_projects else list(p.allowed_projects)
+        return embeddings.reindex(settings, projects=scope)
 
     raise BadRequest(f"알 수 없는 도구: {name}")
 

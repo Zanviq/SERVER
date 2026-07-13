@@ -166,3 +166,15 @@ def projects(p: Principal = Depends(require_principal), settings: Settings = Dep
         authz.need_scope(p, "documents:read")
         return authz.allowed_projects(p, service.list_projects(settings))
     return _mapped(op)
+
+
+@router.post("/reindex")
+def reindex(p: Principal = Depends(require_principal), settings: Settings = Depends(get_settings)):
+    """누락/변경 문서 임베딩 재색인. '*' 토큰은 전체, 스코프 토큰은 허용 프로젝트만."""
+    from ..aidoc import embeddings
+
+    def op():
+        authz.need_scope(p, "documents:update")
+        scope = None if "*" in p.allowed_projects else list(p.allowed_projects)
+        return embeddings.reindex(settings, projects=scope)
+    return _mapped(op)
