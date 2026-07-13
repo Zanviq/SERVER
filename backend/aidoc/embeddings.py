@@ -99,15 +99,6 @@ def index_document(settings: Settings, doc_id: str, title: str, content: str,
         return False
 
 
-def delete_embedding(settings: Settings, doc_id: str) -> None:
-    conn = db.connect(settings)
-    try:
-        conn.execute("DELETE FROM document_embeddings WHERE doc_id=?", (doc_id,))
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def load_vectors(settings: Settings, *, project=None, include_trashed=False) -> list[tuple[str, list[float]]]:
     """(doc_id, 정규화벡터) 목록. documents와 JOIN해 프로젝트/휴지통 필터."""
     where = ["e.dim > 0"]

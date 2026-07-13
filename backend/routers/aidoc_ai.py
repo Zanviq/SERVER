@@ -6,15 +6,13 @@
 """
 from __future__ import annotations
 
-import sqlite3
-
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from ..config import Settings, get_settings
 from ..aidoc import authz, cf_access, service, tokens
-from ..aidoc.errors import AidocError
 from ..aidoc.schemas import AppendDoc, CreateDoc, MoveDoc, RestoreDoc, UpdateDoc
 from ..aidoc.tokens import Principal
+from ._aidoc_util import mapped as _mapped
 
 router = APIRouter(prefix="/mcp/api", tags=["aidoc-ai"])
 
@@ -32,16 +30,6 @@ def require_principal(
     if not p:
         raise HTTPException(status_code=401, detail="유효한 토큰이 필요합니다.")
     return p
-
-
-def _mapped(fn):
-    try:
-        return fn()
-    except AidocError as e:
-        raise HTTPException(status_code=e.status, detail={"error": e.code, "message": e.message, **e.extra})
-    except sqlite3.OperationalError:
-        raise HTTPException(status_code=503,
-                            detail={"error": "STORAGE_BUSY", "message": "저장소가 잠시 바쁩니다. 다시 시도하세요."})
 
 
 @router.get("/documents")

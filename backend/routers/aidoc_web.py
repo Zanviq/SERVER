@@ -1,27 +1,15 @@
 """웹(세션) 문서 라우터 — /api/aidoc/*. 로그인 사용자는 편집자."""
 from __future__ import annotations
 
-import sqlite3
-
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..aidoc import service
-from ..aidoc.errors import AidocError
 from ..aidoc.schemas import AppendDoc, CreateDoc, CreateFolder, MoveDoc, RestoreDoc, UpdateDoc
+from ._aidoc_util import mapped as _mapped
 
 router = APIRouter(prefix="/api/aidoc", tags=["aidoc-web"])
-
-
-def _mapped(fn):
-    try:
-        return fn()
-    except AidocError as e:
-        raise HTTPException(status_code=e.status, detail={"error": e.code, "message": e.message, **e.extra})
-    except sqlite3.OperationalError:
-        raise HTTPException(status_code=503,
-                            detail={"error": "STORAGE_BUSY", "message": "저장소가 잠시 바쁩니다. 다시 시도하세요."})
 
 
 def _actor(user: SessionUser) -> service.Actor:
