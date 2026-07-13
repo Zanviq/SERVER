@@ -8,6 +8,7 @@ os.environ["DOCUMENT_ROOT"] = os.path.join(os.environ["STORAGE_ROOT"], "AI_docum
 os.environ["AIDOC_DB_PATH"] = os.path.join(os.environ["STORAGE_ROOT"], "aidoc", "documents.db")
 os.environ["AIDOC_TOKENS_FILE"] = os.path.join(os.environ["STORAGE_ROOT"], "aidoc", "tokens.json")
 os.environ["AIDOC_PROJECTS"] = "orchestra-room,nodi"
+os.environ["GEMINI_API_KEY"] = ""  # 테스트는 실제 임베딩 호출 안 함(가짜 임베더로만 검증)
 
 from backend.config import Settings  # noqa: E402
 
