@@ -63,6 +63,13 @@ TOOLS = [
     _tool("get_document_history", "문서의 버전 이력을 조회한다.",
           {"document_id": _STR}, ["document_id"]),
     _tool("list_projects", "접근 가능한 등록 프로젝트 목록.", {}),
+    _tool("semantic_search",
+          "의미(임베딩) 기반 검색. 질의와 뜻이 가까운 문서를 찾는다(관련 문서 탐색). "
+          "project 지정 시 그 프로젝트로 범위 한정, 미지정 시 권한 내 전체.",
+          {"query": _STR,
+           "project": {"type": "string", "description": "범위 프로젝트(선택). 미지정=전체"},
+           "limit": {"type": "integer", "description": "최대 결과 수(기본 10)"}},
+          ["query"]),
 ]
 
 _TOOL_NAMES = {t["name"] for t in TOOLS}
@@ -157,6 +164,16 @@ def call_tool(settings, p: Principal, name: str, args: dict):
     if name == "list_projects":
         authz.need_scope(p, "documents:read")
         return authz.allowed_projects(p, service.list_projects(settings))
+
+    if name == "semantic_search":
+        authz.need_scope(p, "documents:read")
+        project = args.get("project")
+        if project:
+            authz.need_resource(p, project)
+        limit = int(args.get("limit") or 10)
+        return authz.filter_allowed(
+            p, service.semantic_search(settings, _require(args, "query"), project=project, limit=limit)
+        )
 
     raise BadRequest(f"알 수 없는 도구: {name}")
 

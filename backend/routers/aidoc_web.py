@@ -42,6 +42,19 @@ def search(q: str = Query(...), user: SessionUser = Depends(require_session),
     return _mapped(lambda: service.search(settings, q))
 
 
+@router.get("/documents/semantic-search")
+def semantic_search(q: str = Query(...), project: str = Query(None), limit: int = Query(10),
+                    user: SessionUser = Depends(require_session),
+                    settings: Settings = Depends(get_settings)):
+    return _mapped(lambda: service.semantic_search(settings, q, project=project or None, limit=limit))
+
+
+@router.post("/reindex")
+def reindex(user: SessionUser = Depends(require_session), settings: Settings = Depends(get_settings)):
+    from ..aidoc import embeddings
+    return _mapped(lambda: embeddings.reindex(settings))
+
+
 @router.get("/documents/{doc_id}")
 def get_doc(doc_id: str, user: SessionUser = Depends(require_session),
             settings: Settings = Depends(get_settings)):

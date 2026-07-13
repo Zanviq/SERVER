@@ -192,6 +192,40 @@ def test_append_concurrent_no_loss():
     assert service.get(s, did)["version"] == n + 1  # v1(생성) + n회 append
 
 
+def test_embeddings_math():
+    from backend.aidoc import embeddings as E
+    assert E.unpack(E.pack([3.0, 4.0])) == [3.0, 4.0]  # float32 왕복(정확값)
+    n = E.normalize([3.0, 4.0])
+    assert abs((n[0] ** 2 + n[1] ** 2) - 1.0) < 1e-6  # 단위길이
+    assert abs(E.dot([1.0, 0.0], [1.0, 0.0]) - 1.0) < 1e-9
+    assert abs(E.dot(E.normalize([1.0, 1.0]), E.normalize([1.0, 1.0])) - 1.0) < 1e-6
+    assert E.normalize([0.0, 0.0]) == [0.0, 0.0]  # 영벡터 안전
+
+
+def test_semantic_search_ranking():
+    """가짜 임베더 주입 → 의미가 가까운 문서가 상위. 임베딩 불가 시 FTS 폴백."""
+    from backend.config import Settings
+    from backend.aidoc import db, paths, service, embeddings
+    from backend.aidoc.schemas import CreateDoc
+    s = Settings(); db.init_db(s); paths.ensure_layout(s)
+    a = service.Actor("t")
+    vocab = ("gpu", "cuda", "database", "sql")
+    orig = embeddings.embed_text
+    embeddings.embed_text = lambda st, t: [float((t or "").lower().count(w)) for w in vocab]
+    try:
+        d1 = service.create(s, a, CreateDoc(title="GPU 커널", content="gpu cuda kernel tuning", project="nodi"))
+        d2 = service.create(s, a, CreateDoc(title="DB 인덱스", content="database sql index", project="nodi"))
+        res = service.semantic_search(s, "cuda gpu programming", limit=5)
+        ids = [r["id"] for r in res]
+        assert d1["id"] in ids and d2["id"] in ids
+        assert ids[0] == d1["id"]  # GPU 문서가 1위
+        assert "score" in res[0] and res[0]["score"] >= res[-1]["score"]
+    finally:
+        embeddings.embed_text = orig
+    # 임베딩 불가(키 없음) → FTS 폴백(예외 없이 리스트)
+    assert isinstance(service.semantic_search(s, "gpu", limit=5), list)
+
+
 def test_service_move_trash_restore():
     from backend.config import Settings
     from backend.aidoc import db, paths, service
@@ -406,7 +440,8 @@ def test_mcp_handshake_and_tools():
     tl = c.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, headers=h).json()
     names = {t["name"] for t in tl["result"]["tools"]}
     assert "create_document" in names and "search_documents" in names
-    assert len(tl["result"]["tools"]) == 11
+    assert "semantic_search" in names
+    assert len(tl["result"]["tools"]) == 12
     # 알 수 없는 메서드 → -32601
     err = c.post("/mcp", json={"jsonrpc": "2.0", "id": 3, "method": "no/such"}, headers=h).json()
     assert err["error"]["code"] == -32601
@@ -563,6 +598,8 @@ if __name__ == "__main__":
     test_service_create_get()
     test_service_update_conflict_and_append()
     test_search_special_chars_safe()
+    test_embeddings_math()
+    test_semantic_search_ranking()
     test_append_concurrent_no_loss()
     test_service_move_trash_restore()
     test_service_list_search()

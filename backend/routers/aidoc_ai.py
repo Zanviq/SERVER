@@ -65,6 +65,19 @@ def search(q: str = Query(...), p: Principal = Depends(require_principal),
     return _mapped(op)
 
 
+@router.get("/documents/semantic-search")
+def semantic_search(q: str = Query(...), project: str = Query(None), limit: int = Query(10),
+                    p: Principal = Depends(require_principal),
+                    settings: Settings = Depends(get_settings)):
+    def op():
+        authz.need_scope(p, "documents:read")
+        if project:
+            authz.need_resource(p, project)
+        return authz.filter_allowed(
+            p, service.semantic_search(settings, q, project=project or None, limit=limit))
+    return _mapped(op)
+
+
 @router.get("/documents/{doc_id}")
 def get_doc(doc_id: str, p: Principal = Depends(require_principal),
             settings: Settings = Depends(get_settings)):

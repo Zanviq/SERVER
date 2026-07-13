@@ -125,6 +125,12 @@ class Settings:
         # 미설정(기본)이면 Bearer 토큰만 사용(기존 동작 유지).
         self.aidoc_access_team_domain: str = os.getenv("AIDOC_ACCESS_TEAM_DOMAIN", "").strip()
         self.aidoc_access_aud: str = os.getenv("AIDOC_ACCESS_AUD", "").strip()
+        # 임베딩(의미 검색·그래프). GEMINI_API_KEY 재사용. 키 없으면 자동 비활성(FTS 유지).
+        self.aidoc_embed_model: str = os.getenv("AIDOC_EMBED_MODEL", "gemini-embedding-001")
+        self.aidoc_embed_dim: int = int(os.getenv("AIDOC_EMBED_DIM", "768"))
+        self.aidoc_embed_max_chars: int = int(os.getenv("AIDOC_EMBED_MAX_CHARS", "8000"))
+        self.aidoc_graph_edge_threshold: float = float(os.getenv("AIDOC_GRAPH_EDGE_THRESHOLD", "0.75"))
+        self.aidoc_graph_max_edges: int = int(os.getenv("AIDOC_GRAPH_MAX_EDGES", "4"))
 
     # ── 저장소 경로 헬퍼 ──
     @property

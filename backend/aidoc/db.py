@@ -52,6 +52,15 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   timestamp TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_audit_ts ON audit_logs(timestamp);
+
+CREATE TABLE IF NOT EXISTS document_embeddings (
+  doc_id TEXT PRIMARY KEY,
+  model TEXT NOT NULL,
+  dim INTEGER NOT NULL,
+  vector BLOB NOT NULL,
+  content_hash TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 """
 
 _FTS = """

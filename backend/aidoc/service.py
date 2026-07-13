@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from ..config import Settings
-from . import audit, db, ids, paths, store
+from . import audit, db, embeddings, ids, paths, store
 from .errors import BadRequest, NotFound, VersionConflict
 from .schemas import AppendDoc, CreateDoc, UpdateDoc
 
@@ -85,6 +85,7 @@ def create(settings: Settings, actor: Actor, data: CreateDoc) -> dict:
         row = _get_row(conn, doc_id)
     finally:
         conn.close()
+    embeddings.index_document(settings, doc_id, data.title, data.content, store.sha256(data.content))
     meta = _row_to_meta(row)
     meta["content"] = data.content
     return meta
@@ -169,6 +170,7 @@ def _apply_new_content(settings, actor, doc_id, new_title, mutate, change_summar
             out = _get_row(conn, doc_id)
             meta = _row_to_meta(out)
             meta["content"] = new_content
+            embeddings.index_document(settings, doc_id, title, new_content, store.sha256(new_content))
             return meta
         finally:
             conn.close()
@@ -376,6 +378,44 @@ def search(settings, q: str, limit: int = 50) -> list[dict]:
             except sqlite3.OperationalError:
                 pass  # 예기치 못한 FTS 파싱 실패 → LIKE 폴백(방어적)
         return _like_search(conn, q, limit)
+    finally:
+        conn.close()
+
+
+def semantic_search(settings, query: str, *, project=None, limit: int = 10) -> list[dict]:
+    """임베딩 코사인 유사도 기반 의미 검색. 임베딩 불가 시 FTS 검색으로 폴백.
+
+    project 지정 시 그 프로젝트로 범위 한정. 결과는 DocMeta + score + snippet.
+    (권한/격리 필터는 호출 라우터가 authz.filter_allowed로 적용.)
+    """
+    if not (query and query.strip()):
+        return []
+    qvec = embeddings.embed_text(settings, query)
+    if not qvec:
+        return search(settings, query, limit)  # 임베딩 불가 → FTS 폴백
+    qn = embeddings.normalize(qvec)
+    scored = sorted(
+        ((embeddings.dot(qn, vec), doc_id)
+         for doc_id, vec in embeddings.load_vectors(settings, project=project)),
+        reverse=True,
+    )[: max(1, int(limit))]
+    if not scored:
+        return []
+    conn = db.connect(settings)
+    try:
+        out = []
+        for score, doc_id in scored:
+            row = conn.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone()
+            if not row:
+                continue
+            m = _row_to_meta(row)
+            m["score"] = round(float(score), 4)
+            try:
+                m["snippet"] = store.read(settings, row["storage_path"]).strip().replace("\n", " ")[:160]
+            except Exception:  # noqa: BLE001
+                m["snippet"] = ""
+            out.append(m)
+        return out
     finally:
         conn.close()
 
