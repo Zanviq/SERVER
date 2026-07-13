@@ -227,6 +227,26 @@ def test_semantic_search_ranking():
     assert isinstance(service.semantic_search(s, "gpu", limit=5), list)
 
 
+def test_export_folder():
+    """폴더 내용물(안의 파일들)을 상대경로+본문으로 반환. 폴더 밖/하위 처리."""
+    from backend.config import Settings
+    from backend.aidoc import db, paths, service
+    from backend.aidoc.schemas import CreateDoc
+    s = Settings(); db.init_db(s); paths.ensure_layout(s)
+    a = service.Actor("t")
+    service.create(s, a, CreateDoc(title="ExpA", content="a", project="nodi", folder="export/sub"))
+    service.create(s, a, CreateDoc(title="ExpB", content="b", project="nodi", folder="export"))
+    service.create(s, a, CreateDoc(title="ExpOut", content="c", project="nodi"))  # 폴더 밖
+    items = service.export_folder(s, project="nodi", folder="export", recursive=True)
+    rels = {it["relative_path"] for it in items}
+    assert "sub/expa.md" in rels and "expb.md" in rels  # 상대경로 유지(폴더 미포장)
+    assert all("expout" not in r for r in rels)          # 폴더 밖 제외
+    assert {it["relative_path"]: it["content"] for it in items}["expb.md"] == "b"
+    # 비재귀 → 직속 파일만
+    direct = {it["relative_path"] for it in service.export_folder(s, project="nodi", folder="export", recursive=False)}
+    assert direct == {"expb.md"}
+
+
 def test_reindex_scoped():
     """reindex: 누락분 임베딩 + 프로젝트 스코프 필터."""
     from backend.config import Settings
@@ -529,8 +549,8 @@ def test_mcp_handshake_and_tools():
     tl = c.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, headers=h).json()
     names = {t["name"] for t in tl["result"]["tools"]}
     assert "create_document" in names and "search_documents" in names
-    assert "semantic_search" in names and "reindex" in names
-    assert len(tl["result"]["tools"]) == 13
+    assert "semantic_search" in names and "reindex" in names and "export_folder" in names
+    assert len(tl["result"]["tools"]) == 14
     # 알 수 없는 메서드 → -32601
     err = c.post("/mcp", json={"jsonrpc": "2.0", "id": 3, "method": "no/such"}, headers=h).json()
     assert err["error"]["code"] == -32601
@@ -689,6 +709,7 @@ if __name__ == "__main__":
     test_search_special_chars_safe()
     test_embeddings_math()
     test_semantic_search_ranking()
+    test_export_folder()
     test_reindex_scoped()
     test_aidoc_folders()
     test_aidoc_graph()

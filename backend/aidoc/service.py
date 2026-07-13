@@ -454,5 +454,42 @@ def list_folders(settings, project=None) -> list[str]:
     return sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_dir())
 
 
+def export_folder(settings, project=None, folder=None, recursive=True) -> list[dict]:
+    """웹 프로젝트 폴더 '안의' 문서들을 상대경로+본문으로 반환(로컬 내려받기용).
+
+    폴더 자체를 감싸지 않고 내용물만 준다. 각 항목의 relative_path는 지정 폴더 기준
+    상대경로 → 호출자가 <로컬대상폴더>/<relative_path>로 재현해 저장한다.
+    """
+    base = paths.new_doc_dir(settings, project)  # 프로젝트 검증(미등록 → BadRequest)
+    prefix = base
+    if folder:
+        sub = folder.replace("\\", "/").strip("/")
+        if ".." in sub.split("/"):
+            raise BadRequest("잘못된 폴더 경로입니다.")
+        prefix = f"{base}/{sub}"
+    conn = db.connect(settings)
+    try:
+        rows = conn.execute(
+            "SELECT id,title,storage_path,project FROM documents WHERE trashed=0"
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        sp = r["storage_path"]
+        if not sp.startswith(prefix + "/"):
+            continue
+        rel = sp[len(prefix) + 1:]
+        if not recursive and "/" in rel:
+            continue  # 하위 폴더 제외(직속 파일만)
+        try:
+            content = store.read(settings, sp)
+        except Exception:  # noqa: BLE001 - 파일 없음 등
+            continue
+        out.append({"relative_path": rel, "title": r["title"], "content": content,
+                    "id": r["id"], "project": r["project"]})
+    return out
+
+
 def list_projects(settings) -> list[str]:
     return list(settings.aidoc_projects)

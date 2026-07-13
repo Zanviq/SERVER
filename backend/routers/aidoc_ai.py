@@ -66,6 +66,18 @@ def semantic_search(q: str = Query(...), project: str = Query(None), limit: int 
     return _mapped(op)
 
 
+@router.get("/documents/export")
+def export_folder(project: str = Query(None), folder: str = Query(None),
+                  recursive: bool = Query(True), p: Principal = Depends(require_principal),
+                  settings: Settings = Depends(get_settings)):
+    def op():
+        authz.need_scope(p, "documents:read")
+        authz.need_resource(p, project or None)
+        return service.export_folder(settings, project=project or None, folder=folder or None,
+                                     recursive=recursive)
+    return _mapped(op)
+
+
 @router.get("/documents/{doc_id}")
 def get_doc(doc_id: str, p: Principal = Depends(require_principal),
             settings: Settings = Depends(get_settings)):

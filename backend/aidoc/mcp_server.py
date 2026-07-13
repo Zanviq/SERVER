@@ -76,6 +76,15 @@ TOOLS = [
           "임베딩이 없거나 본문이 바뀐 문서를 일괄 재색인(임베딩 갱신). "
           "옛 문서를 의미검색·그래프에 포함시킬 때 사용. 권한 내 프로젝트만 처리.",
           {}),
+    _tool("export_folder",
+          "웹 프로젝트 폴더의 '내용물'을 로컬로 내려받기 위해, 그 폴더 안 문서들의 "
+          "relative_path + content를 반환한다. 폴더가 통째로 오는 게 아니라 안의 파일들이 온다. "
+          "→ 먼저 로컬 대상 폴더를 정한 뒤, 각 항목을 <로컬폴더>/<relative_path> 로 저장하라. "
+          "project 미지정=inbox, folder 미지정=프로젝트 전체.",
+          {"project": {"type": "string", "description": "프로젝트명(선택). 미지정=inbox"},
+           "folder": {"type": "string", "description": "프로젝트 하위 폴더(선택). 미지정=전체"},
+           "recursive": {"type": "boolean", "description": "하위 폴더까지 포함(기본 true)"}},
+          []),
 ]
 
 _TOOL_NAMES = {t["name"] for t in TOOLS}
@@ -187,6 +196,13 @@ def call_tool(settings, p: Principal, name: str, args: dict):
         authz.need_scope(p, "documents:update")
         scope = None if "*" in p.allowed_projects else list(p.allowed_projects)
         return embeddings.reindex(settings, projects=scope)
+
+    if name == "export_folder":
+        authz.need_scope(p, "documents:read")
+        project = args.get("project")
+        authz.need_resource(p, project)  # project 접근권(inbox=None은 '*'만)
+        return service.export_folder(settings, project=project, folder=args.get("folder"),
+                                     recursive=args.get("recursive", True))
 
     raise BadRequest(f"알 수 없는 도구: {name}")
 
