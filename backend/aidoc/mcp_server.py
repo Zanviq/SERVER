@@ -37,9 +37,11 @@ TOOLS = [
     _tool("get_document", "문서 상세(본문 포함)를 조회한다.",
           {"document_id": _STR}, ["document_id"]),
     _tool("create_document",
-          "새 문서를 만든다. project 미지정 시 inbox, 지정 시 등록된 projects/{project}에 저장.",
+          "새 문서를 만든다. project 미지정 시 inbox, 지정 시 등록된 projects/{project}에 저장. "
+          "folder 지정 시 그 하위 폴더에 저장(없으면 자동 생성).",
           {"title": _STR, "content": _STR,
            "project": {"type": "string", "description": "등록 프로젝트명(선택)"},
+           "folder": {"type": "string", "description": "프로젝트/인박스 하위 폴더 경로(선택)"},
            "category": _STR, "tags": {"type": "array", "items": {"type": "string"}},
            "status": _STR},
           ["title"]),
@@ -110,6 +112,7 @@ def call_tool(settings, p: Principal, name: str, args: dict):
             title=_require(args, "title"), content=args.get("content", ""),
             project=args.get("project"), category=args.get("category"),
             tags=args.get("tags", []), status=args.get("status", "draft"),
+            folder=args.get("folder"),
         )
         authz.need_create(p, body.project)
         return service.create(settings, _actor(p), body)

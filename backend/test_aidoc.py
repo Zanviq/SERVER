@@ -226,6 +226,35 @@ def test_semantic_search_ranking():
     assert isinstance(service.semantic_search(s, "gpu", limit=5), list)
 
 
+def test_aidoc_folders():
+    """프로젝트 하위 폴더 생성 + 폴더 지정 생성 + 폴더로 이동 + 폴더 목록."""
+    from backend.config import Settings
+    from backend.aidoc import db, paths, service
+    from backend.aidoc.schemas import CreateDoc
+    from backend.aidoc.errors import BadRequest
+    s = Settings(); db.init_db(s); paths.ensure_layout(s)
+    a = service.Actor("t")
+    # 폴더 생성
+    res = service.create_folder(s, "nodi", "설계/초안")
+    assert res["folder"] == "projects/nodi/설계/초안"
+    assert (s.document_root / "projects/nodi/설계/초안").is_dir()
+    # 폴더 지정 생성 → storage_path에 하위폴더 반영
+    d = service.create(s, a, CreateDoc(title="폴더문서", content="x", project="nodi", folder="설계/초안"))
+    assert d["storage_path"] == "projects/nodi/설계/초안/폴더문서.md"
+    # 경로 조작 폴더 차단
+    try:
+        service.create_folder(s, "nodi", "../../etc"); assert False
+    except BadRequest:
+        pass
+    # inbox 문서를 프로젝트 하위 폴더로 이동
+    d2 = service.create(s, a, CreateDoc(title="이동대상", content="y"))  # inbox
+    moved = service.move(s, a, d2["id"], target_folder="projects/nodi/설계")
+    assert moved["storage_path"].startswith("projects/nodi/설계/") and moved["project"] == "nodi"
+    # 폴더 목록에 생성한 폴더 포함
+    folders = service.list_folders(s, project="nodi")
+    assert "설계" in folders and "설계/초안" in folders
+
+
 def test_aidoc_graph():
     """그래프: 노드=문서, 엣지=임베딩 유사도 + [[제목]] 링크."""
     from backend.config import Settings
@@ -370,6 +399,9 @@ def test_routers_web_and_token():
     assert c.post("/api/aidoc/reindex").status_code == 200
     gr = c.get("/api/aidoc/graph")
     assert gr.status_code == 200 and "nodes" in gr.json() and "links" in gr.json()
+    # 폴더 생성/목록
+    assert c.post("/api/aidoc/folders", json={"project": "nodi", "path": "웹폴더"}).status_code == 200
+    assert "웹폴더" in c.get("/api/aidoc/folders", params={"project": "nodi"}).json()
 
     # 토큰(AI) 경로 — 헤더 인증
     h = {"Authorization": f"Bearer {raw}"}
@@ -630,6 +662,7 @@ if __name__ == "__main__":
     test_search_special_chars_safe()
     test_embeddings_math()
     test_semantic_search_ranking()
+    test_aidoc_folders()
     test_aidoc_graph()
     test_append_concurrent_no_loss()
     test_service_move_trash_restore()

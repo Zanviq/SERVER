@@ -11,7 +11,13 @@ class CreateDoc(BaseModel):
     category: str | None = None
     tags: list[str] = Field(default_factory=list)
     status: str = "draft"
+    folder: str | None = None  # 프로젝트/인박스 하위 폴더(선택). 없으면 자동 생성.
     duplicate_check_query: str | None = None
+
+
+class CreateFolder(BaseModel):
+    project: str | None = None  # None → inbox 하위
+    path: str  # 하위 폴더 경로(예: "설계/초안")
 
 
 class UpdateDoc(BaseModel):

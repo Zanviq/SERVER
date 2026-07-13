@@ -182,8 +182,15 @@ export const api = {
   aidocGet: (id: string) => req<AidocDetail>(`/api/aidoc/documents/${id}`),
   aidocSearch: (query: string) =>
     req<AidocSearchHit[]>(`/api/aidoc/documents/search?${q({ q: query })}`),
-  aidocCreate: (body: { title: string; content?: string; project?: string | null; tags?: string[] }) =>
+  aidocCreate: (body: { title: string; content?: string; project?: string | null; tags?: string[]; folder?: string | null }) =>
     req<AidocDetail>("/api/aidoc/documents", jsonInit("POST", body)),
+  aidocFolders: (project?: string) => {
+    const p: Record<string, string> = {};
+    if (project) p.project = project;
+    return req<string[]>(`/api/aidoc/folders?${q(p)}`);
+  },
+  aidocCreateFolder: (body: { project?: string | null; path: string }) =>
+    req<{ folder: string }>("/api/aidoc/folders", jsonInit("POST", body)),
   aidocUpdate: (
     id: string,
     body: { expected_version: number; content?: string; title?: string; change_summary?: string },

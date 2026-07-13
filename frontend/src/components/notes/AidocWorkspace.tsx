@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot, FilePlus, Save, Trash2, History, Loader2, Search, X, RotateCcw,
-  ScrollText, AlertTriangle, Sparkles, FolderOpen,
+  ScrollText, AlertTriangle, Sparkles, FolderOpen, Folder, FolderPlus,
 } from "lucide-react";
 import { MarkdownView } from "./MarkdownView";
 import { Modal } from "../ui/Modal";
@@ -31,6 +31,10 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<AidocSearchHit[] | null>(null);
   const searchTimer = useRef<number | null>(null);
+  const [folder, setFolder] = useState<string>(""); // 선택 하위폴더("" 전체)
+  const [folders, setFolders] = useState<string[]>([]);
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
 
   const [current, setCurrent] = useState<AidocDetail | null>(null);
   const [content, setContent] = useState("");
@@ -67,6 +71,28 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // 폴더: 특정 프로젝트/inbox 선택 시 하위 폴더 목록 로드
+  const folderEnabled = projectFilter !== "";
+  const activeProject = projectFilter === INBOX ? "" : projectFilter; // "" = inbox
+  const folderBase = projectFilter === INBOX ? "inbox/"
+    : projectFilter ? `projects/${projectFilter}/` : "";
+  const loadFolders = useCallback(() => {
+    if (projectFilter === "") { setFolders([]); return; }
+    api.aidocFolders(activeProject || undefined).then(setFolders).catch(() => setFolders([]));
+  }, [projectFilter, activeProject]);
+  useEffect(() => {
+    setFolder("");
+    loadFolders();
+  }, [loadFolders]);
+
+  const docFolder = (d: { storage_path?: string }): string => {
+    const sp = d.storage_path || "";
+    if (!folderBase || !sp.startsWith(folderBase)) return "";
+    const rest = sp.slice(folderBase.length);
+    const i = rest.lastIndexOf("/");
+    return i >= 0 ? rest.slice(0, i) : "";
+  };
 
   const open = useCallback(async (id: string) => {
     try {
@@ -164,8 +190,13 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
     if (!title) return;
     setNewOpen(false);
     setNewTitle("");
+    // 현재 필터 프로젝트와 새 문서 프로젝트가 같을 때만 선택 폴더에 생성
+    const useFolder = folder && newProject === (projectFilter === INBOX ? "" : projectFilter);
     try {
-      const d = await api.aidocCreate({ title, content: `# ${title}\n\n`, project: newProject || null });
+      const d = await api.aidocCreate({
+        title, content: `# ${title}\n\n`, project: newProject || null,
+        folder: useFolder ? folder : undefined,
+      });
       await reload();
       setCurrent(d);
       setContent(d.content);
@@ -174,6 +205,22 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
       toast.ok("문서 생성됨");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "생성 실패");
+    }
+  };
+
+  const createFolder = async () => {
+    const name = newFolderName.trim();
+    if (!name) return;
+    setNewFolderOpen(false);
+    setNewFolderName("");
+    const path = folder ? `${folder}/${name}` : name; // 현재 폴더 하위에 생성
+    try {
+      await api.aidocCreateFolder({ project: activeProject || null, path });
+      loadFolders();
+      setFolder(path);
+      toast.ok("폴더 생성됨");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "폴더 생성 실패");
     }
   };
 
@@ -256,7 +303,9 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
     }, 300);
   };
 
-  const listItems = hits !== null ? hits : docs;
+  const listItems = (hits !== null ? hits : docs).filter(
+    (d) => !folderEnabled || !folder || docFolder(d) === folder,
+  );
   const projName = (p: string | null) => p ?? "미분류";
   const aiEdited = useMemo(
     () => !!current?.updated_by && /codex|claude|gpt|ai|gemini/i.test(current.updated_by),
@@ -300,6 +349,28 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
             <Trash2 size={13} />
           </button>
         </div>
+
+        {/* 폴더 필터 + 새 폴더 (특정 프로젝트/inbox 선택 시) */}
+        {folderEnabled && !showTrash && (
+          <div className="flex items-center gap-1.5 border-b border-line px-2 py-1.5">
+            <Folder size={13} className="shrink-0 text-warning" />
+            <select
+              value={folder}
+              onChange={(e) => setFolder(e.target.value)}
+              className="h-7 flex-1 cursor-pointer appearance-none rounded-md border border-line bg-subtle px-2 text-[12px] outline-none hover:border-line-strong focus:border-accent"
+            >
+              <option value="">전체 (모든 폴더)</option>
+              {folders.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+            <button
+              onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}
+              title="새 폴더" aria-label="새 폴더"
+              className="shrink-0 rounded-md border border-line p-1.5 text-fg-muted hover:text-accent"
+            >
+              <FolderPlus size={13} />
+            </button>
+          </div>
+        )}
 
         <div className="border-b border-line p-2">
           <div className="relative">
@@ -446,9 +517,29 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
               {projects.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </label>
+          {folder && newProject === (projectFilter === INBOX ? "" : projectFilter) && (
+            <p className="text-[11.5px] text-fg-muted">폴더: <b className="text-fg2">{folder}</b> 에 생성됩니다</p>
+          )}
           <div className="flex justify-end gap-2">
             <button onClick={() => setNewOpen(false)} className="btn btn-ghost">취소</button>
             <button onClick={createDoc} className="btn btn-primary">만들기</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 새 폴더 */}
+      <Modal open={newFolderOpen} onClose={() => setNewFolderOpen(false)}
+             title={`새 폴더${folder ? ` · ${folder}` : ""}`} width="max-w-sm">
+        <div className="space-y-3">
+          <input autoFocus className="input" value={newFolderName} placeholder="폴더 이름"
+            onChange={(e) => setNewFolderName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") createFolder(); if (e.key === "Escape") setNewFolderOpen(false); }} />
+          <p className="text-[11.5px] text-fg-muted">
+            {(projectFilter === INBOX ? "미분류(inbox)" : projectFilter)} 하위{folder ? ` · ${folder}` : ""}에 만듭니다.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setNewFolderOpen(false)} className="btn btn-ghost">취소</button>
+            <button onClick={createFolder} className="btn btn-primary">만들기</button>
           </div>
         </div>
       </Modal>

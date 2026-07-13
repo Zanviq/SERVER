@@ -9,7 +9,7 @@ from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..aidoc import service
 from ..aidoc.errors import AidocError
-from ..aidoc.schemas import AppendDoc, CreateDoc, MoveDoc, RestoreDoc, UpdateDoc
+from ..aidoc.schemas import AppendDoc, CreateDoc, CreateFolder, MoveDoc, RestoreDoc, UpdateDoc
 
 router = APIRouter(prefix="/api/aidoc", tags=["aidoc-web"])
 
@@ -114,6 +114,18 @@ def history(doc_id: str, user: SessionUser = Depends(require_session),
 @router.get("/projects")
 def projects(user: SessionUser = Depends(require_session), settings: Settings = Depends(get_settings)):
     return service.list_projects(settings)
+
+
+@router.get("/folders")
+def list_folders(project: str = Query(None), user: SessionUser = Depends(require_session),
+                 settings: Settings = Depends(get_settings)):
+    return _mapped(lambda: service.list_folders(settings, project=project or None))
+
+
+@router.post("/folders")
+def create_folder(body: CreateFolder, user: SessionUser = Depends(require_session),
+                  settings: Settings = Depends(get_settings)):
+    return _mapped(lambda: service.create_folder(settings, body.project, body.path))
 
 
 @router.get("/audit-logs")

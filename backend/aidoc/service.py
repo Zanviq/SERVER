@@ -64,6 +64,12 @@ def create(settings: Settings, actor: Actor, data: CreateDoc) -> dict:
     if len(data.content.encode("utf-8")) > settings.aidoc_max_bytes:
         raise BadRequest("본문이 너무 큽니다.")
     dir_rel = paths.new_doc_dir(settings, data.project)
+    if data.folder:
+        sub = data.folder.replace("\\", "/").strip("/")
+        if not sub or ".." in sub.split("/"):
+            raise BadRequest("잘못된 폴더 경로입니다.")
+        dir_rel = f"{dir_rel}/{sub}"
+        paths.resolve_rel(settings, dir_rel).mkdir(parents=True, exist_ok=True)  # 폴더 자동 생성
     slug = ids.safe_slug(data.title)
     fname = ids.unique_filename(dir_rel, slug, paths.list_existing_names(settings, dir_rel))
     storage_path = f"{dir_rel}/{fname}"
@@ -226,9 +232,17 @@ def move(settings, actor: Actor, doc_id: str, target_project=None, target_folder
             if ".." in tf.split("/") or tf.startswith("/"):
                 raise BadRequest("허용되지 않은 폴더 경로입니다.")
             top = tf.split("/", 1)[0]
-            if top not in allowed:
+            if top == "projects":  # projects/{등록프로젝트}/하위폴더 로 이동
+                parts = tf.split("/")
+                if len(parts) < 2 or parts[1] not in settings.aidoc_projects:
+                    raise BadRequest("등록되지 않은 프로젝트 폴더입니다.")
+                project = parts[1]
+            elif top in allowed:
+                project = None
+            else:
                 raise BadRequest("허용되지 않은 폴더입니다.")
-            dir_rel = tf; project = None
+            paths.resolve_rel(settings, tf).mkdir(parents=True, exist_ok=True)  # 대상 폴더 자동 생성
+            dir_rel = tf
         else:
             dir_rel = paths.new_doc_dir(settings, target_project)
             project = target_project
@@ -418,6 +432,26 @@ def semantic_search(settings, query: str, *, project=None, limit: int = 10) -> l
         return out
     finally:
         conn.close()
+
+
+def create_folder(settings, project, path: str) -> dict:
+    """프로젝트(또는 inbox) 하위에 폴더 생성(mkdir). 반환 {folder: 상대경로}."""
+    base = paths.new_doc_dir(settings, project)  # 프로젝트 검증(미등록 → BadRequest)
+    sub = (path or "").replace("\\", "/").strip("/")
+    if not sub or ".." in sub.split("/"):
+        raise BadRequest("잘못된 폴더 경로입니다.")
+    rel = f"{base}/{sub}"
+    paths.resolve_rel(settings, rel).mkdir(parents=True, exist_ok=True)
+    return {"folder": rel}
+
+
+def list_folders(settings, project=None) -> list[str]:
+    """프로젝트(또는 inbox) 하위 폴더 목록(base 기준 상대 POSIX 경로)."""
+    base = paths.new_doc_dir(settings, project)
+    root = paths.resolve_rel(settings, base)
+    if not root.is_dir():
+        return []
+    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_dir())
 
 
 def list_projects(settings) -> list[str]:
