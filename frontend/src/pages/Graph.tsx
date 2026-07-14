@@ -250,16 +250,20 @@ export function Graph() {
               ctx.lineWidth = isProject && node.expanded ? 1.8 : 0.9; // 펼친 프로젝트는 테두리 강조
               ctx.strokeStyle = isBig ? colors.strokeFolder : colors.strokeNote;
               ctx.stroke();
-              // 라벨(노드 아래) — 프로젝트는 접기/펼치기 표시 + 문서 수
-              const chevron = isProject ? (node.expanded ? "▾ " : "▸ ") : "";
-              const cnt = node.count ? ` (${node.count})` : "";
-              const label = isBig ? `${chevron}${node.title}${cnt}` : node.title;
-              const fontSize = 11 / scale;
-              ctx.font = `${isBig ? "600 " : ""}${fontSize}px Pretendard, sans-serif`;
-              ctx.textAlign = "center";
-              ctx.textBaseline = "top";
-              ctx.fillStyle = isBig ? colors.label : colors.labelMuted;
-              ctx.fillText(label, node.x, node.y + r + 3 / scale);
+              // 라벨(노드 아래) — 너무 축소하면 숨김(컨테이너는 조금 더 오래 보이도록)
+              // scale=화면 확대율(작을수록 축소). 문서는 0.9, 컨테이너는 0.35 미만이면 라벨 생략.
+              const labelMinScale = isBig ? 0.35 : 0.9;
+              if (scale >= labelMinScale) {
+                const chevron = isProject ? (node.expanded ? "▾ " : "▸ ") : "";
+                const cnt = node.count ? ` (${node.count})` : "";
+                const label = isBig ? `${chevron}${node.title}${cnt}` : node.title;
+                const fontSize = 11 / scale;
+                ctx.font = `${isBig ? "600 " : ""}${fontSize}px Pretendard, sans-serif`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "top";
+                ctx.fillStyle = isBig ? colors.label : colors.labelMuted;
+                ctx.fillText(label, node.x, node.y + r + 3 / scale);
+              }
             }}
             cooldownTicks={80}
           />
