@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ForceGraph2D from "react-force-graph-2d";
-import { Users, User, Bot, Share2, FolderTree, Link2, ChevronRight, Home } from "lucide-react";
+import { Users, User, Bot, Share2, FolderTree, Link2, ChevronRight, Home, Loader2 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
@@ -26,15 +26,29 @@ export function Graph() {
   const [mode, setMode] = useState<Mode>("links");
   const [folder, setFolder] = useState(""); // 현재 폴더(상대경로)
   const [data, setData] = useState<{ nodes: any[]; links: any[] }>({ nodes: [], links: [] });
+  const [loading, setLoading] = useState(false); // 소스 전환 시 로딩 오버레이
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 600, h: 600 });
   const isAidoc = source === "aidoc";
 
   useEffect(() => {
+    let cancelled = false; // 빠른 연속 전환 시 이전 요청 결과 무시
+    setLoading(true);
     const p = isAidoc
       ? api.aidocGraph()
       : api.noteGraph(source as "common" | "me", folder, mode);
-    p.then(setData).catch((e) => toast.error(e instanceof Error ? e.message : "그래프 로드 실패"));
+    p.then((d) => {
+      if (!cancelled) setData(d);
+    })
+      .catch((e) => {
+        if (!cancelled) toast.error(e instanceof Error ? e.message : "그래프 로드 실패");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [source, folder, mode, isAidoc]);
 
   // 소스 변경 시 루트로 복귀
@@ -138,6 +152,15 @@ export function Graph() {
       </div>
 
       <div ref={wrapRef} className="card relative h-[calc(100vh-11rem)] overflow-hidden">
+        {/* 소스 전환 로딩 오버레이 — 이전 그래프가 남아 혼란을 주지 않도록 덮는다 */}
+        {loading && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-surface/70 text-fg-muted backdrop-blur-sm">
+            <Loader2 size={26} className="animate-spin text-accent" />
+            <span className="text-[13px]">
+              {isAidoc ? "AI 문서 그래프 불러오는 중…" : "그래프 불러오는 중…"}
+            </span>
+          </div>
+        )}
         {data.nodes.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-fg-muted">
             <Share2 size={30} className="text-accent" />
