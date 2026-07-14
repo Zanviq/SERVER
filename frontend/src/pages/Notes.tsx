@@ -7,6 +7,7 @@ import {
 import { Shell } from "../components/layout/Shell";
 import { MarkdownView } from "../components/notes/MarkdownView";
 import { AidocWorkspace } from "../components/notes/AidocWorkspace";
+import { ThreePane } from "../components/notes/ThreePane";
 import { Modal } from "../components/ui/Modal";
 import { api, NoteSummary, NoteDetail, NoteSearchHit, Scope, NoteBase } from "../lib/api";
 import { toast } from "../store/toast";
@@ -424,7 +425,7 @@ export function Notes() {
 
   return (
     <Shell title="노트" actions={crumbs}>
-      <div className="grid grid-cols-1 gap-4 lg:h-[calc(100vh-9rem)] lg:grid-cols-[240px_1fr_1fr]">
+      <ThreePane storageKey="notes.panes.v1">
         {/* 트리 */}
         <div className="card flex max-h-80 flex-col overflow-hidden lg:max-h-none">
           <div className="flex items-center justify-between border-b border-line px-3 py-2">
@@ -563,7 +564,7 @@ export function Notes() {
             </div>
           )}
         </div>
-      </div>
+      </ThreePane>
 
       {/* 새 노트 모달 */}
       <Modal open={newNoteOpen} onClose={() => setNewNoteOpen(false)} title={`새 노트${curFolder ? ` · ${curFolder}` : ""}`} width="max-w-sm">
