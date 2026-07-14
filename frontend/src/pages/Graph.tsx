@@ -26,21 +26,56 @@ export function Graph() {
   const [mode, setMode] = useState<Mode>("links");
   const [folder, setFolder] = useState(""); // 현재 폴더(상대경로)
   const [data, setData] = useState<{ nodes: any[]; links: any[] }>({ nodes: [], links: [] });
+  // AI 문서: 프로젝트를 컨테이너 노드로 두고 문서는 펼칠 때만 지연 로딩
+  const [aiProjects, setAiProjects] = useState<string[]>([]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [subgraphs, setSubgraphs] = useState<Record<string, { nodes: any[]; links: any[] }>>({});
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 600, h: 600 });
   const isAidoc = source === "aidoc";
 
+  // 노트 그래프 로드(AI 문서는 아래 프로젝트 지연 로딩을 사용)
   useEffect(() => {
-    const p = isAidoc
-      ? api.aidocGraph()
-      : api.noteGraph(source as "common" | "me", folder, mode);
-    p.then(setData).catch((e) => toast.error(e instanceof Error ? e.message : "그래프 로드 실패"));
+    if (isAidoc) return;
+    api
+      .noteGraph(source as "common" | "me", folder, mode)
+      .then(setData)
+      .catch((e) => toast.error(e instanceof Error ? e.message : "그래프 로드 실패"));
   }, [source, folder, mode, isAidoc]);
+
+  // AI 문서: 프로젝트 목록만 먼저 가볍게 로드 → 프로젝트 노드로 표시(문서는 클릭 시 펼침)
+  useEffect(() => {
+    if (!isAidoc) return;
+    setExpanded(new Set());
+    api
+      .aidocProjects()
+      .then(setAiProjects)
+      .catch((e) => toast.error(e instanceof Error ? e.message : "프로젝트 로드 실패"));
+  }, [isAidoc]);
 
   // 소스 변경 시 루트로 복귀
   useEffect(() => {
     setFolder("");
   }, [source]);
+
+  const PROJ_PREFIX = "__project__:";
+  const toggleProject = async (name: string) => {
+    const willExpand = !expanded.has(name);
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+    if (willExpand && !subgraphs[name]) {
+      try {
+        const g = await api.aidocGraph(name);
+        setSubgraphs((prev) => ({ ...prev, [name]: g }));
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "문서 로드 실패");
+      }
+    }
+  };
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -64,16 +99,45 @@ export function Graph() {
     [themeMode],
   );
 
-  const graphData = useMemo(
+  const notesGraphData = useMemo(
     () => ({ nodes: data.nodes.map((n) => ({ ...n })), links: data.links.map((l) => ({ ...l })) }),
     [data],
   );
+
+  // AI 문서 그래프: 프로젝트 노드 + (펼쳐진 프로젝트의) 문서 노드/멤버 엣지
+  const aidocGraphData = useMemo(() => {
+    const nodes: any[] = aiProjects.map((p) => ({
+      id: PROJ_PREFIX + p,
+      title: p,
+      name: p,
+      type: "project",
+      expanded: expanded.has(p),
+      count: subgraphs[p]?.nodes.length,
+    }));
+    const links: any[] = [];
+    expanded.forEach((p) => {
+      const g = subgraphs[p];
+      if (!g) return;
+      for (const n of g.nodes) {
+        nodes.push({ ...n, type: "doc" });
+        links.push({ source: PROJ_PREFIX + p, target: n.id, kind: "member" }); // 프로젝트↔문서 연결
+      }
+      for (const l of g.links) links.push({ ...l });
+    });
+    return { nodes, links };
+  }, [aiProjects, expanded, subgraphs]);
+
+  const graphData = isAidoc ? aidocGraphData : notesGraphData;
 
   const crumbs = folder ? folder.split("/") : [];
   const crumbPath = (i: number) => crumbs.slice(0, i + 1).join("/");
 
   const onNodeClick = (n: any) => {
     if (isAidoc) {
+      if (n.type === "project") {
+        toggleProject(n.name); // 프로젝트 노드 클릭 → 문서 펼침/접기
+        return;
+      }
       navigate(`/notes?aidoc=${encodeURIComponent(n.id)}`); // AI 문서 편집기로
     } else if (n.type === "folder") {
       setFolder(n.path); // 폴더로 진입(드릴다운)
@@ -137,13 +201,20 @@ export function Graph() {
         )}
       </div>
 
+      {/* AI 문서 안내 (프로젝트 노드 접기/펼치기) */}
+      {isAidoc && (
+        <div className="mb-3 flex items-center gap-1 text-[11.5px] text-fg-subtle">
+          프로젝트 노드를 클릭하면 문서가 펼쳐지고, 다시 클릭하면 접힙니다
+        </div>
+      )}
+
       <div ref={wrapRef} className="card relative h-[calc(100vh-11rem)] overflow-hidden">
-        {data.nodes.length === 0 ? (
+        {graphData.nodes.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-fg-muted">
             <Share2 size={30} className="text-accent" />
             <span className="text-[13px]">
               {isAidoc
-                ? "AI 문서를 만들면 임베딩 유사도로 연결된 그래프가 나타납니다"
+                ? "프로젝트를 만들면 프로젝트 노드가 나타납니다"
                 : mode === "folders" ? "하위 폴더가 없습니다" : "노트와 [[링크]]를 만들면 그래프가 나타납니다"}
             </span>
           </div>
@@ -157,12 +228,15 @@ export function Graph() {
             onNodeClick={onNodeClick}
             linkColor={(l: any) => (l.kind === "link" ? colors.strokeNote : colors.link)}
             linkWidth={(l: any) => (l.kind === "similar" ? Math.max(0.6, (l.weight ?? 0.7) * 1.6) : 1)}
-            nodeVal={(n: any) => (n.type === "folder" ? 4 + Math.min(6, n.count ?? 0) : 1.6)}
+            nodeVal={(n: any) =>
+              n.type === "folder" || n.type === "project" ? 4 + Math.min(6, n.count ?? 2) : 1.6
+            }
             nodeCanvasObjectMode={() => "replace"}
             nodeCanvasObject={(node: any, ctx, scale) => {
               // Nodi 스타일: 소프트 글로우 헤일로 + 코어 원(밝은 채움 + 진한 테두리) + 하단 라벨
-              const isFolder = node.type === "folder";
-              const r = isFolder ? 7 : 5;
+              const isProject = node.type === "project";
+              const isBig = node.type === "folder" || isProject; // 컨테이너 노드(폴더·프로젝트)
+              const r = isProject ? 8 : isBig ? 7 : 5;
               // 헤일로(글로우)
               ctx.beginPath();
               ctx.arc(node.x, node.y, r + 3, 0, 2 * Math.PI);
@@ -171,18 +245,20 @@ export function Graph() {
               // 코어
               ctx.beginPath();
               ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
-              ctx.fillStyle = isFolder ? colors.coreFolder : colors.coreNote;
+              ctx.fillStyle = isBig ? colors.coreFolder : colors.coreNote;
               ctx.fill();
-              ctx.lineWidth = 0.9;
-              ctx.strokeStyle = isFolder ? colors.strokeFolder : colors.strokeNote;
+              ctx.lineWidth = isProject && node.expanded ? 1.8 : 0.9; // 펼친 프로젝트는 테두리 강조
+              ctx.strokeStyle = isBig ? colors.strokeFolder : colors.strokeNote;
               ctx.stroke();
-              // 라벨(노드 아래)
-              const label = isFolder ? `${node.title}${node.count ? ` (${node.count})` : ""}` : node.title;
+              // 라벨(노드 아래) — 프로젝트는 접기/펼치기 표시 + 문서 수
+              const chevron = isProject ? (node.expanded ? "▾ " : "▸ ") : "";
+              const cnt = node.count ? ` (${node.count})` : "";
+              const label = isBig ? `${chevron}${node.title}${cnt}` : node.title;
               const fontSize = 11 / scale;
-              ctx.font = `${isFolder ? "600 " : ""}${fontSize}px Pretendard, sans-serif`;
+              ctx.font = `${isBig ? "600 " : ""}${fontSize}px Pretendard, sans-serif`;
               ctx.textAlign = "center";
               ctx.textBaseline = "top";
-              ctx.fillStyle = isFolder ? colors.label : colors.labelMuted;
+              ctx.fillStyle = isBig ? colors.label : colors.labelMuted;
               ctx.fillText(label, node.x, node.y + r + 3 / scale);
             }}
             cooldownTicks={80}
