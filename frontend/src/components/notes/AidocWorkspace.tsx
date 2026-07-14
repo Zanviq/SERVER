@@ -253,6 +253,14 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
     if (openDocId) open(openDocId);
   }, [openDocId, open]);
 
+  // 미리보기의 [[제목]] 클릭 → 같은 제목 문서로 이동(일반 노트와 동일 동작)
+  const openByTitle = useCallback((title: string) => {
+    const t = title.trim().toLowerCase();
+    const hit = docs.find((d) => d.title.trim().toLowerCase() === t);
+    if (hit) open(hit.id);
+    else toast.error(`"${title}" 문서를 찾을 수 없습니다`);
+  }, [docs, open]);
+
   const save = useCallback(async () => {
     if (!current) return;
     setSaving(true);
@@ -734,7 +742,7 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
         </div>
         <div ref={previewRef} onScroll={() => syncScroll(previewRef.current, taRef.current)}
           className="flex-1 overflow-auto p-4">
-          {current ? <MarkdownView content={content} onWikiClick={() => {}} />
+          {current ? <MarkdownView content={content} onWikiClick={openByTitle} />
             : <p className="text-[13px] text-fg-muted">선택된 문서 없음</p>}
         </div>
         {current && (
