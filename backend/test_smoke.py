@@ -123,6 +123,23 @@ def test_notes_wikilinks_and_graph():
     assert all("snippet" in h for h in hits)
 
 
+def test_notes_graph_cache():
+    """노트 그래프 캐시: 변경 없으면 동일 객체, 노트 추가 시 지문 변경으로 무효화."""
+    import tempfile
+    from pathlib import Path
+    from backend import notes_graph
+    d = Path(tempfile.mkdtemp(prefix="ngraph_"))
+    notes_graph.clear_cache()
+    (d / "A.md").write_text("see [[B]]", encoding="utf-8")
+    (d / "B.md").write_text("leaf", encoding="utf-8")
+    g1 = notes_graph.build_graph(d)
+    g2 = notes_graph.build_graph(d)
+    assert g1 is g2 and len(g1["nodes"]) == 2  # 캐시 히트(동일 객체)
+    (d / "C.md").write_text("new [[A]]", encoding="utf-8")
+    g3 = notes_graph.build_graph(d)
+    assert g3 is not g1 and len(g3["nodes"]) == 3  # 지문 변경 → 재계산
+
+
 def test_calendar_recurrence_and_reminders():
     _login()
     # 매일 반복 이벤트 (알림 30분 전)
@@ -462,6 +479,7 @@ if __name__ == "__main__":
     test_path_traversal_blocked()
     test_upload_illegal_filename_sanitized()
     test_notes_wikilinks_and_graph()
+    test_notes_graph_cache()
     test_notes_folders_and_tree()
     test_trash_restore_flow()
     test_sync_manifest_upload_download()

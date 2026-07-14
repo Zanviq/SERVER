@@ -6,9 +6,43 @@
 from __future__ import annotations
 
 import re
+import stat as _stat
 from pathlib import Path
 
 _WIKILINK = re.compile(r"\[\[([^\[\]]+?)\]\]")
+
+# (notes_dir, folder, mode) -> (fingerprint, result). 파일시스템 지문으로 자가 무효화.
+_CACHE: dict[tuple, tuple] = {}
+
+
+def clear_cache() -> None:
+    _CACHE.clear()
+
+
+def _tree_fingerprint(base: Path) -> tuple:
+    """base 하위를 stat만으로 1회 순회한 값싼 지문(.md수·디렉터리수·최대mtime·총크기).
+
+    본문을 읽지 않으므로 read_text 그래프 빌드보다 훨씬 싸다. 저장 시 mtime이
+    바뀌므로 지문이 바뀌어 캐시가 자연히 무효화된다.
+    """
+    if not base.exists():
+        return (0, 0, 0, 0)
+    md = dirs = 0
+    mx = total = 0
+    for p in base.rglob("*"):
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        if _stat.S_ISDIR(st.st_mode):
+            dirs += 1
+            continue
+        if p.name.endswith(".md"):
+            md += 1
+            total += st.st_size
+        if st.st_mtime_ns > mx:
+            mx = st.st_mtime_ns
+    return (md, dirs, mx, total)
 
 
 def parse_wikilinks(text: str) -> list[str]:
@@ -52,8 +86,16 @@ def build_graph(
         links: 그룹(폴더/노트) 간 위키링크 집계.
     """
     base = _resolve_base(notes_dir, folder)
+    cache_key = (str(notes_dir), folder or "", mode)
+    fp = _tree_fingerprint(base)
+    cached = _CACHE.get(cache_key)
+    if cached and cached[0] == fp:
+        return cached[1]  # 변경 없음 → 캐시 반환(전체 파일 읽기·파싱 스킵)
+
     if mode == "folders":
-        return _folder_graph(notes_dir, base)
+        result = _folder_graph(notes_dir, base)
+        _CACHE[cache_key] = (fp, result)
+        return result
 
     notes = sorted(p for p in base.rglob("*.md") if p.is_file())
     by_key: dict[str, str] = {}
@@ -85,7 +127,9 @@ def build_graph(
                 if key not in seen:
                     seen.add(key)
                     links.append({"source": src, "target": tgt})
-    return {"nodes": nodes, "links": links}
+    result = {"nodes": nodes, "links": links}
+    _CACHE[cache_key] = (fp, result)
+    return result
 
 
 def _folder_graph(notes_dir: Path, base: Path) -> dict:
