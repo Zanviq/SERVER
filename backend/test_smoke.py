@@ -123,6 +123,27 @@ def test_notes_wikilinks_and_graph():
     assert all("snippet" in h for h in hits)
 
 
+def test_notes_rename_and_move():
+    _login()
+    client.put("/api/notes/save?scope=me", json={"path": "RM원본", "content": "본문"})
+    client.post("/api/notes/folder?scope=me", json={"path": "이동폴더"})
+    # 이름 변경
+    r = client.post("/api/notes/rename?scope=me", json={"path": "RM원본", "new_name": "RM변경"})
+    assert r.status_code == 200, r.text
+    assert r.json()["title"] == "RM변경"
+    assert client.get("/api/notes/get?scope=me&path=RM변경").json()["content"] == "본문"
+    # 폴더로 이동
+    r = client.post("/api/notes/move?scope=me", json={"path": "RM변경", "target_folder": "이동폴더"})
+    assert r.status_code == 200, r.text
+    assert r.json()["path"] == "이동폴더/RM변경.md"
+    assert client.get("/api/notes/get?scope=me&path=이동폴더/RM변경").json()["content"] == "본문"
+    # 존재하지 않는 노트 이름변경 → 404
+    assert client.post("/api/notes/rename?scope=me", json={"path": "없음", "new_name": "x"}).status_code == 404
+    # 잘못된 이름(슬래시) → 400
+    assert client.post("/api/notes/rename?scope=me",
+                       json={"path": "이동폴더/RM변경", "new_name": "a/b"}).status_code == 400
+
+
 def test_notes_graph_cache():
     """노트 그래프 캐시: 변경 없으면 동일 객체, 노트 추가 시 지문 변경으로 무효화."""
     import tempfile
@@ -479,6 +500,7 @@ if __name__ == "__main__":
     test_path_traversal_blocked()
     test_upload_illegal_filename_sanitized()
     test_notes_wikilinks_and_graph()
+    test_notes_rename_and_move()
     test_notes_graph_cache()
     test_notes_folders_and_tree()
     test_trash_restore_flow()

@@ -35,6 +35,16 @@ class SaveNote(BaseModel):
     content: str
 
 
+class RenameNote(BaseModel):
+    path: str       # 현재 상대경로
+    new_name: str   # 새 파일명(확장자 제외 권장; 폴더는 유지)
+
+
+class MoveNote(BaseModel):
+    path: str            # 현재 상대경로
+    target_folder: str = ""  # 대상 폴더 상대경로("" = 루트)
+
+
 class GraphData(BaseModel):
     nodes: list[dict]
     links: list[dict]
@@ -237,6 +247,58 @@ def delete_note(
     # 즉시 삭제 대신 휴지통으로 이동
     move_to_trash(_trash_kind(base), scope, target, to_rel(root, target), user, settings)
     return {"ok": True}
+
+
+@router.post("/rename", response_model=NoteSummary)
+def rename_note(
+    req: RenameNote,
+    scope: str = Query("me"),
+    base: str = Query("notes"),
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """같은 폴더 안에서 파일명을 바꾼다(내용/폴더 유지). 파일 저장소라 MCP 무관."""
+    root = _note_root(base, scope, user, settings)
+    src = safe_join(root, _resolve_name(base, req.path))
+    if not src.exists():
+        raise HTTPException(status_code=404, detail="노트를 찾을 수 없습니다.")
+    new_name = (req.new_name or "").strip()
+    if not new_name or "/" in new_name or "\\" in new_name or ".." in new_name:
+        raise HTTPException(status_code=400, detail="잘못된 이름입니다.")
+    rel_dir = src.parent.relative_to(root).as_posix()
+    dst_rel = new_name if rel_dir in ("", ".") else f"{rel_dir}/{new_name}"
+    dst = safe_join(root, _resolve_name(base, dst_rel))
+    if dst.exists():
+        raise HTTPException(status_code=409, detail="같은 이름의 노트가 이미 있습니다.")
+    src.rename(dst)
+    return NoteSummary(path=to_rel(root, dst), title=dst.stem, modified=dst.stat().st_mtime)
+
+
+@router.post("/move", response_model=NoteSummary)
+def move_note(
+    req: MoveNote,
+    scope: str = Query("me"),
+    base: str = Query("notes"),
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """노트를 다른 폴더로 이동한다(파일명 유지). 파일 저장소라 MCP 무관."""
+    root = _note_root(base, scope, user, settings)
+    src = safe_join(root, _resolve_name(base, req.path))
+    if not src.exists():
+        raise HTTPException(status_code=404, detail="노트를 찾을 수 없습니다.")
+    folder = (req.target_folder or "").strip().strip("/")
+    if ".." in folder.split("/"):
+        raise HTTPException(status_code=400, detail="잘못된 폴더 경로입니다.")
+    dst_rel = f"{folder}/{src.name}" if folder else src.name
+    dst = safe_join(root, dst_rel)
+    if dst == src:
+        return NoteSummary(path=to_rel(root, src), title=src.stem, modified=src.stat().st_mtime)
+    if dst.exists():
+        raise HTTPException(status_code=409, detail="대상 폴더에 같은 이름의 노트가 있습니다.")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    src.rename(dst)
+    return NoteSummary(path=to_rel(root, dst), title=dst.stem, modified=dst.stat().st_mtime)
 
 
 @router.get("/search", response_model=list[SearchHit])
