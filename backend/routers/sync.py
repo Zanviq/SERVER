@@ -32,6 +32,20 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+# 파일 해시 캐시: abspath -> (size, mtime_ns, hash). size/mtime가 그대로면 재해시 생략.
+_HASH_CACHE: dict[str, tuple[int, int, str]] = {}
+
+
+def _sha256_cached(path: Path, st) -> str:
+    key = str(path)
+    c = _HASH_CACHE.get(key)
+    if c and c[0] == st.st_size and c[1] == st.st_mtime_ns:
+        return c[2]
+    digest = _sha256(path)
+    _HASH_CACHE[key] = (st.st_size, st.st_mtime_ns, digest)
+    return digest
+
+
 def _base_dir(scope: str, path: str, user: SessionUser, settings: Settings) -> tuple[Path, Path]:
     """(scope 루트, 동기화 대상 base 디렉토리) 반환. base 없으면 생성."""
     root = scope_root(scope, user, settings)
@@ -59,7 +73,7 @@ def manifest(
                     "rel": p.relative_to(base).as_posix(),
                     "size": st.st_size,
                     "mtime": st.st_mtime,
-                    "hash": _sha256(p),
+                    "hash": _sha256_cached(p, st),  # 변경 없으면 캐시(전체 재해시 생략)
                 }
             )
         except OSError:
@@ -89,7 +103,7 @@ async def upload(
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(data)
-    return {"ok": True, "rel": rel, "hash": _sha256(dest)}
+    return {"ok": True, "rel": rel, "hash": _sha256_cached(dest, dest.stat())}
 
 
 @router.get("/download")
