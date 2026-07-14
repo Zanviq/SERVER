@@ -113,6 +113,10 @@ export const api = {
     req<NoteSummary>(`/api/notes/save?${q({ scope, base })}`, jsonInit("PUT", { path, content })),
   noteDelete: (scope: Scope, path: string, base: NoteBase = "notes") =>
     req(`/api/notes/delete?${q({ scope, path, base })}`, { method: "DELETE" }),
+  noteRename: (scope: Scope, path: string, new_name: string, base: NoteBase = "notes") =>
+    req<NoteSummary>(`/api/notes/rename?${q({ scope, base })}`, jsonInit("POST", { path, new_name })),
+  noteMove: (scope: Scope, path: string, target_folder: string, base: NoteBase = "notes") =>
+    req<NoteSummary>(`/api/notes/move?${q({ scope, base })}`, jsonInit("POST", { path, target_folder })),
   noteGraph: (scope: Scope, folder = "", mode: "links" | "folders" = "links", base: NoteBase = "notes") =>
     req<NotesGraph>(`/api/notes/graph?${q({ scope, folder, mode, base })}`),
   noteSearch: (scope: Scope, query: string, base: NoteBase = "notes") =>

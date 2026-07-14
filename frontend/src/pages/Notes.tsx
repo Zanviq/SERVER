@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   NotebookPen, FolderPlus, FilePlus, Trash2, Save, Link2, Loader2,
-  FileText, Search, X, Folder, ChevronRight, ChevronDown, Home, ArrowUpDown,
+  FileText, Search, X, Folder, ChevronRight, ChevronDown, Home, ArrowUpDown, FolderInput,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { MarkdownView } from "../components/notes/MarkdownView";
 import { AidocWorkspace } from "../components/notes/AidocWorkspace";
 import { ThreePane } from "../components/notes/ThreePane";
+import { RowMenu } from "../components/notes/RowMenu";
 import { Modal } from "../components/ui/Modal";
 import { api, NoteSummary, NoteDetail, NoteSearchHit, Scope, NoteBase } from "../lib/api";
 import { toast } from "../store/toast";
@@ -72,6 +73,13 @@ export function Notes() {
   const [newName, setNewName] = useState("");
   const [delOpen, setDelOpen] = useState(false);
   const [delFolder, setDelFolder] = useState<string | null>(null);
+  // 행 컨텍스트 메뉴: 이름 변경 / 이동 / 개별 삭제 + 드래그 이동
+  const [renameFor, setRenameFor] = useState<NoteSummary | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [moveFor, setMoveFor] = useState<NoteSummary | null>(null);
+  const [moveTarget, setMoveTarget] = useState("");
+  const [delNotePath, setDelNotePath] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
   const saveTimer = useRef<number | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
@@ -344,6 +352,47 @@ export function Notes() {
     });
   };
 
+  const doRenameNote = async () => {
+    if (!renameFor || !renameName.trim()) return;
+    try {
+      const r = await api.noteRename(scope, renameFor.path, renameName.trim(), base);
+      toast.ok("이름을 변경했습니다");
+      const wasOpen = current === renameFor.path;
+      setRenameFor(null);
+      await reloadTree();
+      if (wasOpen) openNote(r.path);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "이름 변경 실패");
+    }
+  };
+
+  const doMoveNote = async (path: string, folder: string) => {
+    try {
+      const r = await api.noteMove(scope, path, folder, base);
+      toast.ok("이동했습니다");
+      const wasOpen = current === path;
+      setMoveFor(null);
+      await reloadTree();
+      if (wasOpen) openNote(r.path);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "이동 실패");
+    }
+  };
+
+  const doDeleteNotePath = async () => {
+    if (!delNotePath) return;
+    const path = delNotePath;
+    try {
+      await api.noteDelete(scope, path, base);
+      if (current === path) { setCurrent(null); setDetail(null); setContent(""); }
+      setDelNotePath(null);
+      await reloadTree();
+      toast.ok("휴지통으로 옮겼습니다");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "삭제 실패");
+    }
+  };
+
   // 재귀 폴더 렌더
   const renderNode = (node: TreeNode, depth: number): JSX.Element[] => {
     const rows: JSX.Element[] = [];
@@ -353,7 +402,18 @@ export function Notes() {
       rows.push(
         <li key={"f:" + child.path}>
           <div
-            className={`group flex items-center gap-1 rounded-md pr-1 text-[13px] ${isCur ? "bg-accent-muted" : "hover:bg-hovered"}`}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(child.path); }}
+            onDragLeave={() => setDragOver((p) => (p === child.path ? null : p))}
+            onDrop={(e) => {
+              e.preventDefault();
+              const path = e.dataTransfer.getData("text/plain");
+              setDragOver(null);
+              if (path) doMoveNote(path, child.path);
+            }}
+            className={`group flex items-center gap-1 rounded-md pr-1 text-[13px] ${
+              dragOver === child.path ? "ring-1 ring-accent bg-accent-muted"
+              : isCur ? "bg-accent-muted" : "hover:bg-hovered"
+            }`}
             style={{ paddingLeft: depth * 12 + 4 }}
           >
             <button onClick={() => toggleFolder(child.path)}
@@ -375,13 +435,22 @@ export function Notes() {
     }
     for (const n of node.notes) {
       rows.push(
-        <li key={"n:" + n.path}>
-          <button onClick={() => openNote(n.path)}
-            className={`flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left text-[13px] ${current === n.path ? "bg-accent-muted text-accent-fg" : "hover:bg-hovered"}`}
+        <li key={"n:" + n.path}
+          draggable
+          onDragStart={(e) => { e.dataTransfer.setData("text/plain", n.path); e.dataTransfer.effectAllowed = "move"; }}>
+          <div className={`group flex items-center gap-1 rounded-md pr-1 text-[13px] ${current === n.path ? "bg-accent-muted text-accent-fg" : "hover:bg-hovered"}`}
             style={{ paddingLeft: depth * 12 + 22 }}>
-            <FileText size={14} className="shrink-0 text-fg-muted" />
-            <span className="truncate">{n.title}</span>
-          </button>
+            <button onClick={() => openNote(n.path)}
+              className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left">
+              <FileText size={14} className="shrink-0 text-fg-muted" />
+              <span className="truncate">{n.title}</span>
+            </button>
+            <RowMenu
+              onRename={() => { setRenameFor(n); setRenameName(n.title); }}
+              onMove={() => { setMoveFor(n); setMoveTarget(""); }}
+              onTrash={() => setDelNotePath(n.path)}
+            />
+          </div>
         </li>,
       );
     }
@@ -442,10 +511,20 @@ export function Notes() {
             </div>
           </div>
 
-          {/* 현재 위치 */}
+          {/* 현재 위치 (여기로 드래그하면 루트로 이동) */}
           <button onClick={() => setCurFolder("")}
-            className="flex items-center gap-1 border-b border-line px-3 py-1.5 text-left text-[11.5px] text-fg-muted hover:text-accent"
-            title="루트로">
+            onDragOver={(e) => { e.preventDefault(); setDragOver("\0root"); }}
+            onDragLeave={() => setDragOver((p) => (p === "\0root" ? null : p))}
+            onDrop={(e) => {
+              e.preventDefault();
+              const path = e.dataTransfer.getData("text/plain");
+              setDragOver(null);
+              if (path) doMoveNote(path, "");
+            }}
+            className={`flex items-center gap-1 border-b border-line px-3 py-1.5 text-left text-[11.5px] text-fg-muted hover:text-accent ${
+              dragOver === "\0root" ? "bg-accent-muted ring-1 ring-accent" : ""
+            }`}
+            title="루트로 (여기로 드래그하면 루트로 이동)">
             <Home size={12} className="shrink-0" />
             <span className="truncate">위치: {curFolder || "루트"}</span>
           </button>
@@ -565,6 +644,50 @@ export function Notes() {
           )}
         </div>
       </ThreePane>
+
+      {/* 이름 변경 */}
+      <Modal open={!!renameFor} onClose={() => setRenameFor(null)} title="이름 변경" width="max-w-sm">
+        <div className="space-y-3">
+          <input autoFocus className="input" value={renameName} placeholder="새 이름"
+            onChange={(e) => setRenameName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") doRenameNote(); if (e.key === "Escape") setRenameFor(null); }} />
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setRenameFor(null)} className="btn btn-ghost">취소</button>
+            <button onClick={doRenameNote} className="btn btn-primary">변경</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 이동 */}
+      <Modal open={!!moveFor} onClose={() => setMoveFor(null)} title="노트 이동" width="max-w-sm">
+        <div className="space-y-3">
+          <label className="block">
+            <span className="label">대상 폴더</span>
+            <select value={moveTarget} onChange={(e) => setMoveTarget(e.target.value)}
+              className="input mt-1 cursor-pointer">
+              <option value="">(루트)</option>
+              {folders.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </label>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setMoveFor(null)} className="btn btn-ghost">취소</button>
+            <button onClick={() => moveFor && doMoveNote(moveFor.path, moveTarget)} className="btn btn-primary">
+              <FolderInput size={14} /> 이동
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 개별 노트 삭제 확인 */}
+      <Modal open={!!delNotePath} onClose={() => setDelNotePath(null)} title="노트 삭제" width="max-w-sm">
+        <div className="space-y-4">
+          <p className="text-[13.5px] text-fg2">이 노트를 휴지통으로 옮길까요? 휴지통에서 복원할 수 있습니다.</p>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setDelNotePath(null)} className="btn btn-ghost">취소</button>
+            <button onClick={doDeleteNotePath} className="btn btn-danger"><Trash2 size={14} /> 휴지통으로</button>
+          </div>
+        </div>
+      </Modal>
 
       {/* 새 노트 모달 */}
       <Modal open={newNoteOpen} onClose={() => setNewNoteOpen(false)} title={`새 노트${curFolder ? ` · ${curFolder}` : ""}`} width="max-w-sm">
