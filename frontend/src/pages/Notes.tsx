@@ -474,13 +474,19 @@ export function Notes() {
       value={source}
       onChange={(e) => onSource(e.target.value)}
       className="h-8 cursor-pointer appearance-none rounded-md border border-line bg-subtle px-3 text-center text-[13px] font-medium text-accent outline-none transition-colors hover:border-line-strong focus:border-accent"
-      title="편집할 위치 (노트 폴더 / 파일 폴더 / AI 문서)"
+      title="편집할 위치 — 노트 폴더뿐 아니라 파일 페이지의 폴더도 여기서 바로 열 수 있습니다"
     >
-      <option value="notes:me">내 노트</option>
-      <option value="notes:common">공통 노트</option>
-      <option value="files:me">내 파일 폴더</option>
-      <option value="files:common">공통 파일 폴더</option>
-      <option value="aidoc">AI 문서</option>
+      <optgroup label="노트 폴더">
+        <option value="notes:me">내 노트</option>
+        <option value="notes:common">공통 노트</option>
+      </optgroup>
+      <optgroup label="파일 폴더 (파일 페이지와 동일)">
+        <option value="files:me">내 파일 폴더</option>
+        <option value="files:common">공통 파일 폴더</option>
+      </optgroup>
+      <optgroup label="AI">
+        <option value="aidoc">AI 문서</option>
+      </optgroup>
     </select>
   );
 
