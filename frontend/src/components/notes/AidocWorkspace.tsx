@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot, FilePlus, Save, Trash2, History, Loader2, Search, X, RotateCcw,
   ScrollText, AlertTriangle, Sparkles, FolderOpen, Folder, FolderPlus, ArrowUpDown,
-  ChevronRight, ChevronDown, Home, Plus, Pencil,
+  ChevronRight, ChevronDown, Home, Plus, Pencil, MoreHorizontal, FolderInput,
 } from "lucide-react";
 import { MarkdownView } from "./MarkdownView";
 import { ThreePane } from "./ThreePane";
@@ -70,6 +70,13 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
   const [newTitle, setNewTitle] = useState("");
   const [newProject, setNewProject] = useState<string>(""); // "" = inbox
   const [delId, setDelId] = useState<string | null>(null);
+  // 행 컨텍스트 메뉴: 이름 변경 / 이동
+  const [renameFor, setRenameFor] = useState<AidocMeta | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
+  const [moveFor, setMoveFor] = useState<AidocMeta | null>(null);
+  const [moveProject, setMoveProject] = useState<string>(""); // "" = inbox
+  const [moveFolder, setMoveFolder] = useState<string>(""); // "" = 루트
+  const [moveFolders, setMoveFolders] = useState<string[]>([]);
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<AidocVersion[] | null>(null);
@@ -109,6 +116,17 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
     setFolder("");
     loadFolders();
   }, [loadFolders]);
+
+  // 이동 대상: 선택 문서 열릴 때 그 프로젝트로 초기화
+  useEffect(() => {
+    if (moveFor) setMoveProject(moveFor.project || "");
+  }, [moveFor]);
+  // 이동 대상: 프로젝트가 바뀌면 그 프로젝트의 폴더 목록 로드
+  useEffect(() => {
+    if (!moveFor) return;
+    setMoveFolder("");
+    api.aidocFolders(moveProject || undefined).then(setMoveFolders).catch(() => setMoveFolders([]));
+  }, [moveFor, moveProject]);
 
   const docFolder = (d: { storage_path?: string }): string => {
     const sp = d.storage_path || "";
@@ -177,10 +195,11 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
               <span className="truncate text-[13px]">{d.title}</span>
               <span className="shrink-0 text-[10.5px] text-fg-muted">v{d.version}</span>
             </button>
-            <button onClick={() => setDelId(d.id)} title="휴지통으로"
-              className="hidden shrink-0 rounded p-1 text-fg-muted hover:text-danger group-hover:block">
-              <Trash2 size={12} />
-            </button>
+            <RowMenu
+              onRename={() => { setRenameFor(d); setRenameTitle(d.title); }}
+              onMove={() => setMoveFor(d)}
+              onTrash={() => setDelId(d.id)}
+            />
           </div>
         </li>,
       );
@@ -450,6 +469,36 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
     [current],
   );
 
+  const doRename = async () => {
+    if (!renameFor || !renameTitle.trim()) return;
+    try {
+      await api.aidocUpdate(renameFor.id, { expected_version: renameFor.version, title: renameTitle.trim() });
+      toast.ok("이름을 변경했습니다");
+      const id = renameFor.id;
+      setRenameFor(null);
+      await reload();
+      if (current?.id === id) open(id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "이름 변경 실패(먼저 최신 상태로 새로고침하세요)");
+    }
+  };
+
+  const doMove = async () => {
+    if (!moveFor) return;
+    const base = moveProject ? `projects/${moveProject}` : "inbox";
+    const target_folder = moveFolder ? `${base}/${moveFolder}` : base;
+    try {
+      await api.aidocMove(moveFor.id, { target_folder });
+      toast.ok("이동했습니다");
+      const id = moveFor.id;
+      setMoveFor(null);
+      await reload();
+      if (current?.id === id) open(id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "이동 실패");
+    }
+  };
+
   return (
     <>
       <ThreePane storageKey="aidoc.panes.v1">
@@ -566,10 +615,11 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
                       <RotateCcw size={13} />
                     </button>
                   ) : (
-                    <button onClick={() => setDelId(d.id)} title="휴지통으로"
-                      className="hidden shrink-0 rounded p-1.5 text-fg-muted hover:text-danger group-hover:block">
-                      <Trash2 size={13} />
-                    </button>
+                    <RowMenu
+                      onRename={() => { setRenameFor(d); setRenameTitle(d.title); }}
+                      onMove={() => setMoveFor(d)}
+                      onTrash={() => setDelId(d.id)}
+                    />
                   )}
                 </div>
               </li>
@@ -747,6 +797,46 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
         </div>
       </Modal>
 
+      {/* 이름 변경 */}
+      <Modal open={!!renameFor} onClose={() => setRenameFor(null)} title="이름 변경" width="max-w-sm">
+        <div className="space-y-3">
+          <input autoFocus className="input" value={renameTitle} placeholder="새 제목"
+            onChange={(e) => setRenameTitle(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") doRename(); if (e.key === "Escape") setRenameFor(null); }} />
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setRenameFor(null)} className="btn btn-ghost">취소</button>
+            <button onClick={doRename} className="btn btn-primary">변경</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 이동 */}
+      <Modal open={!!moveFor} onClose={() => setMoveFor(null)} title="문서 이동" width="max-w-sm">
+        <div className="space-y-3">
+          <label className="block">
+            <span className="label">프로젝트</span>
+            <select value={moveProject} onChange={(e) => setMoveProject(e.target.value)}
+              className="input mt-1 cursor-pointer">
+              <option value="">미분류(inbox)</option>
+              {projects.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="label">폴더</span>
+            <select value={moveFolder} onChange={(e) => setMoveFolder(e.target.value)}
+              className="input mt-1 cursor-pointer">
+              <option value="">(루트)</option>
+              {moveFolders.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </label>
+          <p className="text-[11px] text-fg-subtle">문서 ID는 유지됩니다(MCP 접근에 영향 없음). 경로만 바뀝니다.</p>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setMoveFor(null)} className="btn btn-ghost">취소</button>
+            <button onClick={doMove} className="btn btn-primary"><FolderInput size={14} /> 이동</button>
+          </div>
+        </div>
+      </Modal>
+
       {/* 삭제 확인 */}
       <Modal open={!!delId} onClose={() => setDelId(null)} title="문서 삭제" width="max-w-sm">
         <div className="space-y-4">
@@ -818,5 +908,47 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
         </div>
       </Modal>
     </>
+  );
+}
+
+/** 문서 행의 "..." 컨텍스트 메뉴(이름 변경 / 이동 / 휴지통). 외부 클릭·ESC로 닫힘. */
+function RowMenu({ onRename, onMove, onTrash }: {
+  onRename: () => void; onMove: () => void; onTrash: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onEsc);
+    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onEsc); };
+  }, [open]);
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }} title="더보기" aria-label="더보기"
+        className={`rounded p-1 text-fg-muted hover:text-fg ${open ? "block" : "hidden group-hover:block"}`}>
+        <MoreHorizontal size={14} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-7 z-20 w-32 overflow-hidden rounded-md border border-line bg-surface py-1 shadow-lg">
+          <MenuItem icon={Pencil} label="이름 변경" onClick={() => { setOpen(false); onRename(); }} />
+          <MenuItem icon={FolderInput} label="이동" onClick={() => { setOpen(false); onMove(); }} />
+          <MenuItem icon={Trash2} label="휴지통으로" danger onClick={() => { setOpen(false); onTrash(); }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({ icon: Icon, label, onClick, danger }: {
+  icon: typeof Pencil; label: string; onClick: () => void; danger?: boolean;
+}) {
+  return (
+    <button onClick={onClick}
+      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] hover:bg-hovered ${danger ? "text-danger" : "text-fg2"}`}>
+      <Icon size={13} className="shrink-0" /> {label}
+    </button>
   );
 }
