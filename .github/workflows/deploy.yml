@@ -1,0 +1,41 @@
+name: Deploy to home server
+
+# main에 push되면 Pi(셀프호스티드 러너)에서 최신 코드로 컨테이너를 재빌드한다.
+# 러너는 아웃바운드로 GitHub에 연결되므로 열린 포트/웹훅이 필요 없다(Cloudflare Tunnel 뒤에서 동작).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {} # Actions 탭에서 수동 실행도 허용
+
+# 동시 배포 방지: 진행 중인 배포가 끝날 때까지 큐잉(빌드가 겹쳐 컨테이너가 반쯤 갱신되는 것 방지).
+concurrency:
+  group: deploy-home-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted] # Pi에 등록한 셀프호스티드 러너에서 실행
+    timeout-minutes: 30
+    steps:
+      - name: Pull latest & rebuild
+        env:
+          # 리포지토리 변수: Settings → Secrets and variables → Actions → Variables → New
+          #   DEPLOY_DIR = Pi에서 이 리포가 clone된 실제 경로(.env가 있는 곳). 예: /home/pi/twoems-server
+          DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+          COMPOSE_PROFILES: tunnel
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_DIR:-}" ]; then
+            echo "::error::리포지토리 변수 DEPLOY_DIR가 설정되지 않았습니다. (Settings → Secrets and variables → Actions → Variables)"
+            exit 1
+          fi
+          echo "▶ 배포 디렉터리: $DEPLOY_DIR"
+          cd "$DEPLOY_DIR"
+          echo "▶ 최신 main으로 맞추기 (git fetch + reset; .env는 gitignore라 보존됨)"
+          git fetch --prune origin
+          git reset --hard origin/main
+          echo "▶ 컨테이너 재빌드 (profile: $COMPOSE_PROFILES)"
+          docker compose --profile "$COMPOSE_PROFILES" up -d --build
+          echo "▶ 미사용(dangling) 이미지 정리"
+          docker image prune -f
+          echo "✅ 배포 완료: $(git rev-parse --short HEAD)"
