@@ -19,9 +19,9 @@ jobs:
     steps:
       - name: Pull latest & rebuild
         env:
-          # 리포지토리 변수: Settings → Secrets and variables → Actions → Variables → New
-          #   DEPLOY_DIR = Pi에서 이 리포가 clone된 실제 경로(.env가 있는 곳). 예: /home/pi/twoems-server
-          DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+          # Pi에서 이 리포가 clone된 실제 경로(.env가 있는 곳).
+          # 리포지토리 변수 DEPLOY_DIR가 있으면 그것을, 없으면 아래 기본 경로를 사용.
+          DEPLOY_DIR: ${{ vars.DEPLOY_DIR || '/home/zanviq/SERVER' }}
           COMPOSE_PROFILES: tunnel
         run: |
           set -euo pipefail
