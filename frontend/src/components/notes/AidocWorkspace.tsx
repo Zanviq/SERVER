@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot, FilePlus, Save, Trash2, History, Loader2, Search, X, RotateCcw,
-  ScrollText, AlertTriangle, Sparkles, FolderOpen, Folder, FolderPlus, ArrowUpDown,
-  ChevronRight, ChevronDown, Home, Plus, Pencil, FolderInput, RefreshCw, Link2,
+  ScrollText, AlertTriangle, Sparkles, FolderOpen, Folder, FolderPlus, Eye,
+  ChevronRight, ChevronDown, Home, Plus, Pencil, FolderInput, RefreshCw,
 } from "lucide-react";
 import { MarkdownView } from "./MarkdownView";
 import { ThreePane } from "./ThreePane";
 import { RowMenu } from "./RowMenu";
+import { LiveEditor } from "./LiveEditor";
 import { Modal } from "../ui/Modal";
 import {
   api, ApiError, AidocMeta, AidocDetail, AidocVersion, AidocAuditLog,
@@ -45,21 +46,7 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
   const [newProjName, setNewProjName] = useState("");
   const [manageOpen, setManageOpen] = useState(false); // 이름변경/삭제
   const [renameProjName, setRenameProjName] = useState("");
-  const taRef = useRef<HTMLTextAreaElement>(null);
-  const previewRef = useRef<HTMLDivElement>(null);
-  const syncingScroll = useRef(false);
-  const [scrollSync, setScrollSync] = useState(true); // 편집↔미리보기 스크롤 동기화(기본 켜짐)
-
-  // 편집 ↔ 미리보기 스크롤 비율 동기화 (피드백 루프 방지 플래그)
-  const syncScroll = (from: HTMLElement | null, to: HTMLElement | null) => {
-    if (!scrollSync || syncingScroll.current || !from || !to) return;
-    const fromMax = from.scrollHeight - from.clientHeight;
-    const toMax = to.scrollHeight - to.clientHeight;
-    if (fromMax <= 1) return;
-    syncingScroll.current = true;
-    to.scrollTop = (from.scrollTop / fromMax) * toMax;
-    requestAnimationFrame(() => { syncingScroll.current = false; });
-  };
+  const [reading, setReading] = useState(false); // 편집(라이브 프리뷰) ↔ 읽기 뷰
 
   const [current, setCurrent] = useState<AidocDetail | null>(null);
   const [content, setContent] = useState("");
@@ -79,7 +66,6 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
   const [moveFolder, setMoveFolder] = useState<string>(""); // "" = 루트
   const [moveFolders, setMoveFolders] = useState<string[]>([]);
   const [reindexing, setReindexing] = useState(false);
-  const [suggest, setSuggest] = useState<string[] | null>(null); // [[위키링크]] 자동완성
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<AidocVersion[] | null>(null);
@@ -326,36 +312,10 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
     }
   }, [current, conflict, content, reload]);
 
+  // 라이브 에디터(CodeMirror)의 [[ 자동완성이 링크를 담당 → 여기선 상태만 갱신.
   const onEdit = (v: string) => {
     setContent(v);
     setDirty(true);
-    const ta = taRef.current;
-    if (ta) {
-      const before = v.slice(0, ta.selectionStart);
-      const m = before.match(/\[\[([^\[\]\n]*)$/); // [[ 입력 중이면 제목 제안
-      if (m) {
-        const qstr = m[1].toLowerCase();
-        setSuggest(docs.map((d) => d.title).filter((t) => t.toLowerCase().includes(qstr)).slice(0, 6));
-      } else setSuggest(null);
-    }
-  };
-
-  const insertLink = (title: string) => {
-    const ta = taRef.current;
-    if (!ta) return;
-    const pos = ta.selectionStart;
-    const before = content.slice(0, pos).replace(/\[\[[^\[\]\n]*$/, `[[${title}]]`);
-    setSuggest(null);
-    setContent(before + content.slice(pos));
-    setDirty(true);
-    setTimeout(() => ta.focus(), 0);
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-      e.preventDefault();
-      if (conflict === null) save();
-    }
   };
 
   const createDoc = async () => {
@@ -715,8 +675,8 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
         </ul>
       </div>
 
-      {/* 에디터 */}
-      <div className="card relative flex min-h-[40vh] flex-col overflow-hidden lg:min-h-0">
+      {/* 메인: 라이브 편집(입력=마크다운 뷰) ↔ 읽기 뷰(표·SVG 완전 렌더) 통합 */}
+      <div className="card relative flex min-h-[50vh] flex-col overflow-hidden lg:min-h-0">
         <div className="flex items-center justify-between border-b border-line px-3 py-2">
           <span className="flex min-w-0 items-center gap-1.5 truncate text-[13px] font-medium">
             <Bot size={14} className="shrink-0 text-accent" />
@@ -730,6 +690,12 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
               : current ? <span className="label text-positive">저장됨</span> : null}
             {current && (
               <>
+                <button onClick={() => setReading((v) => !v)} title="편집 / 읽기 전환"
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                    reading ? "border-accent/40 bg-accent-muted text-accent-fg" : "border-line text-fg-muted hover:text-fg"
+                  }`}>
+                  {reading ? <><Eye size={11} /> 읽기</> : <><Pencil size={11} /> 편집</>}
+                </button>
                 <button onClick={save} disabled={!dirty || conflict !== null} className="btn btn-ghost h-7 px-2 disabled:opacity-40" title="저장 (Ctrl+S)">
                   <Save size={14} />
                 </button>
@@ -754,46 +720,23 @@ export function AidocWorkspace({ openDocId }: { openDocId?: string }) {
         )}
 
         {current ? (
-          <textarea ref={taRef} value={content} onChange={(e) => onEdit(e.target.value)} onKeyDown={onKeyDown}
-            onScroll={() => syncScroll(taRef.current, previewRef.current)}
-            placeholder="마크다운으로 작성… [[ 으로 다른 문서 링크"
-            className="flex-1 resize-none bg-transparent p-4 font-mono text-[13.5px] leading-relaxed outline-none placeholder:text-fg-subtle" />
+          reading ? (
+            <div className="flex-1 overflow-auto p-4">
+              <MarkdownView content={content} onWikiClick={openByTitle} />
+            </div>
+          ) : (
+            <LiveEditor
+              value={content}
+              onChange={onEdit}
+              onSave={() => { if (conflict === null) save(); }}
+              titles={docs.map((d) => d.title)}
+            />
+          )
         ) : (
           <div className="flex flex-1 items-center justify-center px-4 text-center text-[13px] text-fg-muted">
             왼쪽에서 문서를 선택하거나 새로 만드세요
           </div>
         )}
-        {suggest && suggest.length > 0 && (
-          <div className="absolute bottom-4 left-4 z-10 w-56 overflow-hidden rounded-md border border-line bg-surface shadow-lg">
-            {suggest.map((t) => (
-              <button key={t} onClick={() => insertLink(t)}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-hovered">
-                <Link2 size={13} className="text-accent" /> {t}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* 미리보기 + 메타 */}
-      <div className="card flex min-h-[30vh] flex-col overflow-hidden lg:min-h-0">
-        <div className="flex items-center justify-between border-b border-line px-3 py-2">
-          <span className="label">미리보기</span>
-          <button
-            onClick={() => setScrollSync((v) => !v)}
-            title="편집·미리보기 스크롤 동기화"
-            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors ${
-              scrollSync ? "border-accent/40 bg-accent-muted text-accent-fg" : "border-line text-fg-muted hover:text-fg"
-            }`}
-          >
-            <ArrowUpDown size={11} /> 스크롤 동기화 {scrollSync ? "켜짐" : "꺼짐"}
-          </button>
-        </div>
-        <div ref={previewRef} onScroll={() => syncScroll(previewRef.current, taRef.current)}
-          className="flex-1 overflow-auto p-4">
-          {current ? <MarkdownView content={content} onWikiClick={openByTitle} />
-            : <p className="text-[13px] text-fg-muted">선택된 문서 없음</p>}
-        </div>
         {current && (
           <div className="space-y-1.5 border-t border-line p-3 text-[11.5px] text-fg-muted">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
