@@ -14,24 +14,31 @@ function transformWikilinks(text: string): string {
 }
 
 // 인라인 SVG/HTML을 허용하되 script·이벤트 핸들러·위험 프로토콜은 계속 차단(살균).
+// foreignObject(임의 HTML 삽입)·xlink:href(프로토콜 필터 우회) 등 위험 요소는 제외.
 const SVG_TAGS = [
   "svg", "g", "path", "circle", "ellipse", "line", "polyline", "polygon", "rect",
   "text", "tspan", "defs", "linearGradient", "radialGradient", "stop", "use",
   "marker", "clipPath", "mask", "pattern", "image", "title", "desc", "symbol",
-  "foreignObject",
 ];
+// hast는 SVG 속성을 property-information의 camelCase 프로퍼티로 다룬다(하이픈 이름은 매칭 안 됨).
 const SVG_ATTRS = [
-  "viewBox", "xmlns", "fill", "stroke", "strokeWidth", "stroke-width",
-  "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-dashoffset",
-  "stroke-opacity", "fill-opacity", "fill-rule", "clip-rule", "clip-path", "d",
-  "cx", "cy", "r", "rx", "ry", "x", "y", "x1", "x2", "y1", "y2", "width", "height",
-  "points", "transform", "offset", "stop-color", "stop-opacity", "gradientUnits",
-  "gradientTransform", "preserveAspectRatio", "opacity", "text-anchor", "font-size",
-  "font-family", "dominant-baseline", "marker-end", "marker-start", "href", "xlink:href", "role",
+  "viewBox", "xmlns", "fill", "stroke", "strokeWidth", "strokeLinecap", "strokeLinejoin",
+  "strokeDasharray", "strokeDashoffset", "strokeOpacity", "fillOpacity", "fillRule",
+  "clipRule", "clipPath", "d", "cx", "cy", "r", "rx", "ry", "x", "y", "x1", "x2", "y1", "y2",
+  "width", "height", "points", "transform", "offset", "stopColor", "stopOpacity",
+  "gradientUnits", "gradientTransform", "preserveAspectRatio", "opacity", "textAnchor",
+  "fontSize", "fontFamily", "dominantBaseline", "markerEnd", "markerStart", "role",
+  "href", // svg <a>/<use> href — 아래 protocols로 javascript: 등 차단
 ];
+const SAFE_PROTOCOLS = defaultSchema.protocols?.href ?? ["http", "https", "mailto", "tel"];
 const schema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []), ...SVG_TAGS],
+  protocols: {
+    ...defaultSchema.protocols,
+    href: SAFE_PROTOCOLS,
+    xlinkHref: SAFE_PROTOCOLS, // 방어: 혹시 남아도 위험 프로토콜 차단
+  },
   attributes: {
     ...defaultSchema.attributes,
     "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", ...SVG_ATTRS],
