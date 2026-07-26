@@ -94,7 +94,20 @@ export function Settings() {
             <div>
               <Row label="아이디">{session?.username}</Row>
               <Row label="표시 이름">{session?.display_name}</Row>
-              <Row label="세션" desc="1시간 후 자동 로그아웃">
+              <Row label="자동 로그아웃 시간" desc="이 시간이 지나면 세션 만료 · 다음 로그인부터 적용">
+                <select className="input w-32" value={s.security.session_ttl_minutes}
+                  onChange={(e) => update({ security: { session_ttl_minutes: +e.target.value } })}>
+                  <option value={5}>5분</option>
+                  <option value={30}>30분</option>
+                  <option value={60}>1시간</option>
+                  <option value={180}>3시간</option>
+                  <option value={720}>12시간</option>
+                  <option value={1440}>1일</option>
+                  <option value={10080}>7일</option>
+                  <option value={43200}>30일</option>
+                </select>
+              </Row>
+              <Row label="세션" desc="지금 로그아웃">
                 <button onClick={logout} className="btn btn-danger">로그아웃</button>
               </Row>
             </div>
@@ -228,7 +241,7 @@ export function Settings() {
           {tab === "about" && (
             <div className="space-y-1 text-[13px] text-fg2">
               <Row label="버전">v0.2.0</Row>
-              <Row label="인증">.env 계정 · 세션 1시간</Row>
+              <Row label="인증">.env 계정 · 세션 시간 설정 가능(계정 탭)</Row>
               <Row label="AI">Google Gemini (ReAct)</Row>
               <Row label="저장">공통 + 개인 폴더 (HDD)</Row>
             </div>

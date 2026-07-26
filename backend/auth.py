@@ -36,21 +36,42 @@ def _serializer(settings: Settings) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(settings.session_secret, salt=_SALT)
 
 
-def issue_token(username: str, settings: Settings | None = None) -> str:
-    """username에 대한 서명 세션 토큰 발급."""
+# TTL 안전 범위(초): 최소 5분 ~ 최대 30일
+_TTL_MIN = 300
+_TTL_MAX = 2_592_000
+
+
+def clamp_ttl(seconds, settings: Settings) -> int:
+    """사용자가 지정한 TTL(초)을 안전 범위로 클램프. 잘못된 값이면 전역 기본."""
+    try:
+        s = int(seconds)
+    except (TypeError, ValueError):
+        return settings.session_ttl
+    return max(_TTL_MIN, min(s, _TTL_MAX))
+
+
+def _payload_ttl(data: dict, settings: Settings) -> int:
+    """토큰 payload의 ttl(있으면)로 만료 기준을 정한다. 없으면 전역(구 토큰 호환)."""
+    raw = data.get("ttl")
+    return clamp_ttl(raw, settings) if raw is not None else settings.session_ttl
+
+
+def issue_token(username: str, settings: Settings | None = None, ttl: int | None = None) -> str:
+    """username에 대한 서명 세션 토큰 발급. ttl(초) 지정 시 토큰에 포함해 그 값으로 만료."""
     settings = settings or get_settings()
-    return _serializer(settings).dumps({"u": username})
+    payload: dict = {"u": username}
+    if ttl is not None:
+        payload["ttl"] = int(ttl)
+    return _serializer(settings).dumps(payload)
 
 
 def verify_token(token: str, settings: Settings | None = None) -> dict | None:
     """토큰 검증. 유효하면 {'username'} 반환, 만료/위조면 None."""
     settings = settings or get_settings()
     try:
-        # itsdangerous가 발급시각을 토큰에 포함 → max_age로 만료 강제
-        data = _serializer(settings).loads(token, max_age=settings.session_ttl)
-    except SignatureExpired:
-        return None
-    except BadSignature:
+        # 발급시각을 함께 복원(max_age 미지정) → payload의 ttl로 직접 만료 판정
+        data, ts = _serializer(settings).loads(token, return_timestamp=True)
+    except (SignatureExpired, BadSignature):
         return None
     except Exception:
         return None
@@ -58,6 +79,9 @@ def verify_token(token: str, settings: Settings | None = None) -> dict | None:
     username = data.get("u")
     if not username:
         return None
+    ttl = _payload_ttl(data, settings)
+    if (time.time() - ts.timestamp()) > ttl:
+        return None  # 만료
     # 계정이 .env에서 제거되었으면 무효
     if settings.find_user(username) is None:
         return None
@@ -75,13 +99,10 @@ def authenticate(username: str, password: str, settings: Settings) -> bool:
 
 
 def _decode_expiry(token: str, settings: Settings) -> float:
-    """서명 토큰에서 발급시각을 복원해 만료 epoch 계산."""
+    """서명 토큰에서 발급시각을 복원해 만료 epoch 계산(토큰 ttl 반영)."""
     try:
-        # signer가 base64(timestamp)를 포함 — loads는 검증만 하므로
-        # 발급시각은 내부 API로 추출
-        s = _serializer(settings)
-        ts = s.loads(token, max_age=settings.session_ttl, return_timestamp=True)[1]
-        return ts.timestamp() + settings.session_ttl
+        data, ts = _serializer(settings).loads(token, return_timestamp=True)
+        return ts.timestamp() + _payload_ttl(data, settings)
     except Exception:
         return time.time() + settings.session_ttl
 

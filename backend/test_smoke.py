@@ -361,6 +361,21 @@ def test_settings_get_patch():
     assert after["settings"]["calendar"]["default_view"] == "dayGridMonth"
 
 
+def test_session_ttl_setting():
+    """세션 자동 로그아웃 시간 설정: 로그인 remaining이 사용자 설정값을 따르고, 범위 밖은 클램프."""
+    _login()
+    # 30분으로 설정 → 로그인 시 remaining=1800
+    client.patch("/api/settings", json={"changes": {"security": {"session_ttl_minutes": 30}}})
+    r = client.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    assert r.json()["remaining"] == 1800
+    # 1분(최소 5분 미만)으로 설정 → 300초로 클램프
+    client.patch("/api/settings", json={"changes": {"security": {"session_ttl_minutes": 1}}})
+    r = client.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    assert r.json()["remaining"] == 300
+    # 원복(다른 테스트 영향 방지)
+    client.patch("/api/settings", json={"changes": {"security": {"session_ttl_minutes": 60}}})
+
+
 def test_calendar_lifecycle():
     _login()
     r = client.post(
@@ -512,6 +527,7 @@ if __name__ == "__main__":
     test_calendar_list_default_window()
     test_terminal_status_gate()
     test_settings_get_patch()
+    test_session_ttl_setting()
     test_calendar_recurrence_and_reminders()
     test_calendar_lifecycle()
     test_ai_react_chains_skills()

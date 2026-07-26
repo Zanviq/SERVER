@@ -14,6 +14,7 @@ from ..auth import (
     require_session,
 )
 from ..config import Settings, get_settings
+from .. import user_settings
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -40,23 +41,23 @@ def login(
     if not authenticate(req.username, req.password, settings):
         raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
 
-    token = issue_token(req.username, settings)
+    ttl = user_settings.get_session_ttl(req.username, settings)  # 사용자 설정 TTL(전역 폴백)
+    token = issue_token(req.username, settings, ttl=ttl)
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
-        max_age=settings.session_ttl,
+        max_age=ttl,
         httponly=True,
         samesite="lax",
         secure=settings.cookie_secure,  # HTTPS 운영 시 COOKIE_SECURE=true
         path="/",
     )
     acc = settings.find_user(req.username)
-    expires_at = time.time() + settings.session_ttl
     return SessionInfo(
         username=acc.username,
         display_name=acc.display_name,
-        expires_at=expires_at,
-        remaining=settings.session_ttl,
+        expires_at=time.time() + ttl,
+        remaining=ttl,
     )
 
 

@@ -38,6 +38,9 @@ DEFAULTS: dict[str, Any] = {
     "display": {
         "show_seconds_in_timer": True,
     },
+    "security": {
+        "session_ttl_minutes": 60,  # 세션 자동 로그아웃(무활동 시 만료). 5분~30일.
+    },
 }
 
 
@@ -68,3 +71,15 @@ def patch(user: SessionUser, settings: Settings, changes: dict) -> dict:
         merged = _deep_merge(load(user, settings), changes)
         json_store.write_atomic(p, merged)
     return merged
+
+
+def get_session_ttl(username: str, settings: Settings) -> int:
+    """사용자가 설정한 세션 TTL(초). 로그인 시 토큰 만료 기준으로 사용."""
+    from .auth import SessionUser, clamp_ttl
+    u = SessionUser(username=username, display_name="", expires_at=0, remaining=0)
+    mins = load(u, settings).get("security", {}).get("session_ttl_minutes", 60)
+    try:
+        seconds = int(float(mins) * 60)
+    except (TypeError, ValueError):
+        seconds = settings.session_ttl
+    return clamp_ttl(seconds, settings)

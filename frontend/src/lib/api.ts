@@ -284,6 +284,7 @@ export interface UserSettings {
   files: { default_scope: string; confirm_delete: boolean };
   sync: { text_conflict: string; binary_policy: string };
   display: { show_seconds_in_timer: boolean };
+  security: { session_ttl_minutes: number };
 }
 
 export interface CalEvent {
