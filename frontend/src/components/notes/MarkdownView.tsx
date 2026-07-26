@@ -1,3 +1,5 @@
+import { ReactNode, useRef, useState } from "react";
+import { Copy, Check } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -45,6 +47,37 @@ const schema = {
   },
 };
 
+// 코드블록: 뚜렷한 테두리 + 우측 상단 복사 버튼. 버튼은 <pre> 바깥이라 복사 텍스트에 안 섞임.
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const preRef = useRef<HTMLPreElement>(null);
+  const onCopy = () => {
+    const text = preRef.current?.innerText ?? "";
+    if (!text) return;
+    navigator.clipboard
+      ?.writeText(text)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {});
+  };
+  return (
+    <div className="group relative my-2">
+      <button
+        type="button"
+        onClick={onCopy}
+        title="코드 복사"
+        aria-label="코드 복사"
+        className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-md border border-line bg-surface/90 px-2 py-1 text-[11px] text-fg-muted opacity-70 backdrop-blur transition-opacity hover:text-fg group-hover:opacity-100"
+      >
+        {copied ? <><Check size={12} /> 복사됨</> : <><Copy size={12} /> 복사</>}
+      </button>
+      <pre ref={preRef} className="!my-0">{children}</pre>
+    </div>
+  );
+}
+
 export function MarkdownView({
   content,
   onWikiClick,
@@ -60,6 +93,7 @@ export function MarkdownView({
         // 인라인 HTML/SVG 파싱(rehypeRaw) 후 살균(rehypeSanitize, svg 허용 스키마)
         rehypePlugins={[rehypeRaw, [rehypeSanitize, schema]]}
         components={{
+          pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
           a({ href, children, ...props }) {
             if (href?.startsWith("#wiki/")) {
               const title = decodeURIComponent(href.slice(6));
