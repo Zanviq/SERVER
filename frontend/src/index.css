@@ -118,11 +118,12 @@
   .prose-server code {
     @apply rounded bg-subtle px-1 py-0.5 font-mono text-[12.5px] text-accent-fg;
   }
+  /* 코드블록: 가로 스크롤 대신 자동 줄바꿈(긴 토큰도 넘치지 않게 anywhere) */
   .prose-server pre {
-    @apply my-2 overflow-x-auto rounded-md border border-line bg-subtle p-3;
+    @apply my-2 whitespace-pre-wrap rounded-md border border-line bg-subtle p-3 [overflow-wrap:anywhere];
   }
   .prose-server pre code {
-    @apply bg-transparent p-0 text-fg2;
+    @apply whitespace-pre-wrap bg-transparent p-0 text-fg2 [overflow-wrap:anywhere];
   }
   .prose-server a {
     @apply text-info;
