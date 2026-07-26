@@ -73,6 +73,8 @@ export function ThreePane({
     return <div className="grid grid-cols-1 gap-4">{children}</div>;
   }
 
+  // 자식이 2개면 트리 + 메인(단일 패널), 3개면 트리 + 에디터 + 미리보기.
+  const twoPane = right == null;
   return (
     <div ref={wrapRef} className="flex h-[calc(100vh-9rem)] items-stretch">
       {/* 각 래퍼를 flex-col로 만들고 자식 카드를 flex-1/min-h-0로 강제 → 카드가 패널 높이를 꽉 채움 */}
@@ -80,13 +82,21 @@ export function ThreePane({
         {left}
       </div>
       <Handle onPointerDown={treeDown} />
-      <div className="flex min-w-0 flex-col [&>*]:min-h-0 [&>*]:flex-1" style={{ flexGrow: editorFrac, flexBasis: 0 }}>
-        {center}
-      </div>
-      <Handle onPointerDown={splitDown} />
-      <div className="flex min-w-0 flex-col [&>*]:min-h-0 [&>*]:flex-1" style={{ flexGrow: 1 - editorFrac, flexBasis: 0 }}>
-        {right}
-      </div>
+      {twoPane ? (
+        <div className="flex min-w-0 flex-1 flex-col [&>*]:min-h-0 [&>*]:flex-1">
+          {center}
+        </div>
+      ) : (
+        <>
+          <div className="flex min-w-0 flex-col [&>*]:min-h-0 [&>*]:flex-1" style={{ flexGrow: editorFrac, flexBasis: 0 }}>
+            {center}
+          </div>
+          <Handle onPointerDown={splitDown} />
+          <div className="flex min-w-0 flex-col [&>*]:min-h-0 [&>*]:flex-1" style={{ flexGrow: 1 - editorFrac, flexBasis: 0 }}>
+            {right}
+          </div>
+        </>
+      )}
     </div>
   );
 }
