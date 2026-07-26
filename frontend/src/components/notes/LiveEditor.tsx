@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
-import { EditorView, keymap, ViewPlugin, Decoration } from "@codemirror/view";
+import { EditorView, keymap, ViewPlugin, Decoration, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
-import { EditorState, RangeSetBuilder } from "@codemirror/state";
+import { EditorState } from "@codemirror/state";
+import type { Range } from "@codemirror/state";
 import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
@@ -39,27 +40,82 @@ const mdHighlight = HighlightStyle.define([
 // 커서가 없는 줄에서 숨길 인라인 구문기호 노드
 const HIDE = new Set(["EmphasisMark", "CodeMark", "StrikethroughMark", "HeaderMark"]);
 
+// 코드블록 우측 상단 복사 버튼(편집 모드). 위젯이라 문서 텍스트엔 포함되지 않음.
+class CopyBtn extends WidgetType {
+  constructor(readonly code: string) {
+    super();
+  }
+  eq(o: CopyBtn) {
+    return o.code === this.code;
+  }
+  toDOM() {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "cm-copy-btn";
+    b.textContent = "복사";
+    b.onmousedown = (e) => e.preventDefault(); // 에디터 포커스/커서 이동 방지
+    b.onclick = (e) => {
+      e.preventDefault();
+      navigator.clipboard?.writeText(this.code).then(
+        () => {
+          b.textContent = "복사됨";
+          window.setTimeout(() => (b.textContent = "복사"), 1200);
+        },
+        () => {},
+      );
+    };
+    return b;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+const lineDeco = (cls: string) => Decoration.line({ class: cls });
+
 function buildDeco(view: EditorView): DecorationSet {
-  const b = new RangeSetBuilder<Decoration>();
+  const ranges: Range<Decoration>[] = [];
+  const state = view.state;
   const active = new Set<number>();
-  for (const r of view.state.selection.ranges) {
-    const a = view.state.doc.lineAt(r.from).number;
-    const z = view.state.doc.lineAt(r.to).number;
+  for (const r of state.selection.ranges) {
+    const a = state.doc.lineAt(r.from).number;
+    const z = state.doc.lineAt(r.to).number;
     for (let n = a; n <= z; n++) active.add(n);
   }
   const hide = Decoration.replace({});
   for (const { from, to } of view.visibleRanges) {
-    syntaxTree(view.state).iterate({
+    syntaxTree(state).iterate({
       from, to,
       enter: (node) => {
-        if (HIDE.has(node.name)) {
-          const ln = view.state.doc.lineAt(node.from).number;
-          if (!active.has(ln)) b.add(node.from, node.to, hide);
+        // 코드블록: 각 줄을 박스(테두리+배경)로, 첫 줄엔 복사 버튼
+        if (node.name === "FencedCode") {
+          const startLine = state.doc.lineAt(node.from).number;
+          const endLine = state.doc.lineAt(Math.max(node.from, node.to - 1)).number;
+          const inner: string[] = [];
+          for (let n = startLine; n <= endLine; n++) {
+            const line = state.doc.line(n);
+            const cls =
+              "cm-mdcode" +
+              (n === startLine ? " cm-mdcode-first" : "") +
+              (n === endLine ? " cm-mdcode-last" : "");
+            ranges.push(lineDeco(cls).range(line.from));
+            if (n > startLine && n < endLine) inner.push(line.text);
+          }
+          const first = state.doc.line(startLine);
+          ranges.push(
+            Decoration.widget({ widget: new CopyBtn(inner.join("\n")), side: 1 }).range(first.from),
+          );
+          return false; // 코드 내부는 더 파고들지 않음(내부 기호 숨김 제외)
         }
+        if (HIDE.has(node.name)) {
+          const ln = state.doc.lineAt(node.from).number;
+          if (!active.has(ln)) ranges.push(hide.range(node.from, node.to));
+        }
+        return undefined;
       },
     });
   }
-  return b.finish();
+  return Decoration.set(ranges, true); // true=위치 정렬
 }
 
 const livePreview = ViewPlugin.fromClass(
@@ -101,6 +157,42 @@ const editorTheme = EditorView.theme({
     color: "rgb(var(--fg))",
   },
   ".cm-tooltip-autocomplete ul li": { padding: "3px 10px" },
+  // 코드블록 박스(편집 모드): 각 줄 배경 + 좌우 테두리, 첫/끝 줄에 상/하 테두리·라운드
+  ".cm-mdcode": {
+    backgroundColor: "rgb(var(--bg-subtle))",
+    borderLeft: "1px solid rgb(var(--line-strong))",
+    borderRight: "1px solid rgb(var(--line-strong))",
+    fontFamily: "ui-monospace, SFMono-Regular, monospace",
+    fontSize: "13px",
+  },
+  ".cm-mdcode-first": {
+    position: "relative",
+    borderTop: "1px solid rgb(var(--line-strong))",
+    borderTopLeftRadius: "6px",
+    borderTopRightRadius: "6px",
+    marginTop: "4px",
+  },
+  ".cm-mdcode-last": {
+    borderBottom: "1px solid rgb(var(--line-strong))",
+    borderBottomLeftRadius: "6px",
+    borderBottomRightRadius: "6px",
+    marginBottom: "4px",
+  },
+  ".cm-copy-btn": {
+    position: "absolute",
+    top: "2px",
+    right: "6px",
+    zIndex: "5",
+    padding: "1px 7px",
+    fontSize: "10.5px",
+    fontFamily: "Pretendard, sans-serif",
+    borderRadius: "4px",
+    border: "1px solid rgb(var(--line))",
+    backgroundColor: "rgb(var(--bg-elevated))",
+    color: "rgb(var(--fg-muted))",
+    cursor: "pointer",
+  },
+  ".cm-copy-btn:hover": { color: "rgb(var(--fg))" },
 });
 
 export function LiveEditor({
