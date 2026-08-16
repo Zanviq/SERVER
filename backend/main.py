@@ -18,6 +18,7 @@ from .routers import (
     ai,
     auth,
     calendar,
+    google,
     notes,
     settings as settings_router,
     sync,
@@ -85,6 +86,7 @@ app.include_router(trash.router, dependencies=_PROTECTED)
 app.include_router(sync.router, dependencies=_PROTECTED)
 app.include_router(terminal.router, dependencies=_PROTECTED)
 app.include_router(admin.router, dependencies=_PROTECTED)
+app.include_router(google.router, dependencies=_PROTECTED)
 
 
 @app.get("/api/health", tags=["meta"])

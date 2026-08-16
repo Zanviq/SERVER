@@ -11,6 +11,15 @@ export interface SessionInfo {
   role: "admin" | "user";
 }
 
+export interface GoogleStatus {
+  server_ready: boolean;
+  connected: boolean;
+  via: "oauth" | "env" | null;
+  email: string;
+  calendar_id: string;
+  connected_at: number | null;
+}
+
 export interface AdminUser {
   username: string;
   display_name: string;
@@ -95,6 +104,11 @@ export const api = {
       "/api/auth/signup",
       jsonInit("POST", { username, password, display_name }),
     ),
+
+  // ── Google 연동 ──
+  googleStatus: () => req<GoogleStatus>("/api/google/status"),
+  googleAuthUrl: () => req<{ url: string }>("/api/google/auth-url"),
+  googleDisconnect: () => req("/api/google/disconnect", { method: "POST" }),
 
   // ── 관리자(계정 승인) ──
   adminUsers: () =>

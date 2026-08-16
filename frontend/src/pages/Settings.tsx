@@ -7,6 +7,7 @@ import { useSettings } from "../store/settings";
 import { toast } from "../store/toast";
 import { GCAL_COLORS, GCAL_COLOR_NAMES } from "../components/calendar/EventDialog";
 import { AccountAdmin } from "../components/settings/AccountAdmin";
+import { GoogleConnect } from "../components/settings/GoogleConnect";
 
 const BASE_TABS = [
   { id: "account", label: "계정", icon: User },
@@ -138,6 +139,7 @@ export function Settings() {
 
           {tab === "calendar" && (
             <div>
+              <GoogleConnect />
               <Row label="기본 뷰">
                 <select className="input w-32" value={s.calendar.default_view}
                   onChange={(e) => update({ calendar: { default_view: e.target.value } })}>

@@ -1084,6 +1084,44 @@ def test_last_admin_cannot_lock_out():
         accounts.set_status(extra["username"], accounts.STATUS_ACTIVE, "test", s)
 
 
+def test_google_oauth_state_and_isolation():
+    """OAuth state가 위조·타계정 주입을 막는다."""
+    from backend import google_oauth
+    from backend.config import get_settings
+
+    st = get_settings()
+
+    # 서버에 클라이언트가 없으면 연동을 시작할 수 없다(조용히 실패하지 않음)
+    assert not google_oauth.is_configured(st)
+    c = TestClient(app)
+    c.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    assert c.get("/api/google/auth-url").status_code == 503
+
+    # state 서명·검증
+    token = google_oauth.make_state("tester", st)
+    assert google_oauth.verify_state(token, st) == "tester"
+    try:
+        google_oauth.verify_state(token + "x", st)
+        raise AssertionError("위조된 state가 통과됨")
+    except Exception as e:
+        assert getattr(e, "status_code", None) == 400
+
+    # 다른 사용자의 state로 콜백하면 403 (남의 계정에 내 구글을 붙일 수 없다)
+    other = google_oauth.make_state("tester2", st)
+    r = c.get(f"/api/google/callback?code=abc&state={other}", follow_redirects=False)
+    assert r.status_code == 403, r.text
+
+    # 연동 상태: 미연동
+    s0 = c.get("/api/google/status").json()
+    assert s0["connected"] is False and s0["server_ready"] is False
+
+    # 저장/해제 왕복 — 저장되면 google_config가 저장소를 먼저 본다
+    google_oauth.save_tokens("tester", {"refresh_token": "rt", "calendar_id": "primary"}, st)
+    assert c.get("/api/google/status").json()["connected"] is True
+    google_oauth.disconnect("tester", st)
+    assert c.get("/api/google/status").json()["connected"] is False
+
+
 def test_user_isolation():
     """다른 사용자의 문서는 보이지도, 읽히지도 않는다."""
     a = TestClient(app)
@@ -1138,6 +1176,7 @@ if __name__ == "__main__":
     test_ai_react_runs_all_parallel_calls()
     test_ai_skill_catalog_and_ops()
     test_ai_blocks_sensitive_files()
+    test_google_oauth_state_and_isolation()
     test_password_hashing()
     test_signup_requires_admin_approval()
     test_last_admin_cannot_lock_out()
