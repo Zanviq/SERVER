@@ -6,7 +6,6 @@ import { useSettings } from "./store/settings";
 import { useSync } from "./store/sync";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
-import { Files } from "./pages/Files";
 import { Toaster } from "./components/ui/Toaster";
 import { ReminderPoller } from "./components/ReminderPoller";
 
@@ -55,7 +54,6 @@ function AuthedRoutes() {
     <Suspense fallback={<Spinner />}>
       <Routes>
         <Route path="/" element={<Dashboard />} />
-        <Route path="/files" element={<Files />} />
         <Route path="/notes" element={<Notes />} />
         <Route path="/graph" element={<Graph />} />
         <Route path="/calendar" element={<Calendar />} />

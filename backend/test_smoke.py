@@ -31,7 +31,7 @@ def _login():
 # ── 인증 ──
 def test_unauthenticated_blocked():
     fresh = TestClient(app)
-    assert fresh.get("/api/files/list").status_code == 401
+    assert fresh.get("/api/notes/list").status_code == 401
     assert fresh.get("/api/system").status_code == 401
 
 
@@ -72,75 +72,75 @@ def test_system():
 
 
 def test_file_lifecycle():
+    """업로드·조회·원본읽기·삭제 — 문서 API 하나로 처리된다(파일 API는 없어짐)."""
     _login()
-    assert client.get("/api/files/list").json()["entries"] == []
-    assert client.post("/api/files/mkdir", json={"path": "docs"}).status_code == 200
+    assert client.post("/api/notes/folder", json={"path": "docs"}).status_code == 200
     r = client.post(
-        "/api/files/upload?path=docs",
+        "/api/notes/upload?path=docs",
         files={"file": ("hello.txt", io.BytesIO(b"hi server"), "text/plain")},
     )
-    assert r.status_code == 200
-    names = [e["name"] for e in client.get("/api/files/list?path=docs").json()["entries"]]
-    assert "hello.txt" in names
-    assert client.get("/api/files/download?path=docs/hello.txt").content == b"hi server"
-    assert client.delete("/api/files/delete?path=docs/hello.txt").status_code == 200
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "text" and r.json()["editable"] is True
+    tree = client.get("/api/notes/tree").json()
+    assert "docs/hello.txt" in [n["path"] for n in tree["notes"]]
+    assert client.get("/api/notes/raw?path=docs/hello.txt").content == b"hi server"
+    assert client.delete("/api/notes/delete?path=docs/hello.txt").status_code == 200
 
 
 def test_path_traversal_blocked():
     _login()
-    assert client.get("/api/files/list?path=../../etc").status_code == 400
+    assert client.get("/api/notes/get?path=../../etc/passwd").status_code == 400
 
 
 def test_upload_illegal_filename_sanitized():
     _login()
-    client.post("/api/files/mkdir", json={"path": "san"})
+    client.post("/api/notes/folder", json={"path": "san"})
     r = client.post(
-        "/api/files/upload?path=san",
+        "/api/notes/upload?path=san",
         files={"file": ("re*port?.txt", io.BytesIO(b"x"), "text/plain")},
     )
     assert r.status_code == 200, r.text
-    names = [e["name"] for e in client.get("/api/files/list?path=san").json()["entries"]]
-    assert "re_port_.txt" in names
+    assert r.json()["path"] == "san/re_port_.txt"
 
 
 def test_notes_wikilinks_and_graph():
     _login()
-    client.put("/api/notes/save?scope=me", json={"path": "A", "content": "see [[B]] and [[C|alias]]"})
-    client.put("/api/notes/save?scope=me", json={"path": "B", "content": "back to [[A]]"})
-    client.put("/api/notes/save?scope=me", json={"path": "C", "content": "leaf"})
+    client.put("/api/notes/save", json={"path": "A", "content": "see [[B]] and [[C|alias]]"})
+    client.put("/api/notes/save", json={"path": "B", "content": "back to [[A]]"})
+    client.put("/api/notes/save", json={"path": "C", "content": "leaf"})
     # A의 outgoing 링크 + backlinks
-    a = client.get("/api/notes/get?scope=me&path=A").json()
+    a = client.get("/api/notes/get?path=A").json()
     assert set(a["links"]) == {"B", "C"}
     assert a["backlinks"] == ["B"]  # B가 A를 가리킴
     # 그래프: 노드 3, 링크 A->B, A->C, B->A
-    g = client.get("/api/notes/graph?scope=me").json()
+    g = client.get("/api/notes/graph").json()
     assert len(g["nodes"]) == 3
     pairs = {(l["source"], l["target"]) for l in g["links"]}
     assert ("A", "B") in pairs and ("A", "C") in pairs and ("B", "A") in pairs
     # 전문 검색: 내용("alias")으로 매칭
-    hits = client.get("/api/notes/search?scope=me&q=alias").json()
+    hits = client.get("/api/notes/search?q=alias").json()
     assert any(h["title"] == "A" for h in hits)
     assert all("snippet" in h for h in hits)
 
 
 def test_notes_rename_and_move():
     _login()
-    client.put("/api/notes/save?scope=me", json={"path": "RM원본", "content": "본문"})
-    client.post("/api/notes/folder?scope=me", json={"path": "이동폴더"})
+    client.put("/api/notes/save", json={"path": "RM원본", "content": "본문"})
+    client.post("/api/notes/folder", json={"path": "이동폴더"})
     # 이름 변경
-    r = client.post("/api/notes/rename?scope=me", json={"path": "RM원본", "new_name": "RM변경"})
+    r = client.post("/api/notes/rename", json={"path": "RM원본", "new_name": "RM변경"})
     assert r.status_code == 200, r.text
     assert r.json()["title"] == "RM변경"
-    assert client.get("/api/notes/get?scope=me&path=RM변경").json()["content"] == "본문"
+    assert client.get("/api/notes/get?path=RM변경").json()["content"] == "본문"
     # 폴더로 이동
-    r = client.post("/api/notes/move?scope=me", json={"path": "RM변경", "target_folder": "이동폴더"})
+    r = client.post("/api/notes/move", json={"path": "RM변경", "target_folder": "이동폴더"})
     assert r.status_code == 200, r.text
     assert r.json()["path"] == "이동폴더/RM변경.md"
-    assert client.get("/api/notes/get?scope=me&path=이동폴더/RM변경").json()["content"] == "본문"
+    assert client.get("/api/notes/get?path=이동폴더/RM변경").json()["content"] == "본문"
     # 존재하지 않는 노트 이름변경 → 404
-    assert client.post("/api/notes/rename?scope=me", json={"path": "없음", "new_name": "x"}).status_code == 404
+    assert client.post("/api/notes/rename", json={"path": "없음", "new_name": "x"}).status_code == 404
     # 잘못된 이름(슬래시) → 400
-    assert client.post("/api/notes/rename?scope=me",
+    assert client.post("/api/notes/rename",
                        json={"path": "이동폴더/RM변경", "new_name": "a/b"}).status_code == 400
 
 
@@ -193,13 +193,13 @@ def test_calendar_recurrence_and_reminders():
 
 def test_notes_folders_and_tree():
     _login()
-    assert client.post("/api/notes/folder?scope=me", json={"path": "proj"}).status_code == 200
-    client.put("/api/notes/save?scope=me", json={"path": "proj/idea", "content": "# idea"})
-    tree = client.get("/api/notes/tree?scope=me").json()
+    assert client.post("/api/notes/folder", json={"path": "proj"}).status_code == 200
+    client.put("/api/notes/save", json={"path": "proj/idea", "content": "# idea"})
+    tree = client.get("/api/notes/tree").json()
     assert "proj" in tree["folders"]
     assert any(n["path"] == "proj/idea.md" for n in tree["notes"])
     # 폴더 그래프 모드: 루트에서 하위 폴더 노드로 proj 표시
-    g = client.get("/api/notes/graph?scope=me&mode=folders").json()
+    g = client.get("/api/notes/graph?mode=folders").json()
     assert any(n.get("type") == "folder" and n["title"] == "proj" for n in g["nodes"])
 
 
@@ -207,67 +207,85 @@ def test_trash_restore_flow():
     c = TestClient(app)
     c.post("/api/auth/login", json={"username": "tester2", "password": "pw456"})
     c.post(
-        "/api/files/upload?scope=me&path=",
+        "/api/notes/upload?path=",
         files={"file": ("t.txt", io.BytesIO(b"data"), "text/plain")},
     )
-    assert c.delete("/api/files/delete?scope=me&path=t.txt").status_code == 200
-    names = [e["name"] for e in c.get("/api/files/list?scope=me").json()["entries"]]
-    assert "t.txt" not in names  # 목록에서 사라짐
+    assert c.delete("/api/notes/delete?path=t.txt").status_code == 200
+    paths = [n["path"] for n in c.get("/api/notes/tree").json()["notes"]]
+    assert "t.txt" not in paths  # 목록에서 사라짐
     items = c.get("/api/trash/list").json()
     entry = next(e for e in items if e["name"] == "t.txt")
     assert c.post(f"/api/trash/restore?id={entry['id']}").status_code == 200
-    names2 = [e["name"] for e in c.get("/api/files/list?scope=me").json()["entries"]]
-    assert "t.txt" in names2  # 복원됨
+    paths2 = [n["path"] for n in c.get("/api/notes/tree").json()["notes"]]
+    assert "t.txt" in paths2  # 원래 자리로 복원됨
 
 
 def test_sync_manifest_upload_download():
     c = TestClient(app)
     c.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
-    r = c.post("/api/sync/upload?scope=me&path=synced&rel=a/b.txt", content=b"hello-sync")
+    r = c.post("/api/sync/upload?path=synced&rel=a/b.txt", content=b"hello-sync")
     assert r.status_code == 200, r.text
     h = r.json()["hash"]
-    man = c.get("/api/sync/manifest?scope=me&path=synced").json()
+    man = c.get("/api/sync/manifest?path=synced").json()
     assert any(f["rel"] == "a/b.txt" and f["hash"] == h for f in man["files"])
-    d = c.get("/api/sync/download?scope=me&path=synced&rel=a/b.txt")
+    d = c.get("/api/sync/download?path=synced&rel=a/b.txt")
     assert d.status_code == 200 and d.content == b"hello-sync"
     # 덮어쓰기 → 기존본이 휴지통으로 보존
-    c.post("/api/sync/upload?scope=me&path=synced&rel=a/b.txt", content=b"v2")
+    c.post("/api/sync/upload?path=synced&rel=a/b.txt", content=b"v2")
     assert any(e["name"] == "b.txt" for e in c.get("/api/trash/list").json())
 
 
-def test_notes_scope_in_files():
+def test_unified_document_space():
+    """마크다운·텍스트·이미지·PDF가 한 트리에 있고, 종류에 맞게 처리된다.
+
+    개편 전에는 파일 저장소와 노트 폴더가 나뉘어 같은 문서를 두 페이지에서
+    다르게 봐야 했다. 이제 users/<u>/data 하나뿐이다.
+    """
     c = TestClient(app)
     c.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
-    # 파일 API로 notes 스코프(= 개인 노트 폴더)에 폴더 + 마크다운 생성
-    assert c.post("/api/files/mkdir?scope=notes", json={"path": "synced"}).status_code == 200
-    r = c.post(
-        "/api/files/upload?scope=notes&path=synced",
-        files={"file": ("hello.md", io.BytesIO(b"# hi"), "text/markdown")},
-    )
-    assert r.status_code == 200, r.text
-    # 노트 트리에도 같은 파일이 보임(파일관리 ↔ 노트 폴더 공유)
-    tree = c.get("/api/notes/tree?scope=me").json()
-    assert any(n["path"] == "synced/hello.md" for n in tree["notes"])
-    # sync manifest도 notes 스코프에서 동작
-    man = c.get("/api/sync/manifest?scope=notes&path=synced").json()
-    assert any(f["rel"] == "hello.md" for f in man["files"])
 
+    # 마크다운은 확장자 없이 저장 → .md가 붙는다
+    r = c.put("/api/notes/save", json={"path": "혼합/메모", "content": "# 메모"})
+    assert r.status_code == 200 and r.json()["path"] == "혼합/메모.md"
+    assert r.json()["kind"] == "md" and r.json()["editable"] is True
 
-def test_notes_edit_files_base():
-    # 노트 API로 파일 저장소(base=files)의 .md를 보고 수정
-    c = TestClient(app)
-    c.post("/api/auth/login", json={"username": "tester2", "password": "pw456"})
-    assert c.post("/api/notes/folder?scope=me&base=files", json={"path": "docs"}).status_code == 200
-    r = c.put("/api/notes/save?scope=me&base=files", json={"path": "docs/readme", "content": "# hi files"})
-    assert r.status_code == 200, r.text
-    # 파일 목록(me)에도 실제로 생성됨
-    names = [e["name"] for e in c.get("/api/files/list?scope=me&path=docs").json()["entries"]]
-    assert "readme.md" in names
-    # 노트 트리(base=files)에도 보이고, get으로 읽힘
-    tree = c.get("/api/notes/tree?scope=me&base=files").json()
-    assert any(n["path"] == "docs/readme.md" for n in tree["notes"])
-    d = c.get("/api/notes/get?scope=me&base=files&path=docs/readme").json()
-    assert "hi files" in d["content"]
+    # 이미지·PDF 업로드
+    png = b"fake-png-payload" + b"0" * 32  # 분류는 확장자로 하므로 내용은 무관
+    up = c.post("/api/notes/upload?path=혼합",
+                files={"file": ("사진.png", io.BytesIO(png), "image/png")})
+    assert up.status_code == 200 and up.json()["kind"] == "image"
+    assert up.json()["editable"] is False
+    up2 = c.post("/api/notes/upload?path=혼합",
+                 files={"file": ("문서.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")})
+    assert up2.status_code == 200 and up2.json()["kind"] == "pdf"
+
+    # 하나의 트리에 전부 보인다
+    tree = c.get("/api/notes/tree").json()
+    by_path = {n["path"]: n for n in tree["notes"]}
+    for want, kind in [("혼합/메모.md", "md"), ("혼합/사진.png", "image"), ("혼합/문서.pdf", "pdf")]:
+        assert want in by_path, f"{want} 없음"
+        assert by_path[want]["kind"] == kind
+
+    # 이미지는 인라인 MIME으로 서빙(브라우저가 바로 표시)
+    raw = c.get("/api/notes/raw?path=혼합/사진.png")
+    assert raw.status_code == 200 and raw.headers["content-type"] == "image/png"
+    assert c.get("/api/notes/raw?path=혼합/문서.pdf").headers["content-type"] == "application/pdf"
+    # download=true면 첨부로
+    dl = c.get("/api/notes/raw?path=혼합/사진.png&download=true")
+    assert dl.headers["content-type"] == "application/octet-stream"
+
+    # 텍스트가 아닌 파일은 편집기로 열 수 없다(조용히 깨진 내용을 주지 않음)
+    assert c.get("/api/notes/get?path=혼합/사진.png").status_code == 415
+    assert c.put("/api/notes/save",
+                 json={"path": "혼합/사진.png", "content": "x"}).status_code == 415
+
+    # 이름변경은 확장자를 유지한다
+    rn = c.post("/api/notes/rename", json={"path": "혼합/사진.png", "new_name": "여행"})
+    assert rn.status_code == 200 and rn.json()["path"] == "혼합/여행.png"
+
+    # 검색: 이미지·PDF는 이름으로 잡힌다
+    hits = c.get("/api/notes/search?q=여행").json()
+    assert any(h["path"] == "혼합/여행.png" for h in hits)
 
 
 def test_google_allday_end_conversion():
@@ -385,58 +403,59 @@ def test_calendar_list_date_only_end_is_inclusive():
 def test_ai_notes_in_folders_are_usable():
     """폴더 안 노트도 AI가 읽기·덧붙이기·이름변경·삭제까지 할 수 있어야 한다.
 
-    회귀: list_notes가 파일명(stem)만 돌려줘 폴더 정보가 사라졌고, read_note는
-    항상 루트에서만 찾아 '노트를 찾을 수 없습니다'가 났다. 목록은 보이는데
-    읽기/수정이 안 되는, 캘린더 조회→수정 실패와 같은 계약 불일치.
+    회귀: 목록이 파일명만 돌려줘 폴더 정보가 사라졌고, 읽기는 항상 루트에서만
+    찾아 '찾을 수 없습니다'가 났다. 목록은 보이는데 읽기/수정이 안 되는,
+    캘린더 조회→수정 실패와 같은 계약 불일치.
     """
     from backend.ai.skill_base import SkillContext
     from backend.ai.skill_registry import default_registry
     from backend.auth import SessionUser
     from backend.config import get_settings
-    from backend.storage import notes_root
+    from backend.storage import user_data_root
 
     s = get_settings()
     u = SessionUser(username="notefolder", display_name="NF", expires_at=0, remaining=0)
     ctx = SkillContext(user=u, settings=s, today="2026-08-16")
     reg = default_registry()
 
-    root = notes_root("me", u, s)
+    root = user_data_root(u, s)
     (root / "프로젝트").mkdir(parents=True, exist_ok=True)
     (root / "프로젝트" / "회의록.md").write_text("# 회의록\n첫 줄", encoding="utf-8")
     (root / "루트노트.md").write_text("# 루트노트\n", encoding="utf-8")
 
     # 목록은 폴더를 포함한 식별자를 준다
-    listed = reg.dispatch("list_notes", {"scope": "me"}, ctx)
+    listed = reg.dispatch("list_documents", {}, ctx)
     assert listed.ok
-    assert "프로젝트/회의록" in listed.data["notes"]
-    assert "루트노트" in listed.data["notes"]  # 루트 노트는 기존 형태 유지
+    idents = [d["path"] for d in listed.data["documents"]]
+    assert "프로젝트/회의록" in idents
+    assert "루트노트" in idents  # 루트 문서는 확장자 없이
 
     # 목록이 준 식별자로 바로 읽힌다
-    for ident in listed.data["notes"]:
-        got = reg.dispatch("read_note", {"scope": "me", "title": ident}, ctx)
+    for ident in idents:
+        got = reg.dispatch("read_document", {"path": ident}, ctx)
         assert got.ok, f"{ident} 읽기 실패: {got.message}"
 
     # 검색 결과의 title도 그대로 읽기에 쓸 수 있다
-    hit = reg.dispatch("search_notes", {"scope": "me", "query": "회의"}, ctx)
+    hit = reg.dispatch("search_documents", {"query": "회의"}, ctx)
     assert hit.data["matches"], "검색 결과 없음"
-    assert reg.dispatch("read_note", {"scope": "me", "title": hit.data["matches"][0]["title"]}, ctx).ok
+    assert reg.dispatch("read_document", {"path": hit.data["matches"][0]["path"]}, ctx).ok
 
     # 폴더를 생략한 제목만 줘도(모델이 흔히 하는 형태) 유일하면 찾아준다
-    assert reg.dispatch("read_note", {"scope": "me", "title": "회의록"}, ctx).ok
+    assert reg.dispatch("read_document", {"path": "회의록"}, ctx).ok
 
     # 덧붙이기가 새 루트 노트를 만들지 않고 기존 노트를 수정한다
-    reg.dispatch("append_note", {"scope": "me", "title": "회의록", "content": "둘째 줄"}, ctx)
+    reg.dispatch("append_document", {"path": "회의록", "content": "둘째 줄"}, ctx)
     assert not (root / "회의록.md").exists(), "루트에 중복 노트가 생기면 안 됨"
     assert "둘째 줄" in (root / "프로젝트" / "회의록.md").read_text(encoding="utf-8")
 
     # 이름변경은 같은 폴더 안에서 이뤄진다
     assert reg.dispatch(
-        "rename_note", {"scope": "me", "old_title": "회의록", "new_title": "주간회의"}, ctx
+        "rename_document", {"path": "회의록", "new_name": "주간회의"}, ctx
     ).ok
     assert (root / "프로젝트" / "주간회의.md").exists()
 
     # 삭제도 폴더 안 노트에 닿는다
-    assert reg.dispatch("delete_note", {"scope": "me", "title": "프로젝트/주간회의"}, ctx).ok
+    assert reg.dispatch("delete_document", {"path": "프로젝트/주간회의"}, ctx).ok
     assert not (root / "프로젝트" / "주간회의.md").exists()
 
     # 같은 이름이 여러 폴더에 있으면 임의로 고르지 말고 후보를 알려준다
@@ -444,7 +463,7 @@ def test_ai_notes_in_folders_are_usable():
     (root / "B").mkdir(exist_ok=True)
     (root / "A" / "중복.md").write_text("a", encoding="utf-8")
     (root / "B" / "중복.md").write_text("b", encoding="utf-8")
-    amb = reg.dispatch("read_note", {"scope": "me", "title": "중복"}, ctx)
+    amb = reg.dispatch("read_document", {"path": "중복"}, ctx)
     assert not amb.ok and amb.error_code == "ambiguous", f"모호한 제목은 거절해야 함: {amb}"
     assert "A/중복" in amb.message and "B/중복" in amb.message
 
@@ -460,7 +479,7 @@ def test_ai_deletes_go_to_trash():
     from backend.ai.skill_registry import default_registry
     from backend.auth import SessionUser
     from backend.config import get_settings
-    from backend.storage import notes_root, scope_root
+    from backend.storage import user_data_root
 
     s = get_settings()
     u = SessionUser(username="trashai", display_name="TA", expires_at=0, remaining=0)
@@ -468,9 +487,9 @@ def test_ai_deletes_go_to_trash():
     reg = default_registry()
 
     # 노트 삭제 → 휴지통에서 복구 가능해야
-    nroot = notes_root("me", u, s)
+    nroot = user_data_root(u, s)
     (nroot / "지울노트.md").write_text("소중한 내용", encoding="utf-8")
-    assert reg.dispatch("delete_note", {"scope": "me", "title": "지울노트"}, ctx).ok
+    assert reg.dispatch("delete_document", {"path": "지울노트"}, ctx).ok
     assert not (nroot / "지울노트.md").exists()
     entry = next((e for e in trash.list_trash(u, s) if e["name"] == "지울노트.md"), None)
     assert entry is not None, "삭제한 노트가 휴지통에 없음"
@@ -478,9 +497,9 @@ def test_ai_deletes_go_to_trash():
     assert (nroot / "지울노트.md").read_text(encoding="utf-8") == "소중한 내용"
 
     # 파일 삭제도 동일
-    froot = scope_root("me", u, s)
+    froot = user_data_root(u, s)
     (froot / "지울파일.txt").write_text("파일 내용", encoding="utf-8")
-    assert reg.dispatch("delete_path", {"scope": "me", "path": "지울파일.txt"}, ctx).ok
+    assert reg.dispatch("delete_document", {"path": "지울파일.txt"}, ctx).ok
     fentry = next((e for e in trash.list_trash(u, s) if e["name"] == "지울파일.txt"), None)
     assert fentry is not None, "삭제한 파일이 휴지통에 없음"
     trash.restore(fentry["id"], u, s)
@@ -489,7 +508,7 @@ def test_ai_deletes_go_to_trash():
     # 폴더 삭제도 내용째로 복구 가능
     (froot / "지울폴더").mkdir(exist_ok=True)
     (froot / "지울폴더" / "안쪽.txt").write_text("안쪽", encoding="utf-8")
-    assert reg.dispatch("delete_path", {"scope": "me", "path": "지울폴더"}, ctx).ok
+    assert reg.dispatch("delete_document", {"path": "지울폴더"}, ctx).ok
     dentry = next((e for e in trash.list_trash(u, s) if e["name"] == "지울폴더"), None)
     assert dentry is not None, "삭제한 폴더가 휴지통에 없음"
     trash.restore(dentry["id"], u, s)
@@ -777,7 +796,7 @@ def test_ai_react_chains_skills():
     from backend.ai.orchestrator import LLMResult
     from backend.auth import SessionUser
     from backend.config import get_settings
-    from backend.storage import notes_root
+    from backend.storage import user_data_root
     from backend import calendar_store
 
     s = get_settings()
@@ -790,7 +809,7 @@ def test_ai_react_chains_skills():
         def chat(self, contents, catalog, system):
             self.n += 1
             if self.n == 1:
-                return LLMResult(text="", tool_use={"name": "write_note", "args": {"scope": "me", "title": "plan", "content": "# plan\n[[meeting]]"}})
+                return LLMResult(text="", tool_use={"name": "write_document", "args": {"path": "plan", "content": "# plan\n[[meeting]]"}})
             if self.n == 2:
                 return LLMResult(text="", tool_use={"name": "create_calendar_event", "args": {"title": "미팅", "start": "2026-07-05T10:00:00"}})
             return LLMResult(text="노트와 일정을 만들었습니다.", tool_use=None)
@@ -800,7 +819,7 @@ def test_ai_react_chains_skills():
     assert types.count("tool_call") == 2  # 스킬 2개 연속 실행
     assert any(e["type"] == "text" and "일정" in e["text"] for e in events)
     # 실제 생성 확인 (사용자 스코프)
-    assert (notes_root("me", user, s) / "plan.md").exists()
+    assert (user_data_root(user, s) / "plan.md").exists()
     assert any(ev["title"] == "미팅" for ev in calendar_store.list_events(user, s))
 
 
@@ -816,7 +835,7 @@ def test_ai_react_runs_all_parallel_calls():
     from backend.ai.orchestrator import LLMResult, parse_candidate
     from backend.auth import SessionUser
     from backend.config import get_settings
-    from backend.storage import notes_root
+    from backend.storage import user_data_root
 
     # 응답 파싱 자체가 호출을 빠뜨리지 않는지 — 결함이 있던 지점을 직접 검증
     cand = SimpleNamespace(
@@ -845,17 +864,17 @@ def test_ai_react_runs_all_parallel_calls():
             self.n += 1
             if self.n == 1:
                 return LLMResult(text="", tool_uses=[
-                    {"name": "write_note", "args": {"scope": "me", "title": "A", "content": "a"}},
-                    {"name": "write_note", "args": {"scope": "me", "title": "B", "content": "b"}},
+                    {"name": "write_document", "args": {"path": "A", "content": "a"}},
+                    {"name": "write_document", "args": {"path": "B", "content": "b"}},
                 ])
             self.seen = contents
             return LLMResult(text="둘 다 만들었습니다.")
 
     llm = FakeLLM()
     events = list(orchestrator.run(u, s, "노트 두 개 만들어줘", "2026-08-16", llm=llm))
-    assert [e["name"] for e in events if e["type"] == "tool_call"] == ["write_note", "write_note"]
+    assert [e["name"] for e in events if e["type"] == "tool_call"] == ["write_document", "write_document"]
 
-    root = notes_root("me", u, s)
+    root = user_data_root(u, s)
     assert (root / "A.md").exists() and (root / "B.md").exists(), "두 번째 호출이 실행되지 않음"
 
     # 호출 수와 응답 수가 맞아야 Gemini가 대화를 받아들인다
@@ -875,24 +894,32 @@ def test_ai_skill_catalog_and_ops():
     s = get_settings()
     reg = default_registry()
     catalog = reg.build_catalog()
-    # 대량 스킬 등록 확인 (20개 이상)
-    assert len(catalog) >= 20
+    # 문서·캘린더·시스템 스킬이 모두 등록됐는지
+    assert len(catalog) >= 16, len(catalog)
     names = {c["name"] for c in catalog}
-    for expected in ("delete_note", "append_note", "rename_note", "update_calendar_event",
-                     "delete_calendar_event", "find_free_slots", "get_system_status", "move_path"):
+    for expected in ("list_documents", "read_document", "write_document", "append_document",
+                     "delete_document", "rename_document", "move_document", "search_documents",
+                     "create_folder", "document_backlinks", "update_calendar_event",
+                     "delete_calendar_event", "find_free_slots", "get_system_status"):
         assert expected in names, expected
+    # 파일/노트로 나뉘던 옛 스킬은 남아 있으면 안 된다(모델이 헷갈린다)
+    for gone in ("list_files", "read_file", "list_notes", "read_note", "delete_path"):
+        assert gone not in names, gone
+    # 모든 스킬에서 scope 인자가 사라졌다
+    for c in catalog:
+        assert "scope" not in (c.get("parameters", {}).get("properties") or {}), c["name"]
 
     ctx = SkillContext(
         user=SessionUser(username="tester", display_name="T", expires_at=0, remaining=0),
         settings=s,
     )
-    # append_note → read_note 반영
-    reg.dispatch("write_note", {"scope": "me", "title": "log", "content": "# log\n"}, ctx)
-    reg.dispatch("append_note", {"scope": "me", "title": "log", "content": "라인2"}, ctx)
-    r = reg.dispatch("read_note", {"scope": "me", "title": "log"}, ctx)
+    # append_document → read_document 반영
+    reg.dispatch("write_document", {"path": "log", "content": "# log\n"}, ctx)
+    reg.dispatch("append_document", {"path": "log", "content": "라인2"}, ctx)
+    r = reg.dispatch("read_document", {"path": "log"}, ctx)
     assert "라인2" in r.data["content"]
-    # delete_note
-    assert reg.dispatch("delete_note", {"scope": "me", "title": "log"}, ctx).ok
+    # delete_document
+    assert reg.dispatch("delete_document", {"path": "log"}, ctx).ok
     # find_free_slots (일정 없으면 근무시간 전체가 빈 시간)
     fr = reg.dispatch("find_free_slots", {"date": "2026-09-01", "duration_minutes": 60}, ctx)
     assert fr.ok and len(fr.data["free_slots"]) >= 1
@@ -909,7 +936,7 @@ def test_ai_skill_catalog_and_ops():
 
 def test_ai_blocks_sensitive_files():
     from backend.ai.skill_base import SkillContext
-    from backend.ai.skills import ReadFile, ReadNote
+    from backend.ai.skills import ReadDocument
     from backend.auth import SessionUser
     from backend.config import get_settings
 
@@ -918,32 +945,30 @@ def test_ai_blocks_sensitive_files():
         user=SessionUser(username="tester", display_name="T", expires_at=0, remaining=0),
         settings=s,
     )
-    r = ReadFile().run({"scope": "me", "path": "password.txt"}, ctx)
-    assert r.ok is False and r.error_code == "blocked"
-    r2 = ReadNote().run({"scope": "me", "title": "내 비밀번호"}, ctx)
-    assert r2.ok is False and r2.error_code == "blocked"
+    for path in ("password.txt", "내 비밀번호", "계좌/메모", "secret.md"):
+        r = ReadDocument().run({"path": path}, ctx)
+        assert r.ok is False and r.error_code == "blocked", path
     # .env는 텍스트 확장자에서 제외되어 AI가 읽지 못함
     from backend.gemini_client import TEXT_EXTENSIONS
     assert ".env" not in TEXT_EXTENSIONS
 
 
-def test_scope_isolation():
-    # tester가 개인(me) 스코프에 파일 업로드
+def test_user_isolation():
+    """다른 사용자의 문서는 보이지도, 읽히지도 않는다."""
     a = TestClient(app)
     a.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
     r = a.post(
-        "/api/files/upload?scope=me&path=",
+        "/api/notes/upload?path=",
         files={"file": ("secret.txt", io.BytesIO(b"mine"), "text/plain")},
     )
     assert r.status_code == 200, r.text
-    mine = [e["name"] for e in a.get("/api/files/list?scope=me").json()["entries"]]
-    assert "secret.txt" in mine
+    assert "secret.txt" in [n["path"] for n in a.get("/api/notes/tree").json()["notes"]]
 
-    # tester2의 me 스코프에는 tester의 파일이 보이면 안 됨
     b = TestClient(app)
     b.post("/api/auth/login", json={"username": "tester2", "password": "pw456"})
-    other = [e["name"] for e in b.get("/api/files/list?scope=me").json()["entries"]]
-    assert "secret.txt" not in other
+    assert "secret.txt" not in [n["path"] for n in b.get("/api/notes/tree").json()["notes"]]
+    # 경로를 알아도 읽을 수 없다(각자의 루트로만 해석되므로)
+    assert b.get("/api/notes/raw?path=secret.txt").status_code == 404
 
 
 if __name__ == "__main__":
@@ -962,8 +987,7 @@ if __name__ == "__main__":
     test_notes_folders_and_tree()
     test_trash_restore_flow()
     test_sync_manifest_upload_download()
-    test_notes_scope_in_files()
-    test_notes_edit_files_base()
+    test_unified_document_space()
     test_google_allday_end_conversion()
     test_calendar_colors_names_and_prefs()
     test_calendar_list_default_window()
@@ -983,5 +1007,5 @@ if __name__ == "__main__":
     test_ai_react_runs_all_parallel_calls()
     test_ai_skill_catalog_and_ops()
     test_ai_blocks_sensitive_files()
-    test_scope_isolation()
+    test_user_isolation()
     print("ALL SMOKE TESTS PASSED")

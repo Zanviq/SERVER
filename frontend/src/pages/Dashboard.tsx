@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  FolderOpen, NotebookPen, CalendarDays, Bot, FileText, Clock, ChevronRight,
+  NotebookPen, CalendarDays, Bot, FileText, Clock, ChevronRight,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { SystemMonitor } from "../components/system/SystemMonitor";
@@ -9,7 +9,6 @@ import { api, NoteSummary, CalEvent } from "../lib/api";
 import { useAuth } from "../store/auth";
 
 const SHORTCUTS = [
-  { to: "/files", icon: FolderOpen, label: "파일", desc: "공통·개인 파일 관리" },
   { to: "/notes", icon: NotebookPen, label: "노트", desc: "마크다운·위키링크" },
   { to: "/calendar", icon: CalendarDays, label: "캘린더", desc: "일정 관리" },
   { to: "/assistant", icon: Bot, label: "AI 비서", desc: "파일·일정 자동화" },
@@ -30,7 +29,7 @@ export function Dashboard() {
   const [events, setEvents] = useState<CalEvent[]>([]);
 
   useEffect(() => {
-    api.noteList("me")
+    api.noteList()
       .then((list) => setNotes([...list].sort((a, b) => b.modified - a.modified).slice(0, 5)))
       .catch(() => {});
     const now = new Date();

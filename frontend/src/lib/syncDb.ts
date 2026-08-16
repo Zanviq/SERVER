@@ -5,13 +5,11 @@ const DB_NAME = "server-sync";
 const STORE = "mappings";
 const VERSION = 2; // v1: 사용자당 1개(keyPath userId) → v2: 여러 개(keyPath id)
 
-export type SyncScope = "me" | "common" | "notes";
 
 export interface SyncMapping {
   id: string;
   userId: string;
   handle: any; // FileSystemDirectoryHandle
-  scope: SyncScope;
   path: string; // 웹 폴더 상대경로
   uploaded: string[]; // 이 매핑이 웹에 업로드한 파일 rel 목록(해제 시 삭제 추적용)
 }

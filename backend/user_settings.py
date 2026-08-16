@@ -22,11 +22,7 @@ DEFAULTS: dict[str, Any] = {
         "ai_rules": "",  # AI가 일정 생성/수정 때 항상 적용할 필수 규칙(예: 동아리는 보라색)
     },
     "notes": {
-        "default_scope": "me",  # common | me
         "autosave_ms": 900,
-    },
-    "files": {
-        "default_scope": "me",
         "confirm_delete": True,
     },
     "sync": {

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, Scope } from "../lib/api";
+import { api } from "../lib/api";
 import {
   fsSupported, pickDirectory, queryPerm, requestPerm, walk, readBuf, writeLocal,
   sha256, isTextFile, mergeLines,
@@ -18,7 +18,6 @@ export interface Conflict {
 export interface MappingState {
   id: string;
   handle: any;
-  scope: Scope;
   path: string;
   localName: string;
   uploaded: string[];
@@ -36,7 +35,7 @@ interface SyncState {
   pickPending: { handle: any; localName: string } | null;
   init: (userId: string) => Promise<void>;
   beginAdd: () => Promise<void>;
-  confirmAdd: (scope: Scope, path: string) => Promise<void>;
+  confirmAdd: (path: string) => Promise<void>;
   cancelAdd: () => void;
   syncOne: (id: string) => Promise<void>;
   resumeOne: (id: string) => Promise<void>;
@@ -47,8 +46,8 @@ interface SyncState {
 const enc = (s: string): ArrayBuffer => new TextEncoder().encode(s).buffer as ArrayBuffer;
 const dec = (b: ArrayBuffer): string => new TextDecoder().decode(b);
 
-async function fetchWebBuf(scope: Scope, path: string, rel: string): Promise<ArrayBuffer> {
-  const res = await fetch(api.syncDownloadUrl(scope, path, rel), { credentials: "include" });
+async function fetchWebBuf(path: string, rel: string): Promise<ArrayBuffer> {
+  const res = await fetch(api.syncDownloadUrl(path, rel), { credentials: "include" });
   if (!res.ok) throw new Error(`다운로드 실패: ${rel}`);
   return res.arrayBuffer();
 }
@@ -56,7 +55,6 @@ async function fetchWebBuf(scope: Scope, path: string, rel: string): Promise<Arr
 const toState = (m: SyncMapping): MappingState => ({
   id: m.id,
   handle: m.handle,
-  scope: m.scope,
   path: m.path,
   localName: m.handle?.name ?? "",
   uploaded: m.uploaded ?? [],
@@ -73,7 +71,7 @@ export const useSync = create<SyncState>((set, get) => {
   const persist = async (m: MappingState) => {
     await saveMapping({
       id: m.id, userId: get().userId!, handle: m.handle,
-      scope: m.scope as any, path: m.path, uploaded: m.uploaded,
+      path: m.path, uploaded: m.uploaded,
     }).catch(() => {});
   };
 
@@ -93,7 +91,7 @@ export const useSync = create<SyncState>((set, get) => {
         const buf = await readBuf(f.handle);
         localMap.set(f.rel, { hash: await sha256(buf), buf });
       }
-      const manifest = await api.syncManifest(m.scope, m.path);
+      const manifest = await api.syncManifest(m.path);
       const webMap = new Map(manifest.files.map((f) => [f.rel, f.hash]));
 
       const conflicts: Conflict[] = [];
@@ -102,28 +100,28 @@ export const useSync = create<SyncState>((set, get) => {
       for (const [rel, lf] of localMap) {
         const wh = webMap.get(rel);
         if (wh === undefined) {
-          await api.syncUpload(m.scope, m.path, rel, lf.buf);
+          await api.syncUpload(m.path, rel, lf.buf);
           markUp(rel); up++;
         } else if (wh === lf.hash) {
           markUp(rel); // 동일 파일도 우리가 올린 것으로 간주(추적)
         } else if (isTextFile(rel)) {
           const localText = dec(lf.buf);
-          const webText = dec(await fetchWebBuf(m.scope, m.path, rel));
-          if (textPolicy === "local") { await api.syncUpload(m.scope, m.path, rel, lf.buf); markUp(rel); up++; }
+          const webText = dec(await fetchWebBuf(m.path, rel));
+          if (textPolicy === "local") { await api.syncUpload(m.path, rel, lf.buf); markUp(rel); up++; }
           else if (textPolicy === "web") { await writeLocal(m.handle, rel, enc(webText)); down++; }
           else if (textPolicy === "merge") {
             const merged = mergeLines(localText, webText);
-            await api.syncUpload(m.scope, m.path, rel, enc(merged));
+            await api.syncUpload(m.path, rel, enc(merged));
             await writeLocal(m.handle, rel, enc(merged)); markUp(rel); up++;
           } else conflicts.push({ rel, localText, webText });
         } else {
-          if (binaryPolicy === "web") { await writeLocal(m.handle, rel, await fetchWebBuf(m.scope, m.path, rel)); down++; }
-          else { await api.syncUpload(m.scope, m.path, rel, lf.buf); markUp(rel); up++; }
+          if (binaryPolicy === "web") { await writeLocal(m.handle, rel, await fetchWebBuf(m.path, rel)); down++; }
+          else { await api.syncUpload(m.path, rel, lf.buf); markUp(rel); up++; }
         }
       }
       for (const f of manifest.files) {
         if (!localMap.has(f.rel)) {
-          await writeLocal(m.handle, f.rel, await fetchWebBuf(m.scope, m.path, f.rel));
+          await writeLocal(m.handle, f.rel, await fetchWebBuf(m.path, f.rel));
           down++;
         }
       }
@@ -162,15 +160,15 @@ export const useSync = create<SyncState>((set, get) => {
 
     cancelAdd: () => set({ pickPending: null }),
 
-    // 2) 목적지(scope + 최종 경로) 확정 → 매핑 생성 + 동기화
-    confirmAdd: async (scope, path) => {
+    // 2) 목적지(웹 폴더 경로) 확정 → 매핑 생성 + 동기화
+    confirmAdd: async (path) => {
       const userId = get().userId;
       const pending = get().pickPending;
       if (!userId || !pending) return;
       const id = (crypto as any).randomUUID
         ? (crypto as any).randomUUID()
         : `${pending.localName}:${path}:${performance.now()}`;
-      const rec: SyncMapping = { id, userId, handle: pending.handle, scope: scope as any, path, uploaded: [] };
+      const rec: SyncMapping = { id, userId, handle: pending.handle, path, uploaded: [] };
       await saveMapping(rec);
       set((s) => ({ mappings: [...s.mappings, toState(rec)], pickPending: null }));
       await runSync(id);
@@ -192,11 +190,11 @@ export const useSync = create<SyncState>((set, get) => {
       const c = m.conflicts.find((x) => x.rel === rel);
       if (!c) return;
       try {
-        if (choice === "local") { await api.syncUpload(m.scope, m.path, rel, enc(c.localText)); }
+        if (choice === "local") { await api.syncUpload(m.path, rel, enc(c.localText)); }
         else if (choice === "web") { await writeLocal(m.handle, rel, enc(c.webText)); }
         else {
           const merged = mergeLines(c.localText, c.webText);
-          await api.syncUpload(m.scope, m.path, rel, enc(merged));
+          await api.syncUpload(m.path, rel, enc(merged));
           await writeLocal(m.handle, rel, enc(merged));
         }
         const uploaded = choice === "web" ? m.uploaded : [...new Set([...m.uploaded, rel])];
@@ -213,17 +211,17 @@ export const useSync = create<SyncState>((set, get) => {
       if (deleteUploaded && m) {
         if (m.path) {
           // 전용 폴더에 풀었으면 폴더 통째로 휴지통 이동(파일 + 하위 폴더 모두)
-          await api.remove(m.scope, m.path).catch(() => {});
+          await api.noteDelete(m.path).catch(() => {});
         } else {
           // 루트에 바로 푼 경우: 업로드한 파일 + 그 하위 폴더들을 깊은 것부터 삭제
-          for (const rel of m.uploaded) await api.remove(m.scope, rel).catch(() => {});
+          for (const rel of m.uploaded) await api.noteDelete(rel).catch(() => {});
           const dirs = new Set<string>();
           for (const rel of m.uploaded) {
             const parts = rel.split("/");
             for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join("/"));
           }
           for (const d of [...dirs].sort((a, b) => b.length - a.length)) {
-            await api.remove(m.scope, d).catch(() => {});
+            await api.noteDelete(d).catch(() => {});
           }
         }
       }

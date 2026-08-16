@@ -67,7 +67,7 @@ export function Trash() {
   };
 
   const icon = (e: TrashEntry) =>
-    e.is_dir ? FolderOpen : e.kind === "note" ? NotebookPen : FileText;
+    e.is_dir ? FolderOpen : e.name.endsWith(".md") ? NotebookPen : FileText;
 
   return (
     <Shell
@@ -105,7 +105,7 @@ export function Trash() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13.5px] font-medium">{e.name}</p>
                     <p className="truncate text-[11.5px] text-fg-muted">
-                      {e.scope === "me" ? "내 공간" : "공통"} · {e.orig_rel} · {fmt(e.deleted_at)}
+                      {e.orig_rel} · {fmt(e.deleted_at)}
                     </p>
                   </div>
                   <button

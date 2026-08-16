@@ -7,11 +7,9 @@ import {
 import { Shell } from "../components/layout/Shell";
 import { Modal } from "../components/ui/Modal";
 import { useSync, MappingState } from "../store/sync";
-import { Scope } from "../lib/api";
 import { toast } from "../store/toast";
 
-const scopeName = (s: Scope) => (s === "me" ? "내 파일" : s === "notes" ? "노트" : "공통");
-const webLabel = (scope: Scope, path: string) => `${scopeName(scope)} / ${path || "(루트)"}`;
+const webLabel = (path: string) => `문서 / ${path || "(루트)"}`;
 
 const STATUS: Record<string, { label: string; cls: string; icon: JSX.Element }> = {
   syncing: { label: "연동중…", cls: "text-accent", icon: <Loader2 size={13} className="animate-spin" /> },
@@ -25,14 +23,12 @@ export function Sync() {
   const st = useSync();
   const [disc, setDisc] = useState<MappingState | null>(null);
   // 목적지 지정 폼 (폴더 선택 후 모달)
-  const [scope, setScope] = useState<Scope>("me");
   const [parent, setParent] = useState("");
   const [wrap, setWrap] = useState(true);
   const [wrapName, setWrapName] = useState("");
 
   useEffect(() => {
     if (st.pickPending) {
-      setScope("me");
       setParent("");
       setWrap(true);
       setWrapName(st.pickPending.localName); // 기본: 로컬 폴더 이름으로 새 폴더
@@ -89,7 +85,7 @@ export function Sync() {
                   <p className="mt-1.5 flex flex-wrap items-center gap-2 text-[13px] text-fg-muted">
                     <span className="badge">{m.localName}</span>
                     <span>↔</span>
-                    <span className="badge">{webLabel(m.scope, m.path)}</span>
+                    <span className="badge">{webLabel(m.path)}</span>
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
@@ -99,7 +95,7 @@ export function Sync() {
                     </button>
                   ) : (
                     <>
-                      <Link to={`/files?scope=${m.scope}&path=${encodeURIComponent(m.path)}`} className="btn btn-ghost h-8 px-2" title="파일에서 열기">
+                      <Link to={`/notes?path=${encodeURIComponent(m.path)}`} className="btn btn-ghost h-8 px-2" title="문서에서 열기">
                         <FolderOpen size={15} />
                       </Link>
                       <button onClick={() => st.syncOne(m.id)} disabled={m.status === "syncing"} className="btn btn-secondary h-8">
@@ -117,7 +113,7 @@ export function Sync() {
                 <p className="mt-3 flex flex-wrap items-center gap-3 text-[12px] text-fg-muted">
                   <span className="inline-flex items-center gap-1"><ArrowUp size={12} className="text-positive" /> 업로드 {m.stats.up}</span>
                   <span className="inline-flex items-center gap-1"><ArrowDown size={12} className="text-accent" /> 다운로드 {m.stats.down}</span>
-                  <span>· <b className="text-accent">{webLabel(m.scope, m.path)}</b> 에 저장됨</span>
+                  <span>· <b className="text-accent">{webLabel(m.path)}</b> 에 저장됨</span>
                 </p>
               )}
               {m.status === "error" && m.error && <p className="mt-2 text-[12.5px] text-danger">{m.error}</p>}
@@ -144,14 +140,6 @@ export function Sync() {
         title={`「${st.pickPending?.localName ?? ""}」 폴더를 어디에 풀까요?`} width="max-w-md">
         <div className="space-y-4">
           <div className="flex flex-wrap items-end gap-3">
-            <label className="flex flex-col gap-1">
-              <span className="label">웹 위치</span>
-              <select className="input w-32" value={scope} onChange={(e) => setScope(e.target.value as Scope)}>
-                <option value="me">내 파일</option>
-                <option value="common">공통</option>
-                <option value="notes">노트</option>
-              </select>
-            </label>
             <label className="flex flex-1 flex-col gap-1">
               <span className="label">상위 폴더 (선택)</span>
               <input className="input" value={parent} onChange={(e) => setParent(e.target.value)} placeholder="예: docs (비우면 최상위)" />
@@ -174,13 +162,12 @@ export function Sync() {
           </div>
 
           <p className="rounded-md bg-subtle px-3 py-2 text-[12.5px] text-fg2">
-            → <b className="text-accent">{webLabel(scope, finalPath())}</b> 에 동기화됩니다.
-            {scope === "notes" && <span className="text-fg-muted"> (노트 페이지에서도 보임)</span>}
+            → <b className="text-accent">{webLabel(finalPath())}</b> 에 동기화됩니다.
           </p>
 
           <div className="flex justify-end gap-2">
             <button onClick={st.cancelAdd} className="btn btn-ghost">취소</button>
-            <button onClick={() => st.confirmAdd(scope, finalPath())} disabled={wrap && !wrapName.trim()} className="btn btn-primary">
+            <button onClick={() => st.confirmAdd(finalPath())} disabled={wrap && !wrapName.trim()} className="btn btn-primary">
               <FolderSync size={15} /> 연동 시작
             </button>
           </div>
@@ -194,7 +181,7 @@ export function Sync() {
             <p className="text-[13.5px] text-fg2">
               <span className="badge">{disc.localName}</span> 연동을 해제합니다.
               <br />
-              이 연동은 <b>{webLabel(disc.scope, disc.path)}</b> 에 파일 <b className="text-accent">{disc.uploaded.length}개</b>를 올렸습니다.
+              이 연동은 <b>{webLabel(disc.path)}</b> 에 파일 <b className="text-accent">{disc.uploaded.length}개</b>를 올렸습니다.
               <br />
               {disc.path
                 ? <>이 <b>폴더(하위 폴더 포함)</b>를 <b>삭제(휴지통)</b> 하시겠습니까?</>

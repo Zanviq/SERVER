@@ -1,55 +1,28 @@
-"""스코프 기반 저장소 경로 해석.
+"""사용자 문서 저장소 경로 해석.
 
-스코프:
-  - common : 모든 사용자 공유 공간  (STORAGE_ROOT/common)
-  - me     : 로그인 사용자의 개인 파일 (STORAGE_ROOT/users/<username>/files)
+한 사용자의 문서는 **한 곳**에만 있다: `STORAGE_ROOT/users/<username>/data`.
+(2026-08 개편 전에는 common/ · users/<u>/files · users/<u>/notes 로 나뉘어
+있었고, 같은 문서를 두 페이지에서 다르게 보게 되는 원인이었다.)
 
-개인 스코프는 항상 **세션 사용자**의 username으로만 해석되므로,
-다른 사용자의 폴더에는 접근할 수 없다(UI·AI 공통).
+경로는 항상 **세션 사용자**의 것으로만 해석되므로 다른 사용자의 문서에는
+접근할 수 없다(UI·AI 공통).
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import HTTPException
-
 from .auth import SessionUser
 from .config import Settings
 from .security_paths import safe_join
 
-VALID_SCOPES = ("common", "me", "notes")
 
-
-def scope_root(scope: str, user: SessionUser, settings: Settings) -> Path:
-    """스코프의 실제 디스크 루트 반환(없으면 생성).
-
-    notes 스코프는 개인 노트 폴더를 가리켜, 파일 관리·연동에서 노트를 다룰 수 있게 한다.
-    (notes_root('me')와 동일한 경로 → 파일관리/노트페이지가 같은 폴더를 공유)
-    """
-    if scope == "common":
-        root = settings.common_root
-    elif scope == "me":
-        root = settings.user_root(user.username) / "files"
-    elif scope == "notes":
-        root = settings.user_root(user.username) / "notes"
-    else:
-        raise HTTPException(status_code=400, detail="잘못된 스코프입니다.")
+def user_data_root(user: SessionUser, settings: Settings) -> Path:
+    """이 사용자의 문서 루트(없으면 생성)."""
+    root = settings.user_root(user.username) / "data"
     root.mkdir(parents=True, exist_ok=True)
     return root.resolve()
 
 
-def notes_root(scope: str, user: SessionUser, settings: Settings) -> Path:
-    """노트 전용 루트. common/notes 또는 users/<u>/notes."""
-    if scope == "common":
-        root = settings.common_root / "notes"
-    elif scope == "me":
-        root = settings.user_root(user.username) / "notes"
-    else:
-        raise HTTPException(status_code=400, detail="잘못된 스코프입니다.")
-    root.mkdir(parents=True, exist_ok=True)
-    return root.resolve()
-
-
-def resolve(scope: str, rel: str, user: SessionUser, settings: Settings) -> Path:
-    """파일 스코프 내에서 상대경로를 안전하게 해석."""
-    return safe_join(scope_root(scope, user, settings), rel)
+def resolve(rel: str, user: SessionUser, settings: Settings) -> Path:
+    """문서 루트 기준으로 상대경로를 안전하게 해석(루트 밖 탈출 차단)."""
+    return safe_join(user_data_root(user, settings), rel)

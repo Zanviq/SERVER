@@ -17,7 +17,6 @@ from .routers import (
     ai,
     auth,
     calendar,
-    files,
     notes,
     settings as settings_router,
     sync,
@@ -70,7 +69,6 @@ app.include_router(auth.router)
 
 # 보호 라우터: 모든 엔드포인트가 유효 세션 요구
 _PROTECTED = [Depends(require_session)]
-app.include_router(files.router, dependencies=_PROTECTED)
 app.include_router(system.router, dependencies=_PROTECTED)
 app.include_router(notes.router, dependencies=_PROTECTED)
 app.include_router(calendar.router, dependencies=_PROTECTED)

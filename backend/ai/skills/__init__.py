@@ -1,6 +1,7 @@
 """기본 스킬 모음. 도메인별 모듈에서 집계.
 
-모든 스킬은 SkillContext의 세션 사용자 스코프(common | 본인 me)에서만 동작한다.
+모든 스킬은 SkillContext의 세션 사용자 문서 공간에서만 동작한다
+(users/<username>/data). 다른 사용자의 문서에는 접근할 수 없다.
 """
 from __future__ import annotations
 
@@ -11,25 +12,17 @@ from .calendar import (
     ListCalendarEvents,
     UpdateCalendarEvent,
 )
-from .files import (
-    AppendTextFile,
+from .documents import (
+    AppendDocument,
     CreateFolder,
-    DeletePath,
-    ListFiles,
-    MovePath,
-    ReadFile,
-    SearchFiles,
-    WriteTextFile,
-)
-from .notes import (
-    AppendNote,
-    DeleteNote,
-    ListNotes,
-    NoteBacklinks,
-    ReadNote,
-    RenameNote,
-    SearchNotes,
-    WriteNote,
+    DeleteDocument,
+    DocumentBacklinks,
+    ListDocuments,
+    MoveDocument,
+    ReadDocument,
+    RenameDocument,
+    SearchDocuments,
+    WriteDocument,
 )
 from .system import GetSystemStatus
 from .think import ThinkSkill
@@ -37,24 +30,17 @@ from .think import ThinkSkill
 # 등록 순서 = LLM에 노출되는 카탈로그 순서
 ALL_SKILLS = [
     ThinkSkill(),
-    # 파일
-    ListFiles(),
-    ReadFile(),
-    SearchFiles(),
-    WriteTextFile(),
-    AppendTextFile(),
-    DeletePath(),
+    # 문서(파일·노트 통합)
+    ListDocuments(),
+    ReadDocument(),
+    SearchDocuments(),
+    WriteDocument(),
+    AppendDocument(),
+    DeleteDocument(),
+    RenameDocument(),
+    MoveDocument(),
     CreateFolder(),
-    MovePath(),
-    # 노트
-    ListNotes(),
-    ReadNote(),
-    WriteNote(),
-    AppendNote(),
-    DeleteNote(),
-    RenameNote(),
-    SearchNotes(),
-    NoteBacklinks(),
+    DocumentBacklinks(),
     # 캘린더
     ListCalendarEvents(),
     CreateCalendarEvent(),
@@ -67,10 +53,10 @@ ALL_SKILLS = [
 
 __all__ = [
     "ALL_SKILLS",
-    "ThinkSkill", "ListFiles", "ReadFile", "SearchFiles", "WriteTextFile",
-    "AppendTextFile", "DeletePath", "CreateFolder", "MovePath",
-    "ListNotes", "ReadNote", "WriteNote", "AppendNote", "DeleteNote",
-    "RenameNote", "SearchNotes", "NoteBacklinks",
+    "ThinkSkill",
+    "ListDocuments", "ReadDocument", "SearchDocuments", "WriteDocument",
+    "AppendDocument", "DeleteDocument", "RenameDocument", "MoveDocument",
+    "CreateFolder", "DocumentBacklinks",
     "ListCalendarEvents", "CreateCalendarEvent", "UpdateCalendarEvent",
     "DeleteCalendarEvent", "FindFreeSlots", "GetSystemStatus",
 ]

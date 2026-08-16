@@ -108,10 +108,6 @@ class Settings:
 
     # ── 저장소 경로 헬퍼 ──
     @property
-    def common_root(self) -> Path:
-        return self.storage_root / "common"
-
-    @property
     def users_root(self) -> Path:
         return self.storage_root / "users"
 
@@ -147,11 +143,10 @@ class Settings:
         return None
 
     def ensure_storage(self) -> None:
-        """공통 폴더 + 모든 사용자 개인 폴더 골격 생성."""
-        self.common_root.mkdir(parents=True, exist_ok=True)
+        """사용자별 폴더 골격 생성. 문서는 data/ 하나로 통합됐다."""
         for acc in self.users:
             base = self.user_root(acc.username)
-            for sub in ("files", "notes", "calendar", "ai/logs"):
+            for sub in ("data", "calendar", "ai/logs"):
                 (base / sub).mkdir(parents=True, exist_ok=True)
 
 

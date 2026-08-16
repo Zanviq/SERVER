@@ -188,13 +188,6 @@ export function Settings() {
 
           {tab === "notes" && (
             <div>
-              <Row label="기본 노트 공간">
-                <select className="input w-32" value={s.notes.default_scope}
-                  onChange={(e) => update({ notes: { default_scope: e.target.value } })}>
-                  <option value="me">내 노트</option>
-                  <option value="common">공통</option>
-                </select>
-              </Row>
               <Row label="자동 저장 지연" desc="입력 후 저장까지 (ms)">
                 <input type="number" min={300} max={5000} step={100} className="input w-24" value={s.notes.autosave_ms}
                   onChange={(e) => update({ notes: { autosave_ms: Math.max(300, Math.min(5000, +e.target.value)) } })} />
@@ -243,7 +236,7 @@ export function Settings() {
               <Row label="버전">v0.2.0</Row>
               <Row label="인증">.env 계정 · 세션 시간 설정 가능(계정 탭)</Row>
               <Row label="AI">Google Gemini (ReAct)</Row>
-              <Row label="저장">공통 + 개인 폴더 (HDD)</Row>
+              <Row label="저장">개인 문서 공간 (외장하드)</Row>
             </div>
           )}
         </div>

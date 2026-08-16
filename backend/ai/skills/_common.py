@@ -1,11 +1,6 @@
 """스킬 공용 상수/헬퍼."""
 from __future__ import annotations
 
-_SCOPE_PROP = {
-    "type": "string",
-    "enum": ["common", "me"],
-    "description": "common=공통 공간, me=내 개인 공간",
-}
 _MAX_READ = 20000
 
 # AI(외부 Gemini)로 내용이 전송되면 안 되는 민감 키워드 — 파일명/경로 기준.

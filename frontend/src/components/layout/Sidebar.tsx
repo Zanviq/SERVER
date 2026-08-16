@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard,
-  FolderOpen,
   NotebookPen,
   Share2,
   CalendarDays,
@@ -27,8 +26,7 @@ const terminalAvailable = (): Promise<boolean> => {
 
 const NAV = [
   { to: "/", icon: LayoutDashboard, label: "대시보드", end: true },
-  { to: "/files", icon: FolderOpen, label: "파일" },
-  { to: "/notes", icon: NotebookPen, label: "노트" },
+  { to: "/notes", icon: NotebookPen, label: "문서" },
   { to: "/graph", icon: Share2, label: "그래프" },
   { to: "/calendar", icon: CalendarDays, label: "캘린더" },
   { to: "/assistant", icon: Bot, label: "AI 비서" },

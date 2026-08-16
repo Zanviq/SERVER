@@ -2,15 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   NotebookPen, FolderPlus, FilePlus, Trash2, Save, Link2, Loader2,
-  FileText, Search, X, Folder, ChevronRight, ChevronDown, Home, FolderInput, Eye, Pencil,
+  FileText, Search, X, Folder, ChevronRight, ChevronDown, Home, FolderInput, Eye, Pencil, Upload,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { MarkdownView } from "../components/notes/LazyMarkdownView";
+import { DocViewer } from "../components/notes/DocViewer";
 import { ThreePane } from "../components/notes/ThreePane";
 import { RowMenu } from "../components/notes/RowMenu";
 import { LiveEditor } from "../components/notes/LazyLiveEditor";
 import { Modal } from "../components/ui/Modal";
-import { api, NoteSummary, NoteDetail, NoteSearchHit, Scope, NoteBase } from "../lib/api";
+import { api, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
 
@@ -55,8 +56,6 @@ function buildTree(folders: string[], notes: NoteSummary[]): TreeNode {
 
 export function Notes() {
   const prefs = useSettings((st) => st.settings?.notes);
-  const [scope, setScope] = useState<Scope>((prefs?.default_scope as Scope) || "me");
-  const [base, setBase] = useState<NoteBase>("notes"); // notes: 노트폴더 / files: 파일 저장소(hdd)
   const [folders, setFolders] = useState<string[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -90,13 +89,13 @@ export function Notes() {
 
   const reloadTree = useCallback(async () => {
     try {
-      const t = await api.noteTree(scope, base);
+      const t = await api.noteTree();
       setFolders(t.folders);
       setNotes(t.notes);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "목록 실패");
     }
-  }, [scope, base]);
+  }, []);
 
   useEffect(() => {
     reloadTree();
@@ -109,7 +108,7 @@ export function Notes() {
   const openNote = useCallback(
     async (path: string) => {
       try {
-        const d = await api.noteGet(scope, path, base);
+        const d = await api.noteGet(path);
         setCurrent(d.path);
         setContent(d.content);
         setDetail(d);
@@ -121,16 +120,16 @@ export function Notes() {
         toast.error(e instanceof Error ? e.message : "노트 열기 실패");
       }
     },
-    [scope, base],
+    [],
   );
 
   const save = useCallback(
     async (path: string, text: string) => {
       setSaving(true);
       try {
-        await api.noteSave(scope, path, text, base);
+        await api.noteSave(path, text);
         setDirty(false);
-        const d = await api.noteGet(scope, path, base);
+        const d = await api.noteGet(path);
         setDetail(d);
         reloadTree();
       } catch (e) {
@@ -139,7 +138,7 @@ export function Notes() {
         setSaving(false);
       }
     },
-    [scope, base, reloadTree],
+    [reloadTree],
   );
 
   // 라이브 에디터(CodeMirror)의 [[ 자동완성이 링크를 담당하므로 여기선 저장만.
@@ -172,7 +171,7 @@ export function Notes() {
     setNewName("");
     const path = joinPath(curFolder, name);
     try {
-      await api.noteFolderCreate(scope, path, base);
+      await api.noteFolderCreate(path);
       await reloadTree();
       setExpanded((s) => new Set(s).add(path));
       setCurFolder(path);
@@ -186,7 +185,7 @@ export function Notes() {
     if (!current) return;
     setDelOpen(false);
     try {
-      await api.noteDelete(scope, current, base);
+      await api.noteDelete(current);
       setCurrent(null);
       setContent("");
       setDetail(null);
@@ -202,7 +201,7 @@ export function Notes() {
     const target = delFolder;
     setDelFolder(null);
     try {
-      await api.noteFolderDelete(scope, target, base);
+      await api.noteFolderDelete(target);
       if (curFolder === target || curFolder.startsWith(target + "/")) setCurFolder("");
       reloadTree();
       toast.ok("폴더를 휴지통으로 이동했습니다");
@@ -220,7 +219,7 @@ export function Notes() {
     }
     searchTimer.current = window.setTimeout(async () => {
       try {
-        setHits(await api.noteSearch(scope, v.trim(), base));
+        setHits(await api.noteSearch(v.trim()));
       } catch {
         setHits([]);
       }
@@ -236,12 +235,10 @@ export function Notes() {
     [notes, openNote, save, reloadTree],
   );
 
-  // 파일관리(notes 스코프)에서 정확한 경로로 노트 열기 — 개인 노트(me) 기준
+  // 정확한 상대경로로 문서 열기(URL 진입·그래프 클릭 등)
   const openExactPath = useCallback(async (path: string) => {
-    setBase("notes");
-    setScope("me");
     try {
-      const d = await api.noteGet("me", path);
+      const d = await api.noteGet(path);
       setCurrent(d.path);
       setContent(d.content);
       setDetail(d);
@@ -249,49 +246,23 @@ export function Notes() {
       const slash = d.path.lastIndexOf("/");
       setCurFolder(slash >= 0 ? d.path.slice(0, slash) : "");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "노트 열기 실패");
-    }
-  }, []);
-
-  // 파일 폴더(me/common)의 문서를 노트 편집기에서 열기(파일 base). 파일 페이지 더블클릭 진입.
-  const openFileInEditor = useCallback(async (spec: string) => {
-    const idx = spec.indexOf(":");
-    if (idx < 0) return;
-    const sc = spec.slice(0, idx) as Scope;
-    const p = spec.slice(idx + 1);
-    setBase("files");
-    setScope(sc);
-    try {
-      const d = await api.noteGet(sc, p, "files");
-      setCurrent(d.path);
-      setContent(d.content);
-      setDetail(d);
-      setDirty(false);
-      const slash = d.path.lastIndexOf("/");
-      setCurFolder(slash >= 0 ? d.path.slice(0, slash) : "");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "파일 열기 실패");
+      toast.error(e instanceof Error ? e.message : "문서 열기 실패");
     }
   }, []);
 
   useEffect(() => {
     const open = params.get("open");
     const path = params.get("path");
-    const edit = params.get("edit");
     if (path) {
       openExactPath(path);
       params.delete("path");
-      setParams(params, { replace: true });
-    } else if (edit) {
-      openFileInEditor(edit);
-      params.delete("edit");
       setParams(params, { replace: true });
     } else if (open && notes.length) {
       openByTitle(open);
       params.delete("open");
       setParams(params, { replace: true });
     }
-  }, [params, notes, openByTitle, openExactPath, openFileInEditor, setParams]);
+  }, [params, notes, openByTitle, openExactPath, setParams]);
 
   const toggleFolder = (path: string) => {
     setCurFolder(path);
@@ -305,7 +276,7 @@ export function Notes() {
   const doRenameNote = async () => {
     if (!renameFor || !renameName.trim()) return;
     try {
-      const r = await api.noteRename(scope, renameFor.path, renameName.trim(), base);
+      const r = await api.noteRename(renameFor.path, renameName.trim());
       toast.ok("이름을 변경했습니다");
       const wasOpen = current === renameFor.path;
       setRenameFor(null);
@@ -318,7 +289,7 @@ export function Notes() {
 
   const doMoveNote = async (path: string, folder: string) => {
     try {
-      const r = await api.noteMove(scope, path, folder, base);
+      const r = await api.noteMove(path, folder);
       toast.ok("이동했습니다");
       const wasOpen = current === path;
       setMoveFor(null);
@@ -333,7 +304,7 @@ export function Notes() {
     if (!delNotePath) return;
     const path = delNotePath;
     try {
-      await api.noteDelete(scope, path, base);
+      await api.noteDelete(path);
       if (current === path) { setCurrent(null); setDetail(null); setContent(""); }
       setDelNotePath(null);
       await reloadTree();
@@ -407,41 +378,36 @@ export function Notes() {
     return rows;
   };
 
-  // 소스 선택: 노트 폴더 / 파일 저장소
-  const source = `${base}:${scope}`;
-  const onSource = (v: string) => {
-    const [b, s] = v.split(":");
-    setBase(b as NoteBase);
-    setScope(s as Scope);
+  // 현재 열린 문서의 메타(종류에 따라 편집기/뷰어를 고른다)
+  const currentMeta = current ? notes.find((n) => n.path === current) : undefined;
+  const isEditable = !currentMeta || currentMeta.editable;
+
+  const doUpload = async (files: FileList | null) => {
+    if (!files || !files.length) return;
+    try {
+      for (const f of Array.from(files)) await api.noteUpload(curFolder, f);
+      toast.ok(`${files.length}개 업로드됨`);
+      await reloadTree();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "업로드 실패");
+    }
   };
-  const crumbs = (
-    <div className="relative inline-block">
-      <select
-        value={source}
-        onChange={(e) => onSource(e.target.value)}
-        className="h-8 cursor-pointer appearance-none rounded-md border border-line bg-subtle pl-3 pr-8 text-[13px] font-medium text-accent outline-none transition-colors hover:border-line-strong focus:border-accent"
-        title="편집할 위치 — 노트 폴더뿐 아니라 파일 페이지의 폴더도 여기서 바로 열 수 있습니다"
-      >
-        <optgroup label="노트 폴더">
-          <option value="notes:me">내 노트</option>
-          <option value="notes:common">공통 노트</option>
-        </optgroup>
-        <optgroup label="파일 폴더 (파일 페이지와 동일)">
-          <option value="files:me">내 파일 폴더</option>
-          <option value="files:common">공통 파일 폴더</option>
-        </optgroup>
-      </select>
-      <ChevronDown size={14} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-fg-muted" />
-    </div>
+
+  const actions = (
+    <label className="btn btn-secondary h-8 cursor-pointer" title="현재 폴더에 파일 올리기">
+      <Upload size={14} /> 업로드
+      <input type="file" multiple className="hidden"
+        onChange={(e) => { doUpload(e.target.files); e.currentTarget.value = ""; }} />
+    </label>
   );
 
   return (
-    <Shell title="노트" actions={crumbs}>
+    <Shell title="문서" actions={actions}>
       <ThreePane storageKey="notes.panes.v1">
         {/* 트리 */}
         <div className="card flex max-h-80 flex-col overflow-hidden lg:max-h-none">
           <div className="flex items-center justify-between border-b border-line px-3 py-2">
-            <span className="label">노트 {notes.length}</span>
+            <span className="label">문서 {notes.length}</span>
             <div className="flex items-center gap-0.5">
               <button onClick={() => { setNewName(""); setNewFolderOpen(true); }}
                 className="btn btn-ghost h-7 px-2" title="새 폴더" aria-label="새 폴더">
@@ -518,13 +484,13 @@ export function Notes() {
           <div className="flex items-center justify-between border-b border-line px-3 py-2">
             <span className="flex items-center gap-1.5 truncate text-[13px] font-medium">
               <NotebookPen size={14} className="shrink-0 text-accent" />
-              {current ? current.replace(/\.md$/, "") : "노트를 선택하세요"}
+              {current ? current.replace(/\.md$/, "") : "문서를 선택하세요"}
             </span>
             <div className="flex items-center gap-1">
               {saving ? <Loader2 size={13} className="animate-spin text-fg-muted" />
                 : dirty ? <Save size={13} className="text-warning" />
-                : current ? <span className="label text-positive">저장됨</span> : null}
-              {current && (
+                : current && isEditable ? <span className="label text-positive">저장됨</span> : null}
+              {current && isEditable && (
                 <button onClick={() => setReading((v) => !v)} title="편집 / 읽기 전환"
                   className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors ${
                     reading ? "border-accent/40 bg-accent-muted text-accent-fg" : "border-line text-fg-muted hover:text-fg"
@@ -539,23 +505,26 @@ export function Notes() {
               )}
             </div>
           </div>
-          {current ? (
-            reading ? (
-              <div className="flex-1 overflow-auto p-4">
-                <MarkdownView content={content} onWikiClick={openByTitle} />
-              </div>
-            ) : (
-              <LiveEditor
-                value={content}
-                onChange={onEdit}
-                onSave={() => { if (current) save(current, content); }}
-                titles={notes.map((n) => n.title)}
-              />
-            )
-          ) : (
+          {!current ? (
             <div className="flex flex-1 items-center justify-center px-4 text-center text-[13px] text-fg-muted">
-              왼쪽에서 노트를 선택하거나 새로 만드세요
+              왼쪽에서 문서를 선택하거나 새로 만드세요
             </div>
+          ) : !isEditable ? (
+            // 이미지·PDF·미디어 — 편집 대상이 아니므로 전용 뷰어로
+            <div className="flex-1 overflow-hidden">
+              <DocViewer path={current} kind={currentMeta!.kind} size={currentMeta!.size} />
+            </div>
+          ) : reading ? (
+            <div className="flex-1 overflow-auto p-4">
+              <MarkdownView content={content} onWikiClick={openByTitle} />
+            </div>
+          ) : (
+            <LiveEditor
+              value={content}
+              onChange={onEdit}
+              onSave={() => { if (current) save(current, content); }}
+              titles={notes.map((n) => n.title)}
+            />
           )}
           {detail && detail.backlinks.length > 0 && (
             <div className="border-t border-line p-3">

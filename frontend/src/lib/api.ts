@@ -2,8 +2,6 @@
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
-export type Scope = "common" | "me" | "notes";
-export type NoteBase = "notes" | "files";
 
 export interface SessionInfo {
   username: string;
@@ -87,46 +85,35 @@ export const api = {
   system: () => req<SystemStats>("/api/system"),
   health: () => req<{ ok: boolean }>("/api/health"),
 
-  // ── files ──
-  list: (scope: Scope, path = "") =>
-    req<{ path: string; entries: FileEntry[] }>(`/api/files/list?${q({ scope, path })}`),
-  mkdir: (scope: Scope, path: string) =>
-    req(`/api/files/mkdir?${q({ scope })}`, jsonInit("POST", { path })),
-  rename: (scope: Scope, src: string, dst: string) =>
-    req(`/api/files/rename?${q({ scope })}`, jsonInit("POST", { src, dst })),
-  remove: (scope: Scope, path: string) =>
-    req(`/api/files/delete?${q({ scope, path })}`, { method: "DELETE" }),
-  upload: (scope: Scope, path: string, file: File) => {
+  // ── 문서(파일·노트 통합) ──
+  // 저장 공간은 사용자당 하나뿐이라 scope/base 인자가 없다.
+  noteList: () => req<NoteSummary[]>("/api/notes/list"),
+  noteGet: (path: string) => req<NoteDetail>(`/api/notes/get?${q({ path })}`),
+  noteSave: (path: string, content: string) =>
+    req<NoteSummary>("/api/notes/save", jsonInit("PUT", { path, content })),
+  noteDelete: (path: string) =>
+    req(`/api/notes/delete?${q({ path })}`, { method: "DELETE" }),
+  noteRename: (path: string, new_name: string) =>
+    req<NoteSummary>("/api/notes/rename", jsonInit("POST", { path, new_name })),
+  noteMove: (path: string, target_folder: string) =>
+    req<NoteSummary>("/api/notes/move", jsonInit("POST", { path, target_folder })),
+  noteGraph: (folder = "", mode: "links" | "folders" = "links") =>
+    req<NotesGraph>(`/api/notes/graph?${q({ folder, mode })}`),
+  noteSearch: (query: string) =>
+    req<NoteSearchHit[]>(`/api/notes/search?${q({ q: query })}`),
+  noteTree: () => req<NotesTree>("/api/notes/tree"),
+  noteFolderCreate: (path: string) =>
+    req("/api/notes/folder", jsonInit("POST", { path })),
+  noteFolderDelete: (path: string) =>
+    req(`/api/notes/folder?${q({ path })}`, { method: "DELETE" }),
+  noteUpload: (path: string, file: File) => {
     const fd = new FormData();
     fd.append("file", file);
-    return req(`/api/files/upload?${q({ scope, path })}`, { method: "POST", body: fd });
+    return req<NoteSummary>(`/api/notes/upload?${q({ path })}`, { method: "POST", body: fd });
   },
-  downloadUrl: (scope: Scope, path: string) =>
-    `${BASE}/api/files/download?${q({ scope, path })}`,
-
-  // ── notes ── (base="notes": 노트 폴더 / base="files": 파일 저장소의 .md 편집)
-  noteList: (scope: Scope, base: NoteBase = "notes") =>
-    req<NoteSummary[]>(`/api/notes/list?${q({ scope, base })}`),
-  noteGet: (scope: Scope, path: string, base: NoteBase = "notes") =>
-    req<NoteDetail>(`/api/notes/get?${q({ scope, path, base })}`),
-  noteSave: (scope: Scope, path: string, content: string, base: NoteBase = "notes") =>
-    req<NoteSummary>(`/api/notes/save?${q({ scope, base })}`, jsonInit("PUT", { path, content })),
-  noteDelete: (scope: Scope, path: string, base: NoteBase = "notes") =>
-    req(`/api/notes/delete?${q({ scope, path, base })}`, { method: "DELETE" }),
-  noteRename: (scope: Scope, path: string, new_name: string, base: NoteBase = "notes") =>
-    req<NoteSummary>(`/api/notes/rename?${q({ scope, base })}`, jsonInit("POST", { path, new_name })),
-  noteMove: (scope: Scope, path: string, target_folder: string, base: NoteBase = "notes") =>
-    req<NoteSummary>(`/api/notes/move?${q({ scope, base })}`, jsonInit("POST", { path, target_folder })),
-  noteGraph: (scope: Scope, folder = "", mode: "links" | "folders" = "links", base: NoteBase = "notes") =>
-    req<NotesGraph>(`/api/notes/graph?${q({ scope, folder, mode, base })}`),
-  noteSearch: (scope: Scope, query: string, base: NoteBase = "notes") =>
-    req<NoteSearchHit[]>(`/api/notes/search?${q({ scope, q: query, base })}`),
-  noteTree: (scope: Scope, base: NoteBase = "notes") =>
-    req<NotesTree>(`/api/notes/tree?${q({ scope, base })}`),
-  noteFolderCreate: (scope: Scope, path: string, base: NoteBase = "notes") =>
-    req(`/api/notes/folder?${q({ scope, base })}`, jsonInit("POST", { path })),
-  noteFolderDelete: (scope: Scope, path: string, base: NoteBase = "notes") =>
-    req(`/api/notes/folder?${q({ scope, path, base })}`, { method: "DELETE" }),
+  /** 원본 바이트 URL — 이미지·PDF·미디어는 인라인, download=true면 첨부 */
+  noteRawUrl: (path: string, download = false) =>
+    `${BASE}/api/notes/raw?${q({ path, ...(download ? { download: "true" } : {}) })}`,
 
   // ── 휴지통 ──
   trashList: () => req<TrashEntry[]>("/api/trash/list"),
@@ -136,15 +123,15 @@ export const api = {
   trashEmpty: () => req("/api/trash/empty", { method: "DELETE" }),
 
   // ── 로컬 연동(sync) ──
-  syncManifest: (scope: Scope, path: string) =>
-    req<SyncManifest>(`/api/sync/manifest?${q({ scope, path })}`),
-  syncUpload: (scope: Scope, path: string, rel: string, data: ArrayBuffer | Uint8Array) =>
+  syncManifest: (path: string) =>
+    req<SyncManifest>(`/api/sync/manifest?${q({ path })}`),
+  syncUpload: (path: string, rel: string, data: ArrayBuffer | Uint8Array) =>
     req<{ ok: boolean; rel: string; hash: string }>(
-      `/api/sync/upload?${q({ scope, path, rel })}`,
+      `/api/sync/upload?${q({ path, rel })}`,
       { method: "POST", body: data as BodyInit },
     ),
-  syncDownloadUrl: (scope: Scope, path: string, rel: string) =>
-    `${BASE}/api/sync/download?${q({ scope, path, rel })}`,
+  syncDownloadUrl: (path: string, rel: string) =>
+    `${BASE}/api/sync/download?${q({ path, rel })}`,
 
   // ── 터미널 ──
   terminalStatus: () =>
@@ -231,8 +218,7 @@ export async function aiChatStream(
 export interface UserSettings {
   ai: { tone: string; max_steps: number };
   calendar: { default_color: string; default_view: string; week_start: number; default_remind: number; ai_rules: string };
-  notes: { default_scope: string; autosave_ms: number };
-  files: { default_scope: string; confirm_delete: boolean };
+  notes: { autosave_ms: number; confirm_delete: boolean };
   sync: { text_conflict: string; binary_policy: string };
   display: { show_seconds_in_timer: boolean };
   security: { session_ttl_minutes: number };
@@ -254,10 +240,16 @@ export interface CalEvent {
   is_recurring?: boolean;
 }
 
+/** 문서 종류 — 프런트가 어떤 뷰어를 쓸지 정하는 기준(백엔드가 내려준다). */
+export type DocKind = "md" | "text" | "image" | "pdf" | "video" | "audio" | "other";
+
 export interface NoteSummary {
   path: string;
   title: string;
   modified: number;
+  kind: DocKind;
+  size: number;
+  editable: boolean;
 }
 export interface NoteDetail {
   path: string;
@@ -265,6 +257,7 @@ export interface NoteDetail {
   content: string;
   links: string[];
   backlinks: string[];
+  kind: DocKind;
 }
 export interface NotesGraph {
   nodes: { id: string; title: string; path: string; type?: string; count?: number }[];
@@ -276,8 +269,6 @@ export interface NotesTree {
 }
 export interface TrashEntry {
   id: string;
-  kind: string;
-  scope: string;
   orig_rel: string;
   name: string;
   is_dir: boolean;

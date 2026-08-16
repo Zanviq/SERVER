@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..security_paths import safe_join, to_rel
-from ..storage import scope_root
+from ..storage import user_data_root
 from ..trash import move_to_trash
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
@@ -46,9 +46,9 @@ def _sha256_cached(path: Path, st) -> str:
     return digest
 
 
-def _base_dir(scope: str, path: str, user: SessionUser, settings: Settings) -> tuple[Path, Path]:
-    """(scope 루트, 동기화 대상 base 디렉토리) 반환. base 없으면 생성."""
-    root = scope_root(scope, user, settings)
+def _base_dir(path: str, user: SessionUser, settings: Settings) -> tuple[Path, Path]:
+    """(문서 루트, 동기화 대상 base 디렉토리) 반환. base 없으면 생성."""
+    root = user_data_root(user, settings)
     base = safe_join(root, path)
     base.mkdir(parents=True, exist_ok=True)
     return root, base
@@ -56,12 +56,11 @@ def _base_dir(scope: str, path: str, user: SessionUser, settings: Settings) -> t
 
 @router.get("/manifest")
 def manifest(
-    scope: str = Query("me"),
     path: str = Query(""),
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    _, base = _base_dir(scope, path, user, settings)
+    _, base = _base_dir(path, user, settings)
     files = []
     for p in sorted(base.rglob("*")):
         if not p.is_file():
@@ -78,20 +77,19 @@ def manifest(
             )
         except OSError:
             continue
-    return {"scope": scope, "path": path, "files": files}
+    return {"path": path, "files": files}
 
 
 @router.post("/upload")
 async def upload(
     request: Request,
-    scope: str = Query("me"),
     path: str = Query(""),
     rel: str = Query(...),
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
     """로컬 파일 바이트를 웹 base/rel 에 기록. 기존본은 휴지통으로."""
-    root, base = _base_dir(scope, path, user, settings)
+    root, base = _base_dir(path, user, settings)
     dest = safe_join(base, rel)
     data = await request.body()
     if len(data) > settings.max_upload_bytes:
@@ -99,7 +97,7 @@ async def upload(
 
     # 기존본이 있으면 덮어쓰기 전에 휴지통으로 보존 (GitHub식 안전 처리)
     if dest.exists() and dest.is_file():
-        move_to_trash("file", scope, dest, to_rel(root, dest), user, settings)
+        move_to_trash(dest, to_rel(root, dest), user, settings)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(data)
@@ -108,13 +106,12 @@ async def upload(
 
 @router.get("/download")
 def download(
-    scope: str = Query("me"),
     path: str = Query(""),
     rel: str = Query(...),
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    _, base = _base_dir(scope, path, user, settings)
+    _, base = _base_dir(path, user, settings)
     target = safe_join(base, rel)
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")

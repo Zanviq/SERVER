@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ForceGraph2D from "react-force-graph-2d";
-import { Users, User, Share2, FolderTree, Link2, ChevronRight, Home, Loader2 } from "lucide-react";
+import { Share2, FolderTree, Link2, ChevronRight, Home, Loader2 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { useTheme } from "../store/theme";
-
-type Source = "common" | "me";
 
 function tok(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -26,7 +24,6 @@ const NODE_VAL = (n: any) => (n.type === "folder" ? 4 + Math.min(6, n.count ?? 0
 export function Graph() {
   const navigate = useNavigate();
   const themeMode = useTheme((t) => t.mode); // 테마 변경 시 색상 재계산 트리거
-  const [source, setSource] = useState<Source>("me");
   const [mode, setMode] = useState<Mode>("links");
   const [folder, setFolder] = useState(""); // 현재 폴더(상대경로)
   const [data, setData] = useState<{ nodes: any[]; links: any[] }>({ nodes: [], links: [] });
@@ -37,7 +34,7 @@ export function Graph() {
   useEffect(() => {
     let cancelled = false; // 빠른 연속 전환 시 이전 요청 결과 무시
     setLoading(true);
-    const p = api.noteGraph(source, folder, mode);
+    const p = api.noteGraph(folder, mode);
     p.then((d) => {
       if (!cancelled) setData(d);
     })
@@ -50,12 +47,7 @@ export function Graph() {
     return () => {
       cancelled = true;
     };
-  }, [source, folder, mode]);
-
-  // 소스 변경 시 루트로 복귀
-  useEffect(() => {
-    setFolder("");
-  }, [source]);
+  }, [folder, mode]);
 
   // 리사이즈: rAF로 디바운스 + 크기 실제 변화가 있을 때만 setState(렌더 폭풍 방지)
   useEffect(() => {
@@ -156,19 +148,6 @@ export function Graph() {
     [colors],
   );
 
-  const sourceToggle = (
-    <div className="inline-flex rounded-md border border-line bg-subtle p-0.5">
-      <button onClick={() => setSource("common")}
-        className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-[13px] font-medium ${source === "common" ? "bg-surface text-accent shadow-sm" : "text-fg-muted hover:text-fg"}`}>
-        <Users size={14} /> 공통
-      </button>
-      <button onClick={() => setSource("me")}
-        className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-[13px] font-medium ${source === "me" ? "bg-surface text-accent shadow-sm" : "text-fg-muted hover:text-fg"}`}>
-        <User size={14} /> 내 노트
-      </button>
-    </div>
-  );
-
   const modeToggle = (
     <div className="inline-flex rounded-md border border-line bg-subtle p-0.5">
       <button onClick={() => setMode("links")}
@@ -185,7 +164,7 @@ export function Graph() {
   return (
     <Shell
       title="그래프"
-      actions={<div className="flex items-center gap-2">{modeToggle}{sourceToggle}</div>}
+      actions={modeToggle}
     >
       {/* 브레드크럼 (노트 폴더 진입 시) */}
       <div className="mb-3 flex items-center gap-1 text-[13px]">

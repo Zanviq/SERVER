@@ -4,10 +4,10 @@
   - index.json : 엔트리 메타 배열
   - data/<id>/<name> : 실제 이동된 파일/폴더
 
-엔트리: {id, kind(file|note), scope(common|me), orig_rel, name, is_dir, deleted_at}
+엔트리: {id, orig_rel, name, is_dir, deleted_at}
 
-.trash 는 개인 루트 바로 아래(files/notes 형제)에 있으므로
-파일/노트 목록·검색·그래프·동기화의 대상 루트에 포함되지 않는다(자동 제외).
+.trash 는 개인 루트 바로 아래(data/ 형제)에 있으므로
+목록·검색·그래프·동기화의 대상 루트에 포함되지 않는다(자동 제외).
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from fastapi import HTTPException
 from .auth import SessionUser
 from .config import Settings
 from .json_store import lock_for, read_json, write_atomic
-from .storage import notes_root, scope_root
+from .storage import user_data_root
 
 TRASH_DIRNAME = ".trash"
 
@@ -36,16 +36,7 @@ def _index_path(user: SessionUser, settings: Settings) -> Path:
     return _trash_root(user, settings) / "index.json"
 
 
-def _source_root(kind: str, scope: str, user: SessionUser, settings: Settings) -> Path:
-    """kind/scope에 해당하는 원본 루트."""
-    if kind == "note":
-        return notes_root(scope, user, settings)
-    return scope_root(scope, user, settings)
-
-
 def move_to_trash(
-    kind: str,
-    scope: str,
     source: Path,
     orig_rel: str,
     user: SessionUser,
@@ -64,8 +55,6 @@ def move_to_trash(
 
     entry = {
         "id": entry_id,
-        "kind": kind,
-        "scope": scope,
         "orig_rel": orig_rel,
         "name": source.name,
         "is_dir": dest.is_dir(),
@@ -115,7 +104,9 @@ def restore(entry_id: str, user: SessionUser, settings: Settings) -> dict:
             write_atomic(idx_path, entries)
             raise HTTPException(status_code=410, detail="복원할 데이터가 없습니다.")
 
-        root = _source_root(entry["kind"], entry["scope"], user, settings)
+        # 문서 공간이 하나뿐이므로 원래 상대경로 그대로 되돌린다.
+        # (개편 전 엔트리도 files/·notes/ 아래 같은 상대경로로 병합됐으므로 호환된다.)
+        root = user_data_root(user, settings)
         target = _unique_target(root, entry["orig_rel"])
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(data_item), str(target))
