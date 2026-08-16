@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   NotebookPen, FolderPlus, FilePlus, Trash2, Save, Link2, Loader2,
@@ -6,10 +6,6 @@ import {
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { MarkdownView } from "../components/notes/LazyMarkdownView";
-// AI 문서 소스를 고를 때만 필요 — 노트 초기 번들에서 분리
-const AidocWorkspace = lazy(() =>
-  import("../components/notes/AidocWorkspace").then((m) => ({ default: m.AidocWorkspace })),
-);
 import { ThreePane } from "../components/notes/ThreePane";
 import { RowMenu } from "../components/notes/RowMenu";
 import { LiveEditor } from "../components/notes/LazyLiveEditor";
@@ -61,8 +57,6 @@ export function Notes() {
   const prefs = useSettings((st) => st.settings?.notes);
   const [scope, setScope] = useState<Scope>((prefs?.default_scope as Scope) || "me");
   const [base, setBase] = useState<NoteBase>("notes"); // notes: 노트폴더 / files: 파일 저장소(hdd)
-  const [aiDocMode, setAiDocMode] = useState(false); // AI 문서(aidoc) 소스 선택 시
-  const [aidocOpenId, setAidocOpenId] = useState<string | undefined>(); // 그래프에서 진입한 문서 id
   const [folders, setFolders] = useState<string[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -95,7 +89,6 @@ export function Notes() {
   const tree = useMemo(() => buildTree(folders, notes), [folders, notes]);
 
   const reloadTree = useCallback(async () => {
-    if (aiDocMode) return; // AI 문서 모드에서는 노트 트리 미사용
     try {
       const t = await api.noteTree(scope, base);
       setFolders(t.folders);
@@ -103,7 +96,7 @@ export function Notes() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "목록 실패");
     }
-  }, [scope, base, aiDocMode]);
+  }, [scope, base]);
 
   useEffect(() => {
     reloadTree();
@@ -245,7 +238,6 @@ export function Notes() {
 
   // 파일관리(notes 스코프)에서 정확한 경로로 노트 열기 — 개인 노트(me) 기준
   const openExactPath = useCallback(async (path: string) => {
-    setAiDocMode(false);
     setBase("notes");
     setScope("me");
     try {
@@ -267,7 +259,6 @@ export function Notes() {
     if (idx < 0) return;
     const sc = spec.slice(0, idx) as Scope;
     const p = spec.slice(idx + 1);
-    setAiDocMode(false);
     setBase("files");
     setScope(sc);
     try {
@@ -287,14 +278,6 @@ export function Notes() {
     const open = params.get("open");
     const path = params.get("path");
     const edit = params.get("edit");
-    const aidoc = params.get("aidoc");
-    if (aidoc) {
-      setAiDocMode(true);
-      setAidocOpenId(aidoc);
-      params.delete("aidoc");
-      setParams(params, { replace: true });
-      return;
-    }
     if (path) {
       openExactPath(path);
       params.delete("path");
@@ -424,14 +407,9 @@ export function Notes() {
     return rows;
   };
 
-  // 소스 선택: 노트 폴더 / 파일 저장소 / AI 문서
-  const source = aiDocMode ? "aidoc" : `${base}:${scope}`;
+  // 소스 선택: 노트 폴더 / 파일 저장소
+  const source = `${base}:${scope}`;
   const onSource = (v: string) => {
-    if (v === "aidoc") {
-      setAiDocMode(true);
-      return;
-    }
-    setAiDocMode(false);
     const [b, s] = v.split(":");
     setBase(b as NoteBase);
     setScope(s as Scope);
@@ -452,29 +430,10 @@ export function Notes() {
           <option value="files:me">내 파일 폴더</option>
           <option value="files:common">공통 파일 폴더</option>
         </optgroup>
-        <optgroup label="AI">
-          <option value="aidoc">AI 문서</option>
-        </optgroup>
       </select>
       <ChevronDown size={14} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-fg-muted" />
     </div>
   );
-
-  if (aiDocMode) {
-    return (
-      <Shell title="노트" actions={crumbs}>
-        <Suspense
-          fallback={
-            <div className="flex h-full items-center justify-center text-fg-muted">
-              <Loader2 size={22} className="animate-spin" />
-            </div>
-          }
-        >
-          <AidocWorkspace openDocId={aidocOpenId} />
-        </Suspense>
-      </Shell>
-    );
-  }
 
   return (
     <Shell title="노트" actions={crumbs}>

@@ -105,34 +105,6 @@ class Settings:
             os.getenv("MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024))
         )
 
-        # ── AI 문서 시스템 ──
-        self.document_root: Path = Path(
-            os.getenv("DOCUMENT_ROOT", str(self.storage_root / "AI_documents"))
-        ).resolve()
-        self.aidoc_db_path: Path = Path(
-            os.getenv("AIDOC_DB_PATH", str(self.storage_root / "aidoc" / "documents.db"))
-        )
-        self.aidoc_tokens_file: str = os.getenv(
-            "AIDOC_TOKENS_FILE", str(self.storage_root / "aidoc" / "tokens.json")
-        )
-        self.aidoc_projects: list[str] = [
-            p.strip() for p in os.getenv(
-                "AIDOC_PROJECTS", "orchestra-room,conversation-tree-ai,nodi,home-server"
-            ).split(",") if p.strip()
-        ]
-        self.aidoc_max_bytes: int = int(os.getenv("AIDOC_MAX_BYTES", str(1024 * 1024)))
-        # Cloudflare Access(선택): 둘 다 설정되면 /mcp·/mcp/api/* 에 Access JWT 검증을 추가.
-        # 미설정(기본)이면 Bearer 토큰만 사용(기존 동작 유지).
-        self.aidoc_access_team_domain: str = os.getenv("AIDOC_ACCESS_TEAM_DOMAIN", "").strip()
-        self.aidoc_access_aud: str = os.getenv("AIDOC_ACCESS_AUD", "").strip()
-        # 임베딩(의미 검색·그래프). GEMINI_API_KEY 재사용. 키 없으면 자동 비활성(FTS 유지).
-        self.aidoc_embed_model: str = os.getenv("AIDOC_EMBED_MODEL", "gemini-embedding-001")
-        self.aidoc_embed_dim: int = int(os.getenv("AIDOC_EMBED_DIM", "768"))
-        self.aidoc_embed_max_chars: int = int(os.getenv("AIDOC_EMBED_MAX_CHARS", "8000"))
-        # gemini-embedding-001은 문서-문서 코사인이 0.65~0.78 좁은 band에 몰려, 절대 임계값이
-        # 높으면 엣지가 거의 안 생긴다. 낮은 floor + 노드당 상위K(kNN)로 최근접만 연결.
-        self.aidoc_graph_edge_threshold: float = float(os.getenv("AIDOC_GRAPH_EDGE_THRESHOLD", "0.62"))
-        self.aidoc_graph_max_edges: int = int(os.getenv("AIDOC_GRAPH_MAX_EDGES", "3"))
 
     # ── 저장소 경로 헬퍼 ──
     @property

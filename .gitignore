@@ -27,9 +27,6 @@ Thumbs.db
 .vscode/
 .idea/
 
-# AI 문서 토큰/로컬 DB
-aidoc/tokens.json
-data/aidoc/
 
 # 브라우저 자동화 산출물(콘솔 로그·스크린샷)
 .playwright-mcp/

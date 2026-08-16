@@ -15,12 +15,9 @@ from .auth import require_session
 from .config import get_settings
 from .routers import (
     ai,
-    aidoc_ai,
-    aidoc_web,
     auth,
     calendar,
     files,
-    mcp,
     notes,
     settings as settings_router,
     sync,
@@ -40,11 +37,6 @@ logger = logging.getLogger("server")
 async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.ensure_storage()
-    # AI 문서 시스템: 폴더 골격 + SQLite/FTS5 스키마 초기화(멱등)
-    from .aidoc import db as aidoc_db, paths as aidoc_paths, projects as aidoc_projects
-    aidoc_paths.ensure_layout(settings)
-    aidoc_db.init_db(settings)
-    aidoc_projects.ensure_seed(settings)  # 프로젝트 레지스트리 시드 + 폴더 보장
     if not settings.session_secret:
         logger.warning("SESSION_SECRET 미설정 — 로그인이 503으로 거부됩니다.")
     if not settings.users:
@@ -87,13 +79,6 @@ app.include_router(ai.router, dependencies=_PROTECTED)
 app.include_router(trash.router, dependencies=_PROTECTED)
 app.include_router(sync.router, dependencies=_PROTECTED)
 app.include_router(terminal.router, dependencies=_PROTECTED)
-app.include_router(aidoc_web.router, dependencies=_PROTECTED)  # 세션 보호
-
-# AI(Bearer 토큰) 문서 라우터 — 자체 토큰 검증(세션 의존성 없음)
-app.include_router(aidoc_ai.router)
-
-# MCP 서버(Streamable-HTTP, JSON-RPC) — Bearer 자체 검증
-app.include_router(mcp.router)
 
 
 @app.get("/api/health", tags=["meta"])
