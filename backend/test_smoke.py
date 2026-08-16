@@ -665,6 +665,62 @@ def test_google_partial_update_preserves_fields():
     assert body["end"]["dateTime"] == "2026-09-15T11:00:00", f"시각이 변경됨: {body}"
 
 
+def test_google_recurrence_and_reminders_round_trip():
+    """Google 경로에서도 반복·알림이 실제로 전달되고 되읽혀야 한다.
+
+    회귀: _to_google가 recurrence/remind_minutes를 아예 보내지 않아, 반복 일정을
+    만들어도 1회성 일정이 생기고 알림이 사라졌다. 그런데 AI는 "매주 반복 일정을
+    만들었습니다"라고 답했다(조용한 오답).
+    """
+    from backend.calendar_google import _to_google, _to_internal
+
+    body = _to_google(
+        {
+            "title": "주간회의",
+            "start": "2026-09-15T10:00:00",
+            "end": "2026-09-15T11:00:00",
+            "recurrence": "weekly",
+            "interval": 2,
+            "recur_until": "2026-12-31",
+            "remind_minutes": 30,
+        }
+    )
+    rrule = next((r for r in body.get("recurrence", []) if r.startswith("RRULE:")), "")
+    assert "FREQ=WEEKLY" in rrule, f"반복 규칙이 전달되지 않음: {body}"
+    assert "INTERVAL=2" in rrule, f"간격이 전달되지 않음: {rrule}"
+    assert "UNTIL=" in rrule, f"종료일이 전달되지 않음: {rrule}"
+    mins = [o["minutes"] for o in body.get("reminders", {}).get("overrides", [])]
+    assert 30 in mins, f"알림이 전달되지 않음: {body}"
+
+    # 되읽기 — 시리즈를 다시 읽었을 때 값이 복원돼야 부분 수정이 반복을 지우지 않는다
+    back = _to_internal(
+        {
+            "id": "e1",
+            "summary": "주간회의",
+            "start": {"dateTime": "2026-09-15T10:00:00"},
+            "end": {"dateTime": "2026-09-15T11:00:00"},
+            "recurrence": ["RRULE:FREQ=WEEKLY;INTERVAL=2;UNTIL=20261231T145959Z"],
+            "reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": 30}]},
+        }
+    )
+    assert back["recurrence"] == "weekly", back
+    assert back["interval"] == 2, back
+    assert back["recur_until"] == "2026-12-31", back
+    assert back["remind_minutes"] == 30, back
+
+    # 반복 없는 일정은 recurrence 키를 아예 넣지 않는다(인스턴스 patch 거부 방지)
+    plain = _to_google({"title": "단발", "start": "2026-09-15T10:00:00", "recurrence": "none"})
+    assert "recurrence" not in plain, plain
+
+    # 종일 반복은 UNTIL을 날짜 형식으로
+    allday = _to_google(
+        {"title": "휴가", "start": "2026-09-20", "end": "2026-09-20", "allDay": True,
+         "recurrence": "yearly", "recur_until": "2030-01-01"}
+    )
+    ar = next(r for r in allday["recurrence"] if r.startswith("RRULE:"))
+    assert "UNTIL=20300101" in ar and "T" not in ar.split("UNTIL=")[1], ar
+
+
 def test_terminal_status_gate():
     _login()
     st = client.get("/api/terminal/status").json()
@@ -855,6 +911,7 @@ if __name__ == "__main__":
     test_ai_find_free_slots_robustness()
     test_calendar_update_start_preserves_duration()
     test_google_partial_update_preserves_fields()
+    test_google_recurrence_and_reminders_round_trip()
     test_terminal_status_gate()
     test_settings_get_patch()
     test_session_ttl_setting()

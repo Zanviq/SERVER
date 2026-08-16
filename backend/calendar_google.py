@@ -61,6 +61,52 @@ def _build_service(cfg: dict):
         return None
 
 
+_FREQ = {"daily": "DAILY", "weekly": "WEEKLY", "monthly": "MONTHLY", "yearly": "YEARLY"}
+_FREQ_BACK = {v: k for k, v in _FREQ.items()}
+
+
+def _rrule(p: dict) -> str | None:
+    """내부 반복 모델 → Google RRULE. 반복 없으면 None."""
+    freq = _FREQ.get(str(p.get("recurrence", "none")))
+    if not freq:
+        return None
+    parts = [f"FREQ={freq}"]
+    interval = int(p.get("interval", 1) or 1)
+    if interval > 1:
+        parts.append(f"INTERVAL={interval}")
+    until = str(p.get("recur_until") or "")[:10]
+    if until:
+        try:
+            d = date.fromisoformat(until)
+        except ValueError:
+            d = None
+        if d:
+            if p.get("allDay"):
+                parts.append(f"UNTIL={d.strftime('%Y%m%d')}")
+            else:
+                # 내부 모델의 종료일은 KST 기준 '그날까지 포함'.
+                # RRULE UNTIL은 UTC라 23:59:59+09:00 = 같은 날 14:59:59Z.
+                parts.append(f"UNTIL={d.strftime('%Y%m%d')}T145959Z")
+    return "RRULE:" + ";".join(parts)
+
+
+def _from_rrule(rules) -> dict:
+    """Google recurrence 배열 → 내부 반복 필드."""
+    out = {"recurrence": "none", "interval": 1, "recur_until": ""}
+    rule = next((r for r in (rules or []) if str(r).startswith("RRULE:")), "")
+    if not rule:
+        return out
+    for token in rule[len("RRULE:"):].split(";"):
+        key, _, val = token.partition("=")
+        if key == "FREQ":
+            out["recurrence"] = _FREQ_BACK.get(val, "none")
+        elif key == "INTERVAL":
+            out["interval"] = max(1, int(val)) if val.isdigit() else 1
+        elif key == "UNTIL" and len(val) >= 8:
+            out["recur_until"] = f"{val[0:4]}-{val[4:6]}-{val[6:8]}"
+    return out
+
+
 def _to_internal(g: dict) -> dict:
     start = g.get("start", {})
     end = g.get("end", {})
@@ -70,6 +116,7 @@ def _to_internal(g: dict) -> dict:
     # 구글 종일 일정의 end.date는 '배타적'(마지막 날 +1) → 내부 모델은 '포함'으로 통일
     if all_day and end_v:
         end_v = _shift_date(end_v, -1)
+    overrides = (g.get("reminders") or {}).get("overrides") or []
     return {
         "id": g.get("id", ""),
         "title": g.get("summary", ""),
@@ -78,6 +125,9 @@ def _to_internal(g: dict) -> dict:
         "end": end_v,
         "allDay": all_day,
         "color": g.get("colorId", "2"),
+        # 반복·알림도 되읽어야 부분 수정이 이 값들을 지우지 않는다.
+        **_from_rrule(g.get("recurrence")),
+        "remind_minutes": int(overrides[0].get("minutes", 0)) if overrides else 0,
     }
 
 
@@ -96,6 +146,15 @@ def _to_google(p: dict) -> dict:
     else:
         body["start"] = {"dateTime": p["start"], "timeZone": "Asia/Seoul"}
         body["end"] = {"dateTime": p.get("end") or p["start"], "timeZone": "Asia/Seoul"}
+    # 반복은 있을 때만 넣는다 — 반복 인스턴스를 patch할 때 recurrence 키가 있으면
+    # Google이 거부하므로, 'none'이면 아예 건드리지 않는다.
+    rule = _rrule(p)
+    if rule:
+        body["recurrence"] = [rule]
+    # 알림도 설정됐을 때만 — 0을 보내면 캘린더 기본 알림까지 꺼버린다.
+    remind = int(p.get("remind_minutes", 0) or 0)
+    if remind > 0:
+        body["reminders"] = {"useDefault": False, "overrides": [{"method": "popup", "minutes": remind}]}
     return body
 
 
