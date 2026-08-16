@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useState } from "react";
-import { User, Bot, CalendarDays, NotebookPen, Palette, Info, Loader2, RefreshCw, FolderSync, Users } from "lucide-react";
+import { User, Bot, CalendarDays, NotebookPen, Palette, Info, Loader2, RefreshCw, Users } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { ThemeToggle } from "../components/layout/ThemeToggle";
 import { useAuth } from "../store/auth";
@@ -14,12 +14,11 @@ const BASE_TABS = [
   { id: "ai", label: "AI", icon: Bot },
   { id: "calendar", label: "캘린더", icon: CalendarDays },
   { id: "notes", label: "노트", icon: NotebookPen },
-  { id: "sync", label: "로컬 연동", icon: FolderSync },
   { id: "theme", label: "테마", icon: Palette },
   { id: "about", label: "정보", icon: Info },
 ];
 
-// 계정 관리는 관리자에게만 보인다(백엔드도 403으로 막는다)
+// 계정 관리는 서버 주인(.env 계정)에게만 보인다(백엔드도 403으로 막는다)
 const ADMIN_TAB = { id: "members", label: "계정 관리", icon: Users };
 
 function Row({ label, desc, children }: { label: string; desc?: string; children: ReactNode }) {
@@ -77,7 +76,8 @@ export function Settings() {
     );
   }
 
-  const tabs = session?.role === "admin" ? [...BASE_TABS, ADMIN_TAB] : BASE_TABS;
+  const isOwner = session?.origin === "bootstrap" && session?.role === "admin";
+  const tabs = isOwner ? [...BASE_TABS, ADMIN_TAB] : BASE_TABS;
 
   return (
     <Shell title="설정">
@@ -203,30 +203,6 @@ export function Settings() {
             </div>
           )}
 
-          {tab === "sync" && (
-            <div>
-              <Row label="텍스트 충돌 처리" desc="로컬·웹 둘 다 수정된 .md/.txt 등">
-                <select className="input w-40" value={s.sync.text_conflict}
-                  onChange={(e) => update({ sync: { text_conflict: e.target.value } })}>
-                  <option value="ask">매번 물어보기</option>
-                  <option value="local">로컬 우선</option>
-                  <option value="web">웹 우선</option>
-                  <option value="merge">자동 병합</option>
-                </select>
-              </Row>
-              <Row label="바이너리 충돌 처리" desc=".pdf/.png 등 확인 불가 파일">
-                <select className="input w-32" value={s.sync.binary_policy}
-                  onChange={(e) => update({ sync: { binary_policy: e.target.value } })}>
-                  <option value="local">로컬 우선</option>
-                  <option value="web">웹 우선</option>
-                </select>
-              </Row>
-              <p className="pt-3 text-[12px] text-fg-muted">
-                연동은 <b>로컬 연동</b> 페이지에서 폴더를 선택해 시작합니다. PC 크롬/엣지 전용.
-              </p>
-            </div>
-          )}
-
           {tab === "theme" && (
             <div>
               <Row label="테마 모드" desc="라이트 / 다크 / 시스템">
@@ -239,7 +215,7 @@ export function Settings() {
             </div>
           )}
 
-          {tab === "members" && session?.role === "admin" && (
+          {tab === "members" && isOwner && (
             <AccountAdmin me={session.username} />
           )}
 

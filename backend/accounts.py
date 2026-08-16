@@ -31,6 +31,9 @@ _ITERATIONS = 600_000
 USERNAME_RE = re.compile(r"^[a-z0-9_-]{3,32}$")
 MIN_PASSWORD = 8
 
+ORIGIN_BOOTSTRAP = "bootstrap"   # .env AUTH_USERS로 만들어진 서버 주인
+ORIGIN_SIGNUP = "signup"         # 웹 회원가입
+
 STATUS_PENDING = "pending"
 STATUS_ACTIVE = "active"
 STATUS_REJECTED = "rejected"
@@ -43,10 +46,18 @@ class Account:
     display_name: str
     role: str = "user"
     status: str = STATUS_PENDING
+    # 계정이 어떻게 생겼는지. role과 직교한다 —
+    # role의 세 번째 값으로 만들면 _admin_count 기반 "마지막 관리자" 가드가 깨진다.
+    origin: str = ORIGIN_SIGNUP
 
     @property
     def is_admin(self) -> bool:
         return self.role == "admin"
+
+    @property
+    def is_owner(self) -> bool:
+        """.env로 만들어진 서버 주인. 관리 화면·Google 연동은 이 계정만."""
+        return self.origin == ORIGIN_BOOTSTRAP and self.role == "admin"
 
     @property
     def can_login(self) -> bool:
@@ -106,6 +117,7 @@ def _to_account(row: dict) -> Account:
         display_name=row.get("display_name") or row["username"],
         role=row.get("role", "user"),
         status=row.get("status", STATUS_ACTIVE),
+        origin=row.get("origin", ORIGIN_SIGNUP),
     )
 
 
@@ -117,7 +129,9 @@ def ensure_seed(settings: Settings) -> None:
     """
     p = _path(settings)
     with lock_for(p):
-        if read_json(p, None) is not None:
+        existing = read_json(p, None)
+        if existing is not None:
+            _backfill_origin(existing, p, settings)
             return
         now = time.time()
         rows = [
@@ -127,12 +141,35 @@ def ensure_seed(settings: Settings) -> None:
                 "password_hash": hash_password(u.password),
                 "role": "admin",
                 "status": STATUS_ACTIVE,
+                "origin": ORIGIN_BOOTSTRAP,
                 "created_at": now,
                 "approved_at": now,
                 "approved_by": "system(.env 이관)",
             }
             for u in settings.users
         ]
+        write_atomic(p, rows)
+
+
+def _backfill_origin(rows: list[dict], p: Path, settings: Settings) -> None:
+    """origin이 없던 시절에 만들어진 행에 origin을 채운다.
+
+    이 백필이 없으면 실제 배포된 주인 계정이 signup으로 읽혀, 주인 전용 게이트를
+    켜는 순간 본인이 잠긴다(ensure_seed가 파일이 있으면 early-return하므로).
+    판정 근거는 .env 이관 흔적과 현재 AUTH_USERS 목록 둘 다 본다.
+    """
+    seeded = {u.username for u in settings.users}
+    changed = False
+    for row in rows:
+        if row.get("origin"):
+            continue
+        looks_bootstrap = (
+            str(row.get("approved_by", "")).startswith("system(")
+            or row.get("username") in seeded
+        )
+        row["origin"] = ORIGIN_BOOTSTRAP if looks_bootstrap else ORIGIN_SIGNUP
+        changed = True
+    if changed:
         write_atomic(p, rows)
 
 
@@ -189,6 +226,7 @@ def signup(username: str, password: str, display_name: str, settings: Settings) 
                 "password_hash": hash_password(password),
                 "role": "user",
                 "status": STATUS_PENDING,
+                "origin": ORIGIN_SIGNUP,
                 "created_at": time.time(),
                 "approved_at": None,
                 "approved_by": None,
@@ -200,6 +238,32 @@ def signup(username: str, password: str, display_name: str, settings: Settings) 
 
 def _admin_count(rows: list[dict]) -> int:
     return sum(1 for r in rows if r.get("role") == "admin" and r.get("status") == STATUS_ACTIVE)
+
+
+def _owner_count(rows: list[dict]) -> int:
+    """로그인 가능한 주인 수.
+
+    admin 수만 세면 부족하다 — 가입 사용자를 admin으로 올리는 순간 admin은 2명이
+    되지만, 관리 화면·시스템 상태는 origin=bootstrap인 주인만 볼 수 있다. 그 상태로
+    주인이 자기를 지우면 아무도 관리 화면에 못 들어가고, ensure_seed는 파일이 있으면
+    early-return하므로 재기동해도 복구되지 않는다(SSH로 손봐야 한다).
+    """
+    return sum(
+        1
+        for r in rows
+        if r.get("origin") == ORIGIN_BOOTSTRAP
+        and r.get("role") == "admin"
+        and r.get("status") == STATUS_ACTIVE
+    )
+
+
+def _is_last_owner(row: dict, rows: list[dict]) -> bool:
+    return (
+        row.get("origin") == ORIGIN_BOOTSTRAP
+        and row.get("role") == "admin"
+        and row.get("status") == STATUS_ACTIVE
+        and _owner_count(rows) <= 1
+    )
 
 
 def set_status(username: str, status: str, actor: str, settings: Settings) -> dict:
@@ -220,6 +284,8 @@ def set_status(username: str, status: str, actor: str, settings: Settings) -> di
             and _admin_count(rows) <= 1
         ):
             raise HTTPException(status_code=400, detail="마지막 관리자는 비활성화할 수 없습니다.")
+        if status != STATUS_ACTIVE and _is_last_owner(row, rows):
+            raise HTTPException(status_code=400, detail="마지막 서버 관리자는 비활성화할 수 없습니다.")
         row["status"] = status
         if status == STATUS_ACTIVE:
             row["approved_at"] = time.time()
@@ -239,6 +305,8 @@ def set_role(username: str, role: str, settings: Settings) -> dict:
             raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
         if row.get("role") == "admin" and role != "admin" and _admin_count(rows) <= 1:
             raise HTTPException(status_code=400, detail="마지막 관리자는 강등할 수 없습니다.")
+        if role != "admin" and _is_last_owner(row, rows):
+            raise HTTPException(status_code=400, detail="마지막 서버 관리자는 강등할 수 없습니다.")
         row["role"] = role
         write_atomic(p, rows)
     return {k: v for k, v in row.items() if k != "password_hash"}
@@ -254,4 +322,6 @@ def delete(username: str, settings: Settings) -> None:
             raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
         if row.get("role") == "admin" and row.get("status") == STATUS_ACTIVE and _admin_count(rows) <= 1:
             raise HTTPException(status_code=400, detail="마지막 관리자는 삭제할 수 없습니다.")
+        if _is_last_owner(row, rows):
+            raise HTTPException(status_code=400, detail="마지막 서버 관리자는 삭제할 수 없습니다.")
         write_atomic(p, [r for r in rows if r["username"] != username])

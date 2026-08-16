@@ -52,6 +52,11 @@ services:
       # CSWSH 방지용 허용 Origin(쉼표구분). 비우면 요청 Host와 동일 출처만 허용.
       # 예) https://server.zanviq.dev,http://192.168.0.43
       TERMINAL_ORIGINS: ${TERMINAL_ORIGINS:-}
+      ACCOUNTS_FILE: /accounts.json
+    volumes:
+      # 계정 저장소를 읽기 전용으로 — 접속자가 '서버 주인'인지 확인하는 데만 쓴다.
+      # 이름(TERMINAL_ADMINS) 대조만으로는 같은 아이디로 가입한 계정에 셸이 열린다.
+      - /mnt/server/accounts.json:/accounts.json:ro
 
   # 4단계: 포트포워딩 없이 외부 접속 (Cloudflare Tunnel)
   # 사용하려면: 대시보드에서 터널 생성 후 토큰을 .env의 CF_TUNNEL_TOKEN에 넣고

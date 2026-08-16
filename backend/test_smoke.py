@@ -220,21 +220,6 @@ def test_trash_restore_flow():
     assert "t.txt" in paths2  # 원래 자리로 복원됨
 
 
-def test_sync_manifest_upload_download():
-    c = TestClient(app)
-    c.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
-    r = c.post("/api/sync/upload?path=synced&rel=a/b.txt", content=b"hello-sync")
-    assert r.status_code == 200, r.text
-    h = r.json()["hash"]
-    man = c.get("/api/sync/manifest?path=synced").json()
-    assert any(f["rel"] == "a/b.txt" and f["hash"] == h for f in man["files"])
-    d = c.get("/api/sync/download?path=synced&rel=a/b.txt")
-    assert d.status_code == 200 and d.content == b"hello-sync"
-    # 덮어쓰기 → 기존본이 휴지통으로 보존
-    c.post("/api/sync/upload?path=synced&rel=a/b.txt", content=b"v2")
-    assert any(e["name"] == "b.txt" for e in c.get("/api/trash/list").json())
-
-
 def test_unified_document_space():
     """마크다운·텍스트·이미지·PDF가 한 트리에 있고, 종류에 맞게 처리된다.
 
@@ -923,8 +908,14 @@ def test_ai_skill_catalog_and_ops():
     # find_free_slots (일정 없으면 근무시간 전체가 빈 시간)
     fr = reg.dispatch("find_free_slots", {"date": "2026-09-01", "duration_minutes": 60}, ctx)
     assert fr.ok and len(fr.data["free_slots"]) >= 1
-    # get_system_status
-    st = reg.dispatch("get_system_status", {}, ctx)
+    # get_system_status — 주인 전용이라 일반 컨텍스트에서는 거절된다
+    assert reg.dispatch("get_system_status", {}, ctx).error_code == "forbidden"
+    owner_ctx = SkillContext(
+        user=SessionUser(username="tester", display_name="T", expires_at=0, remaining=0,
+                         role="admin", origin="bootstrap"),
+        settings=s,
+    )
+    st = reg.dispatch("get_system_status", {}, owner_ctx)
     assert st.ok and "cpu_percent" in st.data
     # 캘린더 update/delete 스킬
     ev = reg.dispatch("create_calendar_event", {"title": "회의", "start": "2026-09-02T10:00:00"}, ctx)
@@ -1122,6 +1113,255 @@ def test_google_oauth_state_and_isolation():
     assert c.get("/api/google/status").json()["connected"] is False
 
 
+def test_folder_archive_download():
+    """폴더를 zip으로 내려받는다 — 로컬 연동을 대신하는 경로."""
+    import zipfile as _zip
+
+    c = TestClient(app)
+    c.post("/api/auth/login", json={"username": "tester2", "password": "pw456"})
+    c.post("/api/notes/folder", json={"path": "묶음"})
+    c.post("/api/notes/folder", json={"path": "묶음/안쪽"})
+    c.put("/api/notes/save", json={"path": "묶음/문서", "content": "# 문서"})
+    c.put("/api/notes/save", json={"path": "묶음/안쪽/깊은글", "content": "깊은 내용"})
+    c.post("/api/notes/upload?path=묶음",
+           files={"file": ("그림.png", io.BytesIO(b"img"), "image/png")})
+
+    r = c.get("/api/notes/archive?path=묶음")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/zip"
+    # 한글 폴더명이 깨지지 않도록 RFC 5987 인코딩이 붙어야 한다
+    assert "filename*=utf-8''" in r.headers["content-disposition"].lower(), r.headers
+
+    names = _zip.ZipFile(io.BytesIO(r.content)).namelist()
+    assert "문서.md" in names, names
+    assert "안쪽/깊은글.md" in names, names   # 하위 구조 유지
+    assert "그림.png" in names, names
+
+    # path 생략 → 문서 공간 전체
+    whole = c.get("/api/notes/archive")
+    assert whole.status_code == 200
+    assert "묶음/문서.md" in _zip.ZipFile(io.BytesIO(whole.content)).namelist()
+
+    # 폴더가 아니면 404 (파일은 /raw 를 쓴다)
+    assert c.get("/api/notes/archive?path=묶음/문서.md").status_code == 404
+    assert c.get("/api/notes/archive?path=없는폴더").status_code == 404
+
+
+def test_origin_backfill():
+    """origin 없던 기존 행에 origin이 채워진다.
+
+    회귀: ensure_seed가 accounts.json이 있으면 early-return하므로, 백필이 없으면
+    실제 배포된 주인이 signup으로 읽혀 주인 전용 게이트를 켜는 순간 본인이 잠긴다.
+    """
+    import json as _json
+    from backend import accounts
+    from backend.config import get_settings
+
+    st = get_settings()
+    p = st.storage_root / "accounts.json"
+    rows = _json.loads(p.read_text(encoding="utf-8"))
+    # origin을 지워 '구버전 파일' 상태를 만든다
+    for r in rows:
+        r.pop("origin", None)
+    p.write_text(_json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+
+    accounts.ensure_seed(st)  # 백필이 돌아야 한다
+
+    after = {r["username"]: r.get("origin") for r in _json.loads(p.read_text(encoding="utf-8"))}
+    assert after.get("tester") == accounts.ORIGIN_BOOTSTRAP, after
+    assert after.get("tester2") == accounts.ORIGIN_BOOTSTRAP, after
+    # 가입 계정은 bootstrap으로 오인되면 안 된다
+    if "newbie" in after:
+        assert after["newbie"] == accounts.ORIGIN_SIGNUP, after
+
+
+def test_owner_only_surfaces():
+    """가입 사용자는 관리 화면·시스템 상태·Google 연동에 접근할 수 없다.
+
+    클라이언트에서 숨기는 것만으로는 curl로 뚫리므로 서버가 거절해야 한다.
+    """
+    from backend import accounts
+    from backend.config import get_settings
+
+    st = get_settings()
+    guest = TestClient(app)
+    guest.post("/api/auth/signup",
+               json={"username": "member1", "password": "longenough1", "display_name": "멤버"})
+    accounts.set_status("member1", accounts.STATUS_ACTIVE, "tester", st)
+
+    m = TestClient(app)
+    assert m.post("/api/auth/login",
+                  json={"username": "member1", "password": "longenough1"}).status_code == 200
+    assert m.get("/api/auth/session").json()["origin"] == "signup"
+
+    # 주인 전용 표면은 전부 403
+    for path in ("/api/system", "/api/admin/users", "/api/google/auth-url"):
+        assert m.get(path).status_code == 403, path
+
+    # 그런데 자기 기능은 정상 — 문서·캘린더는 그대로 쓴다
+    assert m.get("/api/notes/tree").status_code == 200
+    assert m.post("/api/calendar/events",
+                  json={"title": "내 일정", "start": "2026-10-01T10:00:00"}).status_code == 200
+    assert m.get("/api/calendar/events").status_code == 200
+    # Google 상태 조회는 열려 있되 연동은 불가로 표시된다
+    gs = m.get("/api/google/status").json()
+    assert gs["owner_only"] is True and gs["server_ready"] is False
+
+    # 주인은 접근된다
+    owner = TestClient(app)
+    owner.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    assert owner.get("/api/auth/session").json()["origin"] == "bootstrap"
+    assert owner.get("/api/system").status_code == 200
+    assert owner.get("/api/admin/users").status_code == 200
+
+    # role만 admin으로 올려도 주인은 아니다(.env 출신이 아니므로)
+    accounts.set_role("member1", "admin", st)
+    assert m.get("/api/system").status_code == 403, "role=admin만으로는 주인이 아니어야 함"
+    accounts.set_role("member1", "user", st)
+
+
+def test_settings_prunes_dead_keys():
+    """기능이 사라진 설정 키는 저장 시 정리된다(로컬 연동 잔재)."""
+    from backend import user_settings
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    st = get_settings()
+    u = SessionUser(username="prune", display_name="P", expires_at=0, remaining=0)
+    p = st.user_root("prune") / "settings.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text('{"sync": {"text_conflict": "ask"}, "notes": {"autosave_ms": 500}}', encoding="utf-8")
+
+    loaded = user_settings.load(u, st)
+    assert "sync" not in loaded, loaded.keys()
+    assert loaded["notes"]["autosave_ms"] == 500  # 살아있는 설정은 보존
+
+    user_settings.patch(u, st, {"notes": {"autosave_ms": 700}})
+    import json as _json
+    assert "sync" not in _json.loads(p.read_text(encoding="utf-8"))
+
+
+def test_owner_cannot_lock_themselves_out():
+    """주인이 자기를 지우거나 비활성화·강등해 관리 권한을 영영 잃을 수 없어야 한다.
+
+    회귀: 잠금 방지 가드가 _admin_count(role=admin)만 세어, 가입 사용자를 admin으로
+    올리면 admin이 2명이 되어 주인 자신에 대한 삭제·비활성·강등이 전부 통과했다.
+    그 상태가 되면 require_owner(origin=bootstrap AND role=admin)를 만족하는 계정이
+    하나도 없어 아무도 관리 화면에 못 들어가고, ensure_seed는 파일이 있으면
+    early-return하므로 재기동해도 복구되지 않는다.
+    """
+    from backend import accounts
+    from backend.config import get_settings
+
+    st = get_settings()
+    # 가입 사용자를 admin으로 승격 → admin 수는 늘지만 주인은 여전히 1명
+    guest = TestClient(app)
+    guest.post("/api/auth/signup",
+               json={"username": "coadmin", "password": "longenough1", "display_name": "코어드민"})
+    accounts.set_status("coadmin", accounts.STATUS_ACTIVE, "tester", st)
+    accounts.set_role("coadmin", "admin", st)
+    assert accounts.find("coadmin", st).is_admin is True
+    assert accounts.find("coadmin", st).is_owner is False  # 승격돼도 주인은 아니다
+
+    # 테스트 환경엔 .env 출신 주인이 둘(tester·tester2)이므로 하나만 남긴다
+    others = [
+        u["username"] for u in accounts.list_all(st)
+        if u.get("origin") == accounts.ORIGIN_BOOTSTRAP
+        and u.get("role") == "admin" and u.get("status") == accounts.STATUS_ACTIVE
+        and u["username"] != "tester"
+    ]
+    for u in others:
+        accounts.set_status(u, accounts.STATUS_DISABLED, "test", st)
+
+    owner = "tester"
+    for fn, kwargs in (
+        (accounts.set_status, {"status": accounts.STATUS_DISABLED, "actor": "x"}),
+        (accounts.set_role, {"role": "user"}),
+    ):
+        try:
+            fn(owner, settings=st, **kwargs)
+            raise AssertionError(f"마지막 주인에 대한 {fn.__name__}가 허용됨")
+        except Exception as e:
+            assert getattr(e, "status_code", None) == 400, e
+    try:
+        accounts.delete(owner, st)
+        raise AssertionError("마지막 주인 삭제가 허용됨")
+    except Exception as e:
+        assert getattr(e, "status_code", None) == 400, e
+
+    # 주인은 여전히 관리 화면에 들어갈 수 있다
+    o = TestClient(app)
+    o.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    assert o.get("/api/admin/users").status_code == 200
+
+    # 자기 계정을 대상으로 한 조작은 라우터에서도 막힌다
+    assert o.post("/api/admin/users/tester/disable").status_code == 400
+    assert o.delete("/api/admin/users/tester").status_code == 400
+
+    accounts.set_role("coadmin", "user", st)
+    for u in others:  # 원복
+        accounts.set_status(u, accounts.STATUS_ACTIVE, "test", st)
+
+
+def test_system_stats_not_leaked_via_ai_skill():
+    """/api/system을 막아도 AI 스킬로 같은 값이 새면 의미가 없다."""
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    st = get_settings()
+    reg = default_registry()
+
+    member = SkillContext(
+        user=SessionUser(username="m", display_name="M", expires_at=0, remaining=0,
+                         role="user", origin="signup"),
+        settings=st,
+    )
+    r = reg.dispatch("get_system_status", {}, member)
+    assert r.ok is False and r.error_code == "forbidden", r
+
+    owner = SkillContext(
+        user=SessionUser(username="tester", display_name="T", expires_at=0, remaining=0,
+                         role="admin", origin="bootstrap"),
+        settings=st,
+    )
+    assert reg.dispatch("get_system_status", {}, owner).ok is True
+
+
+def test_archive_survives_bad_files():
+    """압축 불가 파일 하나가 전체 내보내기를 실패시키거나 임시파일을 흘리면 안 된다."""
+    import os, time as _t
+    from backend.config import get_settings
+
+    st = get_settings()
+    c = TestClient(app)
+    c.post("/api/auth/login", json={"username": "tester2", "password": "pw456"})
+    c.post("/api/notes/folder", json={"path": "오래된"})
+    c.put("/api/notes/save", json={"path": "오래된/정상", "content": "ok"})
+
+    # 1980년 이전 mtime → zipfile이 ValueError를 낸다(OSError가 아님)
+    root = st.user_root("tester2") / "data" / "오래된"
+    old = root / "옛날파일.txt"
+    old.write_text("old", encoding="utf-8")
+    os.utime(old, (0, 0))
+
+    tmp_dir = st.storage_root / ".tmp"
+    before = len(list(tmp_dir.glob("*.zip"))) if tmp_dir.exists() else 0
+
+    r = c.get("/api/notes/archive?path=오래된")
+    assert r.status_code == 200, r.text          # 한 파일 때문에 전체가 죽지 않는다
+    import zipfile as _z, io as _io
+    names = _z.ZipFile(_io.BytesIO(r.content)).namelist()
+    assert "정상.md" in names                     # 나머지는 정상 포함
+    # 이어받기를 제안하면 서로 다른 zip이 이어 붙어 조용히 깨진다
+    assert r.headers.get("accept-ranges") == "none", r.headers
+
+    _t.sleep(0.2)  # BackgroundTask가 정리할 틈
+    after = len(list(tmp_dir.glob("*.zip"))) if tmp_dir.exists() else 0
+    assert after <= before, f"임시 zip이 남았다: {before} -> {after}"
+
+
 def test_user_isolation():
     """다른 사용자의 문서는 보이지도, 읽히지도 않는다."""
     a = TestClient(app)
@@ -1155,7 +1395,6 @@ if __name__ == "__main__":
     test_notes_graph_cache()
     test_notes_folders_and_tree()
     test_trash_restore_flow()
-    test_sync_manifest_upload_download()
     test_unified_document_space()
     test_google_allday_end_conversion()
     test_calendar_colors_names_and_prefs()
@@ -1181,5 +1420,12 @@ if __name__ == "__main__":
     test_signup_requires_admin_approval()
     test_last_admin_cannot_lock_out()
     test_raw_serve_blocks_stored_xss()
+    test_origin_backfill()
+    test_owner_cannot_lock_themselves_out()
+    test_system_stats_not_leaked_via_ai_skill()
+    test_archive_survives_bad_files()
+    test_owner_only_surfaces()
+    test_settings_prunes_dead_keys()
+    test_folder_archive_download()
     test_user_isolation()
     print("ALL SMOKE TESTS PASSED")

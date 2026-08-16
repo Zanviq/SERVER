@@ -5,13 +5,19 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from .. import accounts
 from ..auth import SessionUser, require_admin
 from ..config import Settings, get_settings
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+def _not_self(target: str, admin: SessionUser) -> None:
+    """자기 자신을 잠그는 조작은 UI 클릭 두 번이면 되므로 서버에서 막는다."""
+    if target == admin.username:
+        raise HTTPException(status_code=400, detail="자기 계정에는 할 수 없습니다.")
 
 
 @router.get("/users")
@@ -47,6 +53,7 @@ def reject(
     admin: SessionUser = Depends(require_admin),
     settings: Settings = Depends(get_settings),
 ):
+    _not_self(username, admin)
     return accounts.set_status(username, accounts.STATUS_REJECTED, admin.username, settings)
 
 
@@ -57,6 +64,7 @@ def disable(
     settings: Settings = Depends(get_settings),
 ):
     """비활성화 — 세션도 즉시 무효가 된다(verify_token이 상태를 본다)."""
+    _not_self(username, admin)
     return accounts.set_status(username, accounts.STATUS_DISABLED, admin.username, settings)
 
 
@@ -64,18 +72,20 @@ def disable(
 def change_role(
     username: str,
     role: str,
-    _: SessionUser = Depends(require_admin),
+    admin: SessionUser = Depends(require_admin),
     settings: Settings = Depends(get_settings),
 ):
+    _not_self(username, admin)
     return accounts.set_role(username, role, settings)
 
 
 @router.delete("/users/{username}")
 def delete_user(
     username: str,
-    _: SessionUser = Depends(require_admin),
+    admin: SessionUser = Depends(require_admin),
     settings: Settings = Depends(get_settings),
 ):
     """계정만 삭제한다. 문서는 남겨 실수를 되돌릴 수 있게 한다."""
+    _not_self(username, admin)
     accounts.delete(username, settings)
     return {"ok": True}

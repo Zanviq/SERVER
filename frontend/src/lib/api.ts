@@ -9,10 +9,13 @@ export interface SessionInfo {
   expires_at: number;
   remaining: number;
   role: "admin" | "user";
+  /** bootstrap = .env로 만들어진 서버 주인. 관리 화면·Google 연동 전용 판정에 쓴다. */
+  origin: "bootstrap" | "signup";
 }
 
 export interface GoogleStatus {
   server_ready: boolean;
+  owner_only?: boolean;
   connected: boolean;
   via: "oauth" | "env" | null;
   email: string;
@@ -24,6 +27,7 @@ export interface AdminUser {
   username: string;
   display_name: string;
   role: "admin" | "user";
+  origin: "bootstrap" | "signup";
   status: "pending" | "active" | "rejected" | "disabled";
   created_at: number;
   approved_at: number | null;
@@ -164,16 +168,8 @@ export const api = {
   trashPurge: (id: string) => req(`/api/trash/purge?${q({ id })}`, { method: "DELETE" }),
   trashEmpty: () => req("/api/trash/empty", { method: "DELETE" }),
 
-  // ── 로컬 연동(sync) ──
-  syncManifest: (path: string) =>
-    req<SyncManifest>(`/api/sync/manifest?${q({ path })}`),
-  syncUpload: (path: string, rel: string, data: ArrayBuffer | Uint8Array) =>
-    req<{ ok: boolean; rel: string; hash: string }>(
-      `/api/sync/upload?${q({ path, rel })}`,
-      { method: "POST", body: data as BodyInit },
-    ),
-  syncDownloadUrl: (path: string, rel: string) =>
-    `${BASE}/api/sync/download?${q({ path, rel })}`,
+  /** 폴더를 zip으로 받는 URL(비어 있으면 전체). 앵커 이동으로 세션 쿠키가 실린다. */
+  noteArchiveUrl: (path = "") => `${BASE}/api/notes/archive?${q({ path })}`,
 
   // ── 터미널 ──
   terminalStatus: () =>
@@ -261,7 +257,6 @@ export interface UserSettings {
   ai: { tone: string; max_steps: number };
   calendar: { default_color: string; default_view: string; week_start: number; default_remind: number; ai_rules: string };
   notes: { autosave_ms: number; confirm_delete: boolean };
-  sync: { text_conflict: string; binary_policy: string };
   display: { show_seconds_in_timer: boolean };
   security: { session_ttl_minutes: number };
 }
@@ -315,11 +310,6 @@ export interface TrashEntry {
   name: string;
   is_dir: boolean;
   deleted_at: number;
-}
-export interface SyncManifest {
-  scope: string;
-  path: string;
-  files: { rel: string; size: number; mtime: number; hash: string }[];
 }
 export interface NoteSearchHit {
   path: string;

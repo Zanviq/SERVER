@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { CalendarCheck, Link2, Loader2, Unlink } from "lucide-react";
 import { api, GoogleStatus } from "../../lib/api";
+import { useAuth } from "../../store/auth";
 import { toast } from "../../store/toast";
 
 /** 캘린더 탭 상단의 Google 연동 카드. */
 export function GoogleConnect() {
+  const session = useAuth((s) => s.session);
+  const isOwner = session?.origin === "bootstrap" && session?.role === "admin";
   const [st, setSt] = useState<GoogleStatus | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -72,17 +75,21 @@ export function GoogleConnect() {
                 : st.via === "env"
                   ? "환경변수로 설정됨"
                   : "연동됨"
-              : st.server_ready
-                ? "연동하면 일정이 Google 캘린더에 저장됩니다"
-                : "서버에 GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI 설정이 필요합니다"}
+              : !isOwner
+                ? "Google 연동은 서버 관리자만 설정할 수 있습니다. 내부 캘린더는 그대로 사용하세요."
+                : st.server_ready
+                  ? "연동하면 일정이 Google 캘린더에 저장됩니다"
+                  : "서버에 GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI 설정이 필요합니다"}
           </p>
         </div>
 
+        {/* 연동 해제는 권한 축소라 본인이면 항상 가능해야 한다 —
+            이 변경 전에 연동한 가입 사용자가 영영 못 끊는 상태가 되지 않도록. */}
         {st.connected && st.via === "oauth" ? (
           <button onClick={disconnect} disabled={busy} className="btn btn-ghost h-8 hover:text-danger">
             {busy ? <Loader2 size={14} className="animate-spin" /> : <Unlink size={14} />} 해제
           </button>
-        ) : st.server_ready ? (
+        ) : isOwner && st.server_ready ? (
           <button onClick={connect} disabled={busy} className="btn btn-primary h-8">
             {busy ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
             {st.connected ? "다시 연동" : "연동"}

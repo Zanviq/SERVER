@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import logging
 import re
+import tempfile
+import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
@@ -233,6 +236,65 @@ def raw_file(
         filename=target.name,
         media_type="application/octet-stream",
         headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.get("/archive")
+def archive_folder(
+    path: str = Query("", description="폴더 상대경로. 빈 값이면 전체"),
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """폴더를 zip으로 내려받는다(하위 구조 유지).
+
+    임시파일 + FileResponse로 만든다 —
+    - BytesIO는 라즈베리파이에서 사진·영상 폴더를 통째로 메모리에 올린다.
+    - FileResponse가 RFC 5987(`filename*=UTF-8''`)을 붙여줘 한글 폴더명이 안 깨진다.
+      직접 Content-Disposition을 만들면 손으로 퍼센트 인코딩해야 한다.
+    """
+    root = user_data_root(user, settings)
+    target = safe_join(root, path)
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다.")
+
+    name = (target.name if target != root else "문서") + ".zip"
+    # 임시파일을 데이터 볼륨에 만든다 — 컨테이너 기본 /tmp는 SD카드의 오버레이라
+    # 큰 폴더를 압축하면 방금 비운 SD를 다시 채운다.
+    tmp_dir = settings.storage_root / ".tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp = tempfile.NamedTemporaryFile(dir=tmp_dir, suffix=".zip", delete=False)
+    tmp.close()
+    tmp_path = Path(tmp.name)
+    try:
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for p in sorted(target.rglob("*")):
+                # 심볼릭 링크는 건너뛴다 — safe_join은 '요청 경로'만 검증하므로
+                # 루트 밖을 가리키는 링크를 따라가면 그 내용이 통째로 나간다.
+                if p.is_symlink() or not p.is_file():
+                    continue
+                try:
+                    zf.write(p, arcname=p.relative_to(target).as_posix())
+                except (OSError, ValueError) as e:
+                    # 1980년 이전 mtime이나 인코딩 불가 파일명은 zipfile이 ValueError를
+                    # 낸다. 한 파일 때문에 전체 내보내기를 실패시키지 않고 건너뛴다.
+                    logger.warning("압축 제외: %s (%s)", p, e)
+    except BaseException:
+        # OSError만 잡으면 ValueError 등이 새어나가 임시파일이 영구히 남는다.
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    return FileResponse(
+        tmp_path,
+        filename=name,
+        media_type="application/zip",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            # 요청마다 새로 만드는 아카이브라 이어받기를 허용하면 서로 다른 zip이
+            # 이어 붙어 조용히 깨진다(오류도 안 난다).
+            "Accept-Ranges": "none",
+            "Cache-Control": "no-store",
+        },
+        background=BackgroundTask(tmp_path.unlink, True),
     )
 
 

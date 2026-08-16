@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   NotebookPen, FolderPlus, FilePlus, Trash2, Save, Link2, Loader2,
-  FileText, Search, X, Folder, ChevronRight, ChevronDown, Home, FolderInput, Eye, Pencil, Upload,
+  FileText, Search, X, Folder, ChevronRight, ChevronDown, Home, FolderInput, Eye, Pencil, Upload, Download,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { MarkdownView } from "../components/notes/LazyMarkdownView";
@@ -344,6 +344,12 @@ export function Notes() {
               <Folder size={14} className="shrink-0 text-warning" />
               <span className="truncate font-medium">{child.name}</span>
             </button>
+            <a href={api.noteArchiveUrl(child.path)} download
+              onClick={(e) => e.stopPropagation()}
+              className="hidden shrink-0 rounded p-1 text-fg-muted hover:text-accent group-hover:block"
+              title="폴더를 zip으로 내려받기" aria-label="폴더 다운로드">
+              <Download size={12} />
+            </a>
             <button onClick={() => setDelFolder(child.path)}
               className="hidden shrink-0 rounded p-1 text-fg-muted hover:text-danger group-hover:block"
               title="폴더 삭제" aria-label="폴더 삭제">
@@ -394,11 +400,17 @@ export function Notes() {
   };
 
   const actions = (
-    <label className="btn btn-secondary h-8 cursor-pointer" title="현재 폴더에 파일 올리기">
-      <Upload size={14} /> 업로드
-      <input type="file" multiple className="hidden"
-        onChange={(e) => { doUpload(e.target.files); e.currentTarget.value = ""; }} />
-    </label>
+    <div className="flex items-center gap-2">
+      <a href={api.noteArchiveUrl(curFolder)} download className="btn btn-ghost h-8"
+        title={curFolder ? `'${curFolder}' 폴더를 zip으로` : "전체 문서를 zip으로"}>
+        <Download size={14} /> {curFolder ? "폴더 받기" : "전체 받기"}
+      </a>
+      <label className="btn btn-secondary h-8 cursor-pointer" title="현재 폴더에 파일 올리기">
+        <Upload size={14} /> 업로드
+        <input type="file" multiple className="hidden"
+          onChange={(e) => { doUpload(e.target.files); e.currentTarget.value = ""; }} />
+      </label>
+    </div>
   );
 
   return (
@@ -498,8 +510,14 @@ export function Notes() {
                   {reading ? <><Eye size={11} /> 읽기</> : <><Pencil size={11} /> 편집</>}
                 </button>
               )}
+              {current && isEditable && (
+                <a href={api.noteRawUrl(current, true)} download
+                  className="btn btn-ghost h-7 px-2" title="이 문서 내려받기" aria-label="문서 다운로드">
+                  <Download size={14} />
+                </a>
+              )}
               {current && (
-                <button onClick={() => setDelOpen(true)} className="btn btn-ghost h-7 px-2 hover:text-danger" aria-label="노트 삭제">
+                <button onClick={() => setDelOpen(true)} className="btn btn-ghost h-7 px-2 hover:text-danger" aria-label="문서 삭제">
                   <Trash2 size={14} />
                 </button>
               )}

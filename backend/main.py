@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .auth import require_session
+from .auth import require_owner, require_session
 from .config import get_settings
 from .routers import (
     admin,
@@ -21,7 +21,6 @@ from .routers import (
     google,
     notes,
     settings as settings_router,
-    sync,
     system,
     terminal,
     trash,
@@ -77,15 +76,16 @@ app.include_router(auth.router)
 
 # 보호 라우터: 모든 엔드포인트가 유효 세션 요구
 _PROTECTED = [Depends(require_session)]
-app.include_router(system.router, dependencies=_PROTECTED)
+# 시스템 상태·계정 관리는 서버 주인 전용 — 클라이언트에서 숨기는 것만으론 막히지 않는다
+_OWNER_ONLY = [Depends(require_owner)]
+app.include_router(system.router, dependencies=_OWNER_ONLY)
 app.include_router(notes.router, dependencies=_PROTECTED)
 app.include_router(calendar.router, dependencies=_PROTECTED)
 app.include_router(settings_router.router, dependencies=_PROTECTED)
 app.include_router(ai.router, dependencies=_PROTECTED)
 app.include_router(trash.router, dependencies=_PROTECTED)
-app.include_router(sync.router, dependencies=_PROTECTED)
 app.include_router(terminal.router, dependencies=_PROTECTED)
-app.include_router(admin.router, dependencies=_PROTECTED)
+app.include_router(admin.router, dependencies=_OWNER_ONLY)
 app.include_router(google.router, dependencies=_PROTECTED)
 
 

@@ -35,6 +35,7 @@ class SessionInfo(BaseModel):
     expires_at: float
     remaining: int
     role: str = "user"
+    origin: str = "signup"
 
 
 @router.post("/login", response_model=SessionInfo)
@@ -72,6 +73,7 @@ def login(
         expires_at=time.time() + ttl,
         remaining=ttl,
         role=acc.role,
+        origin=acc.origin,
     )
 
 
@@ -105,4 +107,5 @@ def session(user: SessionUser = Depends(require_session)):
         expires_at=user.expires_at,
         remaining=user.remaining,
         role=user.role,
+        origin=user.origin,
     )

@@ -14,6 +14,13 @@ class GetSystemStatus(SkillBase):
     parameters = {"type": "object", "properties": {}}
 
     def run(self, args, ctx):
+        # /api/system은 주인 전용인데 이 스킬로 같은 값이 새어나가면 의미가 없다.
+        if not ctx.user.is_owner:
+            return SkillResult(
+                ok=False,
+                message="서버 상태는 관리자만 조회할 수 있습니다.",
+                error_code="forbidden",
+            )
         vm = psutil.virtual_memory()
         root = ctx.settings.storage_root
         du = psutil.disk_usage(str(root if root.exists() else "/"))

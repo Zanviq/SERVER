@@ -8,29 +8,30 @@ import {
   Settings,
   User,
   Bot,
-  FolderSync,
   Trash2,
   TerminalSquare,
 } from "lucide-react";
 import { useAuth } from "../../store/auth";
 import { api } from "../../lib/api";
 
-// 터미널 가용 여부는 세션 중 바뀌지 않으므로 1회만 조회해 캐시(페이지 이동마다 재요청 방지)
-let _termAvailCache: Promise<boolean> | null = null;
-const terminalAvailable = (): Promise<boolean> => {
-  if (!_termAvailCache) {
-    _termAvailCache = api.terminalStatus().then((s) => s.available).catch(() => false);
+// 터미널 가용 여부 캐시. 계정별로 키를 둔다 —
+// 모듈 전역 캐시로 두면 주인이 로그아웃한 뒤 같은 탭에서 가입 사용자가 로그인해도
+// 이전 결과가 남아 터미널 탭이 그대로 보인다(로그아웃은 페이지를 새로고침하지 않는다).
+let _termAvail: { user: string; p: Promise<boolean> } | null = null;
+const terminalAvailable = (user: string): Promise<boolean> => {
+  if (!_termAvail || _termAvail.user !== user) {
+    _termAvail = { user, p: api.terminalStatus().then((s) => s.available).catch(() => false) };
   }
-  return _termAvailCache;
+  return _termAvail.p;
 };
 
+// 대시보드는 서버 주인 전용(시스템 상태를 담고 있다) — 아래에서 걸러낸다.
 const NAV = [
-  { to: "/", icon: LayoutDashboard, label: "대시보드", end: true },
+  { to: "/", icon: LayoutDashboard, label: "대시보드", end: true, ownerOnly: true },
   { to: "/notes", icon: NotebookPen, label: "문서" },
   { to: "/graph", icon: Share2, label: "그래프" },
   { to: "/calendar", icon: CalendarDays, label: "캘린더" },
   { to: "/assistant", icon: Bot, label: "AI 비서" },
-  { to: "/sync", icon: FolderSync, label: "로컬 연동" },
   { to: "/trash", icon: Trash2, label: "휴지통" },
 ];
 
@@ -74,12 +75,20 @@ export function Sidebar() {
   const [termAvail, setTermAvail] = useState(false);
 
   useEffect(() => {
-    terminalAvailable().then(setTermAvail);
-  }, []);
+    const u = session?.username;
+    if (!u) { setTermAvail(false); return; }
+    let alive = true;
+    terminalAvailable(u).then((v) => { if (alive) setTermAvail(v); });
+    return () => { alive = false; };
+  }, [session?.username]);
 
+  // 데스크톱 레일과 모바일 탭바가 같은 배열을 두 번 렌더하므로,
+  // JSX가 아니라 배열에서 걸러야 양쪽에 동시에 반영된다.
+  const isOwner = session?.origin === "bootstrap" && session?.role === "admin";
+  const visible = NAV.filter((n) => !n.ownerOnly || isOwner);
   const nav = termAvail
-    ? [...NAV, { to: "/terminal", icon: TerminalSquare, label: "터미널" }]
-    : NAV;
+    ? [...visible, { to: "/terminal", icon: TerminalSquare, label: "터미널" }]
+    : visible;
 
   return (
     <>

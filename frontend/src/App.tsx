@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "./store/auth";
 import { useSettings } from "./store/settings";
-import { useSync } from "./store/sync";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { Toaster } from "./components/ui/Toaster";
@@ -19,7 +18,6 @@ const loaders = {
   settings: () => import("./pages/Settings"),
   profile: () => import("./pages/Profile"),
   trash: () => import("./pages/Trash"),
-  sync: () => import("./pages/Sync"),
   terminal: () => import("./pages/Terminal"),
 };
 
@@ -30,7 +28,6 @@ const Assistant = lazy(() => loaders.assistant().then((m) => ({ default: m.Assis
 const Settings = lazy(() => loaders.settings().then((m) => ({ default: m.Settings })));
 const Profile = lazy(() => loaders.profile().then((m) => ({ default: m.Profile })));
 const Trash = lazy(() => loaders.trash().then((m) => ({ default: m.Trash })));
-const Sync = lazy(() => loaders.sync().then((m) => ({ default: m.Sync })));
 const TerminalPage = lazy(() => loaders.terminal().then((m) => ({ default: m.TerminalPage })));
 
 /** 로그인 후 유휴 시간에 모든 라우트 청크를 미리 로드 → 페이지 이동 지연 제거 */
@@ -50,10 +47,14 @@ function Spinner() {
 }
 
 function AuthedRoutes() {
+  // 대시보드·터미널은 .env로 만들어진 서버 주인 전용.
+  // '/'는 catch-all의 목적지이기도 하므로, 주인이 아니면 두 경로 모두 문서로 보낸다.
+  const isOwner = useAuth((st) => st.session?.origin === "bootstrap" && st.session?.role === "admin");
+  const home = isOwner ? <Dashboard /> : <Navigate to="/notes" replace />;
   return (
     <Suspense fallback={<Spinner />}>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={home} />
         <Route path="/notes" element={<Notes />} />
         <Route path="/graph" element={<Graph />} />
         <Route path="/calendar" element={<Calendar />} />
@@ -61,9 +62,8 @@ function AuthedRoutes() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/trash" element={<Trash />} />
-        <Route path="/sync" element={<Sync />} />
-        <Route path="/terminal" element={<TerminalPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="/terminal" element={isOwner ? <TerminalPage /> : <Navigate to="/notes" replace />} />
+        <Route path="*" element={<Navigate to={isOwner ? "/" : "/notes"} replace />} />
       </Routes>
     </Suspense>
   );
@@ -76,11 +76,10 @@ export default function App() {
     init();
   }, [init]);
 
-  // 로그인되면 개인 설정 로드 + 로컬 연동 자동 시도 + 라우트 프리페치
+  // 로그인되면 개인 설정 로드 + 라우트 프리페치
   useEffect(() => {
     if (session) {
       useSettings.getState().load();
-      useSync.getState().init(session.username);
       prefetchRoutes();
     }
   }, [session]);

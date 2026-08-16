@@ -26,10 +26,16 @@ class SessionUser:
     expires_at: float  # epoch seconds
     remaining: int  # seconds
     role: str = "user"
+    origin: str = "signup"  # bootstrap(.env 주인) | signup
 
     @property
     def is_admin(self) -> bool:
         return self.role == "admin"
+
+    @property
+    def is_owner(self) -> bool:
+        """.env로 만들어진 서버 주인. 관리 화면·시스템 상태·터미널·Google 연동 전용."""
+        return self.origin == "bootstrap" and self.role == "admin"
 
 
 def _serializer(settings: Settings) -> URLSafeTimedSerializer:
@@ -127,6 +133,7 @@ def require_session(
         expires_at=expires_at,
         remaining=remaining,
         role=acc.role,
+        origin=acc.origin,
     )
 
 
@@ -134,4 +141,14 @@ def require_admin(user: SessionUser = Depends(require_session)) -> SessionUser:
     """관리자 전용 라우트가 의존."""
     if not user.is_admin:
         raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
+    return user
+
+
+def require_owner(user: SessionUser = Depends(require_session)) -> SessionUser:
+    """서버 주인(.env로 만들어진 계정) 전용 라우트가 의존.
+
+    클라이언트에서 화면을 숨기는 것만으로는 막히지 않는다 — 서버가 거절해야 한다.
+    """
+    if not user.is_owner:
+        raise HTTPException(status_code=403, detail="서버 관리자만 사용할 수 있습니다.")
     return user

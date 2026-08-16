@@ -1,7 +1,9 @@
 """admin 전용 웹 터미널 PTY 서버 (별도 컨테이너).
 
 - 웹소켓 핸드셰이크의 server_session 쿠키를 백엔드와 동일한 SESSION_SECRET/솔트로 검증.
-- TERMINAL_ADMINS 목록의 사용자만 허용.
+- 서버 주인(accounts.json의 origin=bootstrap·role=admin·status=active)이면서
+  TERMINAL_ADMINS 목록에도 있는 사용자만 허용. 이름만 대조하면 같은 아이디로
+  가입한 계정에 호스트 셸이 열린다(여기가 실제 권한 경계다).
 - nsenter로 라즈베리파이 '호스트'의 실제 셸(bash)에 접속 (pid:host + privileged 필요).
 - 프로토콜: 클라이언트→서버 바이너리=stdin, 텍스트 JSON {"resize":[cols,rows]}=창크기.
            서버→클라이언트 바이너리=stdout/stderr.
@@ -16,6 +18,7 @@ import pty
 import signal
 import struct
 import termios
+import time
 from http.cookies import SimpleCookie
 
 import websockets
@@ -25,6 +28,8 @@ from urllib.parse import urlparse
 SECRET = os.getenv("SESSION_SECRET", "")
 SALT = "server-session-v1"
 TTL = int(os.getenv("SESSION_TTL_SECONDS", "3600"))
+# 계정 저장소(읽기 전용 마운트). 없으면 아무도 통과시키지 않는다(fail closed).
+ACCOUNTS_FILE = os.getenv("ACCOUNTS_FILE", "/accounts.json")
 ADMINS = {a.strip() for a in os.getenv("TERMINAL_ADMINS", "admin").split(",") if a.strip()}
 # CSWSH 방지: 허용 Origin 목록. 비어 있으면 요청 Host와 동일 출처만 허용.
 ALLOWED_ORIGINS = {o.strip() for o in os.getenv("TERMINAL_ORIGINS", "").split(",") if o.strip()}
@@ -35,15 +40,47 @@ PORT = int(os.getenv("TERMINAL_PORT", "7681"))
 HOST_SHELL = ["nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "bash", "-l"]
 
 
+def _is_owner(username: str) -> bool:
+    """accounts.json에서 서버 주인인지 확인. 파일이 없거나 못 읽으면 거부."""
+    try:
+        with open(ACCOUNTS_FILE, encoding="utf-8") as f:
+            rows = json.load(f)
+    except Exception:
+        return False
+    for r in rows if isinstance(rows, list) else []:
+        if r.get("username") == username:
+            return (
+                r.get("origin") == "bootstrap"
+                and r.get("role") == "admin"
+                and r.get("status") == "active"
+            )
+    return False
+
+
 def _verify(token: str) -> str | None:
     if not SECRET or not token:
         return None
     try:
-        data = URLSafeTimedSerializer(SECRET, salt=SALT).loads(token, max_age=TTL)
+        # 백엔드와 동일하게 payload의 ttl로 만료를 판정한다.
+        # max_age=SESSION_TTL_SECONDS로 고정하면 사용자별 세션 시간 설정과 어긋나,
+        # 짧게 설정한 사용자는 만료 뒤에도 통과하고 길게 설정한 사용자는 일찍 끊긴다.
+        data, ts = URLSafeTimedSerializer(SECRET, salt=SALT).loads(
+            token, return_timestamp=True
+        )
     except Exception:
         return None
+    raw = data.get("ttl")
+    try:
+        ttl = max(300, min(int(raw), 2_592_000)) if raw is not None else TTL
+    except (TypeError, ValueError):
+        ttl = TTL
+    if (time.time() - ts.timestamp()) > ttl:
+        return None
     u = data.get("u")
-    return u if u in ADMINS else None
+    if not u or u not in ADMINS:
+        return None
+    # 이름 대조만으로는 부족하다 — 실제 계정이 서버 주인이어야 한다.
+    return u if _is_owner(u) else None
 
 
 def _headers(ws):

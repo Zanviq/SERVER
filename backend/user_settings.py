@@ -25,12 +25,6 @@ DEFAULTS: dict[str, Any] = {
         "autosave_ms": 900,
         "confirm_delete": True,
     },
-    "sync": {
-        # 텍스트/md 충돌 시 기본 동작: ask | local | web | merge
-        "text_conflict": "ask",
-        # 바이너리(.pdf/.png 등) 충돌 시: local | web
-        "binary_policy": "local",
-    },
     "display": {
         "show_seconds_in_timer": True,
     },
@@ -58,13 +52,22 @@ def _deep_merge(base: dict, patch: dict) -> dict:
 
 def load(user: SessionUser, settings: Settings) -> dict:
     stored = json_store.read_json(_path(user, settings), {})
-    return _deep_merge(DEFAULTS, stored if isinstance(stored, dict) else {})
+    return _prune(_deep_merge(DEFAULTS, stored if isinstance(stored, dict) else {}))
+
+
+def _prune(merged: dict) -> dict:
+    """DEFAULTS에 없는 최상위 키를 버린다.
+
+    _deep_merge는 저장된 여분 키를 그대로 보존하므로, 기능이 사라져도(예: 로컬 연동)
+    죽은 설정이 영원히 남아 계속 내려간다. 저장 시점에 정리한다.
+    """
+    return {k: v for k, v in merged.items() if k in DEFAULTS}
 
 
 def patch(user: SessionUser, settings: Settings, changes: dict) -> dict:
     p = _path(user, settings)
     with json_store.lock_for(p):
-        merged = _deep_merge(load(user, settings), changes)
+        merged = _prune(_deep_merge(load(user, settings), changes))
         json_store.write_atomic(p, merged)
     return merged
 
