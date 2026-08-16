@@ -42,7 +42,13 @@ class ListCalendarEvents(SkillBase):
         "type": "object",
         "properties": {
             "from_date": {"type": "string", "description": "ISO 날짜/시간 (예: 2026-07-01). 미지정 시 오늘-30일."},
-            "to_date": {"type": "string", "description": "ISO 날짜/시간. 미지정 시 오늘+120일."},
+            "to_date": {
+                "type": "string",
+                "description": (
+                    "ISO 날짜/시간. 끝을 포함한다 — 날짜만 주면(예: 2026-07-01) 그날 하루 전체가 포함되므로, "
+                    "하루만 조회하려면 from_date와 to_date에 같은 날짜를 주면 된다. 미지정 시 오늘+120일."
+                ),
+            },
         },
     }
 

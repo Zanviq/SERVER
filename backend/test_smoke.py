@@ -341,6 +341,47 @@ def test_calendar_list_default_window():
     assert "OLDEVT" not in titles  # 기본창(오늘-30~+120) 밖
 
 
+def test_calendar_list_date_only_end_is_inclusive():
+    """to_date를 날짜만(YYYY-MM-DD) 주면 그날 하루 전체가 포함되어야 한다.
+
+    회귀: 날짜만 준 종료 경계가 그날 00:00으로 해석돼 당일 일정이 전부 빠졌다.
+    AI가 "치과 일정 3시로 옮겨줘" 같은 요청에서 대상 날짜로 범위를 좁혀 조회하면
+    0건이 나와 event_id를 못 얻고, 결국 수정이 실패했다.
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="tester3", display_name="T3", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-16")
+    reg = default_registry()
+    reg.dispatch("create_calendar_event", {"title": "DAYEVT", "start": "2026-08-20T10:00:00"}, ctx)
+
+    # 같은 날짜로 좁힌 조회(AI가 실제로 만드는 인자 형태)
+    r = reg.dispatch("list_calendar_events", {"from_date": "2026-08-20", "to_date": "2026-08-20"}, ctx)
+    assert r.ok
+    assert "DAYEVT" in [e["title"] for e in r.data["events"]], "당일 종료 경계가 하루 전체를 포함해야 함"
+
+    # 하루 끝(23:5x) 일정도 포함
+    reg.dispatch("create_calendar_event", {"title": "LATEEVT", "start": "2026-08-20T23:30:00"}, ctx)
+    r2 = reg.dispatch("list_calendar_events", {"from_date": "2026-08-20", "to_date": "2026-08-20"}, ctx)
+    assert "LATEEVT" in [e["title"] for e in r2.data["events"]]
+
+    # 경계 밖(다음 날)은 여전히 제외되어야 함 — 범위가 과하게 넓어지지 않았는지
+    reg.dispatch("create_calendar_event", {"title": "NEXTEVT", "start": "2026-08-21T09:00:00"}, ctx)
+    r3 = reg.dispatch("list_calendar_events", {"from_date": "2026-08-20", "to_date": "2026-08-20"}, ctx)
+    assert "NEXTEVT" not in [e["title"] for e in r3.data["events"]]
+
+    # 시각을 명시한 종료 경계는 기존 의미 그대로(정오 이후 제외)
+    r4 = reg.dispatch(
+        "list_calendar_events", {"from_date": "2026-08-20", "to_date": "2026-08-20T12:00:00"}, ctx
+    )
+    titles4 = [e["title"] for e in r4.data["events"]]
+    assert "DAYEVT" in titles4 and "LATEEVT" not in titles4
+
+
 def test_terminal_status_gate():
     _login()
     st = client.get("/api/terminal/status").json()
@@ -525,6 +566,7 @@ if __name__ == "__main__":
     test_google_allday_end_conversion()
     test_calendar_colors_names_and_prefs()
     test_calendar_list_default_window()
+    test_calendar_list_date_only_end_is_inclusive()
     test_terminal_status_gate()
     test_settings_get_patch()
     test_session_ttl_setting()

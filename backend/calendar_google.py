@@ -114,7 +114,7 @@ class GoogleCalendar:
         if frm:
             params["timeMin"] = _rfc3339(frm)
         if to:
-            params["timeMax"] = _rfc3339(to)
+            params["timeMax"] = _rfc3339(to, end=True)
         items = self._svc.events().list(**params).execute().get("items", [])
         return [_to_internal(g) for g in items]
 
@@ -130,13 +130,17 @@ class GoogleCalendar:
         self._svc.events().delete(calendarId=self._cid, eventId=eid).execute()
 
 
-def _rfc3339(s: str) -> str:
-    """naive ISO를 timezone 포함 RFC3339로 (Google API용, KST 가정)."""
+def _rfc3339(s: str, *, end: bool = False) -> str:
+    """naive ISO를 timezone 포함 RFC3339로 (Google API용, KST 가정).
+
+    end=True(조회 창의 종료 경계)이고 날짜만 주어지면 그날 23:59:59로 해석한다.
+    자정으로 두면 timeMax=그날 00:00이 되어 당일 일정이 전부 빠진다.
+    """
     s = s.strip()
     if s.endswith("Z") or "+" in s[10:]:
         return s
     if "T" not in s:
-        s = f"{s}T00:00:00"
+        s = f"{s}T23:59:59" if end else f"{s}T00:00:00"
     return s + "+09:00"
 
 

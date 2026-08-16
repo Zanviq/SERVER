@@ -71,6 +71,21 @@ def _parse_dt(s: str) -> datetime:
         return datetime.min
 
 
+def _parse_dt_end(s: str) -> datetime:
+    """조회 창의 '종료' 경계를 파싱한다 (끝을 포함).
+
+    날짜만(YYYY-MM-DD) 주어지면 그날 23:59:59.999999로 해석한다. 자정으로 두면
+    `to=2026-08-20` 조회가 그날 00:00에서 끝나 당일 일정이 통째로 빠진다.
+    시각까지 준 경우(2026-08-20T12:00:00)는 그 시각 그대로 쓴다.
+    """
+    if "T" in s.strip():
+        return _parse_dt(s)
+    try:
+        return datetime.combine(date.fromisoformat(s.strip()[:10]), datetime.max.time())
+    except ValueError:
+        return datetime.max
+
+
 def _fmt_dt(dt: datetime, all_day: bool) -> str:
     return dt.strftime("%Y-%m-%d") if all_day else dt.strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -147,7 +162,7 @@ def list_events(
     if not (frm or to):
         return events
     win_start = _parse_dt(frm) if frm else datetime.min
-    win_end = _parse_dt(to) if to else datetime.max
+    win_end = _parse_dt_end(to) if to else datetime.max
     result: list[dict] = []
     for ev in events:
         result.extend(_occurrences(ev, win_start, win_end))
