@@ -382,6 +382,120 @@ def test_calendar_list_date_only_end_is_inclusive():
     assert "DAYEVT" in titles4 and "LATEEVT" not in titles4
 
 
+def test_ai_notes_in_folders_are_usable():
+    """폴더 안 노트도 AI가 읽기·덧붙이기·이름변경·삭제까지 할 수 있어야 한다.
+
+    회귀: list_notes가 파일명(stem)만 돌려줘 폴더 정보가 사라졌고, read_note는
+    항상 루트에서만 찾아 '노트를 찾을 수 없습니다'가 났다. 목록은 보이는데
+    읽기/수정이 안 되는, 캘린더 조회→수정 실패와 같은 계약 불일치.
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    from backend.storage import notes_root
+
+    s = get_settings()
+    u = SessionUser(username="notefolder", display_name="NF", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-16")
+    reg = default_registry()
+
+    root = notes_root("me", u, s)
+    (root / "프로젝트").mkdir(parents=True, exist_ok=True)
+    (root / "프로젝트" / "회의록.md").write_text("# 회의록\n첫 줄", encoding="utf-8")
+    (root / "루트노트.md").write_text("# 루트노트\n", encoding="utf-8")
+
+    # 목록은 폴더를 포함한 식별자를 준다
+    listed = reg.dispatch("list_notes", {"scope": "me"}, ctx)
+    assert listed.ok
+    assert "프로젝트/회의록" in listed.data["notes"]
+    assert "루트노트" in listed.data["notes"]  # 루트 노트는 기존 형태 유지
+
+    # 목록이 준 식별자로 바로 읽힌다
+    for ident in listed.data["notes"]:
+        got = reg.dispatch("read_note", {"scope": "me", "title": ident}, ctx)
+        assert got.ok, f"{ident} 읽기 실패: {got.message}"
+
+    # 검색 결과의 title도 그대로 읽기에 쓸 수 있다
+    hit = reg.dispatch("search_notes", {"scope": "me", "query": "회의"}, ctx)
+    assert hit.data["matches"], "검색 결과 없음"
+    assert reg.dispatch("read_note", {"scope": "me", "title": hit.data["matches"][0]["title"]}, ctx).ok
+
+    # 폴더를 생략한 제목만 줘도(모델이 흔히 하는 형태) 유일하면 찾아준다
+    assert reg.dispatch("read_note", {"scope": "me", "title": "회의록"}, ctx).ok
+
+    # 덧붙이기가 새 루트 노트를 만들지 않고 기존 노트를 수정한다
+    reg.dispatch("append_note", {"scope": "me", "title": "회의록", "content": "둘째 줄"}, ctx)
+    assert not (root / "회의록.md").exists(), "루트에 중복 노트가 생기면 안 됨"
+    assert "둘째 줄" in (root / "프로젝트" / "회의록.md").read_text(encoding="utf-8")
+
+    # 이름변경은 같은 폴더 안에서 이뤄진다
+    assert reg.dispatch(
+        "rename_note", {"scope": "me", "old_title": "회의록", "new_title": "주간회의"}, ctx
+    ).ok
+    assert (root / "프로젝트" / "주간회의.md").exists()
+
+    # 삭제도 폴더 안 노트에 닿는다
+    assert reg.dispatch("delete_note", {"scope": "me", "title": "프로젝트/주간회의"}, ctx).ok
+    assert not (root / "프로젝트" / "주간회의.md").exists()
+
+    # 같은 이름이 여러 폴더에 있으면 임의로 고르지 말고 후보를 알려준다
+    (root / "A").mkdir(exist_ok=True)
+    (root / "B").mkdir(exist_ok=True)
+    (root / "A" / "중복.md").write_text("a", encoding="utf-8")
+    (root / "B" / "중복.md").write_text("b", encoding="utf-8")
+    amb = reg.dispatch("read_note", {"scope": "me", "title": "중복"}, ctx)
+    assert not amb.ok and amb.error_code == "ambiguous", f"모호한 제목은 거절해야 함: {amb}"
+    assert "A/중복" in amb.message and "B/중복" in amb.message
+
+
+def test_ai_deletes_go_to_trash():
+    """AI 삭제도 웹 UI와 동일하게 휴지통을 거쳐야 한다(복구 가능).
+
+    회귀: delete_note/delete_path만 unlink·rmtree로 영구 삭제해, 대상을 잘못
+    짚었을 때 되돌릴 방법이 없었다. 웹은 전부 move_to_trash를 쓴다.
+    """
+    from backend import trash
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    from backend.storage import notes_root, scope_root
+
+    s = get_settings()
+    u = SessionUser(username="trashai", display_name="TA", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-16")
+    reg = default_registry()
+
+    # 노트 삭제 → 휴지통에서 복구 가능해야
+    nroot = notes_root("me", u, s)
+    (nroot / "지울노트.md").write_text("소중한 내용", encoding="utf-8")
+    assert reg.dispatch("delete_note", {"scope": "me", "title": "지울노트"}, ctx).ok
+    assert not (nroot / "지울노트.md").exists()
+    entry = next((e for e in trash.list_trash(u, s) if e["name"] == "지울노트.md"), None)
+    assert entry is not None, "삭제한 노트가 휴지통에 없음"
+    trash.restore(entry["id"], u, s)
+    assert (nroot / "지울노트.md").read_text(encoding="utf-8") == "소중한 내용"
+
+    # 파일 삭제도 동일
+    froot = scope_root("me", u, s)
+    (froot / "지울파일.txt").write_text("파일 내용", encoding="utf-8")
+    assert reg.dispatch("delete_path", {"scope": "me", "path": "지울파일.txt"}, ctx).ok
+    fentry = next((e for e in trash.list_trash(u, s) if e["name"] == "지울파일.txt"), None)
+    assert fentry is not None, "삭제한 파일이 휴지통에 없음"
+    trash.restore(fentry["id"], u, s)
+    assert (froot / "지울파일.txt").exists()
+
+    # 폴더 삭제도 내용째로 복구 가능
+    (froot / "지울폴더").mkdir(exist_ok=True)
+    (froot / "지울폴더" / "안쪽.txt").write_text("안쪽", encoding="utf-8")
+    assert reg.dispatch("delete_path", {"scope": "me", "path": "지울폴더"}, ctx).ok
+    dentry = next((e for e in trash.list_trash(u, s) if e["name"] == "지울폴더"), None)
+    assert dentry is not None, "삭제한 폴더가 휴지통에 없음"
+    trash.restore(dentry["id"], u, s)
+    assert (froot / "지울폴더" / "안쪽.txt").exists()
+
+
 def test_terminal_status_gate():
     _login()
     st = client.get("/api/terminal/status").json()
@@ -567,6 +681,8 @@ if __name__ == "__main__":
     test_calendar_colors_names_and_prefs()
     test_calendar_list_default_window()
     test_calendar_list_date_only_end_is_inclusive()
+    test_ai_notes_in_folders_are_usable()
+    test_ai_deletes_go_to_trash()
     test_terminal_status_gate()
     test_settings_get_patch()
     test_session_ttl_setting()

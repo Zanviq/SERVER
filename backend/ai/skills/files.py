@@ -1,11 +1,10 @@
 """파일 관련 스킬 — 모두 세션 사용자 스코프."""
 from __future__ import annotations
 
-import shutil
-
 from ...gemini_client import TEXT_EXTENSIONS
 from ...security_paths import to_rel
 from ...storage import resolve, scope_root
+from ...trash import move_to_trash
 from ..skill_base import SkillBase, SkillResult
 from ._common import _MAX_READ, _SCOPE_PROP, _is_sensitive
 
@@ -63,15 +62,26 @@ class SearchFiles(SkillBase):
         "required": ["scope", "query"],
     }
 
+    _LIMIT = 50
+
     def run(self, args, ctx):
         root = scope_root(args["scope"], ctx.user, ctx.settings)
         q = args["query"].lower()
-        hits = [
-            to_rel(root, p)
-            for p in root.rglob("*")
-            if p.is_file() and q in p.name.lower() and not _is_sensitive(to_rel(root, p))
-        ][:50]
-        return SkillResult(ok=True, message=f"{len(hits)}개 검색됨", data={"matches": hits})
+        hits: list[str] = []
+        # 파일명으로 먼저 거르고, 상한에 닿으면 즉시 중단 — 전체 트리를 끝까지
+        # 훑은 뒤 자르면 HDD 저장소에서 불필요하게 오래 걸린다.
+        for p in root.rglob("*"):
+            if q not in p.name.lower() or not p.is_file():
+                continue
+            rel = to_rel(root, p)
+            if _is_sensitive(rel):
+                continue
+            hits.append(rel)
+            if len(hits) >= self._LIMIT:
+                break
+        hits.sort()
+        more = " (상한 도달, 더 있을 수 있음)" if len(hits) >= self._LIMIT else ""
+        return SkillResult(ok=True, message=f"{len(hits)}개 검색됨{more}", data={"matches": hits})
 
 
 class WriteTextFile(SkillBase):
@@ -117,7 +127,7 @@ class AppendTextFile(SkillBase):
 
 class DeletePath(SkillBase):
     name = "delete_path"
-    description = "파일 또는 폴더(내용 포함)를 삭제한다. 되돌릴 수 없으니 주의."
+    description = "파일 또는 폴더(내용 포함)를 휴지통으로 보낸다(웹 휴지통에서 복구 가능)."
     parameters = {
         "type": "object",
         "properties": {"scope": _SCOPE_PROP, "path": {"type": "string"}},
@@ -131,11 +141,12 @@ class DeletePath(SkillBase):
             return SkillResult(ok=False, message="루트는 삭제할 수 없습니다.", error_code="forbidden")
         if not target.exists():
             return SkillResult(ok=False, message="대상을 찾을 수 없습니다.", error_code="not_found")
-        if target.is_dir():
-            shutil.rmtree(target)
-        else:
-            target.unlink()
-        return SkillResult(ok=True, message=f"삭제됨: {args['path']}", data={"path": args["path"]})
+        # 웹과 동일하게 휴지통 경유 — AI가 대상을 잘못 짚어도 되돌릴 수 있게.
+        rel = to_rel(root, target)
+        move_to_trash("file", args["scope"], target, rel, ctx.user, ctx.settings)
+        return SkillResult(
+            ok=True, message=f"'{rel}'을(를) 휴지통으로 옮겼습니다(복구 가능).", data={"path": rel}
+        )
 
 
 class CreateFolder(SkillBase):
