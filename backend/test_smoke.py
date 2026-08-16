@@ -953,6 +953,35 @@ def test_ai_blocks_sensitive_files():
     assert ".env" not in TEXT_EXTENSIONS
 
 
+def test_raw_serve_blocks_stored_xss():
+    """업로드한 파일을 인라인 제공할 때 스크립트가 실행되면 안 된다.
+
+    SVG는 <img>로 볼 땐 안전하지만 문서로 직접 열면(새 탭·URL 직접 접근)
+    내부 <script>가 앱과 같은 오리진에서 실행된다. 세션 쿠키가 httpOnly라
+    값은 못 읽어도 인증된 API를 대신 호출할 수 있어 문서 전체가 노출된다.
+    """
+    c = TestClient(app)
+    c.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    evil = b'<svg xmlns="http://www.w3.org/2000/svg"><script>fetch("/api/notes/tree")</script></svg>'
+    r = c.post("/api/notes/upload?path=",
+               files={"file": ("evil.svg", io.BytesIO(evil), "image/svg+xml")})
+    assert r.status_code == 200, r.text
+
+    raw = c.get("/api/notes/raw?path=evil.svg")
+    assert raw.status_code == 200
+    # 브라우저가 문서로 열어도 스크립트가 돌지 않도록 샌드박스 처리
+    assert "sandbox" in raw.headers.get("content-security-policy", ""), raw.headers
+    # MIME 스니핑으로 다른 타입으로 재해석되는 것도 차단
+    assert raw.headers.get("x-content-type-options") == "nosniff", raw.headers
+
+    # 이미지·PDF 등 나머지 인라인 응답에도 nosniff가 붙는다
+    c.post("/api/notes/upload?path=",
+           files={"file": ("ok.png", io.BytesIO(b"png-bytes"), "image/png")})
+    png = c.get("/api/notes/raw?path=ok.png")
+    assert png.headers["content-type"] == "image/png"
+    assert png.headers.get("x-content-type-options") == "nosniff"
+
+
 def test_user_isolation():
     """다른 사용자의 문서는 보이지도, 읽히지도 않는다."""
     a = TestClient(app)
@@ -1007,5 +1036,6 @@ if __name__ == "__main__":
     test_ai_react_runs_all_parallel_calls()
     test_ai_skill_catalog_and_ops()
     test_ai_blocks_sensitive_files()
+    test_raw_serve_blocks_stored_xss()
     test_user_isolation()
     print("ALL SMOKE TESTS PASSED")

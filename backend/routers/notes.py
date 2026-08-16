@@ -30,6 +30,9 @@ router = APIRouter(prefix="/api/notes", tags=["notes"])
 
 _ILLEGAL_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
+# 문서로 열렸을 때 스크립트를 실행할 수 있는 형식 — CSP 샌드박스를 씌운다.
+_SCRIPTABLE_MEDIA = {"image/svg+xml"}
+
 
 class NoteSummary(BaseModel):
     path: str
@@ -214,10 +217,22 @@ def raw_file(
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
     media = None if download else inline_media_type(target.name)
     if media:
-        # inline: 브라우저 내장 뷰어(<img>, <iframe>, <video>)가 그대로 표시
-        return FileResponse(target, media_type=media)
+        # inline: 브라우저 내장 뷰어(<img>, <iframe>, <video>)가 그대로 표시.
+        #
+        # 업로드된 파일은 신뢰할 수 없다. SVG는 <img>로 볼 땐 스크립트가 안 돌지만
+        # 문서로 직접 열면(새 탭·URL 직접 접근) 앱과 같은 오리진에서 실행된다.
+        # 세션 쿠키가 httpOnly라 값은 못 읽어도 인증된 API를 대신 호출할 수 있다.
+        #   - nosniff: 선언한 MIME과 다르게 재해석되는 것 차단
+        #   - sandbox: 스크립트 실행 가능한 형식에만 붙인다(PDF 내장 뷰어를 깨지 않도록)
+        headers = {"X-Content-Type-Options": "nosniff"}
+        if media in _SCRIPTABLE_MEDIA:
+            headers["Content-Security-Policy"] = "sandbox; default-src 'none'; style-src 'unsafe-inline'"
+        return FileResponse(target, media_type=media, headers=headers)
     return FileResponse(
-        target, filename=target.name, media_type="application/octet-stream"
+        target,
+        filename=target.name,
+        media_type="application/octet-stream",
+        headers={"X-Content-Type-Options": "nosniff"},
     )
 
 
