@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterator
 
 from ..config import Settings
@@ -22,7 +22,32 @@ logger = logging.getLogger("server.ai")
 @dataclass
 class LLMResult:
     text: str
-    tool_use: dict | None  # {"name": str, "args": dict}
+    tool_use: dict | None = None  # {"name": str, "args": dict} — 단일 호출(하위호환)
+    tool_uses: list[dict] = field(default_factory=list)  # 한 응답에 여러 호출이 올 때
+
+    def calls(self) -> list[dict]:
+        """이번 응답이 요청한 스킬 호출 전부."""
+        if self.tool_uses:
+            return self.tool_uses
+        return [self.tool_use] if self.tool_use else []
+
+
+def parse_candidate(cand) -> tuple[str, list[dict]]:
+    """응답 후보에서 텍스트와 스킬 호출 '전부'를 뽑는다.
+
+    한 응답에 function_call이 여러 개 올 수 있다(병렬 함수 호출). 첫 개만 쓰고
+    나머지를 버리면 모델이 요청한 작업이 조용히 누락되고, 다음 스텝에서 다시
+    요청하느라 max_steps를 낭비한다.
+    """
+    text, tool_uses = "", []
+    if cand and getattr(cand, "content", None) and cand.content.parts:
+        for part in cand.content.parts:
+            fc = getattr(part, "function_call", None)
+            if fc and fc.name:
+                tool_uses.append({"name": fc.name, "args": dict(fc.args) if fc.args else {}})
+            elif getattr(part, "text", ""):
+                text += part.text
+    return text, tool_uses
 
 
 class GeminiLLM:
@@ -51,17 +76,9 @@ class GeminiLLM:
             logger.exception("Gemini 호출 실패")
             return LLMResult(text=f"LLM 오류: {e}", tool_use=None)
 
-        text, tool_use = "", None
         cand = resp.candidates[0] if resp.candidates else None
-        if cand and cand.content and cand.content.parts:
-            for part in cand.content.parts:
-                fc = getattr(part, "function_call", None)
-                if fc and fc.name:
-                    tool_use = {"name": fc.name, "args": dict(fc.args) if fc.args else {}}
-                    break
-                if getattr(part, "text", ""):
-                    text += part.text
-        return LLMResult(text=text, tool_use=tool_use)
+        text, tool_uses = parse_candidate(cand)
+        return LLMResult(text=text, tool_uses=tool_uses)
 
 
 def run(
@@ -100,39 +117,42 @@ def run(
     for step in range(max_steps):
         result = llm.chat(contents, catalog, system)
 
-        if result.tool_use:
-            name = result.tool_use["name"]
-            # proto Map/Repeated 값을 순수 파이썬으로 정규화 (재전송 직렬화 안전)
-            args = _plain(result.tool_use.get("args", {}))
-            yield {"type": "tool_call", "name": name, "args": args}
+        calls = result.calls()
+        if calls:
+            # 모델이 요청한 호출을 모두 실행하고, 호출/응답을 짝지어 한 턴으로 기록한다.
+            # Gemini는 function_call 개수와 function_response 개수가 맞기를 기대한다.
+            call_parts, response_parts = [], []
+            for call in calls:
+                name = call["name"]
+                # proto Map/Repeated 값을 순수 파이썬으로 정규화 (재전송 직렬화 안전)
+                args = _plain(call.get("args", {}))
+                yield {"type": "tool_call", "name": name, "args": args}
 
-            skill_result = registry.dispatch(name, args, ctx)
-            yield {
-                "type": "tool_result",
-                "name": name,
-                "ok": skill_result.ok,
-                "message": skill_result.message,
-            }
+                skill_result = registry.dispatch(name, args, ctx)
+                yield {
+                    "type": "tool_result",
+                    "name": name,
+                    "ok": skill_result.ok,
+                    "message": skill_result.message,
+                }
+
+                call_parts.append({"function_call": {"name": name, "args": args}})
+                response_parts.append(
+                    {
+                        "function_response": {
+                            "name": name,
+                            "response": {
+                                "ok": skill_result.ok,
+                                "message": skill_result.message,
+                                "data": skill_result.data,
+                            },
+                        }
+                    }
+                )
 
             # 모델의 호출 + 결과(observation)를 대화에 추가
-            contents.append({"role": "model", "parts": [{"function_call": {"name": name, "args": args}}]})
-            contents.append(
-                {
-                    "role": "user",
-                    "parts": [
-                        {
-                            "function_response": {
-                                "name": name,
-                                "response": {
-                                    "ok": skill_result.ok,
-                                    "message": skill_result.message,
-                                    "data": skill_result.data,
-                                },
-                            }
-                        }
-                    ],
-                }
-            )
+            contents.append({"role": "model", "parts": call_parts})
+            contents.append({"role": "user", "parts": response_parts})
             continue
 
         final_text = result.text

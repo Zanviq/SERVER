@@ -804,6 +804,68 @@ def test_ai_react_chains_skills():
     assert any(ev["title"] == "미팅" for ev in calendar_store.list_events(user, s))
 
 
+def test_ai_react_runs_all_parallel_calls():
+    """한 응답에 스킬 호출이 여러 개 오면 전부 실행돼야 한다.
+
+    회귀: 첫 호출만 쓰고 break로 나머지를 버려, 모델이 요청한 작업이 조용히
+    누락되고 다음 스텝에서 다시 요청하느라 max_steps를 낭비했다.
+    """
+    from types import SimpleNamespace
+
+    from backend.ai import orchestrator
+    from backend.ai.orchestrator import LLMResult, parse_candidate
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    from backend.storage import notes_root
+
+    # 응답 파싱 자체가 호출을 빠뜨리지 않는지 — 결함이 있던 지점을 직접 검증
+    cand = SimpleNamespace(
+        content=SimpleNamespace(
+            parts=[
+                SimpleNamespace(text="확인했습니다.", function_call=None),
+                SimpleNamespace(text="", function_call=SimpleNamespace(name="f1", args={"a": 1})),
+                SimpleNamespace(text="", function_call=SimpleNamespace(name="f2", args={"b": 2})),
+            ]
+        )
+    )
+    text, uses = parse_candidate(cand)
+    assert [u_["name"] for u_ in uses] == ["f1", "f2"], f"호출이 누락됨: {uses}"
+    assert text == "확인했습니다.", text
+    assert uses[1]["args"] == {"b": 2}
+
+    s = get_settings()
+    u = SessionUser(username="par", display_name="P", expires_at=0, remaining=0)
+
+    class FakeLLM:
+        def __init__(self):
+            self.n = 0
+            self.seen = None
+
+        def chat(self, contents, catalog, system):
+            self.n += 1
+            if self.n == 1:
+                return LLMResult(text="", tool_uses=[
+                    {"name": "write_note", "args": {"scope": "me", "title": "A", "content": "a"}},
+                    {"name": "write_note", "args": {"scope": "me", "title": "B", "content": "b"}},
+                ])
+            self.seen = contents
+            return LLMResult(text="둘 다 만들었습니다.")
+
+    llm = FakeLLM()
+    events = list(orchestrator.run(u, s, "노트 두 개 만들어줘", "2026-08-16", llm=llm))
+    assert [e["name"] for e in events if e["type"] == "tool_call"] == ["write_note", "write_note"]
+
+    root = notes_root("me", u, s)
+    assert (root / "A.md").exists() and (root / "B.md").exists(), "두 번째 호출이 실행되지 않음"
+
+    # 호출 수와 응답 수가 맞아야 Gemini가 대화를 받아들인다
+    model_turn = next(c for c in llm.seen if c["role"] == "model")
+    resp_turn = llm.seen[llm.seen.index(model_turn) + 1]
+    assert len(model_turn["parts"]) == 2, model_turn
+    assert len(resp_turn["parts"]) == 2, resp_turn
+    assert all("function_response" in p for p in resp_turn["parts"])
+
+
 def test_ai_skill_catalog_and_ops():
     from backend.ai.skill_base import SkillContext
     from backend.ai.skill_registry import default_registry
@@ -918,6 +980,7 @@ if __name__ == "__main__":
     test_calendar_recurrence_and_reminders()
     test_calendar_lifecycle()
     test_ai_react_chains_skills()
+    test_ai_react_runs_all_parallel_calls()
     test_ai_skill_catalog_and_ops()
     test_ai_blocks_sensitive_files()
     test_scope_isolation()
