@@ -123,7 +123,18 @@ class GoogleCalendar:
         return _to_internal(g)
 
     def update(self, eid: str, payload: dict) -> dict:
-        g = self._svc.events().patch(calendarId=self._cid, eventId=eid, body=_to_google(payload)).execute()
+        """부분 수정도 안전하게 — 기존 값을 읽어 병합한 뒤 전체 본문으로 보낸다.
+
+        _to_google는 항상 전체 본문을 만들므로, 부분 payload를 그대로 넘기면
+        제목·설명이 ''로 덮이고 색이 기본값으로 초기화되며 end가 start로 무너진다
+        (제목만 주면 p["start"]에서 KeyError). 병합 규칙은 내부 저장소와 공유해
+        두 백엔드가 같은 동작을 하게 한다.
+        """
+        from .calendar_store import merge_event
+
+        current = _to_internal(self._svc.events().get(calendarId=self._cid, eventId=eid).execute())
+        merged = merge_event(payload, current)
+        g = self._svc.events().patch(calendarId=self._cid, eventId=eid, body=_to_google(merged)).execute()
         return _to_internal(g)
 
     def delete(self, eid: str) -> None:

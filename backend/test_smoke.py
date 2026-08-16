@@ -560,6 +560,111 @@ def test_ai_find_free_slots_robustness():
             assert started >= now - timedelta(minutes=1), f"지난 시간대 제안됨: {slot}"
 
 
+def test_calendar_update_start_preserves_duration():
+    """시작만 바꾸면 길이를 유지한 채 끝도 따라와야 한다.
+
+    회귀: end를 안 주면 예전 값이 그대로 남아 '3시로 옮겨줘'(start만 변경) 시
+    start=15:00, end=11:00처럼 끝이 시작보다 앞서는 상태가 됐다. 조회 시
+    end<start를 start로 클램프하므로 길이 0짜리 일정으로 보였다.
+    """
+    from backend import calendar_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="dur", display_name="D", expires_at=0, remaining=0)
+
+    ev = calendar_store.create_event(
+        u, s, {"title": "회의", "start": "2026-09-15T10:00:00", "end": "2026-09-15T11:00:00"}
+    )
+    # 시작만 15시로 (AI가 "3시로 옮겨줘"에서 흔히 만드는 형태)
+    moved = calendar_store.update_event(u, s, ev["id"], {"start": "2026-09-15T15:00:00"})
+    assert moved["end"] == "2026-09-15T16:00:00", f"1시간 길이가 유지돼야 함: {moved}"
+
+    # 앞으로 당겨도 동일
+    moved2 = calendar_store.update_event(u, s, ev["id"], {"start": "2026-09-15T09:30:00"})
+    assert moved2["end"] == "2026-09-15T10:30:00", f"길이 유지 실패: {moved2}"
+
+    # start·end를 함께 주면 준 값을 그대로 쓴다
+    both = calendar_store.update_event(
+        u, s, ev["id"], {"start": "2026-09-15T13:00:00", "end": "2026-09-15T17:00:00"}
+    )
+    assert (both["start"], both["end"]) == ("2026-09-15T13:00:00", "2026-09-15T17:00:00")
+
+    # 종일 일정도 길이(일수)를 유지
+    allday = calendar_store.create_event(
+        u, s, {"title": "휴가", "start": "2026-09-20", "end": "2026-09-22", "allDay": True}
+    )
+    a2 = calendar_store.update_event(u, s, allday["id"], {"start": "2026-09-25"})
+    assert a2["end"] == "2026-09-27", f"종일 일정 길이 유지 실패: {a2}"
+
+    calendar_store.delete_event(u, s, ev["id"])
+    calendar_store.delete_event(u, s, allday["id"])
+
+
+def test_google_partial_update_preserves_fields():
+    """Google 캘린더 부분 수정이 나머지 필드를 지우면 안 된다.
+
+    회귀: update가 부분 payload를 그대로 _to_google에 넘겨 전체 본문을 만들었다.
+    시작만 옮기면 summary/description이 ''로, colorId가 '2'로 덮이고 end가 start로
+    무너졌으며, 제목만 바꾸면 p["start"]에서 KeyError(500)가 났다.
+    """
+    from backend.calendar_google import GoogleCalendar
+
+    stored = {
+        "id": "evt1",
+        "summary": "치과 진료",
+        "description": "2층 접수",
+        "colorId": "7",
+        "start": {"dateTime": "2026-09-15T10:00:00", "timeZone": "Asia/Seoul"},
+        "end": {"dateTime": "2026-09-15T11:00:00", "timeZone": "Asia/Seoul"},
+    }
+
+    class _Req:
+        def __init__(self, result):
+            self._r = result
+
+        def execute(self):
+            return self._r
+
+    class _Events:
+        def __init__(self):
+            self.last_body = None
+
+        def get(self, calendarId, eventId):
+            return _Req(stored)
+
+        def patch(self, calendarId, eventId, body):
+            self.last_body = body
+            merged = {**stored, **body}
+            return _Req(merged)
+
+    class _Svc:
+        def __init__(self):
+            self._e = _Events()
+
+        def events(self):
+            return self._e
+
+    svc = _Svc()
+    gc = GoogleCalendar(svc, "primary")
+
+    # 시작만 이동 → 제목·설명·색 유지, 길이(1시간) 유지
+    gc.update("evt1", {"start": "2026-09-15T15:00:00"})
+    body = svc.events().last_body
+    assert body["summary"] == "치과 진료", f"제목이 지워짐: {body}"
+    assert body["description"] == "2층 접수", f"설명이 지워짐: {body}"
+    assert body["colorId"] == "7", f"색이 초기화됨: {body}"
+    assert body["end"]["dateTime"] == "2026-09-15T16:00:00", f"길이 유지 실패: {body}"
+
+    # 제목만 수정 → 500이 아니라 정상 처리되고 시각은 그대로
+    gc.update("evt1", {"title": "치과 재진"})
+    body = svc.events().last_body
+    assert body["summary"] == "치과 재진"
+    assert body["start"]["dateTime"] == "2026-09-15T10:00:00", f"시각이 변경됨: {body}"
+    assert body["end"]["dateTime"] == "2026-09-15T11:00:00", f"시각이 변경됨: {body}"
+
+
 def test_terminal_status_gate():
     _login()
     st = client.get("/api/terminal/status").json()
@@ -748,6 +853,8 @@ if __name__ == "__main__":
     test_ai_notes_in_folders_are_usable()
     test_ai_deletes_go_to_trash()
     test_ai_find_free_slots_robustness()
+    test_calendar_update_start_preserves_duration()
+    test_google_partial_update_preserves_fields()
     test_terminal_status_gate()
     test_settings_get_patch()
     test_session_ttl_setting()

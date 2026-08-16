@@ -44,11 +44,35 @@ def _save(events: list[dict], user: SessionUser, settings: Settings) -> None:
     json_store.write_atomic(_events_path(user, settings), events)
 
 
+def _shift_end(base: dict, existing: dict) -> None:
+    """시작만 옮겼을 때 원래 길이를 유지하도록 끝도 같이 민다.
+
+    end를 안 주면 예전 값이 그대로 남아, 뒤로 옮기면 끝이 시작보다 앞서게 된다
+    ("3시로 옮겨줘"처럼 start만 바꾸는 요청에서 항상 발생). 캘린더 앱에서
+    일정을 드래그하면 길이가 유지되는 것과 같은 동작으로 맞춘다.
+    """
+    old_start, old_end = existing.get("start"), existing.get("end")
+    if not (old_start and old_end):
+        return
+    delta = _parse_dt(base["start"]) - _parse_dt(old_start)
+    if not delta:
+        return
+    base["end"] = _fmt_dt(_parse_dt(old_end) + delta, bool(base.get("allDay")))
+
+
 def _normalize(payload: dict, existing: dict | None = None) -> dict:
     base = dict(existing or {})
+    # start만 바뀌는 경우를 알아야 하므로 값을 덮기 전에 판단한다.
+    shift = (
+        existing is not None
+        and payload.get("start") is not None
+        and payload.get("end") is None
+    )
     for k in ("title", "description", "start", "end", "allDay", "color"):
         if k in payload and payload[k] is not None:
             base[k] = payload[k]
+    if shift:
+        _shift_end(base, existing)
     rec = payload.get("recurrence")
     if rec is not None:
         base["recurrence"] = rec if rec in _RECUR else "none"
@@ -59,6 +83,14 @@ def _normalize(payload: dict, existing: dict | None = None) -> dict:
     if payload.get("remind_minutes") is not None:
         base["remind_minutes"] = max(0, int(payload["remind_minutes"]))
     return base
+
+
+def merge_event(payload: dict, existing: dict) -> dict:
+    """부분 payload를 기존 일정 위에 병합(시작만 옮기면 길이 유지).
+
+    내부 저장소와 Google 어댑터가 같은 규칙을 쓰도록 공개한다.
+    """
+    return _normalize(payload, existing)
 
 
 def _parse_dt(s: str) -> datetime:
