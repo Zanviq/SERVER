@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   NotebookPen, FolderPlus, FilePlus, Trash2, Save, Link2, Loader2,
@@ -6,10 +6,13 @@ import {
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { MarkdownView } from "../components/notes/MarkdownView";
-import { AidocWorkspace } from "../components/notes/AidocWorkspace";
+// AI 문서 소스를 고를 때만 필요 — 노트 초기 번들에서 분리
+const AidocWorkspace = lazy(() =>
+  import("../components/notes/AidocWorkspace").then((m) => ({ default: m.AidocWorkspace })),
+);
 import { ThreePane } from "../components/notes/ThreePane";
 import { RowMenu } from "../components/notes/RowMenu";
-import { LiveEditor } from "../components/notes/LiveEditor";
+import { LiveEditor } from "../components/notes/LazyLiveEditor";
 import { Modal } from "../components/ui/Modal";
 import { api, NoteSummary, NoteDetail, NoteSearchHit, Scope, NoteBase } from "../lib/api";
 import { toast } from "../store/toast";
@@ -460,7 +463,15 @@ export function Notes() {
   if (aiDocMode) {
     return (
       <Shell title="노트" actions={crumbs}>
-        <AidocWorkspace openDocId={aidocOpenId} />
+        <Suspense
+          fallback={
+            <div className="flex h-full items-center justify-center text-fg-muted">
+              <Loader2 size={22} className="animate-spin" />
+            </div>
+          }
+        >
+          <AidocWorkspace openDocId={aidocOpenId} />
+        </Suspense>
       </Shell>
     );
   }

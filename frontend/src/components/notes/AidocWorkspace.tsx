@@ -7,7 +7,7 @@ import {
 import { MarkdownView } from "./MarkdownView";
 import { ThreePane } from "./ThreePane";
 import { RowMenu } from "./RowMenu";
-import { LiveEditor } from "./LiveEditor";
+import { LiveEditor } from "./LazyLiveEditor";
 import { Modal } from "../ui/Modal";
 import {
   api, ApiError, AidocMeta, AidocDetail, AidocVersion, AidocAuditLog,
