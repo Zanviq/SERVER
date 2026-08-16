@@ -5,7 +5,7 @@ import {
   FileText, Search, X, Folder, ChevronRight, ChevronDown, Home, FolderInput, Eye, Pencil,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
-import { MarkdownView } from "../components/notes/MarkdownView";
+import { MarkdownView } from "../components/notes/LazyMarkdownView";
 // AI 문서 소스를 고를 때만 필요 — 노트 초기 번들에서 분리
 const AidocWorkspace = lazy(() =>
   import("../components/notes/AidocWorkspace").then((m) => ({ default: m.AidocWorkspace })),

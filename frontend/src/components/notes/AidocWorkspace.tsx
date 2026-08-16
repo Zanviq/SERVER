@@ -4,7 +4,7 @@ import {
   ScrollText, AlertTriangle, Sparkles, FolderOpen, Folder, FolderPlus, Eye,
   ChevronRight, ChevronDown, Home, Plus, Pencil, FolderInput, RefreshCw,
 } from "lucide-react";
-import { MarkdownView } from "./MarkdownView";
+import { MarkdownView } from "./LazyMarkdownView";
 import { ThreePane } from "./ThreePane";
 import { RowMenu } from "./RowMenu";
 import { LiveEditor } from "./LazyLiveEditor";

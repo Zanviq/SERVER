@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { Bot, Send, Loader2, CheckCircle2, XCircle, Sparkles } from "lucide-react";
-import { MarkdownView } from "../notes/MarkdownView";
+import { MarkdownView } from "../notes/LazyMarkdownView";
 import { aiChatStream, api, AiEvent } from "../../lib/api";
 import { toast } from "../../store/toast";
 
