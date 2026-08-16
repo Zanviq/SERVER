@@ -68,7 +68,20 @@ docker compose up -d --build           # backend + frontend(nginx)
 docker compose --profile tunnel up -d  # + Cloudflare Tunnel(외부 접속)
 ```
 
-HDD 마운트가 선행되어야 함: `sudo mount /dev/sda1 /mnt/hdd` (NTFS면 ntfs-3g).
+저장소 마운트가 선행되어야 함 — 서버 데이터는 외장하드(NTFS) 위의 **ext4 loop 이미지**에 둔다:
+
+```bash
+# 최초 1회
+sudo truncate -s 200G /mnt/HDD/server/server.img
+sudo mkfs.ext4 -F -m 0 -L SERVERDATA /mnt/HDD/server/server.img
+# /etc/fstab
+# /mnt/HDD/server/server.img /mnt/server ext4 loop,noatime,nofail,x-systemd.requires=/mnt/HDD 0 0
+sudo mount /mnt/server
+```
+
+NTFS에 데이터를 직접 두지 않는 이유: `os.replace` 원자성이 보장되지 않아
+저장 도중 파일이 순간적으로 사라지고(실측 300회 중 38회), 그 사이 읽기가
+빈 기본값을 돌려받아 노트·일정이 유실될 수 있다.
 
 ## 환경변수
 
@@ -77,7 +90,7 @@ HDD 마운트가 선행되어야 함: `sudo mount /dev/sda1 /mnt/hdd` (NTFS면 n
 | `AUTH_USERS` | 계정 JSON 배열 (수동 설정, 필수) |
 | `SESSION_SECRET` | 세션 토큰 서명키 (필수) |
 | `SESSION_TTL_SECONDS` | 세션 유효시간 (기본 3600) |
-| `STORAGE_ROOT` | 저장소 루트 (`/mnt/hdd` 또는 `./data`) |
+| `STORAGE_ROOT` | 저장소 루트 (`/mnt/server` 또는 `./data`) |
 | `CORS_ORIGINS` | 허용 오리진 (콤마, 와일드카드 불가) |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | AI (기본 `gemini-2.5-flash`) |
 | `GOOGLE_*` | Google Calendar 연동(선택) |

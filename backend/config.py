@@ -59,7 +59,7 @@ class Settings:
     def __init__(self) -> None:
         # 저장소 루트. 하위에 common/ 과 users/<id>/ 가 생성된다.
         self.storage_root: Path = Path(
-            os.getenv("STORAGE_ROOT", "/mnt/hdd")
+            os.getenv("STORAGE_ROOT", "/mnt/server")
         ).resolve()
 
         # ── 인증 ──
