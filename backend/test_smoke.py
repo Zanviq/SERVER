@@ -496,6 +496,70 @@ def test_ai_deletes_go_to_trash():
     assert (froot / "지울폴더" / "안쪽.txt").exists()
 
 
+def test_ai_find_free_slots_robustness():
+    """빈 시간 찾기: 시각 표기 흔들림을 견디고, 오늘이면 지난 시간대를 내놓지 않는다."""
+    from datetime import datetime, timedelta
+
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="slots", display_name="SL", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-16")
+    reg = default_registry()
+
+    # 모델이 흔히 주는 표기들 — 전부 받아들여야 한다
+    for ws, we in [("09:00", "18:00"), ("9:00", "18:00"), ("09:00:00", "18:00:00")]:
+        r = reg.dispatch(
+            "find_free_slots",
+            {"date": "2026-09-10", "duration_minutes": 60, "work_start": ws, "work_end": we},
+            ctx,
+        )
+        assert r.ok, f"work_start={ws!r} work_end={we!r} 실패: {r.message}"
+        assert r.data["free_slots"], "빈 하루인데 슬롯이 없음"
+
+    # 종료가 시작보다 빠르면 조용히 이상한 결과 대신 명확히 거절
+    bad = reg.dispatch(
+        "find_free_slots",
+        {"date": "2026-09-10", "duration_minutes": 60, "work_start": "18:00", "work_end": "09:00"},
+        ctx,
+    )
+    assert not bad.ok and bad.error_code == "invalid", f"뒤집힌 범위는 거절해야 함: {bad}"
+
+    # 근무시간 밖(저녁) 일정이 슬롯 경계를 끌어당기면 안 된다
+    reg.dispatch(
+        "create_calendar_event",
+        {"title": "저녁약속", "start": "2026-09-11T20:00:00", "end": "2026-09-11T21:00:00"},
+        ctx,
+    )
+    r = reg.dispatch(
+        "find_free_slots",
+        {"date": "2026-09-11", "duration_minutes": 60, "work_start": "09:00", "work_end": "18:00"},
+        ctx,
+    )
+    assert r.ok
+    for slot in r.data["free_slots"]:
+        assert slot["end"] <= "2026-09-11T18:00:00", f"근무시간을 넘는 슬롯: {slot}"
+        assert slot["start"] >= "2026-09-11T09:00:00", f"근무시간 이전 슬롯: {slot}"
+
+    # 오늘 날짜면 이미 지난 시간대는 제안하지 않는다
+    now = datetime.now()
+    if now.hour < 22:  # 자정 근처엔 남은 시간이 없어 의미 없는 검사가 됨
+        today_ctx = SkillContext(user=u, settings=s, today=now.strftime("%Y-%m-%d"))
+        r = reg.dispatch(
+            "find_free_slots",
+            {"date": now.strftime("%Y-%m-%d"), "duration_minutes": 30,
+             "work_start": "00:00", "work_end": "23:59"},
+            today_ctx,
+        )
+        assert r.ok
+        for slot in r.data["free_slots"]:
+            started = datetime.fromisoformat(slot["start"])
+            assert started >= now - timedelta(minutes=1), f"지난 시간대 제안됨: {slot}"
+
+
 def test_terminal_status_gate():
     _login()
     st = client.get("/api/terminal/status").json()
@@ -683,6 +747,7 @@ if __name__ == "__main__":
     test_calendar_list_date_only_end_is_inclusive()
     test_ai_notes_in_folders_are_usable()
     test_ai_deletes_go_to_trash()
+    test_ai_find_free_slots_robustness()
     test_terminal_status_gate()
     test_settings_get_patch()
     test_session_ttl_setting()

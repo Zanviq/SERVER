@@ -16,6 +16,28 @@ def _cal_prefs(ctx) -> dict:
         return {}
 
 
+def _iso(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _hhmmss(raw, default: str) -> str:
+    """모델이 주는 시각 표기를 HH:MM:SS로 정규화.
+
+    '9:00'·'09:00'·'09:00:00'을 모두 받는다. Python의 fromisoformat은
+    자리수가 안 맞으면 그대로 실패하는데, 모델은 한 자리 시각을 흔히 준다.
+    """
+    s = str(raw if raw not in (None, "") else default).strip()
+    parts = s.split(":")
+    if len(parts) == 2:
+        parts.append("00")
+    if len(parts) != 3:
+        raise ValueError(f"시각 형식이 아님: {s}")
+    h, m, sec = (int(p) for p in parts)  # 숫자가 아니면 ValueError
+    if not (0 <= h <= 23 and 0 <= m <= 59 and 0 <= sec <= 59):
+        raise ValueError(f"시각 범위를 벗어남: {s}")
+    return f"{h:02d}:{m:02d}:{sec:02d}"
+
+
 def _default_window(ctx) -> tuple[str, str]:
     """기간 미지정 시 기본 조회창: 오늘-30일 ~ 오늘+120일.
 
@@ -188,8 +210,24 @@ class FindFreeSlots(SkillBase):
     def run(self, args, ctx):
         day = args["date"][:10]
         dur = timedelta(minutes=max(15, int(args["duration_minutes"])))
-        ws = datetime.fromisoformat(f"{day}T{args.get('work_start', '09:00')}:00")
-        we = datetime.fromisoformat(f"{day}T{args.get('work_end', '18:00')}:00")
+        try:
+            ws = datetime.fromisoformat(f"{day}T{_hhmmss(args.get('work_start'), '09:00')}")
+            we = datetime.fromisoformat(f"{day}T{_hhmmss(args.get('work_end'), '18:00')}")
+        except ValueError:
+            return SkillResult(
+                ok=False, message="날짜/시각 형식을 이해하지 못했습니다(date=YYYY-MM-DD, 시각=HH:MM).",
+                error_code="invalid",
+            )
+        if we <= ws:
+            return SkillResult(
+                ok=False, message="work_end가 work_start보다 늦어야 합니다.", error_code="invalid"
+            )
+        # 오늘이면 이미 지난 시간대는 제안하지 않는다(모델이 과거 시각을 잡는 것 방지).
+        now = datetime.now()
+        if day == now.strftime("%Y-%m-%d") and ws < now:
+            ws = now.replace(second=0, microsecond=0)
+        if we - ws < dur:
+            return SkillResult(ok=True, message="0개 빈 시간대", data={"free_slots": []})
 
         events = calendar_service.list_events(
             ctx.user, ctx.settings, f"{day}T00:00:00", f"{day}T23:59:59"
@@ -208,11 +246,17 @@ class FindFreeSlots(SkillBase):
 
         slots = []
         cursor = ws
-        for s, en in busy:
+        for s, en in busy:  # busy는 시작시각 오름차순
+            if s >= we:
+                break  # 근무시간 이후 일정 — 남은 구간을 잡아당기지 않게 여기서 끝
+            if en <= ws:
+                continue  # 근무시간 이전에 끝난 일정
             if s > cursor and s - cursor >= dur:
-                slots.append({"start": cursor.strftime("%Y-%m-%dT%H:%M:%S"), "end": s.strftime("%Y-%m-%dT%H:%M:%S")})
+                slots.append({"start": _iso(cursor), "end": _iso(s)})
             cursor = max(cursor, en)
+            if cursor >= we:
+                break
         if we - cursor >= dur:
-            slots.append({"start": cursor.strftime("%Y-%m-%dT%H:%M:%S"), "end": we.strftime("%Y-%m-%dT%H:%M:%S")})
+            slots.append({"start": _iso(cursor), "end": _iso(we)})
 
         return SkillResult(ok=True, message=f"{len(slots)}개 빈 시간대", data={"free_slots": slots})
