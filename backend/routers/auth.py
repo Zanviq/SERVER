@@ -9,12 +9,11 @@ from pydantic import BaseModel
 from ..auth import (
     COOKIE_NAME,
     SessionUser,
-    authenticate,
     issue_token,
     require_session,
 )
 from ..config import Settings, get_settings
-from .. import user_settings
+from .. import accounts, user_settings
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -24,11 +23,18 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class SignupRequest(BaseModel):
+    username: str
+    password: str
+    display_name: str = ""
+
+
 class SessionInfo(BaseModel):
     username: str
     display_name: str
     expires_at: float
     remaining: int
+    role: str = "user"
 
 
 @router.post("/login", response_model=SessionInfo)
@@ -37,9 +43,17 @@ def login(
     response: Response,
     settings: Settings = Depends(get_settings),
 ):
-    """비밀번호 검증 후 세션 쿠키 발급."""
-    if not authenticate(req.username, req.password, settings):
+    """비밀번호 검증 후 세션 쿠키 발급. 승인 전 계정은 로그인할 수 없다."""
+    acc = accounts.authenticate(req.username, req.password, settings)
+    if acc is None:
+        # 아이디 존재 여부를 흘리지 않도록 한 가지 메시지로 통일
         raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
+    if acc.status == accounts.STATUS_PENDING:
+        raise HTTPException(status_code=403, detail="가입 승인을 기다리는 중입니다. 관리자 승인 후 로그인할 수 있습니다.")
+    if acc.status == accounts.STATUS_REJECTED:
+        raise HTTPException(status_code=403, detail="가입이 거절되었습니다.")
+    if not acc.can_login:
+        raise HTTPException(status_code=403, detail="비활성화된 계정입니다.")
 
     ttl = user_settings.get_session_ttl(req.username, settings)  # 사용자 설정 TTL(전역 폴백)
     token = issue_token(req.username, settings, ttl=ttl)
@@ -52,13 +66,25 @@ def login(
         secure=settings.cookie_secure,  # HTTPS 운영 시 COOKIE_SECURE=true
         path="/",
     )
-    acc = settings.find_user(req.username)
     return SessionInfo(
         username=acc.username,
         display_name=acc.display_name,
         expires_at=time.time() + ttl,
         remaining=ttl,
+        role=acc.role,
     )
+
+
+@router.post("/signup", status_code=201)
+def signup(req: SignupRequest, settings: Settings = Depends(get_settings)):
+    """가입 신청. 관리자가 승인해야 로그인할 수 있다(개인 서버)."""
+    acc = accounts.signup(req.username, req.password, req.display_name, settings)
+    return {
+        "ok": True,
+        "username": acc.username,
+        "status": acc.status,
+        "message": "가입 신청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다.",
+    }
 
 
 @router.post("/logout")
@@ -78,4 +104,5 @@ def session(user: SessionUser = Depends(require_session)):
         display_name=user.display_name,
         expires_at=user.expires_at,
         remaining=user.remaining,
+        role=user.role,
     )

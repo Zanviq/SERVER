@@ -19,7 +19,8 @@ def status(
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    is_admin = user.username in settings.terminal_admins
+    # 계정 권한과 환경변수 화이트리스트를 둘 다 만족해야 한다(권한 축소 방향)
+    is_admin = user.is_admin and user.username in settings.terminal_admins
     return {
         "enabled": settings.terminal_enabled,
         "is_admin": is_admin,

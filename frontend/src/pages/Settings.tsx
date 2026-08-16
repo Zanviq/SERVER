@@ -1,13 +1,14 @@
 import { ReactNode, useEffect, useState } from "react";
-import { User, Bot, CalendarDays, NotebookPen, Palette, Info, Loader2, RefreshCw, FolderSync } from "lucide-react";
+import { User, Bot, CalendarDays, NotebookPen, Palette, Info, Loader2, RefreshCw, FolderSync, Users } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { ThemeToggle } from "../components/layout/ThemeToggle";
 import { useAuth } from "../store/auth";
 import { useSettings } from "../store/settings";
 import { toast } from "../store/toast";
 import { GCAL_COLORS, GCAL_COLOR_NAMES } from "../components/calendar/EventDialog";
+import { AccountAdmin } from "../components/settings/AccountAdmin";
 
-const TABS = [
+const BASE_TABS = [
   { id: "account", label: "계정", icon: User },
   { id: "ai", label: "AI", icon: Bot },
   { id: "calendar", label: "캘린더", icon: CalendarDays },
@@ -16,6 +17,9 @@ const TABS = [
   { id: "theme", label: "테마", icon: Palette },
   { id: "about", label: "정보", icon: Info },
 ];
+
+// 계정 관리는 관리자에게만 보인다(백엔드도 403으로 막는다)
+const ADMIN_TAB = { id: "members", label: "계정 관리", icon: Users };
 
 function Row({ label, desc, children }: { label: string; desc?: string; children: ReactNode }) {
   return (
@@ -72,11 +76,13 @@ export function Settings() {
     );
   }
 
+  const tabs = session?.role === "admin" ? [...BASE_TABS, ADMIN_TAB] : BASE_TABS;
+
   return (
     <Shell title="설정">
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[180px_1fr]">
         <nav className="flex gap-1 overflow-x-auto md:flex-col">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
@@ -229,6 +235,10 @@ export function Settings() {
                   onChange={(e) => update({ display: { show_seconds_in_timer: e.target.checked } })} />
               </Row>
             </div>
+          )}
+
+          {tab === "members" && session?.role === "admin" && (
+            <AccountAdmin me={session.username} />
           )}
 
           {tab === "about" && (

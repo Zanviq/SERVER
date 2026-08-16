@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from .auth import require_session
 from .config import get_settings
 from .routers import (
+    admin,
     ai,
     auth,
     calendar,
@@ -36,10 +37,16 @@ logger = logging.getLogger("server")
 async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.ensure_storage()
+    # 계정 저장소 초기화 — 비어 있으면 .env의 AUTH_USERS를 해시로 1회 이관
+    from . import accounts
+
+    accounts.ensure_seed(settings)
     if not settings.session_secret:
         logger.warning("SESSION_SECRET 미설정 — 로그인이 503으로 거부됩니다.")
-    if not settings.users:
-        logger.warning("AUTH_USERS 미설정 — 로그인 가능한 계정이 없습니다.")
+    if not accounts.list_all(settings):
+        logger.warning(
+            "계정이 없습니다 — .env의 AUTH_USERS로 최초 관리자를 만들거나 가입 후 승인이 필요합니다."
+        )
     yield
 
 
@@ -77,6 +84,7 @@ app.include_router(ai.router, dependencies=_PROTECTED)
 app.include_router(trash.router, dependencies=_PROTECTED)
 app.include_router(sync.router, dependencies=_PROTECTED)
 app.include_router(terminal.router, dependencies=_PROTECTED)
+app.include_router(admin.router, dependencies=_PROTECTED)
 
 
 @app.get("/api/health", tags=["meta"])

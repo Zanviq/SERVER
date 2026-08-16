@@ -982,6 +982,108 @@ def test_raw_serve_blocks_stored_xss():
     assert png.headers.get("x-content-type-options") == "nosniff"
 
 
+def test_password_hashing():
+    """평문 비밀번호가 저장되지 않는다."""
+    from backend import accounts
+    from backend.config import get_settings
+
+    h = accounts.hash_password("correct horse battery")
+    assert "correct horse battery" not in h
+    assert h.startswith("pbkdf2_sha256$")
+    assert accounts.verify_password("correct horse battery", h)
+    assert not accounts.verify_password("wrong", h)
+    assert not accounts.verify_password("x", "깨진값")  # 형식 오류는 조용히 False
+
+    # 같은 비밀번호라도 salt가 달라 해시가 다르다
+    assert accounts.hash_password("same") != accounts.hash_password("same")
+
+    # 저장소 파일에 평문이 없다
+    s = get_settings()
+    raw = (s.storage_root / "accounts.json").read_text(encoding="utf-8")
+    assert "pw123" not in raw and "pw456" not in raw
+
+
+def test_signup_requires_admin_approval():
+    """가입 신청 → 승인 전 로그인 불가 → 승인 후 로그인 가능."""
+    from backend import accounts
+    from backend.config import get_settings
+
+    s = get_settings()
+    guest = TestClient(app)
+
+    # 신청
+    r = guest.post("/api/auth/signup",
+                   json={"username": "newbie", "password": "longenough1", "display_name": "뉴비"})
+    assert r.status_code == 201, r.text
+    assert r.json()["status"] == "pending"
+
+    # 승인 전에는 로그인 불가 — 비밀번호가 맞아도 403이고 이유를 알려준다
+    bad = guest.post("/api/auth/login", json={"username": "newbie", "password": "longenough1"})
+    assert bad.status_code == 403 and "승인" in bad.json()["detail"]
+
+    # 아이디 규칙·비밀번호 길이·중복
+    assert guest.post("/api/auth/signup",
+                      json={"username": "AB", "password": "longenough1"}).status_code == 400
+    assert guest.post("/api/auth/signup",
+                      json={"username": "shortpw", "password": "1234"}).status_code == 400
+    assert guest.post("/api/auth/signup",
+                      json={"username": "newbie", "password": "longenough1"}).status_code == 409
+
+    # 관리자 대기열에 보인다
+    admin = TestClient(app)
+    admin.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    pend = admin.get("/api/admin/users").json()
+    assert any(u["username"] == "newbie" for u in pend["pending"])
+
+    # 비관리자는 접근 불가
+    accounts.set_status("newbie", accounts.STATUS_ACTIVE, "tester", s)
+    member = TestClient(app)
+    member.post("/api/auth/login", json={"username": "newbie", "password": "longenough1"})
+    assert member.get("/api/admin/users").status_code == 403
+
+    # 승인 후 로그인 성공 + 역할 전달
+    ok = guest.post("/api/auth/login", json={"username": "newbie", "password": "longenough1"})
+    assert ok.status_code == 200 and ok.json()["role"] == "user"
+
+    # 비활성화하면 기존 세션도 즉시 무효
+    assert admin.post("/api/admin/users/newbie/disable").status_code == 200
+    assert member.get("/api/notes/tree").status_code == 401
+    assert guest.post("/api/auth/login",
+                      json={"username": "newbie", "password": "longenough1"}).status_code == 403
+
+
+def test_last_admin_cannot_lock_out():
+    """마지막 관리자를 비활성화·강등·삭제하면 아무도 승인할 수 없게 된다."""
+    from backend import accounts
+    from backend.config import get_settings
+
+    s = get_settings()
+    admins = [u for u in accounts.list_all(s) if u.get("role") == "admin" and u.get("status") == "active"]
+    # 테스트 환경엔 .env 이관 계정 2개가 admin이므로, 하나만 남기고 확인
+    for extra in admins[1:]:
+        accounts.set_status(extra["username"], accounts.STATUS_DISABLED, "test", s)
+
+    last = admins[0]["username"]
+    for fn, kwargs in (
+        (accounts.set_status, {"status": accounts.STATUS_DISABLED, "actor": "test"}),
+        (accounts.set_role, {"role": "user"}),
+    ):
+        try:
+            fn(last, settings=s, **kwargs)
+            raise AssertionError("마지막 관리자 변경이 허용됨")
+        except Exception as e:
+            assert getattr(e, "status_code", None) == 400, e
+    try:
+        accounts.delete(last, s)
+        raise AssertionError("마지막 관리자 삭제가 허용됨")
+    except Exception as e:
+        assert getattr(e, "status_code", None) == 400, e
+
+    # 원복
+    for extra in admins[1:]:
+        accounts.set_status(extra["username"], accounts.STATUS_ACTIVE, "test", s)
+
+
 def test_user_isolation():
     """다른 사용자의 문서는 보이지도, 읽히지도 않는다."""
     a = TestClient(app)
@@ -1036,6 +1138,9 @@ if __name__ == "__main__":
     test_ai_react_runs_all_parallel_calls()
     test_ai_skill_catalog_and_ops()
     test_ai_blocks_sensitive_files()
+    test_password_hashing()
+    test_signup_requires_admin_approval()
+    test_last_admin_cannot_lock_out()
     test_raw_serve_blocks_stored_xss()
     test_user_isolation()
     print("ALL SMOKE TESTS PASSED")

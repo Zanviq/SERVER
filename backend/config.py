@@ -63,6 +63,8 @@ class Settings:
         ).resolve()
 
         # ── 인증 ──
+        # AUTH_USERS는 최초 관리자 부트스트랩 전용. 계정의 단일 출처는
+        # accounts 저장소(STORAGE_ROOT/accounts.json)다.
         self.users: list[UserAccount] = _parse_users(os.getenv("AUTH_USERS", ""))
         self.session_secret: str = os.getenv("SESSION_SECRET", "")
         self.session_ttl: int = int(os.getenv("SESSION_TTL_SECONDS", "3600"))
@@ -115,6 +117,7 @@ class Settings:
         return self.users_root / username
 
     def find_user(self, username: str) -> UserAccount | None:
+        """.env의 부트스트랩 계정 조회 — 계정 조회는 accounts 저장소를 쓴다."""
         for u in self.users:
             if u.username == username:
                 return u
@@ -143,11 +146,9 @@ class Settings:
         return None
 
     def ensure_storage(self) -> None:
-        """사용자별 폴더 골격 생성. 문서는 data/ 하나로 통합됐다."""
-        for acc in self.users:
-            base = self.user_root(acc.username)
-            for sub in ("data", "calendar", "ai/logs"):
-                (base / sub).mkdir(parents=True, exist_ok=True)
+        """저장소 루트 보장. 사용자 폴더는 계정 승인 시점에 만든다."""
+        self.storage_root.mkdir(parents=True, exist_ok=True)
+        self.users_root.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

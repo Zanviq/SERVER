@@ -8,6 +8,17 @@ export interface SessionInfo {
   display_name: string;
   expires_at: number;
   remaining: number;
+  role: "admin" | "user";
+}
+
+export interface AdminUser {
+  username: string;
+  display_name: string;
+  role: "admin" | "user";
+  status: "pending" | "active" | "rejected" | "disabled";
+  created_at: number;
+  approved_at: number | null;
+  approved_by: string | null;
 }
 
 export interface FileEntry {
@@ -79,6 +90,23 @@ export const api = {
   login: (username: string, password: string) =>
     req<SessionInfo>("/api/auth/login", jsonInit("POST", { username, password })),
   logout: () => req("/api/auth/logout", { method: "POST" }),
+  signup: (username: string, password: string, display_name: string) =>
+    req<{ ok: boolean; status: string; message: string }>(
+      "/api/auth/signup",
+      jsonInit("POST", { username, password, display_name }),
+    ),
+
+  // ── 관리자(계정 승인) ──
+  adminUsers: () =>
+    req<{ pending: AdminUser[]; users: AdminUser[] }>("/api/admin/users"),
+  adminApprove: (username: string) =>
+    req<AdminUser>(`/api/admin/users/${encodeURIComponent(username)}/approve`, { method: "POST" }),
+  adminReject: (username: string) =>
+    req<AdminUser>(`/api/admin/users/${encodeURIComponent(username)}/reject`, { method: "POST" }),
+  adminDisable: (username: string) =>
+    req<AdminUser>(`/api/admin/users/${encodeURIComponent(username)}/disable`, { method: "POST" }),
+  adminDelete: (username: string) =>
+    req(`/api/admin/users/${encodeURIComponent(username)}`, { method: "DELETE" }),
   session: () => req<SessionInfo>("/api/auth/session"),
 
   // ── system ──

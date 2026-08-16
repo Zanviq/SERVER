@@ -1,12 +1,12 @@
 """세션 인증: 서명된 토큰 발급/검증 + FastAPI 의존성.
 
-- .env(AUTH_USERS)의 계정만 로그인 가능.
+- 계정은 accounts 저장소(STORAGE_ROOT/accounts.json)가 단일 출처.
+  active 상태가 아니면(승인 대기·거절·비활성) 토큰이 있어도 무효다.
 - 토큰은 itsdangerous로 서명(SESSION_SECRET) + 발급시각 포함 → TTL 만료 강제.
 - 토큰은 HttpOnly 쿠키(server_session)로 전달.
 """
 from __future__ import annotations
 
-import hmac
 import time
 from dataclasses import dataclass
 
@@ -25,6 +25,11 @@ class SessionUser:
     display_name: str
     expires_at: float  # epoch seconds
     remaining: int  # seconds
+    role: str = "user"
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == "admin"
 
 
 def _serializer(settings: Settings) -> URLSafeTimedSerializer:
@@ -82,20 +87,13 @@ def verify_token(token: str, settings: Settings | None = None) -> dict | None:
     ttl = _payload_ttl(data, settings)
     if (time.time() - ts.timestamp()) > ttl:
         return None  # 만료
-    # 계정이 .env에서 제거되었으면 무효
-    if settings.find_user(username) is None:
+    # 계정이 삭제됐거나 active가 아니게 되면(승인 취소·비활성) 즉시 무효
+    from . import accounts
+
+    acc = accounts.find(username, settings)
+    if acc is None or not acc.can_login:
         return None
     return {"username": username}
-
-
-def authenticate(username: str, password: str, settings: Settings) -> bool:
-    """상수시간 비교로 비밀번호 검증."""
-    acc = settings.find_user(username)
-    if acc is None:
-        # 타이밍 공격 완화: 더미 비교
-        hmac.compare_digest(password, password)
-        return False
-    return hmac.compare_digest(password, acc.password)
 
 
 def _decode_expiry(token: str, settings: Settings) -> float:
@@ -118,7 +116,9 @@ def require_session(
     if payload is None:
         raise HTTPException(status_code=401, detail="세션이 만료되었거나 유효하지 않습니다.")
 
-    acc = settings.find_user(payload["username"])
+    from . import accounts
+
+    acc = accounts.find(payload["username"], settings)
     expires_at = _decode_expiry(token, settings)
     remaining = max(0, int(expires_at - time.time()))
     return SessionUser(
@@ -126,4 +126,12 @@ def require_session(
         display_name=acc.display_name,
         expires_at=expires_at,
         remaining=remaining,
+        role=acc.role,
     )
+
+
+def require_admin(user: SessionUser = Depends(require_session)) -> SessionUser:
+    """관리자 전용 라우트가 의존."""
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
+    return user
