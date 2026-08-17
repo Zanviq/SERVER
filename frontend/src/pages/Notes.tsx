@@ -10,6 +10,7 @@ import { DocViewer } from "../components/notes/DocViewer";
 import { ThreePane } from "../components/notes/ThreePane";
 import { RowMenu } from "../components/notes/RowMenu";
 import { LiveEditor } from "../components/notes/LazyLiveEditor";
+import { NOTE_PATH_MIME } from "../components/notes/dragTypes";
 import { Modal } from "../components/ui/Modal";
 import { api, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
 import { embedMarkdownFor, makeResolver } from "../lib/embeds";
@@ -239,9 +240,22 @@ export function Notes() {
 
   const openByTitle = useCallback(
     (title: string) => {
-      const found = notes.find((n) => n.title.toLowerCase() === title.toLowerCase());
-      if (found) openNote(found.path);
-      else save(title, `# ${title}\n\n`).then(() => reloadTree().then(() => openNote(`${title}.md`)));
+      const key = title.toLowerCase();
+      const found =
+        notes.find((n) => n.title.toLowerCase() === key) ??
+        notes.find((n) => n.path.toLowerCase() === key) ??
+        notes.find((n) => (n.path.split("/").pop() ?? "").toLowerCase() === key);
+      if (found) {
+        openNote(found.path);
+        return;
+      }
+      // 확장자가 붙은 이름은 '이미 있는 파일'을 가리킨 것이다. 못 찾았다고 새로 만들면
+      // 백엔드 save가 덮어쓰기라 todo.txt 같은 파일 내용이 '# todo.txt'로 날아간다.
+      if (/\.[A-Za-z0-9]{1,8}$/.test(title)) {
+        toast.error(`문서를 찾을 수 없습니다: ${title}`);
+        return;
+      }
+      save(title, `# ${title}\n\n`).then(() => reloadTree().then(() => openNote(`${title}.md`)));
     },
     [notes, openNote, save, reloadTree],
   );
@@ -379,8 +393,9 @@ export function Notes() {
           draggable
           onDragStart={(e) => {
             e.dataTransfer.setData("text/plain", n.path);
-            // 에디터에 떨어뜨렸을 때 링크로 삽입할 수 있게 별도 타입도 싣는다
-            e.dataTransfer.setData("application/x-note-path", n.path);
+            // 에디터는 이 전용 타입으로만 '트리에서 온 드래그'를 가려낸다.
+            // text/plain은 브라우저의 온갖 드래그가 다 쓰므로 판별에 못 쓴다.
+            e.dataTransfer.setData(NOTE_PATH_MIME, n.path);
             e.dataTransfer.effectAllowed = "copyMove";
           }}
           onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOver(parentDir(n.path) || ROOT_DROP); }}
@@ -441,7 +456,7 @@ export function Notes() {
       try {
         for (const f of files) {
           const saved = await api.noteUpload(curFolder, f);
-          out.push(embedMarkdownFor(saved.path)); // 서버가 정한 최종 경로를 쓴다(이름 충돌 시 바뀐다)
+          out.push(embedMarkdownFor(saved.path, notes)); // 서버가 정한 최종 경로 기준
         }
         if (out.length) {
           toast.ok(`${out.length}개 첨부됨`);
@@ -452,8 +467,11 @@ export function Notes() {
       }
       return out;
     },
-    [curFolder, reloadTree],
+    [curFolder, reloadTree, notes],
   );
+
+  /** 트리에서 편집기로 끌어다 놓은 항목 → 삽입할 마크다운. */
+  const onDropPath = useCallback((p: string) => embedMarkdownFor(p, notes), [notes]);
 
   const actions = (
     <div className="flex items-center gap-2">
@@ -616,9 +634,10 @@ export function Notes() {
               onChange={onEdit}
               onSave={() => { if (current) save(current, content); }}
               titles={notes.map((n) => n.title)}
+              docKey={current}
               resolveEmbed={resolveEmbed}
               onDropFiles={onDropFiles}
-              onDropPath={embedMarkdownFor}
+              onDropPath={onDropPath}
             />
           )}
           {detail && detail.backlinks.length > 0 && (

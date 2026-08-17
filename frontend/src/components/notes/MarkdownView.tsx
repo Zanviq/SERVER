@@ -91,6 +91,16 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   );
 }
 
+/** `100%.png` 처럼 %가 든 파일명이면 decodeURIComponent가 URIError를 던진다.
+ *  여기서 던지면 렌더 도중이라 ErrorBoundary가 앱 전체를 오류 화면으로 바꾼다. */
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
 export interface MarkdownViewProps {
   content: string;
   onWikiClick: (title: string) => void;
@@ -123,7 +133,7 @@ export function MarkdownView({
             }
             const label = bar > 0 ? (alt ?? "").slice(0, bar) : alt;
             if (url && !/^(https?:|data:|blob:|\/)/.test(url)) {
-              const hit = resolveEmbed?.(decodeURIComponent(url));
+              const hit = resolveEmbed?.(safeDecode(url));
               if (!hit) {
                 return <span className="rounded bg-danger/10 px-1 text-[12px] text-danger">이미지 없음: {url}</span>;
               }
@@ -142,7 +152,7 @@ export function MarkdownView({
           },
           a({ href, children, ...props }) {
             if (href?.startsWith("#wiki/")) {
-              const title = decodeURIComponent(href.slice(6));
+              const title = safeDecode(href.slice(6));
               return (
                 <button
                   onClick={() => onWikiClick(title)}

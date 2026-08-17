@@ -67,7 +67,10 @@ export function makeResolver(
   currentPath: string | null,
   toUrl: (path: string) => string,
 ): EmbedResolver {
-  const curDir = currentPath ? currentPath.replace(/\/[^/]*$/, "") : "";
+  // 루트 문서(경로에 "/"가 없다)에서 replace가 아무것도 못 지워 파일명이 통째로
+  // 폴더로 잡히는 실수를 막는다 — "메모.md" → curDir "" 이어야 한다.
+  const slash = currentPath ? currentPath.lastIndexOf("/") : -1;
+  const curDir = slash >= 0 ? currentPath!.slice(0, slash) : "";
   const byPath = new Set(files.map((f) => f.path));
 
   return (target: string) => {
@@ -96,8 +99,17 @@ export function makeResolver(
   };
 }
 
-/** 문서에 삽입할 임베드/링크 문자열. 이미지면 임베드, 아니면 링크. */
-export function embedMarkdownFor(path: string): string {
+/**
+ * 문서에 삽입할 임베드/링크 문자열. 이미지면 임베드, 아니면 링크.
+ *
+ * `files`를 주면 같은 이름이 여러 폴더에 있을 때 **전체 경로**를 쓴다 —
+ * 파일명만 넣으면 해석기가 "가장 짧은 경로"를 고르므로 끌어다 놓은 것과 다른
+ * 그림이 표시된다. 이름이 유일할 때만 짧게 쓴다(옵시디언과 같다).
+ */
+export function embedMarkdownFor(path: string, files?: { path: string }[]): string {
   const name = path.split("/").pop() ?? path;
-  return isImagePath(path) ? `![[${name}]]` : `[[${name.replace(/\.md$/, "")}]]`;
+  const ambiguous =
+    !!files && files.filter((f) => (f.path.split("/").pop() ?? f.path) === name).length > 1;
+  const target = ambiguous ? path : name;
+  return isImagePath(path) ? `![[${target}]]` : `[[${target.replace(/\.md$/, "")}]]`;
 }

@@ -13,6 +13,8 @@ import {
 } from "@codemirror/autocomplete";
 import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { EmbedResolver, eachWikiEmbed, isImagePath } from "../../lib/embeds";
+import { toast } from "../../store/toast";
+import { NOTE_PATH_MIME, isOurDrag } from "./dragTypes";
 
 /**
  * 옵시디언식 라이브 프리뷰 마크다운 에디터(CodeMirror 6).
@@ -290,6 +292,9 @@ export interface LiveEditorProps {
   onChange: (v: string) => void;
   onSave?: () => void;
   titles?: string[]; // [[위키링크]] 자동완성 후보
+  /** 지금 편집 중인 문서의 식별자(경로). 비동기 삽입이 문서가 바뀐 뒤에
+   *  엉뚱한 곳으로 들어가지 않도록 대조하는 데만 쓴다. */
+  docKey?: string | null;
   /** ![[사진.png]] → 실제 URL (편집 중 인라인 표시용) */
   resolveEmbed?: EmbedResolver;
   /** OS에서 끌어온 파일 → 업로드 후 삽입할 마크다운을 돌려준다 */
@@ -303,14 +308,15 @@ export function LiveEditor({
   onChange,
   onSave,
   titles,
+  docKey,
   resolveEmbed,
   onDropFiles,
   onDropPath,
 }: LiveEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const cbs = useRef({ onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed });
-  cbs.current = { onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed };
+  const cbs = useRef({ onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey });
+  cbs.current = { onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey };
   const applyingExternal = useRef(false);
 
   // 마운트 시점 값은 아래 embedResolver.init이 심는다. 여기서는 그 뒤의 변화만
@@ -349,14 +355,17 @@ export function LiveEditor({
         // 드래그&드롭: 떨어뜨린 '그 위치'에 삽입한다(옵시디언과 동일).
         EditorView.domEventHandlers({
           dragover(e) {
-            // preventDefault를 해야 drop이 온다. 커서 표시도 CM이 알아서 해준다.
-            if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+            const dt = e.dataTransfer;
+            // 우리 것(트리 항목·OS 파일)일 때만 가로챈다. 에디터 안 텍스트를 끌어
+            // 옮기는 것도 dragover로 오므로, 전부 preventDefault하면 CM6의 이동이 죽는다.
+            if (!dt || !isOurDrag(dt)) return false;
+            dt.dropEffect = "copy";
             e.preventDefault();
             return false;
           },
           drop(e, view) {
             const dt = e.dataTransfer;
-            if (!dt) return false;
+            if (!dt || !isOurDrag(dt)) return false; // 나머지는 CM6 기본 드롭(텍스트 이동)에 넘긴다
             const pos =
               view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? view.state.selection.main.head;
 
@@ -376,16 +385,23 @@ export function LiveEditor({
               e.preventDefault();
               const insert = cbs.current.onDropFiles;
               if (!insert) return true;
-              // 업로드는 비동기 — 끝난 뒤 그 위치에 넣는다. 그 사이 사용자가 입력해도
-              // 위치가 밀리지 않도록 삽입 시점의 문서 길이로 한 번 더 클램프한다.
+              // 업로드가 끝날 때쯤엔 다른 문서가 열려 있을 수 있다. 그때 삽입하면
+              // 엉뚱한 문서가 오염되고 자동저장까지 된다 — 드롭 당시 문서를 붙잡아 둔다.
+              const droppedIn = cbs.current.docKey;
               insert(files).then((snippets) => {
-                if (snippets.length) place(Math.min(pos, view.state.doc.length), snippets.join("\n"));
+                if (!snippets.length) return;
+                if (viewRef.current !== view || cbs.current.docKey !== droppedIn) {
+                  toast.error("다른 문서로 이동해 링크를 넣지 못했습니다. 올린 파일은 목록에 있습니다.");
+                  return;
+                }
+                // 그 사이 사용자가 입력했을 수 있으니 삽입 시점 길이로 한 번 더 클램프
+                place(Math.min(pos, view.state.doc.length), snippets.join("\n"));
               });
               return true;
             }
 
-            // 문서 트리에서 끌어온 항목(text/plain = 벌트 상대경로)
-            const path = dt.getData("text/plain");
+            // 문서 트리에서 끌어온 항목 — 전용 타입으로만 인정한다(위 isOurDrag 참고)
+            const path = dt.getData(NOTE_PATH_MIME);
             if (path && cbs.current.onDropPath) {
               const snippet = cbs.current.onDropPath(path);
               if (snippet) {
