@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
   NotebookPen,
@@ -10,9 +10,11 @@ import {
   Bot,
   Trash2,
   TerminalSquare,
+  MoreHorizontal,
 } from "lucide-react";
 import { useAuth } from "../../store/auth";
 import { api } from "../../lib/api";
+import { MoreSheet, SheetItem } from "./MoreSheet";
 
 // 터미널 가용 여부 캐시. 계정별로 키를 둔다 —
 // 모듈 전역 캐시로 두면 주인이 로그아웃한 뒤 같은 탭에서 가입 사용자가 로그인해도
@@ -26,14 +28,18 @@ const terminalAvailable = (user: string): Promise<boolean> => {
 };
 
 // 대시보드는 서버 주인 전용(시스템 상태를 담고 있다) — 아래에서 걸러낸다.
+// primary는 모바일 하단 탭에 직접 나오는 것. 나머지는 "더보기" 시트로 간다.
 const NAV = [
-  { to: "/", icon: LayoutDashboard, label: "대시보드", end: true, ownerOnly: true },
-  { to: "/notes", icon: NotebookPen, label: "문서" },
+  { to: "/", icon: LayoutDashboard, label: "대시보드", end: true, ownerOnly: true, primary: true },
+  { to: "/notes", icon: NotebookPen, label: "문서", primary: true },
+  { to: "/calendar", icon: CalendarDays, label: "캘린더", primary: true },
+  { to: "/assistant", icon: Bot, label: "AI 비서", primary: true },
   { to: "/graph", icon: Share2, label: "그래프" },
-  { to: "/calendar", icon: CalendarDays, label: "캘린더" },
-  { to: "/assistant", icon: Bot, label: "AI 비서" },
   { to: "/trash", icon: Trash2, label: "휴지통" },
 ];
+
+/** 모바일 탭바에 직접 놓을 개수. 나머지 한 칸은 "더보기"가 쓴다. */
+const MOBILE_TABS = 4;
 
 /** 데스크톱: 좌측 64px 아이콘 사이드바 (호버 툴팁 + aria-label) */
 function DesktopItem({
@@ -73,6 +79,8 @@ export function Sidebar() {
   const session = useAuth((s) => s.session);
   const initial = (session?.display_name || "?").charAt(0).toUpperCase();
   const [termAvail, setTermAvail] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const { pathname } = useLocation();
 
   useEffect(() => {
     const u = session?.username;
@@ -86,9 +94,19 @@ export function Sidebar() {
   // JSX가 아니라 배열에서 걸러야 양쪽에 동시에 반영된다.
   const isOwner = session?.origin === "bootstrap" && session?.role === "admin";
   const visible = NAV.filter((n) => !n.ownerOnly || isOwner);
-  const nav = termAvail
+  const nav: SheetItem[] = termAvail
     ? [...visible, { to: "/terminal", icon: TerminalSquare, label: "터미널" }]
     : visible;
+
+  // 모바일: primary 먼저 채우고, 모자라면(가입 사용자는 대시보드가 없다) 뒤에서 끌어온다.
+  const primary = nav.filter((n) => (n as { primary?: boolean }).primary);
+  const secondary = nav.filter((n) => !(n as { primary?: boolean }).primary);
+  const tabs = [...primary, ...secondary].slice(0, MOBILE_TABS);
+  const sheetItems: SheetItem[] = [
+    ...[...primary, ...secondary].slice(MOBILE_TABS),
+    { to: "/settings", icon: Settings, label: "설정" },
+    { to: "/profile", icon: User, label: "프로필" },
+  ];
 
   return (
     <>
@@ -115,27 +133,38 @@ export function Sidebar() {
         </div>
       </aside>
 
-      {/* 모바일 하단 탭바 — 항목이 많아 가로 스크롤(줄바꿈 방지) */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch gap-0.5 overflow-x-auto border-t border-line bg-sidebar px-2 py-1 [scrollbar-width:none] sm:hidden [&::-webkit-scrollbar]:hidden">
-        {[...nav, { to: "/settings", icon: Settings, label: "설정" }, { to: "/profile", icon: User, label: "프로필" }].map(
-          (n) => (
-            <NavLink
-              key={n.to}
-              to={n.to}
-              end={(n as { end?: boolean }).end}
-              aria-label={n.label}
-              className={({ isActive }) =>
-                `flex w-[58px] shrink-0 flex-col items-center gap-0.5 rounded-md py-1.5 text-[10px] transition-colors ${
-                  isActive ? "text-sidebar-fg-active" : "text-sidebar-fg"
-                }`
-              }
-            >
-              <n.icon size={18} />
-              <span className="w-full truncate text-center">{n.label}</span>
-            </NavLink>
-          ),
-        )}
+      {/* 모바일 하단 탭바 — 5칸을 폭에 맞춰 나눠 쓴다(잘리는 항목이 없어야 한다) */}
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-line bg-sidebar px-1 pb-[env(safe-area-inset-bottom)] pt-1 sm:hidden">
+        {tabs.map((n) => (
+          <NavLink
+            key={n.to}
+            to={n.to}
+            end={n.end}
+            aria-label={n.label}
+            className={({ isActive }) =>
+              `flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-md py-1.5 text-[10px] transition-colors ${
+                isActive ? "text-sidebar-fg-active" : "text-sidebar-fg"
+              }`
+            }
+          >
+            <n.icon size={19} />
+            <span className="w-full truncate px-0.5 text-center">{n.label}</span>
+          </NavLink>
+        ))}
+        <button
+          onClick={() => setMoreOpen(true)}
+          aria-label="더보기"
+          aria-expanded={moreOpen}
+          className={`flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-md py-1.5 text-[10px] transition-colors ${
+            moreOpen || sheetItems.some((n) => n.to === pathname) ? "text-sidebar-fg-active" : "text-sidebar-fg"
+          }`}
+        >
+          <MoreHorizontal size={19} />
+          <span className="w-full truncate px-0.5 text-center">더보기</span>
+        </button>
       </nav>
+
+      <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} items={sheetItems} />
     </>
   );
 }

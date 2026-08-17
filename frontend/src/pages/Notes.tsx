@@ -617,7 +617,9 @@ export function Notes() {
           </div>
           {!current ? (
             <div className="flex flex-1 items-center justify-center px-4 text-center text-[13px] text-fg-muted">
-              왼쪽에서 문서를 선택하거나 새로 만드세요
+              {/* 모바일에서는 목록이 왼쪽이 아니라 위에 쌓인다 */}
+              <span className="sm:hidden">위 목록에서 문서를 선택하거나 새로 만드세요</span>
+              <span className="hidden sm:inline">왼쪽에서 문서를 선택하거나 새로 만드세요</span>
             </div>
           ) : !isEditable ? (
             // 이미지·PDF·미디어 — 편집 대상이 아니므로 전용 뷰어로

@@ -82,12 +82,14 @@ export function Settings() {
   return (
     <Shell title="설정">
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[180px_1fr]">
-        <nav className="flex gap-1 overflow-x-auto md:flex-col">
+        {/* 좁은 폭에서는 줄바꿈시킨다. 예전엔 가로 스크롤이라 '계정 관리'가 화면 밖으로
+            나가고, flex 기본 축소 때문에 '캘린더'가 캘/린/더로 세로로 깨졌다. */}
+        <nav className="flex flex-wrap gap-1 md:flex-col md:flex-nowrap">
           {tabs.map((t) => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 rounded-md px-3 py-2 text-left text-[13.5px] font-medium transition-colors ${
+              className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-left text-[13.5px] font-medium transition-colors md:w-full ${
                 tab === t.id ? "bg-surface text-fg shadow-sm" : "text-fg-muted hover:bg-hovered hover:text-fg"
               }`}
             >

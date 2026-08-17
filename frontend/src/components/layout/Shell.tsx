@@ -19,19 +19,23 @@ export function Shell({
     <div className="flex h-full">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[52px] shrink-0 items-center justify-between gap-3 border-b border-line bg-surface px-5 py-2.5">
+        {/* 모바일에서는 테마·로그아웃을 "더보기" 시트로 옮겼다 — 좁은 폭에서 이것들이
+            자리를 다 먹으면 페이지별 actions(업로드·받기 등)가 밀려난다. */}
+        <header className="flex h-[52px] shrink-0 items-center justify-between gap-2 border-b border-line bg-surface px-3 py-2.5 sm:gap-3 sm:px-5">
           <h1 className="truncate text-base font-semibold tracking-tight">{title}</h1>
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             {actions}
             <SessionTimer />
-            <ThemeToggle />
-            <button
-              onClick={logout}
-              className="btn btn-ghost h-8 px-2"
-              title={`${session?.display_name} 로그아웃`}
-            >
-              <LogOut size={15} />
-            </button>
+            <div className="hidden items-center gap-2 sm:flex">
+              <ThemeToggle />
+              <button
+                onClick={logout}
+                className="btn btn-ghost h-8 px-2"
+                title={`${session?.display_name} 로그아웃`}
+              >
+                <LogOut size={15} />
+              </button>
+            </div>
           </div>
         </header>
         <main className="min-h-0 flex-1 overflow-auto">

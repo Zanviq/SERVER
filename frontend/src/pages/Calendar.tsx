@@ -12,6 +12,7 @@ import { ChatPanel } from "../components/ai/ChatPanel";
 import { api, CalEvent } from "../lib/api";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
+import { useMediaQuery } from "../lib/useMediaQuery";
 
 const CAL_SUGGESTIONS = [
   "이번 주 일정 정리해줘",
@@ -34,6 +35,9 @@ export function Calendar() {
   const [loading, setLoading] = useState(false);
   const [chatColor, setChatColor] = useState<string | null>(null); // AI 채팅에서 지정할 색
   const range = useRef<{ from?: string; to?: string }>({});
+
+  // Tailwind의 sm(640px) 경계와 맞춘다 — 사이드바가 하단 탭바로 바뀌는 지점이다.
+  const isNarrow = useMediaQuery("(max-width: 639px)");
 
   const defaultColor = s?.calendar.default_color ?? "2";
   const defaultView = s?.calendar.default_view ?? "dayGridMonth";
@@ -132,19 +136,30 @@ export function Calendar() {
       }
     >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
-        <div className="card fc-server flex min-w-0 flex-1 flex-col p-4 h-[70vh] lg:h-[calc(100vh-9rem)]">
+        {/* flex-1을 lg에서만 준다. 세로로 쌓이는 모바일에서 flex-1은 basis 0이라
+            h-[70vh]를 눌러 버리고, 옆의 AI 패널이 높이를 다 가져가 달력이
+            130px로 찌부러졌다(주 몇 줄만 보였다). */}
+        <div className="card fc-server flex min-w-0 flex-col p-4 h-[70vh] lg:h-[calc(100vh-9rem)] lg:flex-1">
           <div className="min-h-0 flex-1">
             <FullCalendar
               plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
               initialView={defaultView}
               firstDay={weekStart}
               locale="ko"
-              headerToolbar={{
-                left: "prev,next today",
-                center: "title",
-                right: "dayGridMonth,timeGridWeek,timeGridDay",
-              }}
+              // 좁은 화면에서 한 줄에 7개를 밀어넣으면 제목과 버튼이 서로 뭉갠다.
+              // 모바일은 두 줄로 나눈다(위: 이동+제목, 아래: 보기 전환).
+              headerToolbar={
+                isNarrow
+                  ? { left: "prev,next", center: "title", right: "today" }
+                  : { left: "prev,next today", center: "title", right: "dayGridMonth,timeGridWeek,timeGridDay" }
+              }
+              footerToolbar={isNarrow ? { center: "dayGridMonth,timeGridWeek,timeGridDay" } : undefined}
               buttonText={{ today: "오늘", month: "월", week: "주", day: "일" }}
+              // ko 로케일은 날짜를 "26일"로 낸다. 좁은 칸에서는 두 줄로 깨지므로
+              // 숫자만 남긴다(요일은 열 머리글에 이미 있다).
+              dayCellContent={isNarrow ? (a) => a.dayNumberText.replace("일", "") : undefined}
+              // "+3 more"는 좁은 칸에서 "+3 mo"로 잘린다. 숫자만 보여준다.
+              moreLinkContent={isNarrow ? (a) => `+${a.num}` : undefined}
               events={fcEvents}
               datesSet={onDatesSet}
               dateClick={onDateClick}

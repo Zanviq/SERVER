@@ -176,6 +176,46 @@
     @apply no-underline;
   }
 
+  /* 좁은 화면: 320px에서 한 칸이 40px 남짓이라 기본 여백·글자로는
+     "26일"이 두 줄로 깨지고 +N 칩이 날짜 숫자를 덮는다. */
+  @media (max-width: 639px) {
+    .fc-server .fc {
+      font-size: 11px;
+    }
+    .fc-server .fc-toolbar {
+      @apply gap-2;
+      margin-bottom: 0.5rem;
+    }
+    .fc-server .fc-toolbar-title {
+      @apply text-sm;
+    }
+    .fc-server .fc-button {
+      @apply text-[11px];
+      padding: 3px 8px;
+    }
+    .fc-server .fc-daygrid-day-frame {
+      padding: 1px;
+    }
+    .fc-server .fc-daygrid-day-number {
+      padding: 1px 3px;
+    }
+    /* 이벤트는 제목 대신 색 막대만 — 40px 폭에 글자를 넣으면 어차피 못 읽는다 */
+    .fc-server .fc-daygrid-event {
+      margin-top: 1px;
+      padding: 0;
+      min-height: 3px;
+      border-radius: 2px;
+      font-size: 0;
+      line-height: 3px;
+    }
+    .fc-server .fc-daygrid-event .fc-event-time,
+    .fc-server .fc-daygrid-event .fc-event-title {
+      display: none;
+    }
+    .fc-server .fc-daygrid-more-link {
+      font-size: 10px;
+    }
+  }
 }
 
 /* FullCalendar 더보기(+N) 팝오버.
