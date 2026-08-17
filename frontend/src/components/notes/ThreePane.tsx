@@ -20,9 +20,12 @@ function load(key: string): Saved {
 export function ThreePane({
   children,
   storageKey,
+  showDetail = false,
 }: {
   children: ReactNode;
   storageKey: string;
+  /** 모바일에서 목록 대신 문서를 보여줄지. 좁은 화면은 한 번에 하나만 띄운다. */
+  showDetail?: boolean;
 }) {
   const [left, center, right] = Children.toArray(children);
   const [treeW, setTreeW] = useState<number>(() => load(storageKey).treeW ?? 260);
@@ -70,13 +73,20 @@ export function ThreePane({
   });
 
   if (!desktop) {
-    return <div className="grid grid-cols-1 gap-4">{children}</div>;
+    // 목록과 문서를 같이 쌓으면 문서를 볼 때마다 목록 320px를 지나쳐 스크롤해야 하고,
+    // 문서를 읽는 동안에도 화면 위쪽을 목록이 계속 차지한다. 좁은 화면에서는
+    // 한 번에 하나만 보여주고 전환한다(옵시디언 모바일과 같다).
+    return (
+      <div className="grid grid-cols-1 gap-4">
+        {showDetail ? [center, right].filter(Boolean) : left}
+      </div>
+    );
   }
 
   // 자식이 2개면 트리 + 메인(단일 패널), 3개면 트리 + 에디터 + 미리보기.
   const twoPane = right == null;
   return (
-    <div ref={wrapRef} className="flex h-[calc(100vh-9rem)] items-stretch">
+    <div ref={wrapRef} className="flex h-view-9 items-stretch">
       {/* 각 래퍼를 flex-col로 만들고 자식 카드를 flex-1/min-h-0로 강제 → 카드가 패널 높이를 꽉 채움 */}
       <div className="flex min-w-0 shrink-0 flex-col [&>*]:min-h-0 [&>*]:flex-1" style={{ width: treeW }}>
         {left}

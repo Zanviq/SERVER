@@ -116,7 +116,7 @@ export function TerminalPage() {
             <span className="text-[13px] font-medium">라즈베리파이 셸 (admin)</span>
             <span className="ml-auto text-[11.5px] text-fg-subtle">⚠️ 호스트 루트 셸 — 주의해서 사용</span>
           </div>
-          <div ref={hostRef} className="h-[calc(100vh-13rem)] w-full bg-[#0b0f0a] p-2" />
+          <div ref={hostRef} className="h-view-13 w-full bg-[#0b0f0a] p-2" />
         </div>
       )}
     </Shell>

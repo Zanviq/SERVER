@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   NotebookPen, FolderPlus, FilePlus, Trash2, Save, Link2, Loader2,
-  FileText, Search, X, Folder, ChevronRight, ChevronDown, Home, FolderInput, Eye, Pencil, Upload, Download,
+  FileText, Search, X, Folder, ChevronRight, ChevronDown, ChevronLeft, Home, FolderInput, Eye, Pencil, Upload, Download,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { MarkdownView } from "../components/notes/LazyMarkdownView";
@@ -161,6 +161,19 @@ export function Notes() {
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => save(current, text), autosaveMs);
   };
+
+  /** 모바일에서 목록으로 돌아가기. 대기 중인 자동저장을 먼저 흘려보낸다 —
+   *  타이머(기본 900ms)가 뜨기 전에 나가면 마지막 입력이 사라진다. */
+  const closeNote = useCallback(() => {
+    if (saveTimer.current) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      if (current && dirty) save(current, content);
+    }
+    setCurrent(null);
+    setDetail(null);
+    setContent("");
+  }, [current, dirty, content, save]);
 
   const joinPath = (folder: string, name: string) => (folder ? `${folder}/${name}` : name);
 
@@ -371,14 +384,16 @@ export function Notes() {
               <Folder size={14} className="shrink-0 text-warning" />
               <span className="truncate font-medium">{child.name}</span>
             </button>
+            {/* 터치 기기엔 hover가 없어 group-hover로만 띄우면 모바일에서
+                폴더 다운로드·삭제를 영영 못 누른다. 좁은 화면은 항상 표시. */}
             <a href={api.noteArchiveUrl(child.path)} download
               onClick={(e) => e.stopPropagation()}
-              className="hidden shrink-0 rounded p-1 text-fg-muted hover:text-accent group-hover:block"
+              className="block shrink-0 rounded p-1 text-fg-muted hover:text-accent sm:hidden sm:group-hover:block"
               title="폴더를 zip으로 내려받기" aria-label="폴더 다운로드">
               <Download size={12} />
             </a>
             <button onClick={() => setDelFolder(child.path)}
-              className="hidden shrink-0 rounded p-1 text-fg-muted hover:text-danger group-hover:block"
+              className="block shrink-0 rounded p-1 text-fg-muted hover:text-danger sm:hidden sm:group-hover:block"
               title="폴더 삭제" aria-label="폴더 삭제">
               <Trash2 size={12} />
             </button>
@@ -489,7 +504,7 @@ export function Notes() {
 
   return (
     <Shell title="문서" actions={actions}>
-      <ThreePane storageKey="notes.panes.v1">
+      <ThreePane storageKey="notes.panes.v1" showDetail={!!current}>
         {/* 트리 */}
         <div className="card flex max-h-80 flex-col overflow-hidden lg:max-h-none">
           <div className="flex items-center justify-between border-b border-line px-3 py-2">
@@ -586,9 +601,19 @@ export function Notes() {
         {/* 메인: 라이브 편집(입력=마크다운 뷰) ↔ 읽기 뷰(표·SVG 완전 렌더) 통합 */}
         <div className="card relative flex min-h-[50vh] flex-col overflow-hidden lg:min-h-0">
           <div className="flex items-center justify-between border-b border-line px-3 py-2">
-            <span className="flex items-center gap-1.5 truncate text-[13px] font-medium">
-              <NotebookPen size={14} className="shrink-0 text-accent" />
-              {current ? current.replace(/\.md$/, "") : "문서를 선택하세요"}
+            <span className="flex min-w-0 items-center gap-1.5 truncate text-[13px] font-medium">
+              {/* 모바일은 목록과 문서를 번갈아 보여주므로 돌아갈 길이 필요하다 */}
+              <button
+                onClick={closeNote}
+                aria-label="문서 목록으로"
+                className="-ml-1 shrink-0 rounded p-1 text-fg-muted hover:bg-hovered hover:text-fg lg:hidden"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <NotebookPen size={14} className="hidden shrink-0 text-accent lg:block" />
+              <span className="truncate">
+                {current ? current.replace(/\.md$/, "") : "문서를 선택하세요"}
+              </span>
             </span>
             <div className="flex items-center gap-1">
               {saving ? <Loader2 size={13} className="animate-spin text-fg-muted" />
@@ -642,7 +667,8 @@ export function Notes() {
               onDropPath={onDropPath}
             />
           )}
-          {detail && detail.backlinks.length > 0 && (
+          {/* current도 본다 — 닫은 뒤 늦게 도착한 save 응답이 detail을 다시 채울 수 있다 */}
+          {current && detail && detail.backlinks.length > 0 && (
             <div className="border-t border-line p-3">
               <span className="label flex items-center gap-1.5"><Link2 size={12} /> 백링크 {detail.backlinks.length}</span>
               <div className="mt-2 flex flex-wrap gap-1.5">

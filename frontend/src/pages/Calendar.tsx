@@ -139,7 +139,7 @@ export function Calendar() {
         {/* flex-1을 lg에서만 준다. 세로로 쌓이는 모바일에서 flex-1은 basis 0이라
             h-[70vh]를 눌러 버리고, 옆의 AI 패널이 높이를 다 가져가 달력이
             130px로 찌부러졌다(주 몇 줄만 보였다). */}
-        <div className="card fc-server flex min-w-0 flex-col p-4 h-[70vh] lg:h-[calc(100vh-9rem)] lg:flex-1">
+        <div className="card fc-server flex min-w-0 flex-col p-4 h-[70vh] lg:h-view-9 lg:flex-1">
           <div className="min-h-0 flex-1">
             <FullCalendar
               plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
@@ -170,7 +170,7 @@ export function Calendar() {
             />
           </div>
         </div>
-        <div className="card flex h-[70vh] w-full flex-col p-4 lg:h-[calc(100vh-9rem)] lg:w-[380px] lg:shrink-0">
+        <div className="card flex h-[70vh] w-full flex-col p-4 lg:h-view-9 lg:w-[380px] lg:shrink-0">
           <div className="mb-2 flex items-center gap-2 border-b border-line/50 pb-2 text-sm font-semibold">
             <Bot size={16} className="text-accent" /> AI 일정 비서
           </div>

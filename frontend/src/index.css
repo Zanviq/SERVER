@@ -79,6 +79,20 @@
   .input:focus {
     box-shadow: 0 0 0 3px rgb(var(--accent) / 0.18);
   }
+  /* 모바일 브라우저는 주소창이 접히고 펴지므로 100vh가 실제 보이는 높이와 다르다.
+     dvh를 아는 브라우저는 아래 선언이 덮어쓰고, 모르면 vh로 남는다. */
+  .h-view-9 {
+    height: calc(100vh - 9rem);
+    height: calc(100dvh - 9rem);
+  }
+  .h-view-11 {
+    height: calc(100vh - 11rem);
+    height: calc(100dvh - 11rem);
+  }
+  .h-view-13 {
+    height: calc(100vh - 13rem);
+    height: calc(100dvh - 13rem);
+  }
   .badge {
     @apply inline-flex items-center gap-1 rounded-full border border-line bg-subtle px-2 py-0.5
       text-[11.5px] font-medium text-fg2;
@@ -251,4 +265,18 @@
 .fc-popover .fc-popover-body {
   background: rgb(var(--bg-elevated)) !important;
   padding: 8px;
+}
+
+/* iOS Safari는 글자가 16px 미만인 입력에 포커스하면 페이지를 확대하고 되돌리지 않는다.
+   데스크톱의 조밀한 13.5px은 그대로 두고 좁은 화면에서만 올린다.
+
+   주의: @layer 안에 두면 안 된다. 개별 요소에 붙은 text-[12.5px] 같은 유틸리티가
+   utilities 레이어라 components 레이어를 이기기 때문이다(실제로 그렇게 밀렸다).
+   레이어 밖 + !important 라야 모든 유틸리티를 확실히 덮는다. */
+@media (max-width: 639px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
 }

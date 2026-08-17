@@ -23,7 +23,9 @@ export function RowMenu({ onRename, onMove, onTrash }: {
   return (
     <div ref={ref} className="relative shrink-0">
       <button onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }} title="더보기" aria-label="더보기"
-        className={`rounded p-1 text-fg-muted hover:text-fg ${open ? "block" : "hidden group-hover:block"}`}>
+        // 터치 기기엔 hover가 없다. hover로만 띄우면 모바일에서 이름 변경·이동·휴지통이
+        // 영영 안 눌린다(드래그 이동도 HTML5 DnD라 터치에선 안 된다). 좁은 화면은 항상 표시.
+        className={`rounded p-1 text-fg-muted hover:text-fg ${open ? "block" : "block sm:hidden sm:group-hover:block"}`}>
         <MoreHorizontal size={14} />
       </button>
       {open && (

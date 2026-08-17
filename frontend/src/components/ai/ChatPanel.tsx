@@ -3,6 +3,7 @@ import { Bot, Send, Loader2, CheckCircle2, XCircle, Sparkles } from "lucide-reac
 import { MarkdownView } from "../notes/LazyMarkdownView";
 import { aiChatStream, api, AiEvent } from "../../lib/api";
 import { toast } from "../../store/toast";
+import { useMediaQuery } from "../../lib/useMediaQuery";
 
 interface Step {
   name: string;
@@ -83,6 +84,8 @@ export function ChatPanel({
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // 화면 폭이 아니라 입력 방식으로 판단한다 — 태블릿 가로처럼 넓어도 소프트 키보드다.
+  const touch = useMediaQuery("(pointer: coarse)");
 
   useEffect(() => {
     api.aiStatus().then((s) => setEnabled(s.enabled)).catch(() => setEnabled(false));
@@ -229,13 +232,15 @@ export function ChatPanel({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            // Enter=전송, Shift+Enter=줄바꿈
-            if (e.key === "Enter" && !e.shiftKey) {
+            // Enter=전송, Shift+Enter=줄바꿈. 단 소프트 키보드에서는 Enter가 줄바꿈
+            // 키라 Shift+Enter를 칠 방법이 없다 — 터치 기기에서는 전송을 버튼으로만.
+            // (한글 조합 중 Enter는 조합 확정이므로 전송하면 마지막 글자가 잘린다)
+            if (e.key === "Enter" && !e.shiftKey && !touch && !e.nativeEvent.isComposing) {
               e.preventDefault();
               send(input);
             }
           }}
-          placeholder="메시지를 입력하세요… (Shift+Enter 줄바꿈)"
+          placeholder={touch ? "메시지를 입력하세요…" : "메시지를 입력하세요… (Shift+Enter 줄바꿈)"}
           disabled={busy}
           rows={1}
           className="input flex-1 resize-none !h-auto min-h-[2.25rem] py-2 leading-relaxed [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"

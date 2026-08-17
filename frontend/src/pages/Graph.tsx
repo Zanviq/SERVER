@@ -186,7 +186,7 @@ export function Graph() {
         )}
       </div>
 
-      <div ref={wrapRef} className="card relative h-[calc(100vh-11rem)] overflow-hidden">
+      <div ref={wrapRef} className="card relative h-view-11 overflow-hidden">
         {/* 소스 전환 로딩 오버레이 — 이전 그래프가 남아 혼란을 주지 않도록 덮는다 */}
         {loading && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-surface/70 text-fg-muted backdrop-blur-sm">

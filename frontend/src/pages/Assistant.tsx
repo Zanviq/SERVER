@@ -4,7 +4,7 @@ import { ChatPanel } from "../components/ai/ChatPanel";
 export function Assistant() {
   return (
     <Shell title="AI 비서">
-      <ChatPanel className="mx-auto h-[calc(100vh-9rem)] max-w-3xl" />
+      <ChatPanel className="mx-auto h-view-9 max-w-3xl" />
     </Shell>
   );
 }
