@@ -12,6 +12,7 @@ import { RowMenu } from "../components/notes/RowMenu";
 import { LiveEditor } from "../components/notes/LazyLiveEditor";
 import { Modal } from "../components/ui/Modal";
 import { api, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
+import { embedMarkdownFor, makeResolver } from "../lib/embeds";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
 
@@ -21,6 +22,16 @@ interface TreeNode {
   children: TreeNode[];
   notes: NoteSummary[];
 }
+
+/** 드래그 강조용 "루트" 표식. 루트의 실제 경로는 빈 문자열이라 그대로 쓰면
+ *  "강조 없음"(null)과 구분이 안 되므로, 폴더 경로가 될 수 없는 값을 쓴다. */
+const ROOT_DROP = "/";
+
+/** 문서가 들어 있는 폴더 경로(루트면 빈 문자열). */
+const parentDir = (path: string) => {
+  const i = path.lastIndexOf("/");
+  return i >= 0 ? path.slice(0, i) : "";
+};
 
 function buildTree(folders: string[], notes: NoteSummary[]): TreeNode {
   const root: TreeNode = { name: "", path: "", children: [], notes: [] };
@@ -323,10 +334,12 @@ export function Notes() {
       rows.push(
         <li key={"f:" + child.path}>
           <div
-            onDragOver={(e) => { e.preventDefault(); setDragOver(child.path); }}
+            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOver(child.path); }}
             onDragLeave={() => setDragOver((p) => (p === child.path ? null : p))}
             onDrop={(e) => {
+              // 폴더가 이겨야 한다 — 막지 않으면 바깥(루트) 드롭존까지 함께 처리된다
               e.preventDefault();
+              e.stopPropagation();
               const path = e.dataTransfer.getData("text/plain");
               setDragOver(null);
               if (path) doMoveNote(path, child.path);
@@ -364,7 +377,22 @@ export function Notes() {
       rows.push(
         <li key={"n:" + n.path}
           draggable
-          onDragStart={(e) => { e.dataTransfer.setData("text/plain", n.path); e.dataTransfer.effectAllowed = "move"; }}>
+          onDragStart={(e) => {
+            e.dataTransfer.setData("text/plain", n.path);
+            // 에디터에 떨어뜨렸을 때 링크로 삽입할 수 있게 별도 타입도 싣는다
+            e.dataTransfer.setData("application/x-note-path", n.path);
+            e.dataTransfer.effectAllowed = "copyMove";
+          }}
+          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOver(parentDir(n.path) || ROOT_DROP); }}
+          onDrop={(e) => {
+            // 문서 위에 떨어뜨리면 그 문서가 있는 폴더로 (옵시디언과 같다).
+            // 막지 않으면 바깥 루트 드롭존이 함께 처리해 엉뚱한 곳으로 간다.
+            e.preventDefault();
+            e.stopPropagation();
+            const path = e.dataTransfer.getData("text/plain");
+            setDragOver(null);
+            if (path && path !== n.path) doMoveNote(path, parentDir(n.path));
+          }}>
           <div className={`group flex items-center gap-1 rounded-md pr-1 text-[13px] ${current === n.path ? "bg-accent-muted text-accent-fg" : "hover:bg-hovered"}`}
             style={{ paddingLeft: depth * 12 + 22 }}>
             <button onClick={() => openNote(n.path)}
@@ -398,6 +426,34 @@ export function Notes() {
       toast.error(e instanceof Error ? e.message : "업로드 실패");
     }
   };
+
+  /** `![[사진.png]]` 같은 임베드를 실제 파일로 이어 준다. 편집기와 읽기 뷰가
+   *  같은 해석기를 써야 한쪽에서만 이미지가 보이는 일이 없다. */
+  const resolveEmbed = useMemo(
+    () => makeResolver(notes, current, (p) => api.noteRawUrl(p)),
+    [notes, current],
+  );
+
+  /** 편집기에 파일을 떨어뜨렸을 때 — 현재 폴더에 올리고 삽입할 문자열을 돌려준다. */
+  const onDropFiles = useCallback(
+    async (files: File[]): Promise<string[]> => {
+      const out: string[] = [];
+      try {
+        for (const f of files) {
+          const saved = await api.noteUpload(curFolder, f);
+          out.push(embedMarkdownFor(saved.path)); // 서버가 정한 최종 경로를 쓴다(이름 충돌 시 바뀐다)
+        }
+        if (out.length) {
+          toast.ok(`${out.length}개 첨부됨`);
+          await reloadTree();
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "업로드 실패");
+      }
+      return out;
+    },
+    [curFolder, reloadTree],
+  );
 
   const actions = (
     <div className="flex items-center gap-2">
@@ -434,8 +490,8 @@ export function Notes() {
 
           {/* 현재 위치 (여기로 드래그하면 루트로 이동) */}
           <button onClick={() => setCurFolder("")}
-            onDragOver={(e) => { e.preventDefault(); setDragOver("\0root"); }}
-            onDragLeave={() => setDragOver((p) => (p === "\0root" ? null : p))}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(ROOT_DROP); }}
+            onDragLeave={() => setDragOver((p) => (p === ROOT_DROP ? null : p))}
             onDrop={(e) => {
               e.preventDefault();
               const path = e.dataTransfer.getData("text/plain");
@@ -443,7 +499,7 @@ export function Notes() {
               if (path) doMoveNote(path, "");
             }}
             className={`flex items-center gap-1 border-b border-line px-3 py-1.5 text-left text-[11.5px] text-fg-muted hover:text-accent ${
-              dragOver === "\0root" ? "bg-accent-muted ring-1 ring-accent" : ""
+              dragOver === ROOT_DROP ? "bg-accent-muted ring-1 ring-accent" : ""
             }`}
             title="루트로 (여기로 드래그하면 루트로 이동)">
             <Home size={12} className="shrink-0" />
@@ -465,7 +521,25 @@ export function Notes() {
             </div>
           </div>
 
-          <ul className="flex-1 overflow-auto p-1">
+          {/* 목록 전체가 루트 드롭 영역이다. 폴더·문서 행은 stopPropagation으로
+              자기 드롭을 먼저 처리하므로, 빈 곳에 떨어뜨려야만 루트로 나온다.
+              (전에는 상단의 얇은 "위치:" 줄 하나뿐이라 폴더 밖으로 빼기가 거의 불가능했다) */}
+          <ul
+            className={`flex-1 overflow-auto p-1 ${dragOver === ROOT_DROP ? "bg-accent-muted/40 ring-1 ring-inset ring-accent" : ""}`}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(ROOT_DROP); }}
+            onDragLeave={(e) => {
+              // 자식 사이를 오갈 때 깜빡이지 않도록, 목록 밖으로 나갈 때만 해제
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                setDragOver((p) => (p === ROOT_DROP ? null : p));
+              }
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const path = e.dataTransfer.getData("text/plain");
+              setDragOver(null);
+              if (path && path.includes("/")) doMoveNote(path, "");  // 이미 루트면 무시
+            }}
+          >
             {hits !== null ? (
               hits.length === 0 ? (
                 <li className="px-2 py-6 text-center text-[12px] text-fg-muted">검색 결과 없음</li>
@@ -534,7 +608,7 @@ export function Notes() {
             </div>
           ) : reading ? (
             <div className="flex-1 overflow-auto p-4">
-              <MarkdownView content={content} onWikiClick={openByTitle} />
+              <MarkdownView content={content} onWikiClick={openByTitle} resolveEmbed={resolveEmbed} />
             </div>
           ) : (
             <LiveEditor
@@ -542,6 +616,9 @@ export function Notes() {
               onChange={onEdit}
               onSave={() => { if (current) save(current, content); }}
               titles={notes.map((n) => n.title)}
+              resolveEmbed={resolveEmbed}
+              onDropFiles={onDropFiles}
+              onDropPath={embedMarkdownFor}
             />
           )}
           {detail && detail.backlinks.length > 0 && (

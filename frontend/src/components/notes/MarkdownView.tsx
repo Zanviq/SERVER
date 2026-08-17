@@ -5,10 +5,23 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import { EmbedResolver, parseWikiEmbed } from "../../lib/embeds";
 
-/** [[제목]] / [[제목|별칭]] → 내부 위키링크 마크다운으로 변환. */
-function transformWikilinks(text: string): string {
-  return text.replace(/\[\[([^\[\]]+?)\]\]/g, (_m, inner: string) => {
+/**
+ * `![[대상]]` 임베드와 `[[제목]]` 링크를 표준 마크다운으로 바꾼다.
+ *
+ * 임베드를 **먼저** 처리해야 한다 — `![[x]]`의 뒷부분이 `[[x]]`와 겹쳐서,
+ * 링크를 먼저 바꾸면 임베드가 `![링크]`로 망가진다.
+ */
+function transformWiki(text: string, resolve?: EmbedResolver): string {
+  const withEmbeds = text.replace(/!\[\[([^\[\]]+?)\]\]/g, (_m, inner: string) => {
+    const e = parseWikiEmbed(inner);
+    const hit = resolve?.(e.target);
+    if (!hit) return `\`![[${e.target}]] (파일 없음)\``;
+    const title = e.width ? `${e.target}|${e.width}` : e.target;
+    return `![${title}](${hit.url})`;
+  });
+  return withEmbeds.replace(/\[\[([^\[\]]+?)\]\]/g, (_m, inner: string) => {
     const [target, alias] = inner.split("|");
     const t = target.split("#")[0].trim();
     return `[${(alias ?? target).trim()}](#wiki/${encodeURIComponent(t)})`;
@@ -78,13 +91,18 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   );
 }
 
+export interface MarkdownViewProps {
+  content: string;
+  onWikiClick: (title: string) => void;
+  /** ![[대상]]·상대경로 이미지를 실제 URL로 바꾼다(문서 목록 기준). */
+  resolveEmbed?: EmbedResolver;
+}
+
 export function MarkdownView({
   content,
   onWikiClick,
-}: {
-  content: string;
-  onWikiClick: (title: string) => void;
-}) {
+  resolveEmbed,
+}: MarkdownViewProps) {
   return (
     <div className="prose-server">
       <ReactMarkdown
@@ -94,6 +112,34 @@ export function MarkdownView({
         rehypePlugins={[rehypeRaw, [rehypeSanitize, schema]]}
         components={{
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+          img({ src, alt, ...props }) {
+            // 상대경로(`![](사진.png)`)도 벌트에서 찾아 실제 URL로 바꾼다.
+            let url = src ?? "";
+            let width: number | undefined;
+            const bar = (alt ?? "").lastIndexOf("|");
+            if (bar > 0) {
+              const w = parseInt((alt ?? "").slice(bar + 1), 10);
+              if (Number.isFinite(w) && w > 0) width = w;
+            }
+            const label = bar > 0 ? (alt ?? "").slice(0, bar) : alt;
+            if (url && !/^(https?:|data:|blob:|\/)/.test(url)) {
+              const hit = resolveEmbed?.(decodeURIComponent(url));
+              if (!hit) {
+                return <span className="rounded bg-danger/10 px-1 text-[12px] text-danger">이미지 없음: {url}</span>;
+              }
+              url = hit.url;
+            }
+            return (
+              <img
+                src={url}
+                alt={label}
+                width={width}
+                loading="lazy"
+                className="my-2 max-w-full rounded-md border border-line"
+                {...props}
+              />
+            );
+          },
           a({ href, children, ...props }) {
             if (href?.startsWith("#wiki/")) {
               const title = decodeURIComponent(href.slice(6));
@@ -114,7 +160,7 @@ export function MarkdownView({
           },
         }}
       >
-        {transformWikilinks(content)}
+        {transformWiki(content, resolveEmbed)}
       </ReactMarkdown>
     </div>
   );

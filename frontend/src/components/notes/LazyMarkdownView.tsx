@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import type { MarkdownViewProps } from "./MarkdownView";
 
 /**
  * 마크다운 렌더러(react-markdown + remark/rehype 체인)를 지연 로딩한다.
@@ -9,10 +10,7 @@ const Inner = lazy(() =>
   import("./MarkdownView").then((m) => ({ default: m.MarkdownView })),
 );
 
-export function MarkdownView(props: {
-  content: string;
-  onWikiClick: (title: string) => void;
-}) {
+export function MarkdownView(props: MarkdownViewProps) {
   return (
     <Suspense fallback={<div className="p-4 text-[13px] text-fg-muted">불러오는 중…</div>}>
       <Inner {...props} />

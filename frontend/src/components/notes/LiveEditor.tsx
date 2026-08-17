@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { EditorView, keymap, ViewPlugin, Decoration, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { EditorState, StateEffect, StateField } from "@codemirror/state";
 import type { Range } from "@codemirror/state";
 import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
@@ -12,6 +12,7 @@ import {
   autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap,
 } from "@codemirror/autocomplete";
 import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
+import { EmbedResolver, eachWikiEmbed, isImagePath } from "../../lib/embeds";
 
 /**
  * 옵시디언식 라이브 프리뷰 마크다운 에디터(CodeMirror 6).
@@ -39,6 +40,30 @@ const mdHighlight = HighlightStyle.define([
 
 // 커서가 없는 줄에서 숨길 인라인 구문기호 노드
 const HIDE = new Set(["EmphasisMark", "CodeMark", "StrikethroughMark", "HeaderMark"]);
+
+/** ![[사진.png]] 을 편집 중에도 그림으로 보여주는 위젯(옵시디언 라이브 프리뷰). */
+class ImageWidget extends WidgetType {
+  constructor(readonly url: string, readonly alt: string, readonly width?: number) {
+    super();
+  }
+  eq(o: ImageWidget) {
+    return o.url === this.url && o.width === this.width;
+  }
+  toDOM() {
+    const wrap = document.createElement("div");
+    wrap.className = "cm-embed-img";
+    const img = document.createElement("img");
+    img.src = this.url;
+    img.alt = this.alt;
+    img.loading = "lazy";
+    if (this.width) img.style.width = `${this.width}px`;
+    wrap.appendChild(img);
+    return wrap;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
 
 // 코드블록 우측 상단 복사 버튼(편집 모드). 위젯이라 문서 텍스트엔 포함되지 않음.
 class CopyBtn extends WidgetType {
@@ -118,6 +143,63 @@ function buildDeco(view: EditorView): DecorationSet {
   return Decoration.set(ranges, true); // true=위치 정렬
 }
 
+/**
+ * ![[사진.png]] → 그 줄 아래에 그림을 붙인다. 커서가 그 줄에 있어도 원본 구문을
+ * 지우지 않으므로 편집과 미리보기가 동시에 된다.
+ *
+ * 블록 위젯은 **ViewPlugin으로 줄 수 없다** — CM6가 "Block decorations may not be
+ * specified via plugins"로 던진다(문서의 블록 구조를 바꾸기 때문). 그래서 위의
+ * 인라인 장식과 달리 StateField로 분리한다. 뷰포트가 아니라 문서 전체를 훑지만
+ * 줄마다 문자열 검사 한 번이라 비용은 무시할 만하다.
+ */
+function buildEmbeds(state: EditorState): DecorationSet {
+  const resolve = state.field(embedResolver);
+  if (!resolve) return Decoration.none;
+  const ranges: Range<Decoration>[] = [];
+  let pos = 0;
+  for (const text of state.doc.iterLines()) {
+    const end = pos + text.length;
+    if (text.includes("![[")) {
+      eachWikiEmbed(text, ({ embed }) => {
+        if (!isImagePath(embed.target)) return;
+        const hit = resolve(embed.target);
+        if (!hit) return;
+        ranges.push(
+          Decoration.widget({
+            widget: new ImageWidget(hit.url, embed.target, embed.width),
+            side: 1,
+            block: true,
+          }).range(end),
+        );
+      });
+    }
+    pos = end + 1; // 줄바꿈 한 글자
+  }
+  return Decoration.set(ranges, true);
+}
+
+/** 해석기 교체(문서 목록이 늦게 도착하거나 다른 문서를 열었을 때). */
+const setResolver = StateEffect.define<EmbedResolver | undefined>();
+
+/** 해석기를 상태에 둔다 — 모듈 전역으로 두면 편집기가 둘 이상일 때 섞인다. */
+const embedResolver = StateField.define<EmbedResolver | undefined>({
+  create: () => undefined,
+  update(v, tr) {
+    for (const e of tr.effects) if (e.is(setResolver)) return e.value;
+    return v;
+  },
+});
+
+// embedResolver보다 뒤에 선언해야 같은 트랜잭션에서 갱신된 해석기를 읽는다.
+const embedDeco = StateField.define<DecorationSet>({
+  create: (state) => buildEmbeds(state),
+  update(deco, tr) {
+    if (tr.docChanged || tr.effects.some((e) => e.is(setResolver))) return buildEmbeds(tr.state);
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 const livePreview = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
@@ -193,24 +275,49 @@ const editorTheme = EditorView.theme({
     cursor: "pointer",
   },
   ".cm-copy-btn:hover": { color: "rgb(var(--fg))" },
+  // 인라인 이미지 임베드(편집 중에도 보이는 그림)
+  ".cm-embed-img": { padding: "4px 0" },
+  ".cm-embed-img img": {
+    maxWidth: "100%",
+    borderRadius: "6px",
+    border: "1px solid rgb(var(--line))",
+    display: "block",
+  },
 });
+
+export interface LiveEditorProps {
+  value: string;
+  onChange: (v: string) => void;
+  onSave?: () => void;
+  titles?: string[]; // [[위키링크]] 자동완성 후보
+  /** ![[사진.png]] → 실제 URL (편집 중 인라인 표시용) */
+  resolveEmbed?: EmbedResolver;
+  /** OS에서 끌어온 파일 → 업로드 후 삽입할 마크다운을 돌려준다 */
+  onDropFiles?: (files: File[]) => Promise<string[]>;
+  /** 문서 트리에서 끌어온 경로 → 삽입할 마크다운 */
+  onDropPath?: (path: string) => string;
+}
 
 export function LiveEditor({
   value,
   onChange,
   onSave,
   titles,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  onSave?: () => void;
-  titles?: string[]; // [[위키링크]] 자동완성 후보
-}) {
+  resolveEmbed,
+  onDropFiles,
+  onDropPath,
+}: LiveEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const cbs = useRef({ onChange, onSave, titles });
-  cbs.current = { onChange, onSave, titles };
+  const cbs = useRef({ onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed });
+  cbs.current = { onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed };
   const applyingExternal = useRef(false);
+
+  // 마운트 시점 값은 아래 embedResolver.init이 심는다. 여기서는 그 뒤의 변화만
+  // 알린다 — 문서 목록이 늦게 도착해도 도착한 그때 이미지가 붙도록.
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: setResolver.of(resolveEmbed) });
+  }, [resolveEmbed]);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -239,8 +346,63 @@ export function LiveEditor({
           ...historyKeymap,
         ]),
         markdown({ base: markdownLanguage, codeLanguages: languages }),
+        // 드래그&드롭: 떨어뜨린 '그 위치'에 삽입한다(옵시디언과 동일).
+        EditorView.domEventHandlers({
+          dragover(e) {
+            // preventDefault를 해야 drop이 온다. 커서 표시도 CM이 알아서 해준다.
+            if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+            e.preventDefault();
+            return false;
+          },
+          drop(e, view) {
+            const dt = e.dataTransfer;
+            if (!dt) return false;
+            const pos =
+              view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? view.state.selection.main.head;
+
+            /** 줄 한가운데면 앞뒤로 줄을 나눈다 — 임베드 두 개가 한 줄에 붙지 않도록. */
+            const place = (at: number, body: string) => {
+              const line = view.state.doc.lineAt(at);
+              const text = (at > line.from ? "\n" : "") + body + (at < line.to ? "\n" : "");
+              view.dispatch({
+                changes: { from: at, insert: text },
+                selection: { anchor: at + text.length },
+              });
+              view.focus();
+            };
+
+            const files = Array.from(dt.files ?? []);
+            if (files.length) {
+              e.preventDefault();
+              const insert = cbs.current.onDropFiles;
+              if (!insert) return true;
+              // 업로드는 비동기 — 끝난 뒤 그 위치에 넣는다. 그 사이 사용자가 입력해도
+              // 위치가 밀리지 않도록 삽입 시점의 문서 길이로 한 번 더 클램프한다.
+              insert(files).then((snippets) => {
+                if (snippets.length) place(Math.min(pos, view.state.doc.length), snippets.join("\n"));
+              });
+              return true;
+            }
+
+            // 문서 트리에서 끌어온 항목(text/plain = 벌트 상대경로)
+            const path = dt.getData("text/plain");
+            if (path && cbs.current.onDropPath) {
+              const snippet = cbs.current.onDropPath(path);
+              if (snippet) {
+                e.preventDefault();
+                place(pos, snippet);
+                return true;
+              }
+            }
+            return false;
+          },
+        }),
         syntaxHighlighting(mdHighlight),
         livePreview,
+        // embedDeco보다 먼저 선언해야 같은 트랜잭션에서 갱신된 값을 읽는다.
+        // init으로 첫 값을 심는다 — 마운트 직후부터 이미지가 보여야 한다.
+        embedResolver.init(() => cbs.current.resolveEmbed),
+        embedDeco,
         EditorView.lineWrapping,
         closeBrackets(),
         autocompletion({ override: [wikiComplete] }),
