@@ -506,7 +506,9 @@ export function Notes() {
     <Shell title="문서" actions={actions}>
       <ThreePane storageKey="notes.panes.v1" showDetail={!!current}>
         {/* 트리 */}
-        <div className="card flex max-h-80 flex-col overflow-hidden lg:max-h-none">
+        {/* 모바일은 목록/문서를 번갈아 보여주므로 화면 높이를 다 쓴다.
+            (max-h-80이면 목록만 띄운 화면에서 아래 절반이 빈다) */}
+        <div className="card flex h-view-11 flex-col overflow-hidden lg:h-auto lg:max-h-none">
           <div className="flex items-center justify-between border-b border-line px-3 py-2">
             <span className="label">문서 {notes.length}</span>
             <div className="flex items-center gap-0.5">
@@ -599,7 +601,10 @@ export function Notes() {
         </div>
 
         {/* 메인: 라이브 편집(입력=마크다운 뷰) ↔ 읽기 뷰(표·SVG 완전 렌더) 통합 */}
-        <div className="card relative flex min-h-[50vh] flex-col overflow-hidden lg:min-h-0">
+        {/* 높이를 확정해야 편집기가 **내부에서** 스크롤한다. 예전엔 min-h만 있어
+            카드가 문서 길이만큼 자랐고(5600px), 그러면 absolute인 첨부 버튼과
+            헤더(뒤로가기·읽기전환·삭제)가 문서 맨 끝/맨 앞에만 있어 못 쓴다. */}
+        <div className="card relative flex h-view-11 flex-col overflow-hidden lg:h-auto lg:min-h-0">
           <div className="flex items-center justify-between border-b border-line px-3 py-2">
             <span className="flex min-w-0 items-center gap-1.5 truncate text-[13px] font-medium">
               {/* 모바일은 목록과 문서를 번갈아 보여주므로 돌아갈 길이 필요하다 */}

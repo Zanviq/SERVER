@@ -260,9 +260,14 @@
   background: rgb(var(--bg-elevated)) !important;
   border: 1px solid rgb(var(--line)) !important;
   border-radius: 10px;
-  box-shadow: var(--shadow-lg);
   overflow: hidden;
-  z-index: 40;
+  /* FullCalendar가 `.fc .fc-popover{z-index:9999; box-shadow:...}`(특이도 0,2,0)를
+     런타임에 주입한다. 여기 `.fc-popover`는 0,1,0이라 이 둘은 그냥 무시돼 왔다.
+     그 결과 팝오버가 루트 스택 컨텍스트에서 9999로 떠 일정 수정 다이얼로그(z-50)
+     위를 덮었고, 겹친 자리를 누르면 다이얼로그가 조용히 다른 일정으로 바뀌었다.
+     !important로 실제로 적용되게 한다 — 위 background/border도 같은 이유로 붙어 있다. */
+  box-shadow: var(--shadow-lg) !important;
+  z-index: 40 !important;
 }
 .fc-popover .fc-popover-header {
   background: rgb(var(--bg-subtle)) !important;
