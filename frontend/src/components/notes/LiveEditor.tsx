@@ -13,7 +13,9 @@ import {
 } from "@codemirror/autocomplete";
 import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { EmbedResolver, eachWikiEmbed, isImagePath } from "../../lib/embeds";
+import { Paperclip } from "lucide-react";
 import { toast } from "../../store/toast";
+import { useMediaQuery } from "../../lib/useMediaQuery";
 import { NOTE_PATH_MIME, isOurDrag } from "./dragTypes";
 
 /**
@@ -224,6 +226,12 @@ const editorTheme = EditorView.theme({
     lineHeight: "1.75",
     overflow: "auto",
   },
+  // 편집 표면은 input/textarea가 아니라 contenteditable div라,
+  // index.css의 "좁은 화면 입력 16px" 규칙(폼 요소만 잡는다)에 걸리지 않는다.
+  // 14px인 채로 두면 노트를 탭하는 순간 iOS Safari가 화면을 확대하고 되돌리지 않는다.
+  "@media (max-width: 639px)": {
+    ".cm-scroller": { fontSize: "16px" },
+  },
   ".cm-content": { padding: "16px", caretColor: "rgb(var(--accent))" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "rgb(var(--accent))" },
   ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
@@ -317,6 +325,9 @@ export function LiveEditor({
   const viewRef = useRef<EditorView | null>(null);
   const cbs = useRef({ onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey });
   cbs.current = { onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey };
+  // 터치 기기이거나 화면이 좁을 때. 터치엔 드래그앤드롭이 없고, 좁은 창에서는
+  // 트리에서 편집기로 끌어올 공간 자체가 없다(둘을 번갈아 보여주므로).
+  const needsAttachButton = useMediaQuery("(pointer: coarse), (max-width: 639px)");
   const applyingExternal = useRef(false);
 
   // 마운트 시점 값은 아래 embedResolver.init이 심는다. 여기서는 그 뒤의 변화만
@@ -451,5 +462,48 @@ export function LiveEditor({
     applyingExternal.current = false;
   }, [value]);
 
-  return <div ref={hostRef} className="h-full min-h-0 overflow-hidden" />;
+  /** 파일 선택 → 업로드 → 커서 위치에 임베드 삽입. 드롭 경로와 같은 일을 한다. */
+  const attach = async (files: FileList | null) => {
+    const view = viewRef.current;
+    const insert = cbs.current.onDropFiles;
+    if (!view || !insert || !files?.length) return;
+    const droppedIn = cbs.current.docKey;
+    const snippets = await insert(Array.from(files));
+    if (!snippets.length) return;
+    if (viewRef.current !== view || cbs.current.docKey !== droppedIn) {
+      toast.error("다른 문서로 이동해 링크를 넣지 못했습니다. 올린 파일은 목록에 있습니다.");
+      return;
+    }
+    const at = Math.min(view.state.selection.main.head, view.state.doc.length);
+    const line = view.state.doc.lineAt(at);
+    const body = snippets.join("\n");
+    const text = (at > line.from ? "\n" : "") + body + (at < line.to ? "\n" : "");
+    view.dispatch({ changes: { from: at, insert: text }, selection: { anchor: at + text.length } });
+    view.focus();
+  };
+
+  return (
+    <div className="relative h-full min-h-0">
+      <div ref={hostRef} className="h-full min-h-0 overflow-hidden" />
+      {/* 터치 기기에는 드래그앤드롭이 없어 이미지를 넣을 방법이 아예 없었다.
+          (HTML5 DnD는 모바일 브라우저에서 발화하지 않는다) */}
+      {needsAttachButton && onDropFiles && (
+        <label
+          className="absolute bottom-3 right-3 grid h-11 w-11 cursor-pointer place-items-center rounded-full border border-line bg-surface text-fg-muted shadow-md active:bg-hovered"
+          title="사진·파일 첨부"
+        >
+          <Paperclip size={18} />
+          <input
+            type="file"
+            multiple
+            className="sr-only"
+            onChange={(e) => {
+              attach(e.target.files);
+              e.target.value = ""; // 같은 파일을 다시 골라도 change가 오도록
+            }}
+          />
+        </label>
+      )}
+    </div>
+  );
 }

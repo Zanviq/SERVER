@@ -164,7 +164,9 @@ export function Calendar() {
               datesSet={onDatesSet}
               dateClick={onDateClick}
               eventClick={onEventClick}
-              dayMaxEvents={true}
+              // 좁은 화면에서는 칸에 들어가는 만큼 채우면 색 막대만 잔뜩 쌓이고
+              // '+N'이 안 나온다. 2개로 끊어 나머지를 팝오버(제목이 보이는 곳)로 보낸다.
+              dayMaxEvents={isNarrow ? 2 : true}
               height="100%"
               nowIndicator
             />

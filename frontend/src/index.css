@@ -213,14 +213,16 @@
     .fc-server .fc-daygrid-day-number {
       padding: 1px 3px;
     }
-    /* 이벤트는 제목 대신 색 막대만 — 40px 폭에 글자를 넣으면 어차피 못 읽는다 */
+    /* 이벤트는 제목 대신 색 막대만 — 40px 폭에 글자를 넣으면 어차피 못 읽는다.
+       단 **누를 수 있는 높이**는 남겨야 한다. 3px로 줄였더니 일정을 열 수가 없고,
+       빗나가면 셀의 dateClick이 잡혀 '새 일정' 다이얼로그가 뜨는 상태가 됐다. */
     .fc-server .fc-daygrid-event {
-      margin-top: 1px;
+      margin-top: 2px;
       padding: 0;
-      min-height: 3px;
-      border-radius: 2px;
+      min-height: 14px;
+      border-radius: 3px;
       font-size: 0;
-      line-height: 3px;
+      line-height: 14px;
     }
     .fc-server .fc-daygrid-event .fc-event-time,
     .fc-server .fc-daygrid-event .fc-event-title {
@@ -228,12 +230,30 @@
     }
     .fc-server .fc-daygrid-more-link {
       font-size: 10px;
+      padding: 1px 2px;
+    }
+
+    /* '+N' 팝오버는 좁은 화면에서 제목을 읽고 고르는 **유일한** 곳이다.
+       팝오버는 body가 아니라 .fc-view-harness로 포탈되므로(@fullcalendar/core
+       internal-common.js의 updateParentEl) 위 규칙이 여기까지 걸린다 —
+       그대로 두면 일정을 확인할 방법이 아예 없어진다. 되돌린다. */
+    .fc-server .fc-popover .fc-daygrid-event {
+      min-height: 32px;
+      padding: 4px 6px;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .fc-server .fc-popover .fc-daygrid-event .fc-event-time,
+    .fc-server .fc-popover .fc-daygrid-event .fc-event-title {
+      display: inline;
     }
   }
 }
 
 /* FullCalendar 더보기(+N) 팝오버.
-   주의: body로 포탈되며, Tailwind는 @layer components 안의 "미사용" 셀렉터(.fc-popover는
+   포탈 대상은 body가 아니라 가장 가까운 .fc-view-harness다(= .fc-server 안쪽).
+   따라서 .fc-server 하위 규칙이 팝오버에도 걸린다 — 모바일 규칙을 넣을 때 주의.
+   주의: Tailwind는 @layer components 안의 "미사용" 셀렉터(.fc-popover는
    소스에 안 나타남)를 빌드에서 제거한다 → @layer 밖 '일반 CSS'로 작성해 항상 유지되게 한다.
    (기존엔 규칙이 통째로 퍼지되어 배경이 투명하게 보이던 버그) */
 .fc-popover {
