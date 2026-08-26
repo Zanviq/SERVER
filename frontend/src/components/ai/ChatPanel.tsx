@@ -17,33 +17,31 @@ interface Msg {
   pending?: boolean;
 }
 
+// 스킬 이름 -> 사람이 읽는 이름. 여기 없으면 AI 단계에 raw 이름이 그대로 뜬다
+// (bulk_update_calendar_events가 그렇게 보였다). 스킬을 추가하면 여기도 채운다.
 const SKILL_LABEL: Record<string, string> = {
   think: "생각 정리",
-  list_files: "파일 목록",
-  read_file: "파일 읽기",
-  search_files: "파일 검색",
-  write_text_file: "파일 작성",
-  append_text_file: "파일 덧붙이기",
-  delete_path: "파일 삭제",
+  // 문서(파일·노트 통합)
+  list_documents: "문서 목록",
+  read_document: "문서 읽기",
+  search_documents: "문서 검색",
+  write_document: "문서 작성",
+  append_document: "문서 덧붙이기",
+  delete_document: "문서 삭제",
+  rename_document: "이름 변경",
+  move_document: "문서 이동",
   create_folder: "폴더 생성",
-  move_path: "파일 이동",
-  list_notes: "노트 목록",
-  read_note: "노트 읽기",
-  write_note: "노트 작성",
-  append_note: "노트 덧붙이기",
-  delete_note: "노트 삭제",
-  rename_note: "노트 이름변경",
-  search_notes: "노트 검색",
-  note_backlinks: "백링크 조회",
+  document_backlinks: "백링크 조회",
+  // 캘린더
   list_calendar_events: "일정 조회",
   create_calendar_event: "일정 생성",
   update_calendar_event: "일정 수정",
+  bulk_update_calendar_events: "일정 일괄 수정",
   delete_calendar_event: "일정 삭제",
   find_free_slots: "빈 시간 찾기",
   get_system_status: "시스템 상태",
 };
 
-/** 성공 시 캘린더 새로고침을 트리거해야 하는 스킬들 */
 // 어떤 스킬이 무엇을 바꾸는지는 **백엔드가 알려준다**(tool_result.mutates).
 // 여기에 이름 목록을 두면 새 스킬이 생길 때마다 같이 고쳐야 하고, 빠뜨리면
 // "AI는 고쳤다는데 화면은 그대로"가 된다(bulk_update_calendar_events에서 실제로 그랬다).
