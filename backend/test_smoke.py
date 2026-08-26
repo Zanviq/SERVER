@@ -901,6 +901,41 @@ def test_ai_react_runs_all_parallel_calls():
     assert all("function_response" in p for p in resp_turn["parts"])
 
 
+def test_mutating_skills_declare_what_they_change():
+    """상태를 바꾸는 스킬은 mutates를 선언해야 한다.
+
+    프런트는 tool_result.mutates를 보고 해당 화면을 새로고침한다. 선언이 빠지면
+    "AI는 고쳤다는데 화면은 그대로"가 되고, 새로고침해야 보인다
+    (bulk_update_calendar_events를 추가했을 때 실제로 그랬다).
+    """
+    from backend.ai.skills import ALL_SKILLS
+
+    by_name = {s.name: s for s in ALL_SKILLS}
+    expect_calendar = {
+        "create_calendar_event", "update_calendar_event",
+        "bulk_update_calendar_events", "delete_calendar_event",
+    }
+    expect_documents = {
+        "write_document", "append_document", "delete_document",
+        "rename_document", "move_document", "create_folder",
+    }
+    for n in expect_calendar:
+        assert by_name[n].mutates == "calendar", f"{n}이 mutates를 선언하지 않았다"
+    for n in expect_documents:
+        assert by_name[n].mutates == "documents", f"{n}이 mutates를 선언하지 않았다"
+
+    # 조회 전용은 빈 값이어야 한다(불필요한 새로고침 방지)
+    for n in ("list_calendar_events", "find_free_slots", "list_documents",
+              "read_document", "search_documents", "document_backlinks"):
+        assert by_name[n].mutates == "", f"{n}은 조회인데 mutates가 있다"
+
+    # 이름으로 미루어 바꾸는 것 같은데 선언이 없는 스킬이 새로 생기면 잡는다
+    verbs = ("create_", "update_", "delete_", "write_", "append_", "rename_", "move_", "bulk_")
+    missing = [s.name for s in ALL_SKILLS
+               if s.name.startswith(verbs) and not s.mutates]
+    assert not missing, f"mutates 선언이 빠진 스킬: {missing}"
+
+
 def test_bulk_update_calendar_events():
     """여러 일정 한 번에 수정 — 조건으로 고르고, 반복은 시리즈로 한 번만.
 

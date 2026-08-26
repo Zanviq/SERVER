@@ -33,6 +33,14 @@ class SkillBase(ABC):
     description: str = ""
     parameters: dict = {}
 
+    #: 이 스킬이 성공하면 무엇이 바뀌는가. 프런트가 그 화면을 새로고침하는 데 쓴다.
+    #: 예: "calendar" | "documents". 조회 전용 스킬은 빈 문자열.
+    #:
+    #: 프런트가 스킬 이름 목록을 들고 판단하면, 새 스킬을 추가할 때마다 그 목록을
+    #: 같이 고쳐야 하고 빠뜨리면 "고쳐졌는데 화면이 안 바뀌는" 증상이 된다
+    #: (실제로 bulk_update_calendar_events에서 그랬다). 바뀌는 쪽이 선언한다.
+    mutates: str = ""
+
     @abstractmethod
     def run(self, args: dict, ctx: SkillContext) -> SkillResult: ...
 

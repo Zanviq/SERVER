@@ -210,6 +210,8 @@ export interface AiEvent {
   ok?: boolean;
   message?: string;
   text?: string;
+  /** 이 스킬이 성공하면 바뀌는 대상("calendar" | "documents"). 조회면 빈 값. */
+  mutates?: string;
 }
 
 export interface ChatTurn {

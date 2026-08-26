@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { CalEvent } from "../../lib/api";
 
@@ -25,12 +25,15 @@ export function EventDialog({
   onClose,
   onSave,
   onDelete,
+  busy = false,
 }: {
   open: boolean;
   initial: Partial<CalEvent> | null;
   onClose: () => void;
   onSave: (e: Partial<CalEvent>) => void;
   onDelete?: (id: string) => void;
+  /** 저장/삭제 요청이 진행 중. 버튼을 잠그고 진행 표시를 낸다. */
+  busy?: boolean;
 }) {
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
@@ -164,13 +167,17 @@ export function EventDialog({
 
         <div className="flex items-center justify-between pt-1">
           {isEdit && onDelete ? (
-            <button onClick={() => onDelete(initial!.id!)} className="btn btn-danger">
+            <button onClick={() => onDelete(initial!.id!)} disabled={busy} className="btn btn-danger">
               <Trash2 size={14} /> 삭제
             </button>
           ) : <span />}
           <div className="flex gap-2">
-            <button onClick={onClose} className="btn btn-ghost">취소</button>
-            <button onClick={submit} className="btn btn-primary">저장</button>
+            <button onClick={onClose} disabled={busy} className="btn btn-ghost">취소</button>
+            {/* 왕복이 끝날 때까지 아무 표시가 없으면 멈춘 것처럼 보이고,
+                연타하면 같은 일정이 두 번 만들어진다 — 잠그고 진행을 보여준다. */}
+            <button onClick={submit} disabled={busy} className="btn btn-primary">
+              {busy ? <><Loader2 size={14} className="animate-spin" /> 저장 중…</> : '저장'}
+            </button>
           </div>
         </div>
       </div>

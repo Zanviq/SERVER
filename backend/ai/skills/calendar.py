@@ -138,6 +138,7 @@ class ListCalendarEvents(SkillBase):
 
 
 class CreateCalendarEvent(SkillBase):
+    mutates = "calendar"
     name = "create_calendar_event"
     description = "새 일정을 만든다. 반복(recurrence)·알림(remind_minutes)도 지정 가능."
     parameters = {
@@ -187,6 +188,7 @@ class CreateCalendarEvent(SkillBase):
 
 
 class UpdateCalendarEvent(SkillBase):
+    mutates = "calendar"
     name = "update_calendar_event"
     description = "기존 일정을 수정한다. event_id는 list_calendar_events로 얻는다."
     parameters = {
@@ -233,6 +235,7 @@ class BulkUpdateCalendarEvents(SkillBase):
     그래서 고르기·중복 제거·적용을 한 번에 처리한다.
     """
 
+    mutates = "calendar"
     name = "bulk_update_calendar_events"
     description = (
         "여러 일정을 한 번에 수정한다(제목 앞/뒤에 말 붙이기·치환, 색 변경). "
@@ -373,6 +376,7 @@ class BulkUpdateCalendarEvents(SkillBase):
 
 
 class DeleteCalendarEvent(SkillBase):
+    mutates = "calendar"
     name = "delete_calendar_event"
     description = "일정을 삭제한다. 반복 인스턴스 id(...@날짜)면 해당 회차만 삭제."
     parameters = {

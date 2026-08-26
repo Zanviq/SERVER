@@ -33,6 +33,7 @@ export function Calendar() {
   const [dialog, setDialog] = useState<Partial<CalEvent> | null>(null);
   const [source, setSource] = useState("internal");
   const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false); // 저장/삭제 왕복 중
   const [chatColor, setChatColor] = useState<string | null>(null); // AI 채팅에서 지정할 색
   const range = useRef<{ from?: string; to?: string }>({});
 
@@ -79,30 +80,49 @@ export function Calendar() {
   };
 
   const save = async (e: Partial<CalEvent>) => {
+    if (busy) return; // 연타로 같은 일정이 두 번 만들어지는 것을 막는다
+    setBusy(true);
     try {
+      let saved: CalEvent;
       if (e.id) {
         // 반복 일정 인스턴스 편집은 시리즈 메타만 수정(시작/종료시간 보존)
         const payload = e.id.includes("@")
           ? { ...e, start: undefined, end: undefined, allDay: undefined }
           : e;
-        await api.calUpdate(e.id, payload);
-      } else await api.calCreate(e);
+        saved = await api.calUpdate(e.id, payload);
+      } else saved = await api.calCreate(e);
       setDialog(null);
       toast.ok("저장됨");
+      // 서버가 돌려준 값을 바로 화면에 반영한다. reload()만 기다리면 왕복이 한 번 더
+      // 걸려 "저장했는데 잠깐 안 보이는" 구간이 생긴다.
+      // 반복 일정은 응답이 시리즈 1건이라 인스턴스로 펼치는 건 reload()에 맡긴다.
+      if (saved && (saved.recurrence ?? "none") === "none") {
+        setEvents((prev) => {
+          const rest = prev.filter((x) => x.id !== saved.id && x.id !== e.id);
+          return [...rest, saved];
+        });
+      }
       reload();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "저장 실패");
+    } finally {
+      setBusy(false);
     }
   };
 
   const del = async (id: string) => {
+    if (busy) return;
+    setBusy(true);
     try {
       await api.calDelete(id);
       setDialog(null);
       toast.ok("삭제됨");
+      setEvents((prev) => prev.filter((x) => x.id !== id)); // 즉시 사라지게
       reload();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "삭제 실패");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -208,6 +228,7 @@ export function Calendar() {
         </div>
       </div>
       <EventDialog
+        busy={busy}
         open={!!dialog}
         initial={dialog}
         onClose={() => setDialog(null)}

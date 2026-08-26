@@ -44,11 +44,9 @@ const SKILL_LABEL: Record<string, string> = {
 };
 
 /** 성공 시 캘린더 새로고침을 트리거해야 하는 스킬들 */
-const CALENDAR_MUTATIONS = new Set([
-  "create_calendar_event",
-  "update_calendar_event",
-  "delete_calendar_event",
-]);
+// 어떤 스킬이 무엇을 바꾸는지는 **백엔드가 알려준다**(tool_result.mutates).
+// 여기에 이름 목록을 두면 새 스킬이 생길 때마다 같이 고쳐야 하고, 빠뜨리면
+// "AI는 고쳤다는데 화면은 그대로"가 된다(bulk_update_calendar_events에서 실제로 그랬다).
 
 export const DEFAULT_SUGGESTIONS = [
   "내 노트 목록 보여줘",
@@ -61,7 +59,7 @@ interface ChatPanelProps {
   /** 빈 화면에 보여줄 추천 프롬프트 */
   suggestions?: string[];
   /** 캘린더 등 외부 상태를 바꾸는 스킬이 성공했을 때 호출 (예: 목록 새로고침) */
-  onToolSuccess?: (name: string) => void;
+  onToolSuccess?: (mutated: string) => void;
   /** 컨테이너 추가 클래스 (높이 등은 부모가 제어) */
   className?: string;
   /** 입력창 바로 위에 렌더할 요소 (예: 색상 칩) */
@@ -136,7 +134,7 @@ export function ChatPanel({
             }
             return { ...m, steps };
           });
-          if (e.ok && e.name && CALENDAR_MUTATIONS.has(e.name)) onToolSuccess?.(e.name);
+          if (e.ok && e.mutates) onToolSuccess?.(e.mutates);
         } else if (e.type === "text") {
           patchLast((m) => ({ ...m, text: e.text ?? "" }));
         } else if (e.type === "error") {

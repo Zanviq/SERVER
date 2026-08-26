@@ -155,6 +155,7 @@ class ReadDocument(SkillBase):
 
 
 class WriteDocument(SkillBase):
+    mutates = "documents"
     name = "write_document"
     description = "문서를 만들거나 덮어쓴다(마크다운, [[위키링크]] 가능). 확장자를 안 적으면 .md."
     parameters = {
@@ -178,6 +179,7 @@ class WriteDocument(SkillBase):
 
 
 class AppendDocument(SkillBase):
+    mutates = "documents"
     name = "append_document"
     description = "기존 문서 끝에 내용을 덧붙인다(없으면 생성). 일지·목록 누적에 유용."
     parameters = {
@@ -204,6 +206,7 @@ class AppendDocument(SkillBase):
 
 
 class DeleteDocument(SkillBase):
+    mutates = "documents"
     name = "delete_document"
     description = "문서나 폴더를 휴지통으로 보낸다(웹 휴지통에서 복구 가능)."
     parameters = {
@@ -232,6 +235,7 @@ class DeleteDocument(SkillBase):
 
 
 class RenameDocument(SkillBase):
+    mutates = "documents"
     name = "rename_document"
     description = "문서 이름을 바꾼다(같은 폴더 유지)."
     parameters = {
@@ -266,6 +270,7 @@ class RenameDocument(SkillBase):
 
 
 class MoveDocument(SkillBase):
+    mutates = "documents"
     name = "move_document"
     description = "문서를 다른 폴더로 옮긴다(이름 유지)."
     parameters = {
@@ -297,6 +302,7 @@ class MoveDocument(SkillBase):
 
 
 class CreateFolder(SkillBase):
+    mutates = "documents"
     name = "create_folder"
     description = "새 폴더를 만든다."
     parameters = {

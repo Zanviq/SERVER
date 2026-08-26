@@ -134,6 +134,8 @@ def run(
                     "name": name,
                     "ok": skill_result.ok,
                     "message": skill_result.message,
+                    # 무엇이 바뀌었는지 스킬이 직접 알려준다 → 프런트가 해당 화면만 새로고침
+                    "mutates": getattr(registry.get(name), "mutates", "") or "",
                 }
 
                 call_parts.append({"function_call": {"name": name, "args": args}})
