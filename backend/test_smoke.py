@@ -936,6 +936,84 @@ def test_mutating_skills_declare_what_they_change():
     assert not missing, f"mutates 선언이 빠진 스킬: {missing}"
 
 
+def test_calendar_bulk_create_delete_and_trash_restore():
+    """일괄 생성 → 일괄 삭제 → 휴지통(일정) → 복원."""
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    from backend.trash import KIND_DOCUMENT, KIND_EVENT, counts_by_kind, list_trash
+
+    s = get_settings()
+    u = SessionUser(username="bulkcrud", display_name="BD", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-26")
+    reg = default_registry()
+
+    # 일괄 생성 — dry_run은 만들지 않는다
+    payload = {"events": [
+        {"title": "스탠드업 월", "start": "2026-09-07T09:00:00", "end": "2026-09-07T09:15:00"},
+        {"title": "스탠드업 화", "start": "2026-09-08T09:00:00", "end": "2026-09-08T09:15:00"},
+        {"title": "스탠드업 수", "start": "2026-09-09T09:00:00", "end": "2026-09-09T09:15:00"},
+    ], "color": "하늘"}
+    dry = reg.dispatch("bulk_create_calendar_events", {**payload, "dry_run": True}, ctx)
+    assert dry.ok and dry.data["count"] == 3
+    assert not reg.dispatch("list_calendar_events",
+                            {"from_date": "2026-09-01", "to_date": "2026-09-30"}, ctx).data["events"]
+
+    made = reg.dispatch("bulk_create_calendar_events", payload, ctx)
+    assert made.ok and made.data["count"] == 3, made.data
+    assert all(e["color"] == "7" for e in made.data["created"])  # 하늘 = 7
+
+    # 모르는 색은 하나라도 있으면 거절(일부만 만들어지면 더 곤란하다)
+    bad = reg.dispatch("bulk_create_calendar_events",
+                       {"events": [{"title": "x", "start": "2026-09-10T09:00:00", "color": "민트색"}]}, ctx)
+    assert not bad.ok and bad.error_code == "invalid"
+
+    # 일괄 삭제 — dry_run은 지우지 않는다
+    dry_del = reg.dispatch("bulk_delete_calendar_events",
+                           {"from_date": "2026-09-01", "to_date": "2026-09-30",
+                            "title_contains": "스탠드업", "dry_run": True}, ctx)
+    assert dry_del.ok and dry_del.data["count"] == 3
+    assert len(reg.dispatch("list_calendar_events",
+               {"from_date": "2026-09-01", "to_date": "2026-09-30"}, ctx).data["events"]) == 3
+
+    gone = reg.dispatch("bulk_delete_calendar_events",
+                        {"from_date": "2026-09-01", "to_date": "2026-09-30",
+                         "title_contains": "스탠드업"}, ctx)
+    assert gone.ok and gone.data["count"] == 3, gone.data
+    assert not reg.dispatch("list_calendar_events",
+                            {"from_date": "2026-09-01", "to_date": "2026-09-30"}, ctx).data["events"]
+
+    # 휴지통의 '일정' 갈래에 들어가 있어야 한다
+    ev_entries = list_trash(u, s, KIND_EVENT)
+    assert len(ev_entries) == 3, ev_entries
+    assert all(e["kind"] == KIND_EVENT for e in ev_entries)
+    assert {e["name"] for e in ev_entries} == {"스탠드업 월", "스탠드업 화", "스탠드업 수"}
+    assert all(e.get("event_start", "").startswith("2026-09") for e in ev_entries)
+    c = counts_by_kind(u, s)
+    assert c[KIND_EVENT] == 3 and c["all"] >= 3
+
+    # 문서 갈래에는 안 섞인다
+    assert all(e["kind"] == KIND_DOCUMENT for e in list_trash(u, s, KIND_DOCUMENT))
+
+    # 복원 → 캘린더에 다시 생긴다
+    from backend.trash import restore as trash_restore
+
+    back = trash_restore(ev_entries[0]["id"], u, s)
+    assert back["ok"] and back["kind"] == KIND_EVENT
+    restored = reg.dispatch("list_calendar_events",
+                            {"from_date": "2026-09-01", "to_date": "2026-09-30"}, ctx).data["events"]
+    assert len(restored) == 1
+    assert restored[0]["title"] == ev_entries[0]["name"]
+    assert restored[0]["color"] == "7"          # 색·시간이 보존된다
+    assert restored[0]["start"].startswith("2026-09")
+    # 복원한 항목은 휴지통에서 빠진다
+    assert len(list_trash(u, s, KIND_EVENT)) == 2
+
+    # 안전장치: 조건 없는 일괄 삭제는 거절
+    assert not reg.dispatch("bulk_delete_calendar_events", {}, ctx).ok
+
+
 def test_calendar_color_filter_guardrails():
     """모르는 색은 거절하고, 조건에 안 맞으면 왜 없는지 알려 준다.
 
@@ -1627,6 +1705,7 @@ if __name__ == "__main__":
     test_calendar_lifecycle()
     test_ai_react_chains_skills()
     test_ai_react_runs_all_parallel_calls()
+    test_calendar_bulk_create_delete_and_trash_restore()
     test_calendar_color_filter_guardrails()
     test_bulk_update_calendar_events()
     test_ai_skill_catalog_and_ops()

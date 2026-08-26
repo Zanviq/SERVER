@@ -244,6 +244,12 @@ def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict)
     raise HTTPException(status_code=404, detail="이벤트를 찾을 수 없습니다.")
 
 
+def find_event(user: SessionUser, settings: Settings, eid: str) -> dict | None:
+    """id로 일정 하나(반복은 시리즈 원본). 삭제 전 휴지통에 담을 때 쓴다."""
+    bid = _base_id(eid)
+    return next((e for e in _load(user, settings) if e.get("id") == bid), None)
+
+
 def delete_event(user: SessionUser, settings: Settings, eid: str) -> None:
     """단일 발생(id@date)이면 예외 추가, 아니면 시리즈 전체 삭제."""
     with json_store.lock_for(_events_path(user, settings)):

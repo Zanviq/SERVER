@@ -196,6 +196,12 @@ class GoogleCalendar:
         g = self._svc.events().patch(calendarId=self._cid, eventId=eid, body=_to_google(merged)).execute()
         return _to_internal(g)
 
+    def get(self, eid: str) -> dict:
+        """일정 하나. 반복 인스턴스 id(`시리즈_20260305T100000Z`)도 그대로 받는다."""
+        return _to_internal(
+            self._svc.events().get(calendarId=self._cid, eventId=eid).execute()
+        )
+
     def delete(self, eid: str) -> None:
         self._svc.events().delete(calendarId=self._cid, eventId=eid).execute()
 

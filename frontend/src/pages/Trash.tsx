@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Trash2, RotateCcw, XCircle, Loader2, FolderOpen, FileText, NotebookPen } from "lucide-react";
+import { Trash2, RotateCcw, XCircle, Loader2, FolderOpen, FileText, NotebookPen, CalendarDays } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { Modal } from "../components/ui/Modal";
 import { api, TrashEntry } from "../lib/api";
@@ -11,19 +11,30 @@ function fmt(ts: number): string {
   return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/** 휴지통 갈래. 문서와 일정이 섞이면 찾기 어려워 탭으로 나눈다. */
+const TABS = [
+  { key: "", label: "전체" },
+  { key: "document", label: "문서" },
+  { key: "event", label: "일정" },
+] as const;
+
 export function Trash() {
   const [items, setItems] = useState<TrashEntry[] | null>(null);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [tab, setTab] = useState<string>("");
   const [busy, setBusy] = useState<string | null>(null);
   const [emptyOpen, setEmptyOpen] = useState(false);
 
   const reload = useCallback(async () => {
     try {
-      setItems(await api.trashList());
+      const [list, c] = await Promise.all([api.trashList(tab), api.trashCounts()]);
+      setItems(list);
+      setCounts(c);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "휴지통 로드 실패");
       setItems([]);
     }
-  }, []);
+  }, [tab]);
 
   useEffect(() => {
     reload();
@@ -81,9 +92,29 @@ export function Trash() {
       }
     >
       <div className="card overflow-hidden">
+        {/* 문서와 일정이 한 목록에 섞이면 찾기 어렵다 — 갈래로 나눠 본다 */}
+        <div className="flex flex-wrap items-center gap-1 border-b border-line px-3 py-2">
+          {TABS.map((t) => {
+            const n = t.key === "" ? counts.all ?? 0 : counts[t.key] ?? 0;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                  tab === t.key ? "bg-accent-muted text-accent-fg" : "text-fg-muted hover:bg-hovered hover:text-fg"
+                }`}
+              >
+                {t.label}
+                <span className="text-[11.5px] opacity-70">{n}</span>
+              </button>
+            );
+          })}
+        </div>
         <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
           <span className="label">삭제된 항목 {items?.length ?? 0}</span>
-          <span className="text-[12px] text-fg-muted">복원하면 원래 위치로 돌아갑니다</span>
+          <span className="text-[12px] text-fg-muted">
+            {tab === "event" ? "복원하면 캘린더에 다시 만들어집니다" : "복원하면 원래 위치로 돌아갑니다"}
+          </span>
         </div>
 
         {items === null ? (
@@ -93,19 +124,26 @@ export function Trash() {
         ) : items.length === 0 ? (
           <div className="flex h-48 flex-col items-center justify-center gap-2 text-fg-muted">
             <Trash2 size={28} className="text-fg-subtle" />
-            <span className="text-[13px]">휴지통이 비어 있습니다</span>
+            <span className="text-[13px]">
+              {tab === "event" ? "삭제된 일정이 없습니다"
+                : tab === "document" ? "삭제된 문서가 없습니다"
+                : "휴지통이 비어 있습니다"}
+            </span>
           </div>
         ) : (
           <ul className="divide-y divide-line">
             {items.map((e) => {
-              const Icon = icon(e);
+              const isEvent = e.kind === "event";
+              const Icon = isEvent ? CalendarDays : icon(e);
               return (
                 <li key={e.id} className="flex items-center gap-3 px-4 py-2.5">
                   <Icon size={16} className="shrink-0 text-fg-muted" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13.5px] font-medium">{e.name}</p>
                     <p className="truncate text-[11.5px] text-fg-muted">
-                      {e.orig_rel} · {fmt(e.deleted_at)}
+                      {isEvent
+                        ? `일정 · ${(e.event_start ?? "").slice(0, 16).replace("T", " ")} · 삭제 ${fmt(e.deleted_at)}`
+                        : `${e.orig_rel} · ${fmt(e.deleted_at)}`}
                     </p>
                   </div>
                   <button

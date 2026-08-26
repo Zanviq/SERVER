@@ -36,12 +36,35 @@ def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict)
     return calendar_store.update_event(user, settings, eid, payload)
 
 
+def find_event(user: SessionUser, settings: Settings, eid: str) -> dict | None:
+    """id로 일정 하나를 찾는다(반복은 인스턴스 id도 받는다). 삭제 전 보관용."""
+    gc = get_google_calendar(settings, user.username)
+    try:
+        if gc:
+            return gc.get(eid)
+        return calendar_store.find_event(user, settings, eid)
+    except Exception:  # noqa: BLE001 - 못 찾아도 삭제 자체는 진행한다
+        return None
+
+
 def delete_event(user: SessionUser, settings: Settings, eid: str) -> None:
+    """삭제 전에 휴지통에 담는다 — 실수로 지워도 되돌릴 수 있게.
+
+    보관에 실패해도 삭제는 진행한다(사용자가 요청한 동작을 막지 않는다).
+    """
+    snapshot = find_event(user, settings, eid)
     gc = get_google_calendar(settings, user.username)
     if gc:
         gc.delete(eid.split("@", 1)[0])
     else:
         calendar_store.delete_event(user, settings, eid)
+    if snapshot:
+        try:
+            from . import trash
+
+            trash.move_event_to_trash(snapshot, user, settings)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def due_reminders(user: SessionUser, settings: Settings, now_iso: str, within: int) -> list[dict]:

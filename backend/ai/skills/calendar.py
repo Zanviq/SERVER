@@ -460,6 +460,193 @@ class BulkUpdateCalendarEvents(SkillBase):
         )
 
 
+class BulkCreateCalendarEvents(SkillBase):
+    """여러 일정을 한 번에 만든다."""
+
+    mutates = "calendar"
+    name = "bulk_create_calendar_events"
+    description = (
+        "여러 일정을 한 번에 만든다(예: '다음 주 월~금 09시 스탠드업 잡아줘', "
+        "'9/1, 9/8, 9/15에 스터디'). 각 항목은 create_calendar_event와 같은 형식이며, "
+        "color·remind_minutes를 빼면 events 바깥의 기본값(default_color 등)을 쓴다. "
+        "반복 규칙으로 표현되는 일정이라면 이 스킬 대신 create_calendar_event의 recurrence를 쓰세요."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "events": {
+                "type": "array",
+                "description": "만들 일정들",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "start": {"type": "string", "description": "ISO 시작 (예: 2026-09-01T09:00:00)"},
+                        "end": {"type": "string"},
+                        "all_day": {"type": "boolean"},
+                        "description": {"type": "string"},
+                        "color": {"type": "string"},
+                        "remind_minutes": {"type": "integer"},
+                    },
+                    "required": ["title", "start"],
+                },
+            },
+            "color": {"type": "string", "description": "항목에 색이 없을 때 쓸 공통 색."},
+            "remind_minutes": {"type": "integer", "description": "항목에 없을 때 쓸 공통 알림(분)."},
+            "dry_run": {"type": "boolean", "description": "true면 만들지 않고 목록만 돌려준다."},
+        },
+        "required": ["events"],
+    }
+
+    MAX = 100
+
+    def run(self, args, ctx):
+        items = args.get("events") or []
+        if not items:
+            return SkillResult(ok=False, error_code="invalid", message="만들 일정이 없습니다.")
+        if len(items) > self.MAX:
+            return SkillResult(
+                ok=False, error_code="too_many",
+                message=f"한 번에 {self.MAX}개까지만 만들 수 있습니다({len(items)}개 요청).",
+            )
+        cal = _cal_prefs(ctx)
+        default_color = str(cal.get("default_color", "2"))
+        try:
+            common_color = _strict_color(args["color"]) if args.get("color") else None
+        except _BadColor as e:
+            return SkillResult(ok=False, error_code="invalid", message=str(e))
+        common_remind = args.get("remind_minutes")
+
+        planned = []
+        for it in items:
+            if not it.get("title") or not it.get("start"):
+                return SkillResult(ok=False, error_code="invalid",
+                                   message="각 일정에 title과 start가 있어야 합니다.")
+            try:
+                color = _strict_color(it["color"]) if it.get("color") else (common_color or default_color)
+            except _BadColor as e:
+                return SkillResult(ok=False, error_code="invalid", message=str(e))
+            remind = it.get("remind_minutes", common_remind)
+            planned.append({
+                "title": it["title"],
+                "start": it["start"],
+                "end": it.get("end", it["start"]),
+                "allDay": bool(it.get("all_day", False)),
+                "description": it.get("description", ""),
+                "color": color,
+                "recurrence": "none",
+                "remind_minutes": int(remind) if remind is not None else int(cal.get("default_remind", 0)),
+            })
+
+        if args.get("dry_run"):
+            return SkillResult(
+                ok=True,
+                message=f"{len(planned)}개를 만들 예정입니다(아직 만들지 않음).",
+                data={"planned": planned, "count": len(planned), "dry_run": True},
+            )
+
+        created, failed = [], []
+        for p in planned:
+            try:
+                created.append(calendar_service.create_event(ctx.user, ctx.settings, p))
+            except Exception as e:  # noqa: BLE001
+                failed.append({"title": p["title"], "start": p["start"], "error": getattr(e, "detail", str(e))})
+        msg = f"{len(created)}개 일정을 만들었습니다"
+        if failed:
+            msg += f" — {len(failed)}개 실패"
+        return SkillResult(ok=bool(created) or not failed, message=msg,
+                           data={"created": created, "failed": failed, "count": len(created)})
+
+
+class BulkDeleteCalendarEvents(SkillBase):
+    """여러 일정을 한 번에 지운다(휴지통으로)."""
+
+    mutates = "calendar"
+    name = "bulk_delete_calendar_events"
+    description = (
+        "여러 일정을 한 번에 삭제한다. 기간·색·제목으로 고른다 "
+        "(예: '9월 초록색 테스트 일정 전부 지워줘'). 지운 일정은 휴지통의 '일정'에 들어가 "
+        "되돌릴 수 있다. 되돌릴 수 있다 해도 삭제는 되돌리기 번거로우니, "
+        "반드시 먼저 dry_run=true로 목록을 보여주고 사용자 확인을 받은 뒤 실행하세요."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "from_date": {"type": "string"},
+            "to_date": {"type": "string"},
+            "color": {"type": "string", "description": "이 색만 (이름 또는 colorId)."},
+            "title_contains": {"type": "string", "description": "제목에 이 말이 든 것만."},
+            "event_ids": {"type": "array", "items": {"type": "string"},
+                          "description": "직접 고른 id들. 주면 다른 조건보다 우선."},
+            "dry_run": {"type": "boolean", "description": "true면 지우지 않고 대상만 돌려준다."},
+        },
+    }
+
+    MAX = 100
+
+    def run(self, args, ctx):
+        ids = [str(i) for i in (args.get("event_ids") or [])]
+        if not (ids or args.get("color") or args.get("title_contains")
+                or args.get("from_date") or args.get("to_date")):
+            return SkillResult(ok=False, error_code="invalid",
+                               message="대상이 너무 넓습니다. 기간·색·제목 중 하나로 좁혀 주세요.")
+        try:
+            events, frm, to = _select(args, ctx)
+        except _BadColor as e:
+            return SkillResult(ok=False, error_code="invalid", message=str(e))
+        except Exception as e:  # noqa: BLE001
+            return SkillResult(ok=False, message=f"일정 조회 실패: {getattr(e, 'detail', e)}", error_code="error")
+
+        if ids:
+            want = {_base_id(i) for i in ids}
+            events = [e for e in events if _base_id(e.get("id", "")) in want]
+
+        # 반복은 시리즈당 한 번만 지운다(인스턴스마다 부르면 이미 없는 것을 계속 지운다)
+        by_series: dict[str, dict] = {}
+        for e in events:
+            by_series.setdefault(_base_id(e.get("id", "")), e)
+        targets = list(by_series.values())
+
+        if not targets:
+            data: dict = {"deleted": [], "count": 0}
+            msg = f"지울 일정이 없습니다 ({frm[:10]}~{to[:10]})."
+            hint = _empty_hint(args, ctx, frm, to)
+            if hint:
+                data["hint"] = hint
+                other = hint.get("same_color_other_months")
+                if other:
+                    months = ", ".join(f"{m}({n}건)" for m, n in other.items())
+                    msg += f" 같은 색이 {months}에 있습니다."
+            return SkillResult(ok=True, message=msg, data=data)
+
+        if len(targets) > self.MAX:
+            return SkillResult(ok=False, error_code="too_many",
+                               message=f"대상이 {len(targets)}개로 너무 많습니다(최대 {self.MAX}). 조건을 좁혀 주세요.",
+                               data={"count": len(targets)})
+
+        listing = [{"id": _base_id(e.get("id", "")), "title": e.get("title", ""),
+                    "start": e.get("start", ""), "color": e.get("color", "")} for e in targets]
+        if args.get("dry_run"):
+            return SkillResult(
+                ok=True,
+                message=f"{len(listing)}개가 삭제됩니다(아직 지우지 않음). 확인 후 dry_run 없이 다시 요청하세요.",
+                data={"planned": listing, "count": len(listing), "dry_run": True},
+            )
+
+        deleted, failed = [], []
+        for item in listing:
+            try:
+                calendar_service.delete_event(ctx.user, ctx.settings, item["id"])
+                deleted.append(item)
+            except Exception as e:  # noqa: BLE001
+                failed.append({**item, "error": getattr(e, "detail", str(e))})
+        msg = f"{len(deleted)}개 일정을 삭제했습니다 — 휴지통의 '일정'에서 되돌릴 수 있습니다"
+        if failed:
+            msg += f" ({len(failed)}개 실패)"
+        return SkillResult(ok=bool(deleted) or not failed, message=msg,
+                           data={"deleted": deleted, "failed": failed, "count": len(deleted)})
+
+
 class DeleteCalendarEvent(SkillBase):
     mutates = "calendar"
     name = "delete_calendar_event"

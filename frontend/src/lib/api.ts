@@ -162,7 +162,8 @@ export const api = {
     `${BASE}/api/notes/raw?${q({ path, ...(download ? { download: "true" } : {}) })}`,
 
   // ── 휴지통 ──
-  trashList: () => req<TrashEntry[]>("/api/trash/list"),
+  trashList: (kind = "") => req<TrashEntry[]>(`/api/trash/list?${q({ kind })}`),
+  trashCounts: () => req<Record<string, number>>("/api/trash/counts"),
   trashRestore: (id: string) =>
     req(`/api/trash/restore?${q({ id })}`, { method: "POST" }),
   trashPurge: (id: string) => req(`/api/trash/purge?${q({ id })}`, { method: "DELETE" }),
@@ -308,10 +309,15 @@ export interface NotesTree {
 }
 export interface TrashEntry {
   id: string;
+  /** "document" | "event". 예전 엔트리는 서버가 document로 채워 준다. */
+  kind: string;
   orig_rel: string;
   name: string;
   is_dir: boolean;
   deleted_at: number;
+  /** kind === "event" 일 때만 */
+  event_start?: string;
+  event_color?: string;
 }
 export interface NoteSearchHit {
   path: string;
