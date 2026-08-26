@@ -936,6 +936,69 @@ def test_mutating_skills_declare_what_they_change():
     assert not missing, f"mutates 선언이 빠진 스킬: {missing}"
 
 
+def test_calendar_color_filter_guardrails():
+    """모르는 색은 거절하고, 조건에 안 맞으면 왜 없는지 알려 준다.
+
+    실제로 겪은 두 가지:
+    - "이번 달 초록 일정" 이 0건이면 "없습니다"로 끝나 다음 수가 없었다.
+      정작 그 일정들은 다음 달에 있었다.
+    - resolve_color는 모르는 이름에 기본값을 준다. 그 값을 필터로 쓰면 색 조건이
+      조용히 사라져, 일괄 수정이 기간 내 **전체 일정**을 대상으로 삼는다.
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="colorguard", display_name="CG", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-26")
+    reg = default_registry()
+
+    # 8월엔 연두(2), 9월엔 초록(10)
+    reg.dispatch("create_calendar_event",
+                 {"title": "팀 회의", "start": "2026-08-10T10:00:00", "end": "2026-08-10T11:00:00",
+                  "color": "연두"}, ctx)
+    for d in ("13", "14", "15"):
+        reg.dispatch("create_calendar_event",
+                     {"title": f"수정-테스트{d}", "start": f"2026-09-{d}T10:00:00",
+                      "end": f"2026-09-{d}T11:00:00", "color": "초록"}, ctx)
+
+    # 8월 초록 조회 → 0건이지만, 9월에 있다고 알려 줘야 한다
+    r = reg.dispatch("list_calendar_events",
+                     {"from_date": "2026-08-01", "to_date": "2026-08-31", "color": "초록"}, ctx)
+    assert r.ok and not r.data["events"]
+    hint = r.data.get("hint", {})
+    assert hint.get("same_color_other_months", {}).get("2026-09") == 3, hint
+    assert "2026-09" in r.message, r.message
+    # 그 기간에 어떤 색이 있는지도 준다(초록↔연두 혼동을 풀 수 있게)
+    assert any("연두" in k for k in hint.get("colors_in_window", {})), hint
+
+    # 9월로 잡으면 제대로 나온다 + 접두어 제거도 동작
+    r2 = reg.dispatch("list_calendar_events",
+                      {"from_date": "2026-09-01", "to_date": "2026-09-30", "color": "초록"}, ctx)
+    assert len(r2.data["events"]) == 3
+    rm = reg.dispatch("bulk_update_calendar_events",
+                      {"from_date": "2026-09-01", "to_date": "2026-09-30", "color": "초록",
+                       "replace_from": "수정-", "replace_to": ""}, ctx)
+    assert rm.ok and rm.data["count"] == 3, rm.data
+    names = {e["title"] for e in reg.dispatch("list_calendar_events",
+             {"from_date": "2026-09-01", "to_date": "2026-09-30"}, ctx).data["events"]}
+    assert not any(t.startswith("수정-") for t in names), names
+
+    # 모르는 색은 거절한다 — 조용히 전체를 대상으로 삼으면 안 된다
+    bad = reg.dispatch("list_calendar_events", {"color": "민트색"}, ctx)
+    assert not bad.ok and bad.error_code == "invalid", bad
+    bad2 = reg.dispatch("bulk_update_calendar_events",
+                        {"from_date": "2026-08-01", "to_date": "2026-09-30",
+                         "color": "민트색", "title_prefix": "X-"}, ctx)
+    assert not bad2.ok and bad2.error_code == "invalid", bad2
+    # 거절당했으니 아무것도 안 바뀌어야 한다
+    untouched = {e["title"] for e in reg.dispatch("list_calendar_events",
+                 {"from_date": "2026-08-01", "to_date": "2026-09-30"}, ctx).data["events"]}
+    assert not any(t.startswith("X-") for t in untouched), untouched
+
+
 def test_bulk_update_calendar_events():
     """여러 일정 한 번에 수정 — 조건으로 고르고, 반복은 시리즈로 한 번만.
 
@@ -1564,6 +1627,7 @@ if __name__ == "__main__":
     test_calendar_lifecycle()
     test_ai_react_chains_skills()
     test_ai_react_runs_all_parallel_calls()
+    test_calendar_color_filter_guardrails()
     test_bulk_update_calendar_events()
     test_ai_skill_catalog_and_ops()
     test_ai_blocks_sensitive_files()

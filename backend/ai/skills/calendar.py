@@ -84,16 +84,80 @@ def _matches(ev: dict, color_id: str | None, needle: str | None) -> bool:
     return True
 
 
+class _BadColor(Exception):
+    """색 이름을 못 알아들었다."""
+
+
+def _strict_color(value) -> str:
+    """색 이름 → colorId. 못 알아들으면 **예외**를 던진다.
+
+    resolve_color는 모르는 값에 기본값을 돌려주는데, 필터에 그대로 쓰면
+    빈 문자열이 되어 색 조건이 조용히 사라진다. 그러면 "민트색 일정 이름 바꿔줘"가
+    기간 내 **전체 일정**을 대상으로 삼는다 — 일괄 수정에서는 사고다.
+    """
+    cid = resolve_color(value, "")
+    if not cid:
+        names = ", ".join(sorted({n for n in COLOR_NAMES.values()}))
+        raise _BadColor(f"'{value}'가 어떤 색인지 모르겠습니다. 쓸 수 있는 색: {names}")
+    return cid
+
+
 def _select(args, ctx) -> tuple[list[dict], str, str]:
     """기간·색·제목으로 일정을 고른다. (고른 목록, 시작, 끝)"""
     frm = args.get("from_date")
     to = args.get("to_date")
     if not frm and not to:
         frm, to = _default_window(ctx)
-    color_id = resolve_color(args["color"], "") if args.get("color") else None
+    color_id = _strict_color(args["color"]) if args.get("color") else None
     needle = str(args["title_contains"]).strip().lower() if args.get("title_contains") else None
     events = calendar_service.list_events(ctx.user, ctx.settings, frm, to)
     return [e for e in events if _matches(e, color_id, needle)], frm or "", to or ""
+
+
+def _empty_hint(args, ctx, frm: str, to: str) -> dict:
+    """조건에 맞는 게 하나도 없을 때, 다음 수를 알려 줄 정보를 모은다.
+
+    "없습니다"로 끝나면 사용자는 왜 없는지 모른다(기간을 잘못 잡았는지, 색을
+    잘못 짚었는지). 그 기간에 어떤 색이 있는지와, 찾는 색이 언제 있는지를 준다.
+    """
+    hint: dict = {}
+    try:
+        in_window = calendar_service.list_events(ctx.user, ctx.settings, frm, to)
+    except Exception:  # noqa: BLE001
+        return hint
+    counts: dict[str, int] = {}
+    for e in in_window:
+        cid = str(e.get("color", ""))
+        counts[cid] = counts.get(cid, 0) + 1
+    hint["colors_in_window"] = {COLOR_NAMES.get(c, c): n for c, n in sorted(counts.items())}
+
+    if args.get("color"):
+        try:
+            want = _strict_color(args["color"])
+        except _BadColor:
+            return hint
+        # 찾는 색이 이 기간 밖 어디에 있는지 — 앞뒤 6개월만 본다
+        base = (frm or "")[:10] or (ctx.today or "")[:10]
+        try:
+            anchor = datetime.fromisoformat(base) if base else datetime.now()
+        except ValueError:
+            anchor = datetime.now()
+        wide_from = (anchor - timedelta(days=185)).strftime("%Y-%m-%dT00:00:00")
+        wide_to = (anchor + timedelta(days=185)).strftime("%Y-%m-%dT23:59:59")
+        try:
+            wide = calendar_service.list_events(ctx.user, ctx.settings, wide_from, wide_to)
+        except Exception:  # noqa: BLE001
+            return hint
+        by_month: dict[str, int] = {}
+        for e in wide:
+            if str(e.get("color", "")) != want:
+                continue
+            m = str(e.get("start", ""))[:7]
+            if m:
+                by_month[m] = by_month.get(m, 0) + 1
+        if by_month:
+            hint["same_color_other_months"] = dict(sorted(by_month.items()))
+    return hint
 
 
 class ListCalendarEvents(SkillBase):
@@ -122,18 +186,30 @@ class ListCalendarEvents(SkillBase):
     def run(self, args, ctx):
         try:
             events, frm, to = _select(args, ctx)
+        except _BadColor as e:
+            return SkillResult(ok=False, message=str(e), error_code="invalid")
         except Exception as e:  # noqa: BLE001 - Google API 오류 등
             return SkillResult(ok=False, message=f"일정 조회 실패: {getattr(e, 'detail', e)}", error_code="error")
         cond = []
         if args.get("color"):
-            cond.append(f"색={COLOR_NAMES.get(resolve_color(args['color'], ''), args['color'])}")
+            cond.append(f"색={COLOR_NAMES.get(_strict_color(args['color']), args['color'])}")
         if args.get("title_contains"):
             cond.append(f"제목~'{args['title_contains']}'")
         suffix = (" " + ", ".join(cond)) if cond else ""
+        data: dict = {"events": events}
+        if not events:
+            # 그냥 "없습니다"로 끝내면 사용자가 다음에 뭘 해야 할지 모른다.
+            hint = _empty_hint(args, ctx, frm, to)
+            if hint:
+                data["hint"] = hint
+                other = hint.get("same_color_other_months")
+                if other:
+                    months = ", ".join(f"{m}({n}건)" for m, n in other.items())
+                    suffix += f" — 이 기간엔 없고 {months}에 있습니다"
         return SkillResult(
             ok=True,
             message=f"{len(events)}개 일정 ({frm[:10]}~{to[:10]}){suffix}",
-            data={"events": events},
+            data=data,
         )
 
 
@@ -292,6 +368,9 @@ class BulkUpdateCalendarEvents(SkillBase):
 
         try:
             events, frm, to = _select(args, ctx)
+        except _BadColor as e:
+            # 모르는 색을 그냥 넘기면 색 조건이 사라져 기간 내 전체가 대상이 된다
+            return SkillResult(ok=False, message=str(e), error_code="invalid")
         except Exception as e:  # noqa: BLE001
             return SkillResult(ok=False, message=f"일정 조회 실패: {getattr(e, 'detail', e)}", error_code="error")
 
@@ -330,11 +409,17 @@ class BulkUpdateCalendarEvents(SkillBase):
             })
 
         if not planned:
-            return SkillResult(
-                ok=True,
-                message=f"바꿀 일정이 없습니다 ({frm[:10]}~{to[:10]}). 이미 반영돼 있거나 조건에 맞는 일정이 없습니다.",
-                data={"changed": [], "count": 0},
-            )
+            data: dict = {"changed": [], "count": 0}
+            msg = f"바꿀 일정이 없습니다 ({frm[:10]}~{to[:10]}). 이미 반영돼 있거나 조건에 맞는 일정이 없습니다."
+            if not events:  # 애초에 고른 게 없다 — 왜 없는지 알려 준다
+                hint = _empty_hint(args, ctx, frm, to)
+                if hint:
+                    data["hint"] = hint
+                    other = hint.get("same_color_other_months")
+                    if other:
+                        months = ", ".join(f"{m}({n}건)" for m, n in other.items())
+                        msg += f" 같은 색이 {months}에 있습니다 — 기간을 그쪽으로 잡을까요?"
+            return SkillResult(ok=True, message=msg, data=data)
         if len(planned) > self.MAX:
             return SkillResult(
                 ok=False,
