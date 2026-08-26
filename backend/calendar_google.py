@@ -10,6 +10,7 @@ import logging
 import os
 from datetime import date, timedelta
 
+from .calendar_store import merge_event
 from .config import Settings
 
 logger = logging.getLogger("server.gcal")
@@ -60,6 +61,9 @@ def _build_service(cfg: dict):
         logger.warning("Google Calendar 초기화 실패, 내부 캘린더로 폴백: %s", e)
         return None
 
+
+# 구글 캘린더 배치 권장 상한(한 요청에 50건)
+_BATCH_SIZE = 50
 
 _FREQ = {"daily": "DAILY", "weekly": "WEEKLY", "monthly": "MONTHLY", "yearly": "YEARLY"}
 _FREQ_BACK = {v: k for k, v in _FREQ.items()}
@@ -201,6 +205,102 @@ class GoogleCalendar:
         return _to_internal(
             self._svc.events().get(calendarId=self._cid, eventId=eid).execute()
         )
+
+    def patch_many(self, items: list[tuple[str, dict, dict]]) -> tuple[list[str], list[tuple[str, str]]]:
+        """여러 건을 한 번에 수정. items = [(eid, payload, current)].
+
+        낱개 update()는 건마다 get + patch로 **왕복 2회**다. 78건이면 156회가 되어
+        라즈베리파이에서 1분을 넘고, nginx가 응답을 끊는다(실제로 그렇게 실패했다).
+        여기서는 (1) current를 이미 알고 있으므로 get을 생략하고,
+        (2) 구글 배치 HTTP로 50건씩 묶어 요청 수를 왕복 2회 수준으로 줄인다.
+
+        배치가 막히는 환경도 있으므로 실패하면 순차 patch로 자동 폴백한다.
+        """
+        ok: list[str] = []
+        fail: list[tuple[str, str]] = []
+
+        def _seq(chunk):
+            for eid, payload, current in chunk:
+                try:
+                    body = _to_google(merge_event(payload, current))
+                    self._svc.events().patch(calendarId=self._cid, eventId=eid, body=body).execute()
+                    ok.append(eid)
+                except Exception as e:  # noqa: BLE001
+                    fail.append((eid, str(e)))
+
+        for i in range(0, len(items), _BATCH_SIZE):
+            chunk = items[i:i + _BATCH_SIZE]
+            try:
+                batch = self._svc.new_batch_http_request()
+            except Exception:  # noqa: BLE001 - 배치 미지원
+                _seq(chunk)
+                continue
+
+            def _cb(eid):  # 루프 변수를 그대로 닫으면 전부 마지막 id가 된다
+                def done(_rid, _resp, err):
+                    if err is None:
+                        ok.append(eid)
+                    else:
+                        fail.append((eid, str(err)))
+                return done
+
+            try:
+                for n, (eid, payload, current) in enumerate(chunk):
+                    body = _to_google(merge_event(payload, current))
+                    batch.add(
+                        self._svc.events().patch(calendarId=self._cid, eventId=eid, body=body),
+                        request_id=str(n),
+                        callback=_cb(eid),
+                    )
+                batch.execute()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("배치 수정 실패, 순차로 재시도: %s", e)
+                done_ids = set(ok) | {f[0] for f in fail}
+                _seq([c for c in chunk if c[0] not in done_ids])
+        return ok, fail
+
+    def delete_many(self, eids: list[str]) -> tuple[list[str], list[tuple[str, str]]]:
+        """여러 건을 한 번에 삭제(배치, 실패 시 순차 폴백)."""
+        ok: list[str] = []
+        fail: list[tuple[str, str]] = []
+
+        def _seq(chunk):
+            for eid in chunk:
+                try:
+                    self._svc.events().delete(calendarId=self._cid, eventId=eid).execute()
+                    ok.append(eid)
+                except Exception as e:  # noqa: BLE001
+                    fail.append((eid, str(e)))
+
+        for i in range(0, len(eids), _BATCH_SIZE):
+            chunk = eids[i:i + _BATCH_SIZE]
+            try:
+                batch = self._svc.new_batch_http_request()
+            except Exception:  # noqa: BLE001
+                _seq(chunk)
+                continue
+
+            def _cb(eid):
+                def done(_rid, _resp, err):
+                    if err is None:
+                        ok.append(eid)
+                    else:
+                        fail.append((eid, str(err)))
+                return done
+
+            try:
+                for n, eid in enumerate(chunk):
+                    batch.add(
+                        self._svc.events().delete(calendarId=self._cid, eventId=eid),
+                        request_id=str(n),
+                        callback=_cb(eid),
+                    )
+                batch.execute()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("배치 삭제 실패, 순차로 재시도: %s", e)
+                done_ids = set(ok) | {f[0] for f in fail}
+                _seq([c for c in chunk if c not in done_ids])
+        return ok, fail
 
     def delete(self, eid: str) -> None:
         self._svc.events().delete(calendarId=self._cid, eventId=eid).execute()

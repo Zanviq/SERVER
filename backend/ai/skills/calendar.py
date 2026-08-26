@@ -196,7 +196,11 @@ class ListCalendarEvents(SkillBase):
         if args.get("title_contains"):
             cond.append(f"제목~'{args['title_contains']}'")
         suffix = (" " + ", ".join(cond)) if cond else ""
-        data: dict = {"events": events}
+        # 색 이름을 같이 준다 — id(1~11)만 주면 모델이 "자주"를 달라 해놓고
+        # 보라 결과를 받아도 알아채지 못한다.
+        data: dict = {"events": [
+            {**e, "color_name": COLOR_NAMES.get(str(e.get("color", "")), "")} for e in events
+        ]}
         if not events:
             # 그냥 "없습니다"로 끝내면 사용자가 다음에 뭘 해야 할지 모른다.
             hint = _empty_hint(args, ctx, frm, to)
@@ -439,16 +443,20 @@ class BulkUpdateCalendarEvents(SkillBase):
                 data={"planned": planned, "count": len(planned), "recurring": recurring, "dry_run": True},
             )
 
-        changed, failed = [], []
+        # 한 건씩 부르면 Google은 건마다 get+patch(왕복 2회)라 수십 건에서 응답이 끊긴다.
+        # 바꿀 내용을 여기서 다 만들어 두고 한 번에 넘긴다(배치).
+        items = []
         for p in planned:
-            payload = {"title": p["new_title"]}
+            payload: dict = {"title": p["new_title"]}
             if new_color:
                 payload["color"] = new_color
-            try:
-                calendar_service.update_event(ctx.user, ctx.settings, p["id"], payload)
-                changed.append(p)
-            except Exception as e:  # noqa: BLE001
-                failed.append({"id": p["id"], "title": p["old_title"], "error": getattr(e, "detail", str(e))})
+            items.append((p["id"], payload, by_series[p["id"]]))
+        ok_ids, fail_pairs = calendar_service.update_many(ctx.user, ctx.settings, items)
+        done = set(ok_ids)
+        changed = [p for p in planned if p["id"] in done]
+        err_by_id = dict(fail_pairs)
+        failed = [{"id": p["id"], "title": p["old_title"], "error": err_by_id.get(p["id"], "")}
+                  for p in planned if p["id"] not in done]
 
         msg = f"{len(changed)}개 일정을 수정했습니다 ({frm[:10]}~{to[:10]}){note}"
         if failed:
@@ -633,13 +641,12 @@ class BulkDeleteCalendarEvents(SkillBase):
                 data={"planned": listing, "count": len(listing), "dry_run": True},
             )
 
-        deleted, failed = [], []
-        for item in listing:
-            try:
-                calendar_service.delete_event(ctx.user, ctx.settings, item["id"])
-                deleted.append(item)
-            except Exception as e:  # noqa: BLE001
-                failed.append({**item, "error": getattr(e, "detail", str(e))})
+        # 한 번에 넘긴다(휴지통 보관도 서비스 계층이 함께 처리한다)
+        ok_ids, fail_pairs = calendar_service.delete_many(ctx.user, ctx.settings, targets)
+        done = set(ok_ids)
+        err_by_id = dict(fail_pairs)
+        deleted = [i for i in listing if i["id"] in done]
+        failed = [{**i, "error": err_by_id.get(i["id"], "")} for i in listing if i["id"] not in done]
         msg = f"{len(deleted)}개 일정을 삭제했습니다 — 휴지통의 '일정'에서 되돌릴 수 있습니다"
         if failed:
             msg += f" ({len(failed)}개 실패)"

@@ -244,6 +244,52 @@ def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict)
     raise HTTPException(status_code=404, detail="이벤트를 찾을 수 없습니다.")
 
 
+def update_many(user: SessionUser, settings: Settings,
+                items: list[tuple[str, dict]]) -> tuple[list[str], list[tuple[str, str]]]:
+    """여러 건을 한 번에 수정 — 파일을 한 번만 읽고 한 번만 쓴다.
+
+    낱개 update_event를 78번 부르면 파일 read/write도 78번이다(락도 78번).
+    """
+    ok: list[str] = []
+    fail: list[tuple[str, str]] = []
+    with json_store.lock_for(_events_path(user, settings)):
+        events = _load(user, settings)
+        by_id = {e["id"]: e for e in events}
+        for eid, payload in items:
+            base = _base_id(eid)
+            cur = by_id.get(base)
+            if cur is None:
+                fail.append((eid, "이벤트를 찾을 수 없습니다."))
+                continue
+            try:
+                cur.update(merge_event(payload, cur))
+                ok.append(base)
+            except Exception as e:  # noqa: BLE001
+                fail.append((eid, str(e)))
+        _save(events, user, settings)
+    return ok, fail
+
+
+def delete_many(user: SessionUser, settings: Settings,
+                eids: list[str]) -> tuple[list[str], list[tuple[str, str]]]:
+    """여러 건을 한 번에 삭제(시리즈 단위). 파일 접근 1회."""
+    ok: list[str] = []
+    fail: list[tuple[str, str]] = []
+    with json_store.lock_for(_events_path(user, settings)):
+        events = _load(user, settings)
+        present = {e["id"] for e in events}
+        want: set[str] = set()
+        for eid in eids:
+            base = _base_id(eid)
+            if base in present:
+                want.add(base)
+                ok.append(base)
+            else:
+                fail.append((eid, "이벤트를 찾을 수 없습니다."))
+        _save([e for e in events if e["id"] not in want], user, settings)
+    return ok, fail
+
+
 def find_event(user: SessionUser, settings: Settings, eid: str) -> dict | None:
     """id로 일정 하나(반복은 시리즈 원본). 삭제 전 휴지통에 담을 때 쓴다."""
     bid = _base_id(eid)

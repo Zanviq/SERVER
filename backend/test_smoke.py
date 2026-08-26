@@ -936,6 +936,67 @@ def test_mutating_skills_declare_what_they_change():
     assert not missing, f"mutates 선언이 빠진 스킬: {missing}"
 
 
+def test_bulk_update_uses_one_batched_call():
+    """일괄 수정이 건당 호출로 흩어지지 않아야 한다.
+
+    낱개 update_event를 반복하면 Google에서는 건마다 get+patch(왕복 2회)다.
+    78건 = 156회가 되어 라즈베리파이에서 1분을 넘겼고 nginx가 스트림을 끊어
+    "요청 처리 중 오류"가 떴다. 그래서 서비스 계층의 update_many 한 번으로 모은다.
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    from backend import calendar_service
+
+    s = get_settings()
+    u = SessionUser(username="batchcal", display_name="BC", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-26")
+    reg = default_registry()
+
+    reg.dispatch("bulk_create_calendar_events", {"events": [
+        {"title": f"항목{i}", "start": f"2026-09-{i:02d}T10:00:00", "end": f"2026-09-{i:02d}T11:00:00"}
+        for i in range(1, 13)
+    ], "color": "자주"}, ctx)
+
+    calls = {"single": 0, "many": 0, "sizes": []}
+    real_single = calendar_service.update_event
+    real_many = calendar_service.update_many
+
+    def spy_single(*a, **k):
+        calls["single"] += 1
+        return real_single(*a, **k)
+
+    def spy_many(user, settings, items):
+        calls["many"] += 1
+        calls["sizes"].append(len(items))
+        return real_many(user, settings, items)
+
+    calendar_service.update_event = spy_single
+    calendar_service.update_many = spy_many
+    try:
+        r = reg.dispatch("bulk_update_calendar_events",
+                         {"from_date": "2026-09-01", "to_date": "2026-09-30",
+                          "color": "자주", "title_prefix": "묶음-"}, ctx)
+    finally:
+        calendar_service.update_event = real_single
+        calendar_service.update_many = real_many
+
+    assert r.ok and r.data["count"] == 12, r.data
+    assert calls["many"] == 1, f"update_many가 한 번이어야 한다: {calls}"
+    assert calls["sizes"] == [12], calls
+    assert calls["single"] == 0, "낱개 update_event로 흩어지면 안 된다"
+
+    names = {e["title"] for e in reg.dispatch("list_calendar_events",
+             {"from_date": "2026-09-01", "to_date": "2026-09-30"}, ctx).data["events"]}
+    assert all(n.startswith("묶음-") for n in names), names
+
+    # 조회 결과에 색 이름이 실려 온다(모델이 색을 잘못 짚었는지 알아채도록)
+    ev = reg.dispatch("list_calendar_events",
+                      {"from_date": "2026-09-01", "to_date": "2026-09-30"}, ctx).data["events"][0]
+    assert ev["color_name"] == "자주", ev
+
+
 def test_calendar_bulk_create_delete_and_trash_restore():
     """일괄 생성 → 일괄 삭제 → 휴지통(일정) → 복원."""
     from backend.ai.skill_base import SkillContext
@@ -1705,6 +1766,7 @@ if __name__ == "__main__":
     test_calendar_lifecycle()
     test_ai_react_chains_skills()
     test_ai_react_runs_all_parallel_calls()
+    test_bulk_update_uses_one_batched_call()
     test_calendar_bulk_create_delete_and_trash_restore()
     test_calendar_color_filter_guardrails()
     test_bulk_update_calendar_events()
