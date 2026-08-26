@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from .calendar import (
+    BulkUpdateCalendarEvents,
     CreateCalendarEvent,
     DeleteCalendarEvent,
     FindFreeSlots,
@@ -45,6 +46,7 @@ ALL_SKILLS = [
     ListCalendarEvents(),
     CreateCalendarEvent(),
     UpdateCalendarEvent(),
+    BulkUpdateCalendarEvents(),
     DeleteCalendarEvent(),
     FindFreeSlots(),
     # 시스템

@@ -1,10 +1,11 @@
 """캘린더 관련 스킬 (스케줄링·수정·삭제·빈 시간 찾기)."""
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 
 from ... import calendar_service, user_settings
-from ...calendar_colors import resolve_color
+from ...calendar_colors import COLOR_NAMES, resolve_color
 from ..skill_base import SkillBase, SkillResult
 
 
@@ -54,10 +55,52 @@ def _default_window(ctx) -> tuple[str, str]:
     return frm, to
 
 
+# 구글 반복 인스턴스 id: `{시리즈id}_{YYYYMMDD}` 또는 `{시리즈id}_{YYYYMMDD}T{HHMMSS}Z`.
+# 구글 이벤트 id는 base32hex(a-v, 0-9)라 `_`가 들어가지 않으므로 이 분리는 안전하다.
+_GOOGLE_INSTANCE = re.compile(r"^(?P<base>[^_@]+)_\d{8}(T\d{6}Z)?$")
+
+
+def _base_id(eid: str) -> str:
+    """반복 인스턴스 id에서 시리즈 id만 뽑는다.
+
+    내부 캘린더는 `시리즈@YYYY-MM-DD`, 구글은 `시리즈_20260305T100000Z` 형식이다.
+    **두 형식을 모두 봐야 한다** — `@`만 보고 자르면 구글에서는 인스턴스마다
+    다른 id로 취급돼, 주간 반복 하나에 제목 변경이 수십 번 걸리고 그만큼
+    시리즈 예외가 만들어진다(실제로 그렇게 망가뜨린 적이 있다).
+    """
+    s = str(eid)
+    if "@" in s:
+        return s.split("@", 1)[0]
+    m = _GOOGLE_INSTANCE.match(s)
+    return m.group("base") if m else s
+
+
+def _matches(ev: dict, color_id: str | None, needle: str | None) -> bool:
+    """색·제목 조건. 둘 다 없으면 통과(기간만으로 고른 경우)."""
+    if color_id and str(ev.get("color", "")) != color_id:
+        return False
+    if needle and needle not in str(ev.get("title", "")).lower():
+        return False
+    return True
+
+
+def _select(args, ctx) -> tuple[list[dict], str, str]:
+    """기간·색·제목으로 일정을 고른다. (고른 목록, 시작, 끝)"""
+    frm = args.get("from_date")
+    to = args.get("to_date")
+    if not frm and not to:
+        frm, to = _default_window(ctx)
+    color_id = resolve_color(args["color"], "") if args.get("color") else None
+    needle = str(args["title_contains"]).strip().lower() if args.get("title_contains") else None
+    events = calendar_service.list_events(ctx.user, ctx.settings, frm, to)
+    return [e for e in events if _matches(e, color_id, needle)], frm or "", to or ""
+
+
 class ListCalendarEvents(SkillBase):
     name = "list_calendar_events"
     description = (
         "일정을 조회한다(반복 일정은 인스턴스로 확장). 충돌·삭제 대상 확인 등에 사용. "
+        "색(color)·제목(title_contains)으로 걸러낼 수 있다 — 예: '3~8월 보라색 일정'. "
         "기간을 지정하지 않으면 최근 1달 전 ~ 향후 4달만 조회한다(오래된 반복일정 방지)."
     )
     parameters = {
@@ -71,21 +114,25 @@ class ListCalendarEvents(SkillBase):
                     "하루만 조회하려면 from_date와 to_date에 같은 날짜를 주면 된다. 미지정 시 오늘+120일."
                 ),
             },
+            "color": {"type": "string", "description": "이 색만 (colorId 또는 '보라'·'빨강' 같은 이름)."},
+            "title_contains": {"type": "string", "description": "제목에 이 말이 들어간 것만(대소문자 무시)."},
         },
     }
 
     def run(self, args, ctx):
-        frm = args.get("from_date")
-        to = args.get("to_date")
-        if not frm and not to:
-            frm, to = _default_window(ctx)  # 기간 미지정 → 현재 근처로 한정
         try:
-            events = calendar_service.list_events(ctx.user, ctx.settings, frm, to)
+            events, frm, to = _select(args, ctx)
         except Exception as e:  # noqa: BLE001 - Google API 오류 등
             return SkillResult(ok=False, message=f"일정 조회 실패: {getattr(e, 'detail', e)}", error_code="error")
+        cond = []
+        if args.get("color"):
+            cond.append(f"색={COLOR_NAMES.get(resolve_color(args['color'], ''), args['color'])}")
+        if args.get("title_contains"):
+            cond.append(f"제목~'{args['title_contains']}'")
+        suffix = (" " + ", ".join(cond)) if cond else ""
         return SkillResult(
             ok=True,
-            message=f"{len(events)}개 일정 ({(frm or '')[:10]}~{(to or '')[:10]})",
+            message=f"{len(events)}개 일정 ({frm[:10]}~{to[:10]}){suffix}",
             data={"events": events},
         )
 
@@ -174,6 +221,155 @@ class UpdateCalendarEvent(SkillBase):
         except Exception as e:  # HTTPException 등
             return SkillResult(ok=False, message=getattr(e, "detail", str(e)), error_code="error")
         return SkillResult(ok=True, message="일정 수정됨", data={"event": ev})
+
+
+class BulkUpdateCalendarEvents(SkillBase):
+    """여러 일정을 한 번에 고친다.
+
+    개별 update_calendar_event를 반복 호출하게 두면 두 가지가 어긋난다.
+    (1) 반복 일정은 조회 시 인스턴스로 펼쳐지지만 수정은 **시리즈 전체**에 걸린다.
+        인스턴스마다 접두어를 붙이면 '멋사-멋사-멋사-…'가 된다.
+    (2) 대상이 수십 개면 모델이 중간에 빠뜨리거나 같은 걸 두 번 고친다.
+    그래서 고르기·중복 제거·적용을 한 번에 처리한다.
+    """
+
+    name = "bulk_update_calendar_events"
+    description = (
+        "여러 일정을 한 번에 수정한다(제목 앞/뒤에 말 붙이기·치환, 색 변경). "
+        "기간·색·제목으로 대상을 고른다. 예: '3월~8월 보라색 일정 제목 앞에 멋사- 붙이기'. "
+        "반복 일정은 시리즈로 묶어 한 번만 고친다. 이미 그 접두어가 있으면 건너뛴다. "
+        "무엇이 바뀌는지 먼저 보여주려면 dry_run=true로 부르고, 사용자가 확인하면 다시 부른다."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "from_date": {"type": "string", "description": "ISO 날짜 (예: 2026-03-01). 미지정 시 오늘-30일."},
+            "to_date": {"type": "string", "description": "ISO 날짜. 끝을 포함한다. 미지정 시 오늘+120일."},
+            "color": {"type": "string", "description": "이 색만 고른다 (colorId 또는 '보라' 같은 이름)."},
+            "title_contains": {"type": "string", "description": "제목에 이 말이 든 것만."},
+            "event_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "직접 고른 id들(list_calendar_events가 준 값). 주면 기간·색 조건보다 우선.",
+            },
+            "title_prefix": {"type": "string", "description": "제목 앞에 붙일 말 (예: '멋사-')."},
+            "title_suffix": {"type": "string", "description": "제목 뒤에 붙일 말."},
+            "replace_from": {"type": "string", "description": "제목에서 바꿀 말."},
+            "replace_to": {"type": "string", "description": "replace_from을 이 말로 바꾼다."},
+            "set_color": {"type": "string", "description": "색을 이 값으로 바꾼다 (이름 또는 colorId)."},
+            "dry_run": {"type": "boolean", "description": "true면 바꾸지 않고 바뀔 내용만 돌려준다."},
+        },
+    }
+
+    # 한 번에 건드릴 수 있는 상한. 넘으면 조건을 좁히게 한다.
+    MAX = 200
+
+    def run(self, args, ctx):
+        prefix = args.get("title_prefix") or ""
+        suffix = args.get("title_suffix") or ""
+        rep_from = args.get("replace_from") or ""
+        rep_to = args.get("replace_to") if args.get("replace_to") is not None else ""
+        new_color = resolve_color(args["set_color"], "") if args.get("set_color") else ""
+        if not (prefix or suffix or rep_from or new_color):
+            return SkillResult(
+                ok=False,
+                error_code="invalid",
+                message="무엇을 바꿀지 없습니다. title_prefix·title_suffix·replace_from/replace_to·set_color 중 하나는 주세요.",
+            )
+
+        ids = [str(i) for i in (args.get("event_ids") or [])]
+        has_filter = bool(ids or args.get("color") or args.get("title_contains")
+                          or args.get("from_date") or args.get("to_date"))
+        if not has_filter:
+            return SkillResult(
+                ok=False,
+                error_code="invalid",
+                message="대상이 너무 넓습니다. 기간·색·제목 중 하나로 좁혀 주세요.",
+            )
+
+        try:
+            events, frm, to = _select(args, ctx)
+        except Exception as e:  # noqa: BLE001
+            return SkillResult(ok=False, message=f"일정 조회 실패: {getattr(e, 'detail', e)}", error_code="error")
+
+        if ids:
+            want = {_base_id(i) for i in ids}
+            events = [e for e in events if _base_id(e.get("id", "")) in want]
+
+        # 반복 일정은 인스턴스로 펼쳐져 있다 — 시리즈당 한 번만 고친다.
+        by_series: dict[str, dict] = {}
+        instances: dict[str, int] = {}
+        for e in events:
+            sid = _base_id(e.get("id", ""))
+            by_series.setdefault(sid, e)
+            instances[sid] = instances.get(sid, 0) + 1
+        recurring = sum(1 for n in instances.values() if n > 1)
+
+        planned = []
+        for sid, ev in by_series.items():
+            old = str(ev.get("title", ""))
+            new = old.replace(rep_from, rep_to) if rep_from else old
+            # 이미 붙어 있으면 다시 붙이지 않는다(같은 지시를 두 번 받아도 안전).
+            if prefix and not new.startswith(prefix):
+                new = prefix + new
+            if suffix and not new.endswith(suffix):
+                new = new + suffix
+            color_changes = bool(new_color) and str(ev.get("color", "")) != new_color
+            if new == old and not color_changes:
+                continue  # 바뀔 게 없다
+            planned.append({
+                "id": sid,
+                "old_title": old,
+                "new_title": new,
+                "start": ev.get("start", ""),
+                "old_color": ev.get("color", ""),
+                "new_color": new_color or ev.get("color", ""),
+            })
+
+        if not planned:
+            return SkillResult(
+                ok=True,
+                message=f"바꿀 일정이 없습니다 ({frm[:10]}~{to[:10]}). 이미 반영돼 있거나 조건에 맞는 일정이 없습니다.",
+                data={"changed": [], "count": 0},
+            )
+        if len(planned) > self.MAX:
+            return SkillResult(
+                ok=False,
+                error_code="too_many",
+                message=f"대상이 {len(planned)}개로 너무 많습니다(최대 {self.MAX}). 기간이나 조건을 좁혀 주세요.",
+                data={"count": len(planned)},
+            )
+
+        # 반복 일정의 제목·색은 시리즈 속성이라, 고치면 기간 밖 회차까지 함께 바뀐다.
+        # 조용히 넘어가면 사용자가 나중에 알게 되므로 결과에 적어 준다.
+        note = f" (반복 일정 {recurring}건은 시리즈 전체가 바뀝니다)" if recurring else ""
+
+        if args.get("dry_run"):
+            return SkillResult(
+                ok=True,
+                message=f"{len(planned)}개가 바뀝니다(아직 적용 안 함){note}. 확인 후 dry_run 없이 다시 요청하세요.",
+                data={"planned": planned, "count": len(planned), "recurring": recurring, "dry_run": True},
+            )
+
+        changed, failed = [], []
+        for p in planned:
+            payload = {"title": p["new_title"]}
+            if new_color:
+                payload["color"] = new_color
+            try:
+                calendar_service.update_event(ctx.user, ctx.settings, p["id"], payload)
+                changed.append(p)
+            except Exception as e:  # noqa: BLE001
+                failed.append({"id": p["id"], "title": p["old_title"], "error": getattr(e, "detail", str(e))})
+
+        msg = f"{len(changed)}개 일정을 수정했습니다 ({frm[:10]}~{to[:10]}){note}"
+        if failed:
+            msg += f" — {len(failed)}개 실패"
+        return SkillResult(
+            ok=not failed or bool(changed),
+            message=msg,
+            data={"changed": changed, "failed": failed, "count": len(changed)},
+        )
 
 
 class DeleteCalendarEvent(SkillBase):

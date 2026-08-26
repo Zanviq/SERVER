@@ -901,6 +901,90 @@ def test_ai_react_runs_all_parallel_calls():
     assert all("function_response" in p for p in resp_turn["parts"])
 
 
+def test_bulk_update_calendar_events():
+    """여러 일정 한 번에 수정 — 조건으로 고르고, 반복은 시리즈로 한 번만.
+
+    테스트 사용자는 Google 연동이 없으므로 내부 캘린더를 쓴다(실제 계정 데이터와 무관).
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.ai.skills.calendar import _base_id
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    # 구글 인스턴스 id도 시리즈로 접힌다 — 이걸 놓치면 주간 반복 하나에
+    # 제목 변경이 수십 번 걸려 '멋사-멋사-…'와 시리즈 예외가 생긴다.
+    assert _base_id("abc123_20260305T100000Z") == "abc123"
+    assert _base_id("abc123_20260305") == "abc123"
+    assert _base_id("abc123@2026-03-05") == "abc123"
+    assert _base_id("abc123") == "abc123"
+
+    s = get_settings()
+    u = SessionUser(username="bulkcal", display_name="BC", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-05-15")
+    reg = default_registry()
+
+    mk = lambda t, d, c, rec="none": reg.dispatch(  # noqa: E731
+        "create_calendar_event",
+        {"title": t, "start": f"{d}T10:00:00", "end": f"{d}T11:00:00", "color": c, "recurrence": rec},
+        ctx,
+    )
+    mk("스터디", "2026-03-10", "보라")
+    mk("해커톤", "2026-05-02", "보라")
+    mk("치과", "2026-04-01", "빨강")          # 색이 달라 대상 아님
+    mk("옛날모임", "2026-01-05", "보라")       # 기간 밖
+    mk("정기모임", "2026-03-05", "보라", "weekly")  # 반복 → 인스턴스 여러 개
+
+    # 조회가 색으로 걸러진다
+    listed = reg.dispatch("list_calendar_events",
+                          {"from_date": "2026-03-01", "to_date": "2026-08-31", "color": "보라"}, ctx)
+    assert listed.ok
+    titles = {e["title"] for e in listed.data["events"]}
+    assert titles == {"스터디", "해커톤", "정기모임"}, titles
+    assert len(listed.data["events"]) > 3  # 반복이 인스턴스로 펼쳐진다
+
+    # dry_run은 바꾸지 않는다
+    dry = reg.dispatch("bulk_update_calendar_events",
+                       {"from_date": "2026-03-01", "to_date": "2026-08-31",
+                        "color": "보라", "title_prefix": "멋사-", "dry_run": True}, ctx)
+    assert dry.ok and dry.data["count"] == 3, dry.data
+    assert dry.data["recurring"] == 1
+    still = {e["title"] for e in reg.dispatch("list_calendar_events",
+             {"from_date": "2026-03-01", "to_date": "2026-08-31"}, ctx).data["events"]}
+    assert "멋사-스터디" not in still
+
+    # 적용: 반복은 시리즈 하나로 세어 3건
+    hit = reg.dispatch("bulk_update_calendar_events",
+                       {"from_date": "2026-03-01", "to_date": "2026-08-31",
+                        "color": "보라", "title_prefix": "멋사-"}, ctx)
+    assert hit.ok and hit.data["count"] == 3, hit.data
+
+    after = reg.dispatch("list_calendar_events", {"from_date": "2026-01-01", "to_date": "2026-12-31"}, ctx)
+    names = {e["title"] for e in after.data["events"]}
+    assert {"멋사-스터디", "멋사-해커톤", "멋사-정기모임"} <= names
+    assert "치과" in names and "옛날모임" in names        # 조건 밖은 그대로
+    assert not any(t.startswith("멋사-멋사-") for t in names)  # 반복에 중복 부착 없음
+
+    # 같은 지시를 다시 받아도 두 번 붙지 않는다
+    again = reg.dispatch("bulk_update_calendar_events",
+                         {"from_date": "2026-03-01", "to_date": "2026-08-31",
+                          "color": "보라", "title_prefix": "멋사-"}, ctx)
+    assert again.ok and again.data["count"] == 0, again.data
+
+    # 색 변경 + 제목 치환
+    reg.dispatch("bulk_update_calendar_events",
+                 {"from_date": "2026-03-01", "to_date": "2026-08-31",
+                  "title_contains": "멋사", "replace_from": "멋사-", "replace_to": "LIKELION_",
+                  "set_color": "초록"}, ctx)
+    fin = reg.dispatch("list_calendar_events", {"from_date": "2026-03-01", "to_date": "2026-08-31"}, ctx)
+    changed = [e for e in fin.data["events"] if e["title"].startswith("LIKELION_")]
+    assert changed and all(e["color"] == "10" for e in changed)
+
+    # 안전장치: 무엇을 바꿀지 없거나 대상이 너무 넓으면 거절
+    assert not reg.dispatch("bulk_update_calendar_events", {"color": "보라"}, ctx).ok
+    assert not reg.dispatch("bulk_update_calendar_events", {"title_prefix": "x"}, ctx).ok
+
+
 def test_ai_skill_catalog_and_ops():
     from backend.ai.skill_base import SkillContext
     from backend.ai.skill_registry import default_registry
@@ -1445,6 +1529,7 @@ if __name__ == "__main__":
     test_calendar_lifecycle()
     test_ai_react_chains_skills()
     test_ai_react_runs_all_parallel_calls()
+    test_bulk_update_calendar_events()
     test_ai_skill_catalog_and_ops()
     test_ai_blocks_sensitive_files()
     test_google_oauth_state_and_isolation()

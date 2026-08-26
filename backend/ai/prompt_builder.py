@@ -25,6 +25,11 @@ def _calendar_section(cal: dict) -> str:
 캘린더 색상·규칙:
 - 일정을 수정·삭제하려면 먼저 list_calendar_events로 대상을 찾아 정확한 event_id를 얻으세요.
   대상 시점을 알면 from_date/to_date로 기간을 좁혀 조회하세요(정확도↑). 반복 일정은 인스턴스 id로 조회됩니다.
+- 여러 일정을 한꺼번에 바꿀 때는 update_calendar_event를 반복 호출하지 말고
+  bulk_update_calendar_events를 쓰세요(예: "3~8월 보라색 일정 앞에 '멋사-' 붙여줘").
+  반복 일정을 인스턴스마다 고치면 제목이 중복해서 붙고 시리즈가 망가집니다.
+  대상이 여러 건이면 먼저 dry_run=true로 무엇이 바뀌는지 사용자에게 보여주고,
+  확인을 받은 뒤 dry_run 없이 다시 호출하세요.
 - 색상은 Google colorId(1~11)이며 이름은 다음과 같습니다. 사용자가 색을 말하면 이 표로 id를 정하세요.
 {color_table_text()}
 - 사용자가 색을 지정하지 않으면 기본 색 {default_color}({COLOR_NAMES.get(default_color, '')})을 사용하세요.
