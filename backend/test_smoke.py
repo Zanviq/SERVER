@@ -103,11 +103,42 @@ def test_upload_illegal_filename_sanitized():
     assert r.json()["path"] == "san/re_port_.txt"
 
 
+def test_save_keeps_extension_verbatim():
+    """저장은 준 경로 그대로. 확장자를 지어내지 않는다.
+
+    예전에는 확장자가 없으면 무조건 .md를 붙여서, 사용자가 'todo.txt'가 아닌
+    이름을 넣으면 뭘 만들든 마크다운이 됐고 확장자 없는 파일은 다시 열 수도 없었다.
+    """
+    _login()
+    # 1) 확장자를 적으면 그대로
+    r = client.put("/api/notes/save", json={"path": "ext/할일.txt", "content": "x"})
+    assert r.status_code == 200, r.text
+    assert r.json()["path"] == "ext/할일.txt"
+    assert client.get("/api/notes/get?path=ext/할일.txt").json()["content"] == "x"
+
+    # 2) 확장자가 없으면 붙이지 않는다 — 그리고 그 이름으로 다시 열린다
+    r = client.put("/api/notes/save", json={"path": "ext/확장자없음", "content": "y"})
+    assert r.json()["path"] == "ext/확장자없음"
+    paths = {n["path"] for n in client.get("/api/notes/tree").json()["notes"]}
+    assert "ext/확장자없음" in paths and "ext/확장자없음.md" not in paths
+    assert client.get("/api/notes/get?path=ext/확장자없음").json()["content"] == "y"
+
+    # 3) 위키링크용 .md 폴백은 남아 있다 — [[제목]]으로 여는 경로
+    client.put("/api/notes/save", json={"path": "ext/링크대상.md", "content": "z"})
+    got = client.get("/api/notes/get?path=ext/링크대상")  # 확장자 없이 요청
+    assert got.status_code == 200 and got.json()["path"] == "ext/링크대상.md"
+
+    # 4) 정확히 있는 파일이 폴백보다 우선
+    client.put("/api/notes/save", json={"path": "ext/둘다", "content": "plain"})
+    client.put("/api/notes/save", json={"path": "ext/둘다.md", "content": "markdown"})
+    assert client.get("/api/notes/get?path=ext/둘다").json()["content"] == "plain"
+
+
 def test_notes_wikilinks_and_graph():
     _login()
-    client.put("/api/notes/save", json={"path": "A", "content": "see [[B]] and [[C|alias]]"})
-    client.put("/api/notes/save", json={"path": "B", "content": "back to [[A]]"})
-    client.put("/api/notes/save", json={"path": "C", "content": "leaf"})
+    client.put("/api/notes/save", json={"path": "A.md", "content": "see [[B]] and [[C|alias]]"})
+    client.put("/api/notes/save", json={"path": "B.md", "content": "back to [[A]]"})
+    client.put("/api/notes/save", json={"path": "C.md", "content": "leaf"})
     # A의 outgoing 링크 + backlinks
     a = client.get("/api/notes/get?path=A").json()
     assert set(a["links"]) == {"B", "C"}
@@ -125,7 +156,7 @@ def test_notes_wikilinks_and_graph():
 
 def test_notes_rename_and_move():
     _login()
-    client.put("/api/notes/save", json={"path": "RM원본", "content": "본문"})
+    client.put("/api/notes/save", json={"path": "RM원본.md", "content": "본문"})
     client.post("/api/notes/folder", json={"path": "이동폴더"})
     # 이름 변경
     r = client.post("/api/notes/rename", json={"path": "RM원본", "new_name": "RM변경"})
@@ -194,7 +225,7 @@ def test_calendar_recurrence_and_reminders():
 def test_notes_folders_and_tree():
     _login()
     assert client.post("/api/notes/folder", json={"path": "proj"}).status_code == 200
-    client.put("/api/notes/save", json={"path": "proj/idea", "content": "# idea"})
+    client.put("/api/notes/save", json={"path": "proj/idea.md", "content": "# idea"})
     tree = client.get("/api/notes/tree").json()
     assert "proj" in tree["folders"]
     assert any(n["path"] == "proj/idea.md" for n in tree["notes"])
@@ -230,7 +261,7 @@ def test_unified_document_space():
     c.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
 
     # 마크다운은 확장자 없이 저장 → .md가 붙는다
-    r = c.put("/api/notes/save", json={"path": "혼합/메모", "content": "# 메모"})
+    r = c.put("/api/notes/save", json={"path": "혼합/메모.md", "content": "# 메모"})
     assert r.status_code == 200 and r.json()["path"] == "혼합/메모.md"
     assert r.json()["kind"] == "md" and r.json()["editable"] is True
 
@@ -1121,8 +1152,8 @@ def test_folder_archive_download():
     c.post("/api/auth/login", json={"username": "tester2", "password": "pw456"})
     c.post("/api/notes/folder", json={"path": "묶음"})
     c.post("/api/notes/folder", json={"path": "묶음/안쪽"})
-    c.put("/api/notes/save", json={"path": "묶음/문서", "content": "# 문서"})
-    c.put("/api/notes/save", json={"path": "묶음/안쪽/깊은글", "content": "깊은 내용"})
+    c.put("/api/notes/save", json={"path": "묶음/문서.md", "content": "# 문서"})
+    c.put("/api/notes/save", json={"path": "묶음/안쪽/깊은글.md", "content": "깊은 내용"})
     c.post("/api/notes/upload?path=묶음",
            files={"file": ("그림.png", io.BytesIO(b"img"), "image/png")})
 
@@ -1338,7 +1369,7 @@ def test_archive_survives_bad_files():
     c = TestClient(app)
     c.post("/api/auth/login", json={"username": "tester2", "password": "pw456"})
     c.post("/api/notes/folder", json={"path": "오래된"})
-    c.put("/api/notes/save", json={"path": "오래된/정상", "content": "ok"})
+    c.put("/api/notes/save", json={"path": "오래된/정상.md", "content": "ok"})
 
     # 1980년 이전 mtime → zipfile이 ValueError를 낸다(OSError가 아님)
     root = st.user_root("tester2") / "data" / "오래된"
@@ -1393,6 +1424,7 @@ if __name__ == "__main__":
     test_notes_wikilinks_and_graph()
     test_notes_rename_and_move()
     test_notes_graph_cache()
+    test_save_keeps_extension_verbatim()
     test_notes_folders_and_tree()
     test_trash_restore_flow()
     test_unified_document_space()

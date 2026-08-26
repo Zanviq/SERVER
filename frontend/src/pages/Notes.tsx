@@ -28,6 +28,10 @@ interface TreeNode {
  *  "강조 없음"(null)과 구분이 안 되므로, 폴더 경로가 될 수 없는 값을 쓴다. */
 const ROOT_DROP = "/";
 
+/** 목록에 보여줄 파일명 — 확장자를 포함한다.
+ *  NoteSummary.title은 확장자를 뗀 값(= 위키링크 [[제목]]의 키)이라 표시용으로는 안 맞다. */
+const fileName = (path: string) => path.split("/").pop() ?? path;
+
 /** 문서가 들어 있는 폴더 경로(루트면 빈 문자열). */
 const parentDir = (path: string) => {
   const i = path.lastIndexOf("/");
@@ -59,7 +63,8 @@ function buildTree(folders: string[], notes: NoteSummary[]): TreeNode {
 
   const sortNode = (node: TreeNode) => {
     node.children.sort((a, b) => a.name.localeCompare(b.name));
-    node.notes.sort((a, b) => a.title.localeCompare(b.title));
+    // 화면에 보이는 값(확장자 포함 파일명) 기준으로 정렬해야 순서가 납득된다
+    node.notes.sort((a, b) => fileName(a.path).localeCompare(fileName(b.path)));
     node.children.forEach(sortNode);
   };
   sortNode(root);
@@ -183,10 +188,14 @@ export function Notes() {
     setNewNoteOpen(false);
     setNewName("");
     const path = joinPath(curFolder, name);
-    await save(path, `# ${name}\n\n`);
+    // 적은 이름 그대로 만든다. 확장자는 사용자가 정한다 — 예전엔 무조건 .md를 붙여서
+    // 'todo.txt'처럼 확장자를 적지 않으면 뭘 만들든 마크다운이 됐다.
+    // 마크다운일 때만 제목 줄을 넣는다(.txt/.py에 '# 이름'이 들어가면 곤란하다).
+    const isMd = /\.(md|markdown)$/i.test(name);
+    await save(path, isMd ? `# ${name.replace(/\.[^.]+$/, "")}\n\n` : "");
     await reloadTree();
     if (curFolder) setExpanded((s) => new Set(s).add(curFolder));
-    openNote(`${path}.md`);
+    openNote(path);
   };
 
   const createFolder = async () => {
@@ -268,7 +277,9 @@ export function Notes() {
         toast.error(`문서를 찾을 수 없습니다: ${title}`);
         return;
       }
-      save(title, `# ${title}\n\n`).then(() => reloadTree().then(() => openNote(`${title}.md`)));
+      // 위키링크에는 확장자를 쓰지 않으므로 여기서 마크다운으로 정한다
+      // (백엔드는 더 이상 확장자를 추측하지 않는다).
+      save(`${title}.md`, `# ${title}\n\n`).then(() => reloadTree().then(() => openNote(`${title}.md`)));
     },
     [notes, openNote, save, reloadTree],
   );
@@ -428,10 +439,10 @@ export function Notes() {
             <button onClick={() => openNote(n.path)}
               className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left">
               <FileText size={14} className="shrink-0 text-fg-muted" />
-              <span className="truncate">{n.title}</span>
+              <span className="truncate">{fileName(n.path)}</span>
             </button>
             <RowMenu
-              onRename={() => { setRenameFor(n); setRenameName(n.title); }}
+              onRename={() => { setRenameFor(n); setRenameName(fileName(n.path)); }}
               onMove={() => { setMoveFor(n); setMoveTarget(""); }}
               onTrash={() => setDelNotePath(n.path)}
             />
@@ -585,7 +596,7 @@ export function Notes() {
                       className={`flex w-full flex-col gap-0.5 rounded-md px-2.5 py-2 text-left ${current === h.path ? "bg-accent-muted" : "hover:bg-hovered"}`}>
                       <span className="flex items-center gap-2 text-[13px] font-medium">
                         <FileText size={13} className="shrink-0 text-accent" />
-                        <span className="truncate">{h.title}</span>
+                        <span className="truncate">{fileName(h.path)}</span>
                       </span>
                       <span className="truncate pl-5 text-[11.5px] text-fg-muted">{h.snippet}</span>
                     </button>
@@ -617,7 +628,8 @@ export function Notes() {
               </button>
               <NotebookPen size={14} className="hidden shrink-0 text-accent lg:block" />
               <span className="truncate">
-                {current ? current.replace(/\.md$/, "") : "문서를 선택하세요"}
+                {/* 확장자를 떼지 않는다 — 무엇을 열고 있는지가 확장자로 갈린다 */}
+                {current ?? "문서를 선택하세요"}
               </span>
             </span>
             <div className="flex items-center gap-1">
@@ -733,9 +745,12 @@ export function Notes() {
       {/* 새 노트 모달 */}
       <Modal open={newNoteOpen} onClose={() => setNewNoteOpen(false)} title={`새 노트${curFolder ? ` · ${curFolder}` : ""}`} width="max-w-sm">
         <div className="space-y-3">
-          <input autoFocus className="input" value={newName} placeholder="노트 제목"
+          <input autoFocus className="input" value={newName} placeholder="예: 회의록.md, todo.txt, script.py"
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") createNote(); if (e.key === "Escape") setNewNoteOpen(false); }} />
+          <p className="text-[12px] text-fg-muted">
+            확장자까지 적어 주세요. 안 적으면 확장자 없는 파일로 만들어집니다.
+          </p>
           <div className="flex justify-end gap-2">
             <button onClick={() => setNewNoteOpen(false)} className="btn btn-ghost">취소</button>
             <button onClick={createNote} className="btn btn-primary">만들기</button>

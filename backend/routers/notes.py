@@ -100,9 +100,24 @@ def _snippet(text: str, q: str, width: int = 60) -> str:
     return ("…" if start > 0 else "") + seg + ("…" if start + width < len(text) else "")
 
 
-def _with_ext(path: str) -> str:
-    """확장자가 없으면 .md를 붙인다(새 문서 기본은 마크다운)."""
-    return path if Path(path).suffix else f"{path}.md"
+def _existing(root: Path, rel: str) -> Path:
+    """상대경로를 **이미 있는 파일**로 해석한다.
+
+    있는 그대로를 먼저 보고, 없고 확장자도 없을 때만 `.md`를 붙여 본다.
+    이 폴백은 위키링크(`[[제목]]`)를 위한 것이다 — 링크에는 확장자를 안 쓴다.
+
+    새로 만들 때는 쓰지 않는다. 예전에는 저장 경로에도 무조건 `.md`를 붙여서
+    사용자가 `메모.txt`가 아닌 이름을 넣으면 마음대로 마크다운이 됐고,
+    확장자 없는 파일은 만들어도 다시 열 수 없었다(`메모` -> `메모.md`를 찾음).
+    """
+    exact = safe_join(root, rel)
+    if exact.exists():
+        return exact
+    if not Path(rel).suffix:
+        alt = safe_join(root, f"{rel}.md")
+        if alt.exists():
+            return alt
+    return exact
 
 
 def _summary(root: Path, p: Path) -> NoteSummary:
@@ -190,7 +205,7 @@ def get_note(
 ):
     """텍스트 문서의 내용을 읽는다. 이미지·PDF 등은 /raw 를 쓴다."""
     root = user_data_root(user, settings)
-    target = safe_join(root, _with_ext(path))
+    target = _existing(root, path)
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
     if not is_editable(target.name):
@@ -346,7 +361,8 @@ def save_note(
     settings: Settings = Depends(get_settings),
 ):
     root = user_data_root(user, settings)
-    target = safe_join(root, _with_ext(req.path))
+    # 저장은 받은 경로 그대로. 확장자는 만든 사람이 정한다.
+    target = _existing(root, req.path)
     if target.exists() and not is_editable(target.name):
         raise HTTPException(status_code=415, detail="텍스트 문서만 편집할 수 있습니다.")
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -361,7 +377,7 @@ def delete_note(
     settings: Settings = Depends(get_settings),
 ):
     root = user_data_root(user, settings)
-    target = safe_join(root, _with_ext(path))
+    target = _existing(root, path)
     if not target.exists():
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
     # 즉시 삭제 대신 휴지통으로 이동
@@ -377,7 +393,7 @@ def rename_note(
 ):
     """같은 폴더 안에서 파일명을 바꾼다(내용·폴더 유지)."""
     root = user_data_root(user, settings)
-    src = safe_join(root, _with_ext(req.path))
+    src = _existing(root, req.path)
     if not src.exists():
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
     new_name = (req.new_name or "").strip()
@@ -403,7 +419,7 @@ def move_note(
 ):
     """문서를 다른 폴더로 이동한다(파일명 유지)."""
     root = user_data_root(user, settings)
-    src = safe_join(root, _with_ext(req.path))
+    src = _existing(root, req.path)
     if not src.exists():
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
     folder = (req.target_folder or "").strip().strip("/")
