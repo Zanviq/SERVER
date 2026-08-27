@@ -53,8 +53,10 @@ def parse_candidate(cand) -> tuple[str, list[dict]]:
 class GeminiLLM:
     """google-genai(신 SDK) 기반 function-calling LLM."""
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, model: str = ""):
         self._settings = settings
+        # 설정 화면에서 고른 모델. 비어 있으면 서버 기본(GEMINI_MODEL).
+        self._model = model or settings.gemini_model
 
     def chat(self, contents: list[dict], catalog: list[dict], system: str) -> LLMResult:
         from google import genai
@@ -70,7 +72,7 @@ class GeminiLLM:
         )
         try:
             resp = client.models.generate_content(
-                model=self._settings.gemini_model, contents=contents, config=config
+                model=self._model, contents=contents, config=config
             )
         except Exception as e:  # noqa: BLE001
             logger.exception("Gemini 호출 실패")
@@ -95,11 +97,12 @@ def run(
     이벤트: {type: tool_call|tool_result|text|done|error, ...}
     """
     registry = registry or default_registry()
-    llm = llm or GeminiLLM(settings)
     ctx = SkillContext(user=user, settings=settings, today=today)
     catalog = registry.build_catalog()
 
     prefs = _user_ai_prefs(user, settings)
+    # 모델은 사용자 설정을 따르므로 prefs를 읽은 뒤에 만든다
+    llm = llm or GeminiLLM(settings, prefs.get("model", ""))
     system = build_system(user, prefs["tone"], today, prefs.get("calendar"))
     max_steps = max(1, min(16, int(prefs["max_steps"])))
 
@@ -175,10 +178,12 @@ def _user_ai_prefs(user, settings: Settings) -> dict:
         return {
             "tone": ai.get("tone", "assistant"),
             "max_steps": ai.get("max_steps", settings.ai_max_steps),
+            "model": str(ai.get("model") or "") or settings.gemini_model,
             "calendar": loaded.get("calendar", {}),
         }
     except Exception:  # noqa: BLE001
-        return {"tone": "assistant", "max_steps": settings.ai_max_steps, "calendar": {}}
+        return {"tone": "assistant", "max_steps": settings.ai_max_steps,
+                "model": settings.gemini_model, "calendar": {}}
 
 
 def _plain(obj):

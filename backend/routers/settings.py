@@ -1,10 +1,11 @@
 """설정 API: 개인 settings.json 조회/부분수정."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from .. import user_settings
+from ..ai import models as ai_models
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 
@@ -34,4 +35,8 @@ def patch_settings(
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
+    # 없는 모델 id가 저장되면 그 뒤로 AI가 통째로 실패한다 — 저장 전에 막는다.
+    model = (body.changes.get("ai") or {}).get("model")
+    if model is not None and not ai_models.is_allowed(settings, str(model)):
+        raise HTTPException(status_code=400, detail=f"쓸 수 없는 모델입니다: {model}")
     return {"settings": user_settings.patch(user, settings, body.changes)}

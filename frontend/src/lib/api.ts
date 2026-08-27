@@ -201,6 +201,9 @@ export const api = {
 
   // ── AI ──
   aiStatus: () => req<{ enabled: boolean; model: string }>("/api/ai/status"),
+  /** 설정 드롭다운용 — 비서로 쓸 수 있는 Gemini 모델 목록 */
+  aiModels: () =>
+    req<{ models: { id: string; label: string }[]; server_default: string }>("/api/ai/models"),
 
 };
 
@@ -257,7 +260,7 @@ export async function aiChatStream(
 }
 
 export interface UserSettings {
-  ai: { tone: string; max_steps: number };
+  ai: { tone: string; max_steps: number; model: string };
   calendar: { default_color: string; default_view: string; week_start: number; default_remind: number; ai_rules: string };
   notes: { autosave_ms: number; confirm_delete: boolean };
   display: { show_seconds_in_timer: boolean };

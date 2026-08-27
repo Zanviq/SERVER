@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ..ai import models as ai_models
 from ..ai import orchestrator
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
@@ -32,6 +33,15 @@ class ChatRequest(BaseModel):
 def status(settings: Settings = Depends(get_settings)):
     """AI 사용 가능 여부."""
     return {"enabled": bool(settings.gemini_api_key), "model": settings.gemini_model}
+
+
+@router.get("/models")
+def models(
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """설정 화면 드롭다운용 — 비서로 쓸 수 있는 Gemini 모델 목록."""
+    return {"models": ai_models.list_models(settings), "server_default": settings.gemini_model}
 
 
 @router.post("/chat")

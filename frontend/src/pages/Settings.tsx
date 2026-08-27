@@ -5,6 +5,7 @@ import { ThemeToggle } from "../components/layout/ThemeToggle";
 import { useAuth } from "../store/auth";
 import { useSettings } from "../store/settings";
 import { toast } from "../store/toast";
+import { api } from "../lib/api";
 import { GCAL_COLORS, GCAL_COLOR_NAMES } from "../components/calendar/EventDialog";
 import { AccountAdmin } from "../components/settings/AccountAdmin";
 import { GoogleConnect } from "../components/settings/GoogleConnect";
@@ -38,10 +39,23 @@ export function Settings() {
   const { settings: s, loaded, error, load, patch } = useSettings();
   const [tab, setTab] = useState("account");
   const [aiRules, setAiRules] = useState("");
+  // 모델 목록은 서버가 Gemini API에서 받아온다(코드에 박아두면 새 모델이 나올 때마다 고쳐야 한다)
+  const [models, setModels] = useState<{ id: string; label: string }[] | null>(null);
+  const [serverDefault, setServerDefault] = useState("");
 
   useEffect(() => {
     if (!s) load();
   }, [s, load]);
+
+  useEffect(() => {
+    api
+      .aiModels()
+      .then((r) => {
+        setModels(r.models);
+        setServerDefault(r.server_default);
+      })
+      .catch(() => setModels([])); // 못 받아와도 '서버 기본'은 고를 수 있어야 한다
+  }, []);
 
   // AI 규칙 텍스트는 로컬 상태로 두고 blur 때 저장(키 입력마다 저장 방지)
   useEffect(() => {
@@ -130,6 +144,28 @@ export function Settings() {
                   <option value="counselor">따뜻한 상담사</option>
                   <option value="assistant">담백한 비서</option>
                   <option value="friend">친근한 친구</option>
+                </select>
+              </Row>
+              <Row
+                label="AI 모델"
+                desc={
+                  models === null
+                    ? "목록을 불러오는 중…"
+                    : `상위 모델일수록 판단이 정확하지만 느리고 요금이 더 나옵니다. 서버 기본: ${serverDefault || "미설정"}`
+                }
+              >
+                <select
+                  className="input w-64"
+                  value={s.ai.model ?? ""}
+                  disabled={models === null}
+                  onChange={(e) => update({ ai: { model: e.target.value } })}
+                >
+                  <option value="">서버 기본 ({serverDefault || "미설정"})</option>
+                  {(models ?? []).map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label === m.id ? m.id : `${m.label} — ${m.id}`}
+                    </option>
+                  ))}
                 </select>
               </Row>
               <Row label="최대 추론 단계" desc="ReAct 1턴당 스킬 실행 한도 (1~16)">

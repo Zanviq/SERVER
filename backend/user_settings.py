@@ -13,6 +13,7 @@ DEFAULTS: dict[str, Any] = {
     "ai": {
         "tone": "assistant",  # counselor | assistant | friend
         "max_steps": 8,
+        "model": "",  # 빈 값 = 서버 기본(GEMINI_MODEL). 설정 화면에서 고른다.
     },
     "calendar": {
         "default_color": "2",

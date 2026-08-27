@@ -936,6 +936,49 @@ def test_mutating_skills_declare_what_they_change():
     assert not missing, f"mutates 선언이 빠진 스킬: {missing}"
 
 
+def test_ai_model_selectable_in_settings():
+    """설정에서 고른 모델이 실제 호출에 쓰이고, 없는 모델은 저장이 막힌다."""
+    from backend.ai import models as ai_models
+    from backend.ai.orchestrator import GeminiLLM
+    from backend.config import get_settings
+
+    s = get_settings()
+    _login()
+
+    # 목록은 대화용만 — 이미지/TTS/전사/로봇 모델이 섞이면 고르는 순간 비서가 망가진다
+    listed = [m["id"] for m in ai_models.list_models(s)]
+    assert listed, "목록이 비면 드롭다운이 빈칸이 된다"
+    banned = ("-image", "-tts", "transcribe", "robotics", "computer-use", "omni")
+    assert not [m for m in listed if any(b in m for b in banned)], listed
+    assert all(m.startswith("gemini") for m in listed), listed
+    # 현재 서버 기본값은 항상 고를 수 있어야 한다
+    assert s.gemini_model in listed, (s.gemini_model, listed)
+
+    # API로도 같은 목록을 준다
+    r = client.get("/api/ai/models")
+    assert r.status_code == 200
+    body = r.json()
+    assert [m["id"] for m in body["models"]] == listed
+    assert body["server_default"] == s.gemini_model
+
+    # 고른 모델이 실제 호출에 쓰인다
+    pick = listed[0]
+    assert client.patch("/api/settings", json={"changes": {"ai": {"model": pick}}}).status_code == 200
+    assert client.get("/api/settings").json()["settings"]["ai"]["model"] == pick
+    assert GeminiLLM(s, pick)._model == pick
+    # 빈 값이면 서버 기본으로 되돌아간다
+    assert GeminiLLM(s, "")._model == s.gemini_model
+
+    # 없는 모델은 저장 자체를 막는다(저장되면 그 뒤 AI가 통째로 실패한다)
+    bad = client.patch("/api/settings", json={"changes": {"ai": {"model": "gemini-없는모델"}}})
+    assert bad.status_code == 400, bad.text
+    assert client.get("/api/settings").json()["settings"]["ai"]["model"] == pick  # 그대로
+
+    # 빈 값(서버 기본)은 허용
+    assert client.patch("/api/settings", json={"changes": {"ai": {"model": ""}}}).status_code == 200
+    assert client.get("/api/settings").json()["settings"]["ai"]["model"] == ""
+
+
 def test_bulk_update_uses_one_batched_call():
     """일괄 수정이 건당 호출로 흩어지지 않아야 한다.
 
@@ -1766,6 +1809,7 @@ if __name__ == "__main__":
     test_calendar_lifecycle()
     test_ai_react_chains_skills()
     test_ai_react_runs_all_parallel_calls()
+    test_ai_model_selectable_in_settings()
     test_bulk_update_uses_one_batched_call()
     test_calendar_bulk_create_delete_and_trash_restore()
     test_calendar_color_filter_guardrails()
