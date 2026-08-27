@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazyChunk } from "./lib/lazyChunk";
+import { Suspense, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "./store/auth";
@@ -21,14 +22,14 @@ const loaders = {
   terminal: () => import("./pages/Terminal"),
 };
 
-const Notes = lazy(() => loaders.notes().then((m) => ({ default: m.Notes })));
-const Graph = lazy(() => loaders.graph().then((m) => ({ default: m.Graph })));
-const Calendar = lazy(() => loaders.calendar().then((m) => ({ default: m.Calendar })));
-const Assistant = lazy(() => loaders.assistant().then((m) => ({ default: m.Assistant })));
-const Settings = lazy(() => loaders.settings().then((m) => ({ default: m.Settings })));
-const Profile = lazy(() => loaders.profile().then((m) => ({ default: m.Profile })));
-const Trash = lazy(() => loaders.trash().then((m) => ({ default: m.Trash })));
-const TerminalPage = lazy(() => loaders.terminal().then((m) => ({ default: m.TerminalPage })));
+const Notes = lazyChunk(() => loaders.notes().then((m) => ({ default: m.Notes })));
+const Graph = lazyChunk(() => loaders.graph().then((m) => ({ default: m.Graph })));
+const Calendar = lazyChunk(() => loaders.calendar().then((m) => ({ default: m.Calendar })));
+const Assistant = lazyChunk(() => loaders.assistant().then((m) => ({ default: m.Assistant })));
+const Settings = lazyChunk(() => loaders.settings().then((m) => ({ default: m.Settings })));
+const Profile = lazyChunk(() => loaders.profile().then((m) => ({ default: m.Profile })));
+const Trash = lazyChunk(() => loaders.trash().then((m) => ({ default: m.Trash })));
+const TerminalPage = lazyChunk(() => loaders.terminal().then((m) => ({ default: m.TerminalPage })));
 
 /** 로그인 후 유휴 시간에 모든 라우트 청크를 미리 로드 → 페이지 이동 지연 제거 */
 function prefetchRoutes() {

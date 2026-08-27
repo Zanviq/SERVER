@@ -1,4 +1,5 @@
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
+import { lazyChunk } from "../../lib/lazyChunk";
 import type { MarkdownViewProps } from "./MarkdownView";
 
 /**
@@ -6,7 +7,7 @@ import type { MarkdownViewProps } from "./MarkdownView";
  * 노트 읽기 모드·AI 답변처럼 실제로 표시할 때만 필요한데, 정적 import면
  * 노트·캘린더·비서 세 화면 진입 시 항상 함께 받게 된다.
  */
-const Inner = lazy(() =>
+const Inner = lazyChunk(() =>
   import("./MarkdownView").then((m) => ({ default: m.MarkdownView })),
 );
 
