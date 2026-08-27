@@ -936,6 +936,70 @@ def test_mutating_skills_declare_what_they_change():
     assert not missing, f"mutates 선언이 빠진 스킬: {missing}"
 
 
+def test_ai_can_undo_its_own_deletions():
+    """지우는 힘을 준 곳에는 되돌리는 힘도 있어야 한다.
+
+    문서·일정을 지우는 스킬은 있는데 휴지통 스킬이 없어서, AI가 방금 지운 것을
+    되살릴 수 없었다(사용자가 UI로 직접 들어가야 했다).
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    from backend.storage import user_data_root
+
+    s = get_settings()
+    u = SessionUser(username="undoer", display_name="UD", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-27")
+    reg = default_registry()
+
+    # 문서 하나, 일정 하나를 만들고 AI가 지운다
+    root = user_data_root(u, s)
+    (root / "소중한메모.md").write_text("# 소중한메모\n지우면 안 되는 내용", encoding="utf-8")
+    reg.dispatch("create_calendar_event",
+                 {"title": "지울일정", "start": "2026-09-05T10:00:00",
+                  "end": "2026-09-05T11:00:00", "color": "보라"}, ctx)
+
+    assert reg.dispatch("delete_document", {"path": "소중한메모"}, ctx).ok
+    ev = reg.dispatch("list_calendar_events",
+                      {"from_date": "2026-09-01", "to_date": "2026-09-30"}, ctx).data["events"]
+    assert reg.dispatch("delete_calendar_event", {"event_id": ev[0]["id"]}, ctx).ok
+
+    # 휴지통에서 둘 다 보인다 — 갈래로 걸러진다
+    listed = reg.dispatch("list_trash", {}, ctx)
+    assert listed.ok and len(listed.data["items"]) == 2, listed.data
+    docs = reg.dispatch("list_trash", {"kind": "document"}, ctx).data["items"]
+    evs = reg.dispatch("list_trash", {"kind": "event"}, ctx).data["items"]
+    assert [d["name"] for d in docs] == ["소중한메모.md"], docs
+    assert [e["name"] for e in evs] == ["지울일정"], evs
+    assert evs[0]["event_start"].startswith("2026-09-05")
+
+    # 이름으로도 좁힌다(모델이 "메모 되살려줘"라고 할 때)
+    hit = reg.dispatch("list_trash", {"name_contains": "소중한"}, ctx).data["items"]
+    assert len(hit) == 1 and hit[0]["kind"] == "document"
+
+    # 복원 — 문서는 원래 경로로, 결과가 바뀐 화면을 알려준다
+    r1 = reg.dispatch("restore_from_trash", {"id": docs[0]["id"]}, ctx)
+    assert r1.ok and r1.mutates == "documents", (r1.message, r1.mutates)
+    assert (root / "소중한메모.md").read_text(encoding="utf-8").startswith("# 소중한메모")
+
+    # 일정은 캘린더에 다시 생기고, mutates가 calendar로 바뀐다
+    r2 = reg.dispatch("restore_from_trash", {"id": evs[0]["id"]}, ctx)
+    assert r2.ok and r2.mutates == "calendar", (r2.message, r2.mutates)
+    back = reg.dispatch("list_calendar_events",
+                        {"from_date": "2026-09-01", "to_date": "2026-09-30"}, ctx).data["events"]
+    assert [e["title"] for e in back] == ["지울일정"] and back[0]["color"] == "9", back
+
+    # 휴지통이 비었고, 없는 id는 조용히 성공하지 않는다
+    assert reg.dispatch("list_trash", {}, ctx).data["items"] == []
+    assert not reg.dispatch("restore_from_trash", {"id": "없는id"}, ctx).ok
+    assert not reg.dispatch("restore_from_trash", {"id": ""}, ctx).ok
+
+    # 영구 삭제·비우기는 스킬로 열지 않는다(되돌릴 수 없다)
+    names = {sk.name for sk in reg._skills.values()}  # noqa: SLF001
+    assert not {"purge_trash", "empty_trash"} & names, names
+
+
 def test_ai_model_selectable_in_settings():
     """설정에서 고른 모델이 실제 호출에 쓰이고, 없는 모델은 저장이 막힌다."""
     from backend.ai import models as ai_models
@@ -1809,6 +1873,7 @@ if __name__ == "__main__":
     test_calendar_lifecycle()
     test_ai_react_chains_skills()
     test_ai_react_runs_all_parallel_calls()
+    test_ai_can_undo_its_own_deletions()
     test_ai_model_selectable_in_settings()
     test_bulk_update_uses_one_batched_call()
     test_calendar_bulk_create_delete_and_trash_restore()

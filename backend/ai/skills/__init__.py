@@ -28,6 +28,7 @@ from .documents import (
     WriteDocument,
 )
 from .system import GetSystemStatus
+from .trash import ListTrash, RestoreFromTrash
 from .think import ThinkSkill
 
 # 등록 순서 = LLM에 노출되는 카탈로그 순서
@@ -53,6 +54,9 @@ ALL_SKILLS = [
     BulkDeleteCalendarEvents(),
     DeleteCalendarEvent(),
     FindFreeSlots(),
+    # 휴지통(되돌리기)
+    ListTrash(),
+    RestoreFromTrash(),
     # 시스템
     GetSystemStatus(),
 ]

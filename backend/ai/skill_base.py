@@ -19,6 +19,10 @@ class SkillResult:
     message: str
     data: dict = field(default_factory=dict)
     error_code: str = ""
+    #: 실행해 봐야 무엇이 바뀌는지 아는 경우의 덮어쓰기(예: 휴지통 복원은
+    #: 항목에 따라 문서일 수도 일정일 수도 있다). 비면 스킬의 mutates를 쓴다.
+    #: 스킬 인스턴스는 싱글턴이라 self.mutates를 바꾸면 동시 요청끼리 섞인다.
+    mutates: str = ""
 
 
 @dataclass

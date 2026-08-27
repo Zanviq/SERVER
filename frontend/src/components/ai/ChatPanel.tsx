@@ -41,6 +41,9 @@ const SKILL_LABEL: Record<string, string> = {
   bulk_delete_calendar_events: "일정 일괄 삭제",
   delete_calendar_event: "일정 삭제",
   find_free_slots: "빈 시간 찾기",
+  // 휴지통
+  list_trash: "휴지통 목록",
+  restore_from_trash: "휴지통 복원",
   get_system_status: "시스템 상태",
 };
 
