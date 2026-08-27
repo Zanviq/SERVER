@@ -229,7 +229,10 @@ def create_event(user: SessionUser, settings: Settings, payload: dict) -> dict:
 
 
 def _base_id(eid: str) -> str:
-    return eid.split("@", 1)[0]
+    """규칙은 calendar_ids 한 곳에서만 정한다."""
+    from .calendar_ids import base_id
+
+    return base_id(eid)
 
 
 def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict) -> dict:

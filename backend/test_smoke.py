@@ -936,6 +936,111 @@ def test_mutating_skills_declare_what_they_change():
     assert not missing, f"mutates 선언이 빠진 스킬: {missing}"
 
 
+def test_ai_document_safety_rules():
+    """전면 점검에서 확인된 문서 스킬 결함들(전부 데이터 손실 경로였다)."""
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    from backend.storage import user_data_root
+    from backend.trash import KIND_DOCUMENT, list_trash
+
+    s = get_settings()
+    u = SessionUser(username="docsafe", display_name="DS", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-27")
+    reg = default_registry()
+    root = user_data_root(u, s)
+
+    # (1) 폴더를 명시했으면 다른 폴더의 같은 이름 문서를 건드리면 안 된다.
+    #     예전엔 '업무/보고서'가 없으면 트리 전체에서 '보고서'를 찾아
+    #     '개인/보고서.md'를 덮어썼다(복구 불가였다).
+    (root / "개인").mkdir(parents=True, exist_ok=True)
+    (root / "개인" / "보고서.md").write_text("원본 내용", encoding="utf-8")
+    r = reg.dispatch("write_document", {"path": "업무/보고서", "content": "새 업무 보고"}, ctx)
+    assert r.ok, r.message
+    assert (root / "개인" / "보고서.md").read_text(encoding="utf-8") == "원본 내용"
+    assert (root / "업무" / "보고서.md").read_text(encoding="utf-8") == "새 업무 보고"
+    # 삭제·이동도 같은 규칙
+    assert not reg.dispatch("delete_document", {"path": "없는폴더/보고서"}, ctx).ok
+    assert (root / "개인" / "보고서.md").exists()
+
+    # (2) 덮어쓰기는 이전 내용을 휴지통에 남긴다(가장 되돌리기 어려운 동작이었다)
+    before = len(list_trash(u, s, KIND_DOCUMENT))
+    r = reg.dispatch("write_document", {"path": "개인/보고서", "content": "덮어쓴 내용"}, ctx)
+    assert r.ok and r.data["backed_up"] is True, r.data
+    after = list_trash(u, s, KIND_DOCUMENT)
+    assert len(after) == before + 1
+    assert reg.dispatch("restore_from_trash", {"id": after[0]["id"]}, ctx).ok
+    restored = [p for p in (root / "개인").iterdir() if p.name.startswith("보고서")]
+    assert any("원본 내용" in p.read_text(encoding="utf-8") for p in restored), restored
+
+    # (3) 긴 문서를 읽으면 잘렸다고 알려준다(모델이 되쓰면 뒤가 사라지므로)
+    long_text = "가" * 25000
+    (root / "긴글.md").write_text(long_text, encoding="utf-8")
+    rd = reg.dispatch("read_document", {"path": "긴글"}, ctx)
+    assert rd.ok and rd.data["truncated"] is True
+    assert rd.data["total_chars"] == 25000 and rd.data["read_chars"] == 20000
+    assert "25000자 중" in rd.message and "사라집니다" in rd.message
+    short = reg.dispatch("read_document", {"path": "개인/보고서"}, ctx)
+    assert short.data["truncated"] is False
+
+    # (4) 민감 판정은 '해석된 실제 경로'로 한다 — 폴더를 빼고 이름만 줘도 막혀야 한다
+    (root / "비밀").mkdir(parents=True, exist_ok=True)
+    (root / "비밀" / "일기.md").write_text("카드번호 4123-9999", encoding="utf-8")
+    blocked_full = reg.dispatch("read_document", {"path": "비밀/일기"}, ctx)
+    blocked_name = reg.dispatch("read_document", {"path": "일기"}, ctx)
+    assert blocked_full.error_code == "blocked"
+    assert blocked_name.error_code == "blocked", blocked_name.data  # 예전엔 여기서 뚫렸다
+
+
+def test_ai_calendar_id_and_filter_rules():
+    """반복 id 규칙 일원화 + event_ids가 기본 조회창에 갇히지 않는지."""
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.calendar_ids import base_id, is_instance
+    from backend.config import get_settings
+
+    # 규칙은 한 곳에서만 정의된다 — 예전엔 세 벌이 갈라져 구글에서만 깨졌다
+    assert base_id("abc_20260305T100000Z") == "abc" and is_instance("abc_20260305T100000Z")
+    assert base_id("abc@2026-03-05") == "abc" and is_instance("abc@2026-03-05")
+    assert base_id("abc") == "abc" and not is_instance("abc")
+
+    s = get_settings()
+    u = SessionUser(username="calids", display_name="CI", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-27")
+    reg = default_registry()
+
+    # 기본 조회창(오늘-30일~+120일) 밖의 일정
+    reg.dispatch("create_calendar_event",
+                 {"title": "작년 회고", "start": "2025-12-10T10:00:00",
+                  "end": "2025-12-10T11:00:00", "color": "노랑"}, ctx)
+    old = reg.dispatch("list_calendar_events",
+                       {"from_date": "2025-12-01", "to_date": "2025-12-31"}, ctx).data["events"]
+    assert len(old) == 1
+    eid = old[0]["id"]
+
+    # 조회가 준 id를 기간 없이 그대로 넘겨도 동작해야 한다
+    r = reg.dispatch("bulk_update_calendar_events",
+                     {"event_ids": [eid], "title_prefix": "[완료] "}, ctx)
+    assert r.ok and r.data["count"] == 1, (r.message, r.data)
+    again = reg.dispatch("list_calendar_events",
+                         {"from_date": "2025-12-01", "to_date": "2025-12-31"}, ctx).data["events"]
+    assert again[0]["title"] == "[완료] 작년 회고"
+
+    # 없는 id는 조용히 0건이 아니라 왜 못 찾았는지 알려준다
+    miss = reg.dispatch("bulk_update_calendar_events",
+                        {"event_ids": ["없는id"], "title_prefix": "x"}, ctx)
+    assert not miss.ok and miss.error_code == "not_found" and "없는id" in miss.message
+
+    # 단건 수정도 모르는 색을 거절한다(예전엔 조용히 기본색으로 덮었다)
+    bad = reg.dispatch("update_calendar_event", {"event_id": eid, "color": "민트색"}, ctx)
+    assert not bad.ok and bad.error_code == "invalid"
+    same = reg.dispatch("list_calendar_events",
+                        {"from_date": "2025-12-01", "to_date": "2025-12-31"}, ctx).data["events"]
+    assert same[0]["color"] == "5", same  # 노랑 그대로
+
+
 def test_ai_can_undo_its_own_deletions():
     """지우는 힘을 준 곳에는 되돌리는 힘도 있어야 한다.
 
@@ -1398,9 +1503,15 @@ def test_ai_blocks_sensitive_files():
     for path in ("password.txt", "내 비밀번호", "계좌/메모", "secret.md"):
         r = ReadDocument().run({"path": path}, ctx)
         assert r.ok is False and r.error_code == "blocked", path
-    # .env는 텍스트 확장자에서 제외되어 AI가 읽지 못함
-    from backend.gemini_client import TEXT_EXTENSIONS
-    assert ".env" not in TEXT_EXTENSIONS
+    # .env·키 파일은 AI가 읽지 못한다.
+    # 예전에는 이 단언이 gemini_client.TEXT_EXTENSIONS를 봤는데, 그 모듈은
+    # 아무도 쓰지 않는 죽은 코드라 '가짜 보증'이었다. 실제 게이트를 확인한다.
+    from backend.file_kinds import is_editable
+
+    assert is_editable(".env"), "UI 편집은 되어야 한다(텍스트로 분류)"
+    for name in (".env", "prod.env", "server.key", "cert.pem"):
+        r = ReadDocument().run({"path": name}, ctx)
+        assert r.ok is False and r.error_code == "blocked", name
 
 
 def test_raw_serve_blocks_stored_xss():

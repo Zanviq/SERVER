@@ -61,11 +61,19 @@ def _find_by_name(root: Path, ident: str) -> list:
 
 
 def _resolve(root: Path, ident: str):
-    """식별자 → 실제 파일. 없으면 None, 후보가 여럿이면 _Ambiguous."""
+    """식별자 → 실제 파일. 없으면 None, 후보가 여럿이면 _Ambiguous.
+
+    **폴더를 명시했으면 이름 검색으로 넘어가지 않는다.** 예전에는 `업무/보고서`가
+    없으면 트리 전체에서 `보고서`를 찾아 `개인/보고서.md`를 돌려줬고, 그게
+    쓰기 대상이 되어 엉뚱한 폴더의 문서를 통째로 덮어썼다(덮어쓰기는 휴지통을
+    거치지 않아 복구 불가였다). 삭제·이동·이름변경도 같은 경로를 탄다.
+    """
     for cand in (ident, f"{ident}.md"):
         p = safe_join(root, cand)
         if p.is_file():
             return p
+    if "/" in ident.strip("/"):
+        return None  # 폴더까지 지정했는데 없다 = 없는 것이다
     hits = _find_by_name(root, ident)
     if len(hits) == 1:
         return hits[0]
@@ -82,6 +90,25 @@ def _ambiguous_result(exc: _Ambiguous) -> SkillResult:
         error_code="ambiguous",
         data={"candidates": exc.candidates},
     )
+
+
+def _backup_before_overwrite(root: Path, target: Path, ctx) -> None:
+    """덮어쓰기 전 이전 내용을 휴지통에 넣는다(사본을 만들어 옮긴다).
+
+    원본을 그대로 옮기면 그 자리에 파일이 없어지므로, 중간에 실패하면 문서가
+    통째로 사라진다. 사본을 만들어 그것만 휴지통에 넣는다.
+    """
+    import shutil
+    import tempfile
+
+    rel = to_rel(root, target)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="ovw_", dir=str(target.parent)))
+    try:
+        copy = tmp_dir / target.name
+        shutil.copy2(target, copy)
+        move_to_trash(copy, rel, ctx.user, ctx.settings)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _target_for_write(root: Path, ident: str) -> Path:
@@ -128,9 +155,12 @@ class ReadDocument(SkillBase):
         "required": ["path"],
     }
 
+    _BLOCKED = "민감 문서로 판단되어 AI 읽기가 차단되었습니다."
+
     def run(self, args, ctx):
+        # 요청 문자열로 한 번 — 없는 경로라도 막아서 존재 여부를 흘리지 않는다.
         if _is_sensitive(args["path"]):
-            return SkillResult(ok=False, message="민감 문서로 판단되어 AI 읽기가 차단되었습니다.", error_code="blocked")
+            return SkillResult(ok=False, message=self._BLOCKED, error_code="blocked")
         root = user_data_root(ctx.user, ctx.settings)
         try:
             target = _resolve(root, args["path"])
@@ -138,18 +168,36 @@ class ReadDocument(SkillBase):
             return _ambiguous_result(e)
         if target is None:
             return SkillResult(ok=False, message="문서를 찾을 수 없습니다.", error_code="not_found")
+        # 해석된 **실제 경로**로 한 번 더. 요청 문자열만 보면 `비밀/일기`는 막히는데
+        # `일기`는 통과해 같은 파일이 그대로 읽혔다 — 스킬 설명이 "이름만 줘도 된다"고
+        # 안내하므로 이 우회는 공격이 아니라 모델의 정상 동작이었다.
+        if _is_sensitive(to_rel(root, target)):
+            return SkillResult(ok=False, message=self._BLOCKED, error_code="blocked")
         if not is_editable(target.name):
             return SkillResult(
                 ok=False,
                 message=f"'{kind_of(target.name)}' 파일이라 내용을 읽을 수 없습니다.",
                 error_code="unsupported",
             )
+        full = target.read_text(encoding="utf-8", errors="replace")
+        content = full[:_MAX_READ]
+        truncated = len(full) > _MAX_READ
+        # 잘렸다는 사실을 반드시 알린다. 예전에는 조용히 잘라 줘서, 모델이 그걸
+        # 전문으로 믿고 write_document로 되쓰면 뒷부분이 영구히 사라졌다.
         return SkillResult(
             ok=True,
-            message="읽기 완료",
+            message=(
+                f"읽기 완료 — 전체 {len(full)}자 중 앞 {len(content)}자만 읽었습니다. "
+                "이 내용으로 문서를 덮어쓰면 나머지가 사라집니다."
+                if truncated
+                else "읽기 완료"
+            ),
             data={
                 "path": _ident(root, target),
-                "content": target.read_text(encoding="utf-8", errors="replace")[:_MAX_READ],
+                "content": content,
+                "truncated": truncated,
+                "total_chars": len(full),
+                "read_chars": len(content),
             },
         )
 
@@ -173,9 +221,24 @@ class WriteDocument(SkillBase):
         if target.exists() and not is_editable(target.name):
             return SkillResult(ok=False, message="텍스트 문서만 편집할 수 있습니다.", error_code="unsupported")
         target.parent.mkdir(parents=True, exist_ok=True)
+
+        # 덮어쓰기는 이 시스템에서 가장 되돌리기 어려운 동작이었다 — 삭제는 휴지통을
+        # 거치는데 덮어쓰기만 아무 흔적도 안 남겼다. 이전 내용을 휴지통에 넣어
+        # restore_from_trash로 되돌릴 수 있게 한다.
+        backed_up = False
+        if target.exists() and target.read_text(encoding="utf-8", errors="replace") != args["content"]:
+            try:
+                _backup_before_overwrite(root, target, ctx)
+                backed_up = True
+            except Exception:  # noqa: BLE001 - 백업 실패가 저장을 막지는 않는다
+                pass
+
         target.write_text(args["content"], encoding="utf-8")
         ident = _ident(root, target)
-        return SkillResult(ok=True, message=f"'{ident}' 저장됨", data={"path": ident})
+        msg = f"'{ident}' 저장됨"
+        if backed_up:
+            msg += " (이전 내용은 휴지통에 있습니다)"
+        return SkillResult(ok=True, message=msg, data={"path": ident, "backed_up": backed_up})
 
 
 class AppendDocument(SkillBase):

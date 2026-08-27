@@ -140,15 +140,23 @@ export function Notes() {
     [],
   );
 
+  /** 저장. quiet=true면 저장만 하고 재조회·트리 갱신을 건너뛴다.
+   *
+   *  자동저장(기본 900ms)마다 noteGet + noteTree를 부르면, 백엔드가 백링크를
+   *  구하려고 마크다운 전체를 다시 읽고 파싱한다(저장으로 지문이 바뀌어 캐시가
+   *  매번 무효화된다). 타이핑 중에 그걸 반복할 이유가 없다 — 문서 집합이 바뀌는
+   *  동작(생성·삭제·이름변경)에서만 갱신한다. */
   const save = useCallback(
-    async (path: string, text: string) => {
+    async (path: string, text: string, quiet = false) => {
       setSaving(true);
       try {
         await api.noteSave(path, text);
         setDirty(false);
-        const d = await api.noteGet(path);
-        setDetail(d);
-        reloadTree();
+        if (!quiet) {
+          const d = await api.noteGet(path);
+          setDetail(d);
+          reloadTree();
+        }
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "저장 실패");
       } finally {
@@ -164,7 +172,7 @@ export function Notes() {
     setDirty(true);
     if (!current) return;
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => save(current, text), autosaveMs);
+    saveTimer.current = window.setTimeout(() => save(current, text, true), autosaveMs);
   };
 
   /** 모바일에서 목록으로 돌아가기. 대기 중인 자동저장을 먼저 흘려보낸다 —
@@ -173,7 +181,7 @@ export function Notes() {
     if (saveTimer.current) {
       window.clearTimeout(saveTimer.current);
       saveTimer.current = null;
-      if (current && dirty) save(current, content);
+      if (current && dirty) save(current, content, true);
     }
     setCurrent(null);
     setDetail(null);
@@ -637,7 +645,14 @@ export function Notes() {
                 : dirty ? <Save size={13} className="text-warning" />
                 : current && isEditable ? <span className="label text-positive">저장됨</span> : null}
               {current && isEditable && (
-                <button onClick={() => setReading((v) => !v)} title="편집 / 읽기 전환"
+                <button
+                  onClick={() => {
+                    const next = !reading;
+                    setReading(next);
+                    // 읽기 모드에서는 백링크가 최신이어야 한다(자동저장은 갱신을 건너뛴다)
+                    if (next && current) api.noteGet(current).then(setDetail).catch(() => {});
+                  }}
+                  title="편집 / 읽기 전환"
                   className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors ${
                     reading ? "border-accent/40 bg-accent-muted text-accent-fg" : "border-line text-fg-muted hover:text-fg"
                   }`}>

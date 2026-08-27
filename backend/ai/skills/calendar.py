@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 
 from ... import calendar_service, user_settings
 from ...calendar_colors import COLOR_NAMES, resolve_color
+from ...calendar_ids import base_id as calendar_base_id
 from ..skill_base import SkillBase, SkillResult
 
 
@@ -55,24 +56,9 @@ def _default_window(ctx) -> tuple[str, str]:
     return frm, to
 
 
-# 구글 반복 인스턴스 id: `{시리즈id}_{YYYYMMDD}` 또는 `{시리즈id}_{YYYYMMDD}T{HHMMSS}Z`.
-# 구글 이벤트 id는 base32hex(a-v, 0-9)라 `_`가 들어가지 않으므로 이 분리는 안전하다.
-_GOOGLE_INSTANCE = re.compile(r"^(?P<base>[^_@]+)_\d{8}(T\d{6}Z)?$")
-
-
 def _base_id(eid: str) -> str:
-    """반복 인스턴스 id에서 시리즈 id만 뽑는다.
-
-    내부 캘린더는 `시리즈@YYYY-MM-DD`, 구글은 `시리즈_20260305T100000Z` 형식이다.
-    **두 형식을 모두 봐야 한다** — `@`만 보고 자르면 구글에서는 인스턴스마다
-    다른 id로 취급돼, 주간 반복 하나에 제목 변경이 수십 번 걸리고 그만큼
-    시리즈 예외가 만들어진다(실제로 그렇게 망가뜨린 적이 있다).
-    """
-    s = str(eid)
-    if "@" in s:
-        return s.split("@", 1)[0]
-    m = _GOOGLE_INSTANCE.match(s)
-    return m.group("base") if m else s
+    """반복 인스턴스 id에서 시리즈 id만. 규칙은 calendar_ids에 한 벌만 둔다."""
+    return calendar_base_id(eid)
 
 
 def _matches(ev: dict, color_id: str | None, needle: str | None) -> bool:
@@ -102,12 +88,30 @@ def _strict_color(value) -> str:
     return cid
 
 
+def _wide_window(ctx) -> tuple[str, str]:
+    """id를 직접 준 경우의 조회창 — 앞뒤 3년.
+
+    기본창(오늘-30일~+120일)을 쓰면 "작년 12월 일정"의 id를 그대로 넘겨도
+    창 밖이라 0건이 되어, 조회가 준 식별자가 후속 스킬에서 안 먹는다.
+    """
+    base = (ctx.today or "")[:10]
+    try:
+        today = datetime.fromisoformat(base) if base else datetime.now()
+    except ValueError:
+        today = datetime.now()
+    return (
+        (today - timedelta(days=1095)).strftime("%Y-%m-%dT00:00:00"),
+        (today + timedelta(days=1095)).strftime("%Y-%m-%dT23:59:59"),
+    )
+
+
 def _select(args, ctx) -> tuple[list[dict], str, str]:
     """기간·색·제목으로 일정을 고른다. (고른 목록, 시작, 끝)"""
     frm = args.get("from_date")
     to = args.get("to_date")
     if not frm and not to:
-        frm, to = _default_window(ctx)
+        # id를 직접 줬으면 기간으로 다시 좁히지 않는다(파라미터 설명이 "기간보다 우선"이다)
+        frm, to = _wide_window(ctx) if args.get("event_ids") else _default_window(ctx)
     color_id = _strict_color(args["color"]) if args.get("color") else None
     needle = str(args["title_contains"]).strip().lower() if args.get("title_contains") else None
     events = calendar_service.list_events(ctx.user, ctx.settings, frm, to)
@@ -270,7 +274,11 @@ class CreateCalendarEvent(SkillBase):
 class UpdateCalendarEvent(SkillBase):
     mutates = "calendar"
     name = "update_calendar_event"
-    description = "기존 일정을 수정한다. event_id는 list_calendar_events로 얻는다."
+    description = (
+        "기존 일정을 수정한다. event_id는 list_calendar_events로 얻는다. "
+        "**반복 일정은 인스턴스 id를 줘도 시리즈 전체가 바뀐다** — 한 회차만 고치려면 "
+        "delete_calendar_event로 그 회차를 지우고 create_calendar_event로 새로 만드세요."
+    )
     parameters = {
         "type": "object",
         "properties": {
@@ -293,7 +301,12 @@ class UpdateCalendarEvent(SkillBase):
             if args.get(k) is not None:
                 payload[k] = args[k]
         if args.get("color") is not None:
-            payload["color"] = resolve_color(args["color"])
+            # 일괄 스킬과 같은 규칙 — 모르는 색을 기본값으로 바꿔치기하면
+            # 보라색 일정이 조용히 연두로 덮인다.
+            try:
+                payload["color"] = _strict_color(args["color"])
+            except _BadColor as e:
+                return SkillResult(ok=False, message=str(e), error_code="invalid")
         if args.get("all_day") is not None:
             payload["allDay"] = bool(args["all_day"])
         if args.get("remind_minutes") is not None:
@@ -381,6 +394,15 @@ class BulkUpdateCalendarEvents(SkillBase):
         if ids:
             want = {_base_id(i) for i in ids}
             events = [e for e in events if _base_id(e.get("id", "")) in want]
+            missing = want - {_base_id(e.get("id", "")) for e in events}
+            if missing:
+                return SkillResult(
+                    ok=False, error_code="not_found",
+                    message=("찾지 못한 일정이 있습니다: " + ", ".join(sorted(missing)) +
+                             f". 조회 기간({frm[:10]}~{to[:10]}) 밖일 수 있으니 "
+                             "from_date/to_date를 함께 주세요."),
+                    data={"missing": sorted(missing)},
+                )
 
         # 반복 일정은 인스턴스로 펼쳐져 있다 — 시리즈당 한 번만 고친다.
         by_series: dict[str, dict] = {}
@@ -608,6 +630,15 @@ class BulkDeleteCalendarEvents(SkillBase):
         if ids:
             want = {_base_id(i) for i in ids}
             events = [e for e in events if _base_id(e.get("id", "")) in want]
+            missing = want - {_base_id(e.get("id", "")) for e in events}
+            if missing:
+                return SkillResult(
+                    ok=False, error_code="not_found",
+                    message=("찾지 못한 일정이 있습니다: " + ", ".join(sorted(missing)) +
+                             f". 조회 기간({frm[:10]}~{to[:10]}) 밖일 수 있으니 "
+                             "from_date/to_date를 함께 주세요."),
+                    data={"missing": sorted(missing)},
+                )
 
         # 반복은 시리즈당 한 번만 지운다(인스턴스마다 부르면 이미 없는 것을 계속 지운다)
         by_series: dict[str, dict] = {}
@@ -643,8 +674,9 @@ class BulkDeleteCalendarEvents(SkillBase):
 
         # 한 번에 넘긴다(휴지통 보관도 서비스 계층이 함께 처리한다)
         ok_ids, fail_pairs = calendar_service.delete_many(ctx.user, ctx.settings, targets)
-        done = set(ok_ids)
-        err_by_id = dict(fail_pairs)
+        # 백엔드가 인스턴스 id를 돌려줘도 시리즈 id와 대조되도록 한 번 더 정규화한다
+        done = {_base_id(i) for i in ok_ids}
+        err_by_id = {_base_id(k): v for k, v in fail_pairs}
         deleted = [i for i in listing if i["id"] in done]
         failed = [{**i, "error": err_by_id.get(i["id"], "")} for i in listing if i["id"] not in done]
         msg = f"{len(deleted)}개 일정을 삭제했습니다 — 휴지통의 '일정'에서 되돌릴 수 있습니다"

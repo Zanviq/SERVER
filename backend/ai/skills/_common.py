@@ -8,6 +8,9 @@ SENSITIVE_KEYWORDS = {
     "비밀", "민감", "주민등록", "주민번호", "계좌", "여권", "비밀번호",
     "secret", "private", "password", "passwd", "ssn", "card", "credential",
     "token", "apikey", "api_key", ".key", ".pem",
+    # .env는 file_kinds에서 'text'로 분류돼 읽기가 가능하다(UI 편집은 되어야 하므로
+    # 그대로 둔다). AI로 내보내는 것만 여기서 막는다.
+    ".env",
 }
 
 

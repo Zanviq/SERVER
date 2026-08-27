@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from . import calendar_store
+from .calendar_ids import base_id
 from .auth import SessionUser
 from .calendar_google import get_google_calendar
 from .config import Settings
@@ -32,7 +33,7 @@ def create_event(user: SessionUser, settings: Settings, payload: dict) -> dict:
 def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict) -> dict:
     gc = get_google_calendar(settings, user.username)
     if gc:
-        return gc.update(eid.split("@", 1)[0], payload)
+        return gc.update(base_id(eid), payload)
     return calendar_store.update_event(user, settings, eid, payload)
 
 
@@ -69,7 +70,7 @@ def delete_many(
     eids = [str(e.get("id", "")) for e in events]
     gc = get_google_calendar(settings, user.username)
     if gc:
-        return gc.delete_many([e.split("@", 1)[0] for e in eids])
+        return gc.delete_many([base_id(e) for e in eids])
     return calendar_store.delete_many(user, settings, eids)
 
 
@@ -92,7 +93,7 @@ def delete_event(user: SessionUser, settings: Settings, eid: str) -> None:
     snapshot = find_event(user, settings, eid)
     gc = get_google_calendar(settings, user.username)
     if gc:
-        gc.delete(eid.split("@", 1)[0])
+        gc.delete(base_id(eid))
     else:
         calendar_store.delete_event(user, settings, eid)
     if snapshot:
