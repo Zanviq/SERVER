@@ -22,6 +22,8 @@ logger = logging.getLogger("server.ai")
 @dataclass
 class LLMResult:
     text: str
+    #: LLM 호출 자체가 실패했을 때의 원인(모델의 답이 아니다)
+    error: str = ""
     tool_use: dict | None = None  # {"name": str, "args": dict} — 단일 호출(하위호환)
     tool_uses: list[dict] = field(default_factory=list)  # 한 응답에 여러 호출이 올 때
 
@@ -76,7 +78,10 @@ class GeminiLLM:
             )
         except Exception as e:  # noqa: BLE001
             logger.exception("Gemini 호출 실패")
-            return LLMResult(text=f"LLM 오류: {e}", tool_use=None)
+            # 텍스트로 돌려주면 오케스트레이터가 '모델의 답'으로 취급해 그대로
+            # 말풍선에 띄운다(사용자에겐 비서가 그렇게 말한 것처럼 보이고,
+            # 라우터의 DEBUG 마스킹도 우회한다). 오류로 표시한다.
+            return LLMResult(text="", tool_use=None, error=str(e))
 
         cand = resp.candidates[0] if resp.candidates else None
         text, tool_uses = parse_candidate(cand)
@@ -116,9 +121,14 @@ def run(
     contents.append({"role": "user", "parts": [{"text": message}]})
 
     final_text = ""
+    executed: list[tuple[str, bool]] = []  # 한도 초과 시 요약용
 
     for step in range(max_steps):
         result = llm.chat(contents, catalog, system)
+        if result.error:
+            yield {"type": "error", "message": f"AI 호출 실패: {result.error}"}
+            yield {"type": "done"}
+            return
 
         calls = result.calls()
         if calls:
@@ -132,6 +142,7 @@ def run(
                 yield {"type": "tool_call", "name": name, "args": args}
 
                 skill_result = registry.dispatch(name, args, ctx)
+                executed.append((name, skill_result.ok))
                 yield {
                     "type": "tool_result",
                     "name": name,
@@ -164,7 +175,14 @@ def run(
         final_text = result.text
         break
     else:
-        final_text = final_text or "최대 단계에 도달했습니다."
+        # 여기까지 왔다는 건 스킬을 계속 부르다 한도에 닿았다는 뜻이다.
+        # 이미 적용된 변경이 있는데 "최대 단계에 도달했습니다."만 내보내면
+        # 사용자는 무엇이 바뀌었는지 알 수 없다.
+        did = [f"{n}({'성공' if ok else '실패'})" for n, ok in executed]
+        final_text = final_text or (
+            "최대 단계에 도달해 중단했습니다. 지금까지 실행한 작업: " + ", ".join(did)
+            if did else "최대 단계에 도달했습니다."
+        )
 
     yield {"type": "text", "text": final_text}
     yield {"type": "done"}

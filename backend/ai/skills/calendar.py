@@ -380,7 +380,11 @@ class BulkUpdateCalendarEvents(SkillBase):
         suffix = args.get("title_suffix") or ""
         rep_from = args.get("replace_from") or ""
         rep_to = args.get("replace_to") if args.get("replace_to") is not None else ""
-        new_color = resolve_color(args["set_color"], "") if args.get("set_color") else ""
+        try:
+            # 관대한 resolve_color를 쓰면 모르는 색이 ""가 되어 색 변경이 조용히 증발한다
+            new_color = _strict_color(args["set_color"]) if args.get("set_color") else ""
+        except _BadColor as e:
+            return SkillResult(ok=False, message=str(e), error_code="invalid")
         if not (prefix or suffix or rep_from or new_color):
             return SkillResult(
                 ok=False,

@@ -936,6 +936,76 @@ def test_mutating_skills_declare_what_they_change():
     assert not missing, f"mutates 선언이 빠진 스킬: {missing}"
 
 
+def test_recurring_single_occurrence_roundtrip():
+    """반복 일정 '한 회차만' 삭제 → 휴지통 → 복원.
+
+    id 규칙을 통일하면서 단건 삭제에도 base_id를 적용했더니, 구글에서는
+    "그날 것만 지워줘"가 시리즈 전체를 지웠다(내가 만든 회귀). 또 휴지통에
+    시리즈 원본이 담겨 복원하면 반복 일정이 통째로 중복 생성됐다.
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    from backend import trash
+
+    s = get_settings()
+    u = SessionUser(username="recur1", display_name="R1", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-27")
+    reg = default_registry()
+
+    reg.dispatch("create_calendar_event", {
+        "title": "스탠드업", "start": "2026-09-01T09:00:00",
+        "end": "2026-09-01T09:15:00", "recurrence": "weekly",
+    }, ctx)
+    win = {"from_date": "2026-09-01", "to_date": "2026-09-30"}
+    before = reg.dispatch("list_calendar_events", win, ctx).data["events"]
+    assert len(before) >= 4, before
+    target = before[1]
+
+    assert reg.dispatch("delete_calendar_event", {"event_id": target["id"]}, ctx).ok
+    after = reg.dispatch("list_calendar_events", win, ctx).data["events"]
+    assert len(after) == len(before) - 1, "시리즈가 통째로 지워지면 안 된다"
+
+    # 휴지통에는 '그 회차'만 담긴다(시리즈가 아니라)
+    entries = trash.list_trash(u, s, trash.KIND_EVENT)
+    assert len(entries) == 1 and entries[0]["event_start"].startswith("2026-09-08"), entries
+    assert reg.dispatch("restore_from_trash", {"id": entries[0]["id"]}, ctx).ok
+    back = reg.dispatch("list_calendar_events", win, ctx).data["events"]
+    assert len(back) == len(before), "복원이 시리즈를 복제하면 안 된다"
+
+
+def test_ai_write_target_rules():
+    """쓰기 대상 선택 — 이미지 충돌과 점 있는 제목."""
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    from backend.storage import user_data_root
+
+    s = get_settings()
+    u = SessionUser(username="wtarget", display_name="WT", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-27")
+    reg = default_registry()
+    root = user_data_root(u, s)
+
+    # 같은 이름의 이미지가 있어도 노트를 만들 수 있어야 한다(예전엔 거절됐다)
+    (root / "사진").mkdir(parents=True, exist_ok=True)
+    (root / "사진" / "여행.png").write_bytes(b"PNG")
+    r = reg.dispatch("write_document", {"path": "여행", "content": "# 여행"}, ctx)
+    assert r.ok, r.message
+    assert (root / "여행.md").exists()
+    assert (root / "사진" / "여행.png").read_bytes() == b"PNG"  # 이미지는 그대로
+    # 이미지 자체를 정확히 지정하면 여전히 거절된다
+    assert not reg.dispatch("write_document", {"path": "사진/여행.png", "content": "x"}, ctx).ok
+
+    # 제목에 점이 있어도 .md가 붙어 다시 열린다
+    # (Path("v1.2 회의록").suffix == ".2 회의록" 이라 확장자로 오판했다)
+    assert reg.dispatch("write_document", {"path": "v1.2 회의록", "content": "본문"}, ctx).ok
+    assert (root / "v1.2 회의록.md").exists()
+    assert reg.dispatch("read_document", {"path": "v1.2 회의록"}, ctx).ok
+
+
 def test_ai_round2_hardening():
     """2차 점검 수정분 — 상한·식별자 충돌·폴더 목록·입력 제한."""
     from backend.ai.skill_base import SkillContext

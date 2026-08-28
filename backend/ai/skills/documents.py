@@ -52,7 +52,7 @@ class _Ambiguous(Exception):
         self.candidates = [_ident(root, p) for p in hits]
 
 
-def _find_by_name(root: Path, ident: str) -> list:
+def _find_by_name(root: Path, ident: str, *, editable_only: bool = False) -> list:
     """폴더를 생략한 이름으로 전체에서 찾는다(모델이 흔히 이름만 준다).
 
     이름을 glob 패턴에 끼워 넣지 않는다 — '*'·'[' 가 든 이름의 오매칭 방지.
@@ -63,12 +63,14 @@ def _find_by_name(root: Path, ident: str) -> list:
     for p in root.rglob("*"):
         if not p.is_file():
             continue
+        if editable_only and not is_editable(p.name):
+            continue  # 쓰기 대상 탐색에서는 이미지·PDF를 후보로 삼지 않는다
         if p.name == name or p.stem == stem:
             out.append(p)
     return sorted(out)
 
 
-def _resolve(root: Path, ident: str):
+def _resolve(root: Path, ident: str, *, editable_only: bool = False):
     """식별자 → 실제 파일. 없으면 None, 후보가 여럿이면 _Ambiguous.
 
     **폴더를 명시했으면 이름 검색으로 넘어가지 않는다.** 예전에는 `업무/보고서`가
@@ -82,7 +84,7 @@ def _resolve(root: Path, ident: str):
             return p
     if "/" in ident.strip("/"):
         return None  # 폴더까지 지정했는데 없다 = 없는 것이다
-    hits = _find_by_name(root, ident)
+    hits = _find_by_name(root, ident, editable_only=editable_only)
     if len(hits) == 1:
         return hits[0]
     if len(hits) > 1:
@@ -119,12 +121,27 @@ def _backup_before_overwrite(root: Path, target: Path, ctx) -> None:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+_EXT_RE = __import__("re").compile(r"\.[A-Za-z0-9]{1,8}$")
+
+
+def _has_extension(name: str) -> bool:
+    """진짜 확장자인가.
+
+    Path.suffix는 'v1.2 회의록'의 suffix를 '.2 회의록'으로 준다. 그걸 확장자로
+    믿으면 .md를 안 붙여 확장자 없는 파일이 만들어지고, kind_of가 'other'로
+    분류해 다시 열 수도 없는 문서가 된다.
+    """
+    return bool(_EXT_RE.search(name.rsplit("/", 1)[-1]))
+
+
 def _target_for_write(root: Path, ident: str) -> Path:
     """쓰기 대상 — 기존 문서가 있으면 그 위치, 없으면 준 경로에 새로 만든다."""
-    found = _resolve(root, ident)
+    # 쓰기 후보는 편집 가능한 문서만. 예전에는 `사진/여행.png` 하나 때문에
+    # 새 노트 `여행`을 아예 만들 수 없었다("텍스트 문서만 편집할 수 있습니다").
+    found = _resolve(root, ident, editable_only=True)
     if found:
         return found
-    rel = ident if Path(ident).suffix else f"{ident}.md"
+    rel = ident if _has_extension(ident) else f"{ident}.md"
     return safe_join(root, rel)
 
 
