@@ -143,14 +143,7 @@ def _to_google(p: dict) -> dict:
         "description": p.get("description", ""),
         "colorId": str(p.get("color", "2")),
     }
-    if all_day:
-        body["start"] = {"date": p["start"][:10]}
-        # 내부 모델의 종료일은 '포함' → 구글엔 '배타적'(+1일)으로 보냄
-        inc_end = (p.get("end") or p["start"])[:10]
-        body["end"] = {"date": _shift_date(inc_end, 1)}
-    else:
-        body["start"] = {"dateTime": p["start"], "timeZone": "Asia/Seoul"}
-        body["end"] = {"dateTime": p.get("end") or p["start"], "timeZone": "Asia/Seoul"}
+    body.update(_time_fields(p))
     # 반복은 있을 때만 넣는다 — 반복 인스턴스를 patch할 때 recurrence 키가 있으면
     # Google이 거부하므로, 'none'이면 아예 건드리지 않는다.
     rule = _rrule(p)
@@ -161,6 +154,17 @@ def _to_google(p: dict) -> dict:
     if remind > 0:
         body["reminders"] = {"useDefault": False, "overrides": [{"method": "popup", "minutes": remind}]}
     return body
+
+
+def _time_fields(p: dict) -> dict:
+    """시작·종료만 구글 형식으로."""
+    if bool(p.get("allDay")):
+        # 내부 모델의 종료일은 '포함' → 구글엔 '배타적'(+1일)으로 보냄
+        inc_end = (p.get("end") or p["start"])[:10]
+        return {"start": {"date": p["start"][:10]},
+                "end": {"date": _shift_date(inc_end, 1)}}
+    return {"start": {"dateTime": p["start"], "timeZone": "Asia/Seoul"},
+            "end": {"dateTime": p.get("end") or p["start"], "timeZone": "Asia/Seoul"}}
 
 
 def _to_google_partial(p: dict) -> dict:
@@ -274,19 +278,38 @@ class GoogleCalendar:
         return made, fail
 
     def update(self, eid: str, payload: dict) -> dict:
-        """부분 수정도 안전하게 — 기존 값을 읽어 병합한 뒤 전체 본문으로 보낸다.
+        """부분 수정. **바꾸라고 한 것만 보낸다.**
 
-        _to_google는 항상 전체 본문을 만들므로, 부분 payload를 그대로 넘기면
-        제목·설명이 ''로 덮이고 색이 기본값으로 초기화되며 end가 start로 무너진다
-        (제목만 주면 p["start"]에서 KeyError). 병합 규칙은 내부 저장소와 공유해
-        두 백엔드가 같은 동작을 하게 한다.
+        예전에는 전체 본문(_to_google)을 만들어 보냈다. 그런데 우리 내부 모델은
+        반복 규칙을 FREQ/INTERVAL/UNTIL로만 표현하므로, 구글 앱에서 만든
+        'BYDAY=MO,WE,FR; COUNT=30' 일정의 **제목만 바꿔도** 규칙이
+        'FREQ=WEEKLY' 하나로 재작성됐다 — 수·금 회차가 사라지고 횟수 제한이
+        풀리며, 개별 삭제해 둔 회차(EXDATE)까지 되살아났다.
+        recurrence는 사용자가 반복을 실제로 건드릴 때만 손댄다.
+
+        시각을 바꿀 때는 기존 값이 필요하다(“3시로 옮겨줘”처럼 start만 주면
+        원래 길이를 유지해야 한다). 그때만 get으로 읽는다.
         """
         from .calendar_store import merge_event
 
-        current = _to_internal(self._svc.events().get(calendarId=self._cid, eventId=eid).execute())
-        merged = merge_event(payload, current)
-        g = self._svc.events().patch(calendarId=self._cid, eventId=eid, body=_to_google(merged)).execute()
-        return _to_internal(g)
+        body = _to_google_partial(payload)
+        touches_time = any(k in payload for k in ("start", "end", "allDay"))
+        touches_recur = any(k in payload for k in ("recurrence", "interval", "recur_until"))
+
+        raw = None
+        if touches_time or touches_recur:
+            raw = self._svc.events().get(calendarId=self._cid, eventId=eid).execute()
+            merged = merge_event(payload, _to_internal(raw))
+            if touches_time:
+                body.update(_time_fields(merged))
+            if touches_recur:
+                rule = _rrule(merged)
+                # 반복을 없애라고 한 경우도 명시적으로 비운다
+                body["recurrence"] = [rule] if rule else []
+
+        g = self._svc.events().patch(calendarId=self._cid, eventId=eid, body=body).execute()
+        # 구글은 patch에 전체 리소스를 돌려주지만, 얇게 오는 경우도 방어한다
+        return _to_internal(g if g.get("start") else {**(raw or {}), **g})
 
     def get(self, eid: str) -> dict:
         """일정 하나. 반복 인스턴스 id(`시리즈_20260305T100000Z`)도 그대로 받는다."""

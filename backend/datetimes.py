@@ -22,7 +22,7 @@ from datetime import date, datetime
 #: 'YYYY-M-D' 처럼 자리수가 덜 맞는 표기도 받는다 — 모델이 흔히 그렇게 준다.
 _LOOSE = re.compile(
     r"^(?P<y>\d{4})-(?P<mo>\d{1,2})-(?P<d>\d{1,2})"
-    r"(?:[T ](?P<h>\d{1,2}):(?P<mi>\d{2})(?::(?P<s>\d{2}))?)?"
+    r"(?:[T ](?P<h>\d{1,2}):(?P<mi>\d{2})(?::(?P<s>\d{2})(?:\.\d+)?)?)?"
     r"\s*(?P<tz>Z|[+-]\d{2}:?\d{2})?$"
 )
 

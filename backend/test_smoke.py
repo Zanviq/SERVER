@@ -642,11 +642,17 @@ def test_calendar_update_start_preserves_duration():
 
 
 def test_google_partial_update_preserves_fields():
-    """Google 캘린더 부분 수정이 나머지 필드를 지우면 안 된다.
+    """Google 캘린더 부분 수정이 나머지 필드를 건드리면 안 된다.
 
-    회귀: update가 부분 payload를 그대로 _to_google에 넘겨 전체 본문을 만들었다.
+    회귀 1: update가 부분 payload를 그대로 _to_google에 넘겨 전체 본문을 만들었다.
     시작만 옮기면 summary/description이 ''로, colorId가 '2'로 덮이고 end가 start로
     무너졌으며, 제목만 바꾸면 p["start"]에서 KeyError(500)가 났다.
+    회귀 2: 전체 본문을 보내느라 recurrence를 우리 모델(FREQ/INTERVAL/UNTIL)로
+    재작성했다. 구글 앱에서 만든 'BYDAY=MO,WE,FR;COUNT=30' 일정의 제목만 바꿔도
+    수·금 회차가 사라지고 EXDATE로 지워둔 회차가 되살아났다.
+
+    events.patch는 **보내지 않은 필드를 그대로 둔다**. 그러니 안 바꿀 것은
+    아예 보내지 않는 것이 정답이다.
     """
     from backend.calendar_google import GoogleCalendar
 
@@ -688,20 +694,80 @@ def test_google_partial_update_preserves_fields():
     svc = _Svc()
     gc = GoogleCalendar(svc, "primary")
 
-    # 시작만 이동 → 제목·설명·색 유지, 길이(1시간) 유지
-    gc.update("evt1", {"start": "2026-09-15T15:00:00"})
+    # 시작만 이동 → 제목·설명·색은 아예 보내지 않고(=보존), 길이(1시간)는 유지
+    got = gc.update("evt1", {"start": "2026-09-15T15:00:00"})
     body = svc.events().last_body
-    assert body["summary"] == "치과 진료", f"제목이 지워짐: {body}"
-    assert body["description"] == "2층 접수", f"설명이 지워짐: {body}"
-    assert body["colorId"] == "7", f"색이 초기화됨: {body}"
+    assert "summary" not in body and "description" not in body, f"안 바꿀 걸 보냄: {body}"
+    assert "colorId" not in body, f"색을 덮어씀: {body}"
     assert body["end"]["dateTime"] == "2026-09-15T16:00:00", f"길이 유지 실패: {body}"
+    assert got["title"] == "치과 진료" and got["color"] == "7", got
 
-    # 제목만 수정 → 500이 아니라 정상 처리되고 시각은 그대로
-    gc.update("evt1", {"title": "치과 재진"})
+    # 제목만 수정 → 500이 아니고, 시각은 아예 건드리지 않는다
+    got = gc.update("evt1", {"title": "치과 재진"})
     body = svc.events().last_body
     assert body["summary"] == "치과 재진"
-    assert body["start"]["dateTime"] == "2026-09-15T10:00:00", f"시각이 변경됨: {body}"
-    assert body["end"]["dateTime"] == "2026-09-15T11:00:00", f"시각이 변경됨: {body}"
+    assert "start" not in body and "end" not in body, f"시각을 건드림: {body}"
+    assert got["start"] == "2026-09-15T10:00:00", got
+
+
+def test_google_update_keeps_recurrence_rules_it_cannot_model():
+    """우리가 표현하지 못하는 반복 규칙을 수정 한 번에 날리면 안 된다."""
+    from backend.calendar_google import GoogleCalendar
+
+    stored = {
+        "id": "rec1",
+        "summary": "스터디",
+        "description": "",
+        "colorId": "5",
+        "start": {"dateTime": "2026-01-05T19:00:00+09:00"},
+        "end": {"dateTime": "2026-01-05T21:00:00+09:00"},
+        "recurrence": [
+            "RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=30",
+            "EXDATE;TZID=Asia/Seoul:20260211T190000",
+        ],
+    }
+
+    class _Req:
+        def __init__(self, r):
+            self._r = r
+
+        def execute(self):
+            return self._r
+
+    class _Events:
+        def __init__(self):
+            self.last_body = None
+
+        def get(self, calendarId, eventId):
+            return _Req(stored)
+
+        def patch(self, calendarId, eventId, body):
+            self.last_body = body
+            return _Req({**stored, **body})
+
+    class _Svc:
+        def __init__(self):
+            self._e = _Events()
+
+        def events(self):
+            return self._e
+
+    svc = _Svc()
+    gc = GoogleCalendar(svc, "primary")
+
+    # 제목만 / 색만 바꾸면 recurrence를 아예 보내지 않는다 → 구글이 원본을 유지
+    for payload in ({"title": "스터디(변경)"}, {"color": "3"}):
+        gc.update("rec1", payload)
+        assert "recurrence" not in svc.events().last_body, svc.events().last_body
+
+    # 반복을 실제로 바꾸라고 하면 그때는 보낸다
+    gc.update("rec1", {"recurrence": "daily", "interval": 2})
+    body = svc.events().last_body
+    assert body["recurrence"] == ["RRULE:FREQ=DAILY;INTERVAL=2"], body
+
+    # 반복을 없애라고 하면 비운다
+    gc.update("rec1", {"recurrence": "none"})
+    assert svc.events().last_body["recurrence"] == [], svc.events().last_body
 
 
 def test_google_recurrence_and_reminders_round_trip():
