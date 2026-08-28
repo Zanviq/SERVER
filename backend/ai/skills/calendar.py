@@ -777,6 +777,16 @@ class BulkDeleteCalendarEvents(SkillBase):
         # 조회가 준 회차를 그대로 지운다. 시리즈로 접으면 "9월 것만"이 몇 년치를
         # 날린다(실측: 52회차 → 0). 단건 삭제와 같은 규칙이어야 한다.
         targets = list(by_series.values())
+        # 시리즈 전체를 지우는 대상은 '창 안 첫 회차'가 아니라 **진짜 시리즈 기록**을
+        # 휴지통에 담아야 한다. 창 안 회차를 담으면 복원했을 때 시작일이 그 창으로
+        # 밀려 앞쪽 회차가 통째로 사라진다(실측: 52회차 → 복원 후 17).
+        # 시리즈 id를 직접 준 드문 경우에만 도는 조회라 왕복 비용도 무시할 만하다.
+        for i, t in enumerate(targets):
+            if not t.get("_whole_series"):
+                continue
+            real = calendar_service.find_event(ctx.user, ctx.settings, str(t.get("id", "")))
+            if real:
+                targets[i] = {**real, "_whole_series": True}
         series_hit = _series_note(targets, instances)
 
         if len(targets) > self.MAX:

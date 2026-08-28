@@ -2774,3 +2774,39 @@ def test_write_document_does_not_invent_extensions_from_dates():
     assert w.ok, w
     r = reg.dispatch("read_document", {"path": "월간정리 2026.08"}, ctx)
     assert r.ok and "내용" in r.data["content"], r
+
+
+def test_whole_series_delete_snapshots_the_real_series():
+    """시리즈를 통째로 지울 땐 진짜 시리즈 기록을 휴지통에 담는다.
+
+    '창 안 첫 회차'를 담으면 복원했을 때 시작일이 그 창으로 밀려 앞쪽 회차가
+    사라진다(실측: 52회차를 지우고 되돌렸더니 17회차만 돌아왔다).
+    """
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("serieskeep")
+
+    def n(frm="2026-01-01", to="2026-12-31"):
+        return len(reg.dispatch("list_calendar_events",
+                                {"from_date": frm, "to_date": to}, ctx).data["events"])
+
+    reg.dispatch("create_calendar_event", {
+        "title": "스터디", "start": "2026-01-05T19:00:00", "end": "2026-01-05T21:00:00",
+        "recurrence": "weekly", "recur_until": "2026-12-28",
+    }, ctx)
+    total = n()
+    day = reg.dispatch("list_calendar_events",
+                       {"from_date": "2026-09-21", "to_date": "2026-09-21"}, ctx)
+    base = day.data["events"][0]["id"].split("@", 1)[0]
+
+    # 시리즈 id + 기간을 함께 줘도 스냅샷은 시리즈 원본이어야 한다
+    r = reg.dispatch("bulk_delete_calendar_events",
+                     {"event_ids": [base], "from_date": "2026-09-01", "to_date": "2026-09-30"}, ctx)
+    assert r.ok and n() == 0, (r, n())
+    item = reg.dispatch("list_trash", {"kind": "event"}, ctx).data["items"][0]
+    assert item["event_start"].startswith("2026-01-05"), item["event_start"]
+
+    assert reg.dispatch("restore_from_trash", {"id": item["id"]}, ctx).ok
+    assert n() == total, (n(), total)
+    assert n("2026-01-01", "2026-03-01") == 8, n("2026-01-01", "2026-03-01")
