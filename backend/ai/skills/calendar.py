@@ -743,11 +743,17 @@ class DeleteCalendarEvent(SkillBase):
 
 class FindFreeSlots(SkillBase):
     name = "find_free_slots"
-    description = "특정 날짜에 지정 길이의 빈 시간대를 찾는다(일정 잡기 전에 사용)."
+    description = (
+        "빈 시간대를 찾는다(일정 잡기 전에 사용). date 하루만 볼 수도 있고, "
+        "to_date를 함께 주면 그 기간 전체를 한 번에 본다 "
+        "(예: '이번 주에 2시간 빈 때' → date=월요일, to_date=일요일). "
+        "하루씩 여러 번 부르지 말고 기간으로 한 번에 물어보세요."
+    )
     parameters = {
         "type": "object",
         "properties": {
-            "date": {"type": "string", "description": "YYYY-MM-DD"},
+            "date": {"type": "string", "description": "YYYY-MM-DD (시작일)"},
+            "to_date": {"type": "string", "description": "YYYY-MM-DD (끝일, 포함). 생략하면 date 하루만."},
             "duration_minutes": {"type": "integer"},
             "work_start": {"type": "string", "description": "HH:MM (기본 09:00)"},
             "work_end": {"type": "string", "description": "HH:MM (기본 18:00)"},
@@ -755,56 +761,105 @@ class FindFreeSlots(SkillBase):
         "required": ["date", "duration_minutes"],
     }
 
-    def run(self, args, ctx):
-        day = args["date"][:10]
-        dur = timedelta(minutes=max(15, int(args["duration_minutes"])))
-        try:
-            ws = datetime.fromisoformat(f"{day}T{_hhmmss(args.get('work_start'), '09:00')}")
-            we = datetime.fromisoformat(f"{day}T{_hhmmss(args.get('work_end'), '18:00')}")
-        except ValueError:
-            return SkillResult(
-                ok=False, message="날짜/시각 형식을 이해하지 못했습니다(date=YYYY-MM-DD, 시각=HH:MM).",
-                error_code="invalid",
-            )
-        if we <= ws:
-            return SkillResult(
-                ok=False, message="work_end가 work_start보다 늦어야 합니다.", error_code="invalid"
-            )
-        # 오늘이면 이미 지난 시간대는 제안하지 않는다(모델이 과거 시각을 잡는 것 방지).
-        now = datetime.now()
-        if day == now.strftime("%Y-%m-%d") and ws < now:
-            ws = now.replace(second=0, microsecond=0)
-        if we - ws < dur:
-            return SkillResult(ok=True, message="0개 빈 시간대", data={"free_slots": []})
+    #: 한 번에 볼 수 있는 날짜 수. 넘으면 기간을 좁히게 한다.
+    MAX_DAYS = 31
+    #: 모델에 실을 후보 수 상한
+    MAX_SLOTS = 50
 
-        events = calendar_service.list_events(
-            ctx.user, ctx.settings, f"{day}T00:00:00", f"{day}T23:59:59"
-        )
+    def run(self, args, ctx):
+        start_day = str(args["date"])[:10]
+        end_day = str(args.get("to_date") or "")[:10] or start_day
+        try:
+            # _hhmmss·int·fromisoformat 모두 ValueError를 던진다. 밖에 두면
+            # 사용자의 오타가 "internal"로 올라가 모델이 스스로 고치지 못한다.
+            dur = timedelta(minutes=max(15, int(args["duration_minutes"])))
+            ws_t = _hhmmss(args.get("work_start"), "09:00")
+            we_t = _hhmmss(args.get("work_end"), "18:00")
+            d0 = datetime.fromisoformat(f"{start_day}T00:00:00")
+            d1 = datetime.fromisoformat(f"{end_day}T00:00:00")
+        except (ValueError, TypeError):
+            return SkillResult(
+                ok=False, error_code="invalid",
+                message="날짜/시각 형식을 이해하지 못했습니다(date=YYYY-MM-DD, 시각=HH:MM).",
+            )
+        if d1 < d0:
+            return SkillResult(ok=False, error_code="invalid",
+                               message="to_date는 date와 같거나 뒤여야 합니다.")
+        if we_t <= ws_t:
+            return SkillResult(ok=False, error_code="invalid",
+                               message="work_end가 work_start보다 늦어야 합니다.")
+        span = (d1 - d0).days + 1
+        if span > self.MAX_DAYS:
+            return SkillResult(
+                ok=False, error_code="too_many",
+                message=f"{span}일은 한 번에 보기엔 깁니다(최대 {self.MAX_DAYS}일). 기간을 좁혀 주세요.",
+            )
+
+        # 기간 전체를 한 번에 조회한다. 하루씩 부르면 구글 계정에서 왕복이 날짜 수만큼이다.
+        try:
+            events = calendar_service.list_events(
+                ctx.user, ctx.settings, f"{start_day}T00:00:00", f"{end_day}T23:59:59"
+            )
+        except Exception as e:  # noqa: BLE001
+            return SkillResult(ok=False, error_code="error",
+                               message=f"일정 조회 실패: {getattr(e, 'detail', e)}")
+
         busy = []
         for e in events:
             if e.get("allDay"):
                 continue
             try:
-                s = datetime.fromisoformat(e["start"]).replace(tzinfo=None)
+                st = datetime.fromisoformat(e["start"]).replace(tzinfo=None)
                 en = datetime.fromisoformat(e.get("end") or e["start"]).replace(tzinfo=None)
-                busy.append((s, en))
             except (ValueError, TypeError):
                 continue
+            if en > st:
+                busy.append((st, en))
         busy.sort()
 
-        slots = []
-        cursor = ws
-        for s, en in busy:  # busy는 시작시각 오름차순
-            if s >= we:
-                break  # 근무시간 이후 일정 — 남은 구간을 잡아당기지 않게 여기서 끝
-            if en <= ws:
-                continue  # 근무시간 이전에 끝난 일정
-            if s > cursor and s - cursor >= dur:
-                slots.append({"start": _iso(cursor), "end": _iso(s)})
-            cursor = max(cursor, en)
-            if cursor >= we:
-                break
-        if we - cursor >= dur:
-            slots.append({"start": _iso(cursor), "end": _iso(we)})
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
+        slots: list[dict] = []
+        skipped_past = 0
+        truncated = False
+        for i in range(span):
+            iso = (d0 + timedelta(days=i)).strftime("%Y-%m-%d")
+            ws = datetime.fromisoformat(f"{iso}T{ws_t}")
+            we = datetime.fromisoformat(f"{iso}T{we_t}")
+            # 이미 지난 시간대는 제안하지 않는다(모델이 과거 시각을 잡는 것 방지).
+            if iso < today:
+                skipped_past += 1
+                continue
+            if iso == today and ws < now:
+                ws = now.replace(second=0, microsecond=0)
+            if we - ws < dur:
+                continue
 
-        return SkillResult(ok=True, message=f"{len(slots)}개 빈 시간대", data={"free_slots": slots})
+            cursor = ws
+            for st, en in busy:  # busy는 시작시각 오름차순
+                if st >= we:
+                    break  # 이 날 근무시간 이후 — 남은 구간을 잡아당기지 않는다
+                if en <= cursor:
+                    continue  # 이미 지나온 구간
+                if st > cursor and st - cursor >= dur:
+                    slots.append({"date": iso, "start": _iso(cursor), "end": _iso(st)})
+                cursor = max(cursor, en)
+                if cursor >= we:
+                    break
+            if we - cursor >= dur:
+                slots.append({"date": iso, "start": _iso(cursor), "end": _iso(we)})
+            if len(slots) >= self.MAX_SLOTS:
+                truncated = True
+                slots = slots[: self.MAX_SLOTS]
+                break
+
+        scope = start_day if span == 1 else f"{start_day}~{end_day}"
+        msg = f"{len(slots)}개 빈 시간대 ({scope})"
+        if skipped_past:
+            msg += f" — 지난 날짜 {skipped_past}일은 제외했습니다"
+        if truncated:
+            msg += f" — 앞의 {self.MAX_SLOTS}개만 표시"
+        data: dict = {"free_slots": slots, "days_checked": span - skipped_past}
+        if truncated:
+            data["truncated"] = True
+        return SkillResult(ok=True, message=msg, data=data)

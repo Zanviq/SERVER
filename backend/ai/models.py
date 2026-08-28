@@ -23,8 +23,13 @@ _NOT_CHAT = ("-image", "-tts", "transcribe", "robotics", "computer-use", "omni")
 # API를 못 부를 때 쓸 최소 목록(키가 없거나 네트워크가 막힌 경우)
 _FALLBACK = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
-_CACHE: dict[str, object] = {"at": 0.0, "items": []}
+#: 캐시는 통째로 바꿔 끼운다. 필드를 하나씩 대입하면 새 at + 옛 items 를
+#: 읽는 순간이 생긴다(설정 화면은 여러 요청이 동시에 들어온다).
+_CACHE: dict = {"at": 0.0, "items": [], "live": False}
 _TTL_SEC = 600  # 10분 — 설정 화면을 열 때마다 외부 호출을 하지 않도록
+#: 조회 실패는 짧게만 굳힌다. 네트워크가 잠깐 끊긴 것 때문에 10분 동안
+#: 기본 목록 3개만 보이면, 사용자는 모델이 사라진 줄 안다.
+_TTL_FAIL_SEC = 60
 
 
 def _is_chat_model(name: str) -> bool:
@@ -47,10 +52,15 @@ def _sort_key(item: dict) -> tuple:
 
 def list_models(settings: Settings) -> list[dict]:
     """[{id, label}] — 비서로 쓸 수 있는 모델만."""
-    now = time.time()
-    if _CACHE["items"] and now - float(_CACHE["at"]) < _TTL_SEC:
-        return list(_CACHE["items"])  # type: ignore[arg-type]
+    global _CACHE
 
+    cache = _CACHE  # 한 번만 읽는다(도중에 다른 스레드가 바꿔 끼워도 일관되게)
+    now = time.time()
+    ttl = _TTL_SEC if cache["live"] else _TTL_FAIL_SEC
+    if cache["items"] and now - float(cache["at"]) < ttl:
+        return list(cache["items"])
+
+    live = False
     items: list[dict] = []
     if settings.gemini_api_key:
         try:
@@ -65,6 +75,7 @@ def list_models(settings: Settings) -> list[dict]:
                 if not _is_chat_model(name):
                     continue
                 items.append({"id": name, "label": getattr(m, "display_name", "") or name})
+            live = bool(items)
         except Exception as e:  # noqa: BLE001 - 외부 API
             logger.warning("모델 목록 조회 실패, 기본 목록 사용: %s", e)
 
@@ -76,8 +87,7 @@ def list_models(settings: Settings) -> list[dict]:
         items.append({"id": settings.gemini_model, "label": settings.gemini_model})
 
     items.sort(key=_sort_key)
-    _CACHE["at"] = now
-    _CACHE["items"] = items
+    _CACHE = {"at": now, "items": items, "live": live}
     return list(items)
 
 
@@ -85,4 +95,10 @@ def is_allowed(settings: Settings, model: str) -> bool:
     """설정에 저장해도 되는 값인가(빈 값 = 서버 기본)."""
     if not model:
         return True
-    return any(i["id"] == model for i in list_models(settings))
+    items = list_models(settings)
+    if any(i["id"] == model for i in items):
+        return True
+    # 목록을 실제로 받아오지 못한 상태(기본 목록만 있음)라면, 형태가 맞는 이름을
+    # 거절하지 않는다. 네트워크가 잠깐 끊긴 탓에 "저장이 안 된다"가 되면
+    # 사용자는 원인을 알 수 없다.
+    return not _CACHE["live"] and len(model) <= 80 and _is_chat_model(model)

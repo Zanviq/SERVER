@@ -2362,3 +2362,120 @@ def test_bulk_calendar_skills_agree():
     dele = reg.dispatch("bulk_delete_calendar_events", common, ctx)
     assert dele.ok and dele.data["count"] == 2, dele
     assert reg.dispatch("list_calendar_events", common, ctx).data["events"] == []
+
+
+def test_auth_reads_accounts_once_per_request():
+    """인증된 요청 하나가 accounts.json을 몇 번 읽는가.
+
+    verify_token과 require_session이 각각 조회해 요청마다 두 번 읽고 두 번
+    파싱했다. 게다가 두 번째 조회는 None 검사가 없어, 그 사이에 계정이 지워지면
+    401이 아니라 500이 났다.
+    """
+    from backend import accounts as accounts_mod
+
+    _login()
+    calls = []
+    real = accounts_mod.find
+
+    def counting(username, settings):
+        calls.append(username)
+        return real(username, settings)
+
+    accounts_mod.find = counting
+    try:
+        r = client.get("/api/notes/list")
+        assert r.status_code == 200, r.text
+    finally:
+        accounts_mod.find = real
+    assert len(calls) == 1, calls
+
+
+def test_session_survives_account_disappearing_mid_request():
+    """조회와 조회 사이에 계정이 사라져도 500이 나지 않는다.
+
+    두 번 조회하던 시절에는 첫 조회는 성공하고 둘째가 None이 되는 창이 있었고,
+    거기에 None 검사가 없어 AttributeError → 500이 났다. 조회가 한 번이면
+    그 창 자체가 없다.
+    """
+    from backend import accounts as accounts_mod
+
+    _login()
+    real = accounts_mod.find
+    seen = []
+
+    def vanishing(username, settings):
+        seen.append(username)
+        return real(username, settings) if len(seen) == 1 else None
+
+    accounts_mod.find = vanishing
+    try:
+        r = client.get("/api/notes/list")
+    finally:
+        accounts_mod.find = real
+    assert r.status_code == 200, (r.status_code, len(seen))
+
+    # 계정이 정말 없어졌다면 401이지 500이 아니다
+    accounts_mod.find = lambda username, settings: None
+    try:
+        assert client.get("/api/notes/list").status_code == 401
+    finally:
+        accounts_mod.find = real
+    assert client.get("/api/notes/list").status_code == 200
+
+
+def test_find_free_slots_over_a_range():
+    """빈 시간 찾기가 기간을 한 번에 본다.
+
+    하루씩만 볼 수 있으면 "이번 주에 두 시간 빈 때" 한 마디에 7번을 불러야 하고,
+    모델은 대개 중간에 그만두거나 max_steps를 다 쓴다.
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    st = get_settings()
+    u = SessionUser(username="freeslots", display_name="F", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=st, today="2026-09-01")
+    reg = default_registry()
+
+    # 화요일 하루만 오전이 막혀 있다
+    reg.dispatch("create_calendar_event", {
+        "title": "종일 회의", "start": "2026-09-08T09:00:00", "end": "2026-09-08T12:00:00",
+    }, ctx)
+
+    # 하루만: 예전과 같은 동작
+    one = reg.dispatch("find_free_slots", {"date": "2026-09-08", "duration_minutes": 60}, ctx)
+    assert one.ok, one
+    assert [x["start"][11:16] for x in one.data["free_slots"]] == ["12:00"], one.data
+
+    # 기간: 월~수를 한 번에
+    many = reg.dispatch("find_free_slots", {
+        "date": "2026-09-07", "to_date": "2026-09-09", "duration_minutes": 60,
+    }, ctx)
+    assert many.ok, many
+    by_date = {}
+    for x in many.data["free_slots"]:
+        by_date.setdefault(x["date"], []).append(x["start"][11:16])
+    assert by_date["2026-09-07"] == ["09:00"], by_date
+    assert by_date["2026-09-08"] == ["12:00"], by_date   # 회의 뒤만 빈다
+    assert by_date["2026-09-09"] == ["09:00"], by_date
+    assert many.data["days_checked"] == 3, many.data
+
+    # 거꾸로 준 기간은 거절한다(조용히 하루만 보지 않는다)
+    bad = reg.dispatch("find_free_slots", {
+        "date": "2026-09-09", "to_date": "2026-09-07", "duration_minutes": 60,
+    }, ctx)
+    assert bad.ok is False and bad.error_code == "invalid", bad
+
+    # 너무 긴 기간도 거절한다
+    long = reg.dispatch("find_free_slots", {
+        "date": "2026-09-01", "to_date": "2026-12-31", "duration_minutes": 60,
+    }, ctx)
+    assert long.ok is False and long.error_code == "too_many", long
+
+    # 형식 오류는 invalid 이지 internal 이 아니다
+    junk = reg.dispatch("find_free_slots", {
+        "date": "2026-09-07", "duration_minutes": 60, "work_start": "아홉시",
+    }, ctx)
+    assert junk.ok is False and junk.error_code == "invalid", junk

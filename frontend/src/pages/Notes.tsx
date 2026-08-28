@@ -292,26 +292,12 @@ export function Notes() {
     [notes, openNote, save, reloadTree],
   );
 
-  // 정확한 상대경로로 문서 열기(URL 진입·그래프 클릭 등)
-  const openExactPath = useCallback(async (path: string) => {
-    try {
-      const d = await api.noteGet(path);
-      setCurrent(d.path);
-      setContent(d.content);
-      setDetail(d);
-      setDirty(false);
-      const slash = d.path.lastIndexOf("/");
-      setCurFolder(slash >= 0 ? d.path.slice(0, slash) : "");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "문서 열기 실패");
-    }
-  }, []);
-
   useEffect(() => {
     const open = params.get("open");
     const path = params.get("path");
     if (path) {
-      openExactPath(path);
+      // 정확한 상대경로로 열기(URL 진입·그래프 클릭 등) — openNote와 같은 동작이다
+      openNote(path);
       params.delete("path");
       setParams(params, { replace: true });
     } else if (open && notes.length) {
@@ -319,7 +305,7 @@ export function Notes() {
       params.delete("open");
       setParams(params, { replace: true });
     }
-  }, [params, notes, openByTitle, openExactPath, setParams]);
+  }, [params, notes, openByTitle, openNote, setParams]);
 
   const toggleFolder = (path: string) => {
     setCurFolder(path);

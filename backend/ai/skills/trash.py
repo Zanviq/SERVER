@@ -9,6 +9,11 @@ AI가 문서·일정을 지울 수 있는데 되돌릴 수단이 없었다. 사�
 """
 from __future__ import annotations
 
+import time
+from datetime import datetime
+
+from fastapi import HTTPException
+
 from ... import trash
 from ..skill_base import SkillBase, SkillResult
 
@@ -18,15 +23,30 @@ _KIND_LABEL = {trash.KIND_DOCUMENT: "문서", trash.KIND_EVENT: "일정"}
 _MAX_ITEMS = 100
 
 
-def _row(e: dict) -> dict:
+def _ago(seconds: float) -> str:
+    """'방금 지운 거 되살려줘'에 답하려면 상대 시간이 필요하다."""
+    if seconds < 90:
+        return "방금"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}분 전"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}시간 전"
+    return f"{int(seconds // 86400)}일 전"
+
+
+def _row(e: dict, now: float) -> dict:
     """모델에게 줄 최소 정보. 복원에 필요한 id와 사람이 알아볼 이름·시각."""
     kind = trash.entry_kind(e)
+    at = float(e.get("deleted_at", 0) or 0)
     out = {
         "id": e.get("id", ""),
         "kind": kind,
         "kind_label": _KIND_LABEL.get(kind, kind),
         "name": e.get("name", ""),
-        "deleted_at": e.get("deleted_at", 0),
+        # epoch 숫자만 주면 모델이 "방금"인지 "지난달"인지 알 수 없다.
+        # 사람이 읽는 형태와 상대 시간을 함께 준다.
+        "deleted_at": datetime.fromtimestamp(at).strftime("%Y-%m-%dT%H:%M:%S") if at else "",
+        "deleted_ago": _ago(max(0.0, now - at)) if at else "",
     }
     if kind == trash.KIND_EVENT:
         out["event_start"] = e.get("event_start", "")
@@ -50,6 +70,10 @@ class ListTrash(SkillBase):
                 "description": "생략하면 전체.",
             },
             "name_contains": {"type": "string", "description": "이름에 이 말이 든 것만."},
+            "within_hours": {
+                "type": "number",
+                "description": "최근 N시간 안에 지운 것만. '방금/오늘 지운 것'은 이걸로 좁히세요.",
+            },
         },
     }
 
@@ -62,10 +86,26 @@ class ListTrash(SkillBase):
         needle = str(args.get("name_contains") or "").strip().lower()
         if needle:
             entries = [e for e in entries if needle in str(e.get("name", "")).lower()]
+
+        now = time.time()
+        window = ""
+        if args.get("within_hours") not in (None, ""):
+            try:
+                hours = float(args["within_hours"])
+            except (TypeError, ValueError):
+                return SkillResult(ok=False, error_code="invalid",
+                                   message="within_hours는 숫자여야 합니다(예: 1, 24).")
+            if hours <= 0:
+                return SkillResult(ok=False, error_code="invalid",
+                                   message="within_hours는 0보다 커야 합니다.")
+            cutoff = now - hours * 3600
+            entries = [e for e in entries if float(e.get("deleted_at", 0) or 0) >= cutoff]
+            window = f" (최근 {hours:g}시간)"
+
         total = len(entries)
-        rows = [_row(e) for e in entries[:_MAX_ITEMS]]
+        rows = [_row(e, now) for e in entries[:_MAX_ITEMS]]
         label = _KIND_LABEL.get(kind, "항목")
-        msg = f"휴지통에 {label} {total}개"
+        msg = f"휴지통에 {label} {total}개{window}"
         data: dict = {"items": rows}
         if total > _MAX_ITEMS:
             data["truncated"] = True
@@ -94,8 +134,15 @@ class RestoreFromTrash(SkillBase):
             return SkillResult(ok=False, message="복원할 id가 없습니다.", error_code="invalid")
         try:
             result = trash.restore(entry_id, ctx.user, ctx.settings)
-        except Exception as e:  # noqa: BLE001 - HTTPException 등
-            return SkillResult(ok=False, message=getattr(e, "detail", str(e)), error_code="error")
+        except HTTPException as e:
+            # 없는 id(404)와 내용이 사라진 항목(410)을 "error" 한 덩어리로 주면
+            # 모델이 다시 list_trash를 부를지 포기할지 판단하지 못한다.
+            return SkillResult(
+                ok=False, message=str(e.detail),
+                error_code="not_found" if e.status_code == 404 else "gone",
+            )
+        except Exception as e:  # noqa: BLE001
+            return SkillResult(ok=False, message=str(e), error_code="error")
         kind = str(result.get("kind") or trash.KIND_DOCUMENT)
         where = result.get("restored_to", "")
         label = _KIND_LABEL.get(kind, kind)

@@ -76,9 +76,13 @@ def issue_token(username: str, settings: Settings | None = None, ttl: int | None
     return _serializer(settings).dumps(payload)
 
 
-def verify_token(token: str, settings: Settings | None = None) -> dict | None:
-    """토큰 검증. 유효하면 {'username'} 반환, 만료/위조면 None."""
-    settings = settings or get_settings()
+def _verify(token: str, settings: Settings):
+    """토큰 검증. 유효하면 (username, Account, 만료epoch), 아니면 None.
+
+    계정을 함께 돌려주는 이유: 예전에는 여기서 한 번, require_session에서 또 한 번
+    accounts.json을 읽었다. 인증된 요청마다 같은 파일을 두 번 읽고 두 번 파싱했고,
+    그 사이에 계정이 지워지면 두 번째 조회가 None이 되어 500이 났다.
+    """
     try:
         # 발급시각을 함께 복원(max_age 미지정) → payload의 ttl로 직접 만료 판정
         data, ts = _serializer(settings).loads(token, return_timestamp=True)
@@ -99,16 +103,13 @@ def verify_token(token: str, settings: Settings | None = None) -> dict | None:
     acc = accounts.find(username, settings)
     if acc is None or not acc.can_login:
         return None
-    return {"username": username}
+    return username, acc, ts.timestamp() + ttl
 
 
-def _decode_expiry(token: str, settings: Settings) -> float:
-    """서명 토큰에서 발급시각을 복원해 만료 epoch 계산(토큰 ttl 반영)."""
-    try:
-        data, ts = _serializer(settings).loads(token, return_timestamp=True)
-        return ts.timestamp() + _payload_ttl(data, settings)
-    except Exception:
-        return time.time() + settings.session_ttl
+def verify_token(token: str, settings: Settings | None = None) -> dict | None:
+    """토큰 검증. 유효하면 {'username'} 반환, 만료/위조면 None."""
+    got = _verify(token, settings or get_settings())
+    return {"username": got[0]} if got else None
 
 
 def require_session(
@@ -118,14 +119,11 @@ def require_session(
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
-    payload = verify_token(token, settings)
-    if payload is None:
+    got = _verify(token, settings)
+    if got is None:
         raise HTTPException(status_code=401, detail="세션이 만료되었거나 유효하지 않습니다.")
 
-    from . import accounts
-
-    acc = accounts.find(payload["username"], settings)
-    expires_at = _decode_expiry(token, settings)
+    _username, acc, expires_at = got
     remaining = max(0, int(expires_at - time.time()))
     return SessionUser(
         username=acc.username,
