@@ -5,9 +5,18 @@
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
+
+#: 파일 이름에 쓸 수 없는 문자. 널바이트와 제어문자가 그대로 통과하면
+#: os 계층에서 ValueError/OSError가 나 500이 됐다(사용자 입력인데 서버 오류다).
+_BAD_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+#: 한 구성요소의 최대 길이. ext4·APFS 모두 파일명은 255**바이트**가 한계라,
+#: 한글 300자는 900바이트가 되어 OSError로 500이 났다.
+_MAX_COMPONENT_BYTES = 200
 
 
 def safe_join(root: Path, rel: str) -> Path:
@@ -20,12 +29,23 @@ def safe_join(root: Path, rel: str) -> Path:
     Returns:
         root 하위로 보장된 절대 Path.
     """
+    raw = str(rel or "")
+    if _BAD_CHARS.search(raw):
+        raise HTTPException(status_code=400, detail="이름에 쓸 수 없는 문자가 있습니다.")
+
     # 항상 POSIX 구분자로 정규화하고 선행 슬래시 제거.
-    rel_clean = PurePosixPath(rel.replace("\\", "/").lstrip("/"))
+    rel_clean = PurePosixPath(raw.replace("\\", "/").lstrip("/"))
 
     # '..' 세그먼트는 명시적으로 차단 (심볼릭/상대 탈출 방지).
     if any(part == ".." for part in rel_clean.parts):
         raise HTTPException(status_code=400, detail="잘못된 경로입니다 ('..' 불가).")
+
+    for part in rel_clean.parts:
+        if len(part.encode("utf-8")) > _MAX_COMPONENT_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"이름이 너무 깁니다(최대 {_MAX_COMPONENT_BYTES}바이트).",
+            )
 
     target = (root / rel_clean).resolve()
 

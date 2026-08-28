@@ -146,10 +146,18 @@ class RestoreFromTrash(SkillBase):
         kind = str(result.get("kind") or trash.KIND_DOCUMENT)
         where = result.get("restored_to", "")
         label = _KIND_LABEL.get(kind, kind)
+        data: dict = {"kind": kind, "restored_to": where}
+        if kind == trash.KIND_EVENT:
+            # 일정은 원래 id를 되살릴 수 없어 **새 id**로 생긴다. 그 값을 안 주면
+            # "복원하고 시간도 바꿔줘"에서 다음 스킬이 쓸 식별자가 없어 끊긴다.
+            data["event_id"] = str(result.get("event_id") or "")
+            data["event"] = result.get("event") or {}
+        else:
+            data["path"] = where
         return SkillResult(
             ok=True,
             message=f"{label} '{where}' 복원됨",
-            data={"kind": kind, "restored_to": where},
+            data=data,
             # 실제로 바뀐 화면을 알려야 프런트가 맞는 쪽을 새로고침한다
             mutates="calendar" if kind == trash.KIND_EVENT else "documents",
         )

@@ -3071,3 +3071,57 @@ def test_http_calendar_rejects_bad_times():
     # 그리고 캘린더는 여전히 조회된다
     q = client.get("/api/calendar/events?from=2026-09-01&to=2026-09-30")
     assert q.status_code == 200, q.text
+
+
+def test_bad_path_characters_are_rejected_not_crashed():
+    """사용자 입력이 서버 오류(500)가 되면 안 된다.
+
+    널바이트와 아주 긴 이름이 그대로 os 계층까지 내려가 ValueError/OSError로
+    500이 났다. 둘 다 사용자 입력이므로 400이어야 한다.
+    """
+    _login()
+    for path in ["a\x00b", "폴더/나쁜\x01이름", "가" * 300, "a/" + "b" * 300]:
+        r = client.put("/api/notes/save", json={"path": path, "content": "x"})
+        assert 400 <= r.status_code < 500, (path[:20], r.status_code, r.text[:120])
+
+    # 정상 경로는 그대로 동작한다
+    ok = client.put("/api/notes/save", json={"path": "정상/문서.md", "content": "x"})
+    assert ok.status_code == 200, ok.text
+    # 경계 근처(200바이트 이하)는 허용
+    name = "가" * 60  # 180바이트
+    ok2 = client.put("/api/notes/save", json={"path": f"{name}.md", "content": "x"})
+    assert ok2.status_code == 200, ok2.text
+
+
+def test_restore_gives_back_an_identifier_the_next_skill_can_use():
+    """복원 결과가 후속 스킬이 쓸 식별자를 준다.
+
+    일정은 원래 id를 되살릴 수 없어 새 id로 생긴다. 그 값을 안 주면
+    "복원하고 시간도 바꿔줘"에서 다음 스킬이 쓸 것이 없어 흐름이 끊긴다.
+    """
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("restoreid")
+
+    # 일정: event_id로 바로 이어서 수정할 수 있어야 한다
+    reg.dispatch("create_calendar_event", {"title": "복원대상", "start": "2026-09-01T10:00:00"}, ctx)
+    eid = reg.dispatch("list_calendar_events",
+                       {"from_date": "2026-09-01", "to_date": "2026-09-01"},
+                       ctx).data["events"][0]["id"]
+    reg.dispatch("delete_calendar_event", {"event_id": eid}, ctx)
+    tid = reg.dispatch("list_trash", {"kind": "event"}, ctx).data["items"][0]["id"]
+    rs = reg.dispatch("restore_from_trash", {"id": tid}, ctx)
+    assert rs.ok and rs.data.get("event_id"), rs.data
+    nxt = reg.dispatch("update_calendar_event",
+                       {"event_id": rs.data["event_id"], "title": "복원 후 수정"}, ctx)
+    assert nxt.ok, nxt
+
+    # 문서: path로 바로 이어서 읽을 수 있어야 한다
+    reg.dispatch("write_document", {"path": "지울문서", "content": "내용"}, ctx)
+    reg.dispatch("delete_document", {"path": "지울문서"}, ctx)
+    dtid = reg.dispatch("list_trash", {"kind": "document"}, ctx).data["items"][0]["id"]
+    dr = reg.dispatch("restore_from_trash", {"id": dtid}, ctx)
+    assert dr.ok and dr.data.get("path"), dr.data
+    rd = reg.dispatch("read_document", {"path": dr.data["path"]}, ctx)
+    assert rd.ok and "내용" in rd.data["content"], rd
