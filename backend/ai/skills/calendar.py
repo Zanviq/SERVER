@@ -56,6 +56,10 @@ def _default_window(ctx) -> tuple[str, str]:
     return frm, to
 
 
+#: 한 번에 모델에게 보여줄 일정 수 상한
+_MAX_LIST = 200
+
+
 def _base_id(eid: str) -> str:
     """반복 인스턴스 id에서 시리즈 id만. 규칙은 calendar_ids에 한 벌만 둔다."""
     return calendar_base_id(eid)
@@ -202,9 +206,16 @@ class ListCalendarEvents(SkillBase):
         suffix = (" " + ", ".join(cond)) if cond else ""
         # 색 이름을 같이 준다 — id(1~11)만 주면 모델이 "자주"를 달라 해놓고
         # 보라 결과를 받아도 알아채지 못한다.
+        # 모델에 넘기는 양을 제한한다. 수백 건을 통째로 실으면 컨텍스트를 다 쓰고
+        # 정작 추론할 자리가 없어진다. 넘치면 그 사실을 알려 기간을 좁히게 한다.
+        shown = events[:_MAX_LIST]
         data: dict = {"events": [
-            {**e, "color_name": COLOR_NAMES.get(str(e.get("color", "")), "")} for e in events
+            {**e, "color_name": COLOR_NAMES.get(str(e.get("color", "")), "")} for e in shown
         ]}
+        if len(events) > _MAX_LIST:
+            data["truncated"] = True
+            data["total"] = len(events)
+            suffix += f" — {len(events)}건 중 {_MAX_LIST}건만 표시(기간을 좁히세요)"
         if not events:
             # 그냥 "없습니다"로 끝내면 사용자가 다음에 뭘 해야 할지 모른다.
             hint = _empty_hint(args, ctx, frm, to)
@@ -268,7 +279,11 @@ class CreateCalendarEvent(SkillBase):
             )
         except Exception as e:  # noqa: BLE001
             return SkillResult(ok=False, message=f"일정 생성 실패: {getattr(e, 'detail', e)}", error_code="error")
-        return SkillResult(ok=True, message=f"일정 '{ev['title']}' 생성됨", data={"event": ev})
+        msg = f"일정 '{ev['title']}' 생성됨"
+        # 알림은 내부 캘린더 전용이다. 구글에 걸어놓고 "설정했습니다"라고 답하면 거짓말이 된다.
+        if remind > 0 and calendar_service.backend_kind(ctx.user, ctx.settings) == "google":
+            msg += " (Google 캘린더라 알림 설정은 적용되지 않습니다)"
+        return SkillResult(ok=True, message=msg, data={"event": ev})
 
 
 class UpdateCalendarEvent(SkillBase):
@@ -575,12 +590,15 @@ class BulkCreateCalendarEvents(SkillBase):
                 data={"planned": planned, "count": len(planned), "dry_run": True},
             )
 
-        created, failed = [], []
-        for p in planned:
-            try:
-                created.append(calendar_service.create_event(ctx.user, ctx.settings, p))
-            except Exception as e:  # noqa: BLE001
-                failed.append({"title": p["title"], "start": p["start"], "error": getattr(e, "detail", str(e))})
+        # 낱개 create_event를 반복하면 구글에서 건당 왕복 1회, 내부 저장소에서는
+        # 건당 파일 read/write다. 한 번에 넘긴다.
+        made, fail_pairs = calendar_service.create_many(ctx.user, ctx.settings, planned)
+        created = made
+        err_by_title = dict(fail_pairs)
+        failed = [
+            {"title": t, "error": err}
+            for t, err in err_by_title.items()
+        ]
         msg = f"{len(created)}개 일정을 만들었습니다"
         if failed:
             msg += f" — {len(failed)}개 실패"

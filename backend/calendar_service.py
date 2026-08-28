@@ -37,6 +37,16 @@ def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict)
     return calendar_store.update_event(user, settings, eid, payload)
 
 
+def create_many(
+    user: SessionUser, settings: Settings, payloads: list[dict]
+) -> tuple[list[dict], list[tuple[str, str]]]:
+    """여러 건을 한 번에 만든다(구글은 배치, 내부는 파일 접근 1회)."""
+    gc = get_google_calendar(settings, user.username)
+    if gc:
+        return gc.create_many(payloads)
+    return calendar_store.create_many(user, settings, payloads)
+
+
 def update_many(
     user: SessionUser, settings: Settings, items: list[tuple[str, dict, dict]]
 ) -> tuple[list[str], list[tuple[str, str]]]:

@@ -14,6 +14,9 @@ from ..skill_base import SkillBase, SkillResult
 
 _KIND_LABEL = {trash.KIND_DOCUMENT: "문서", trash.KIND_EVENT: "일정"}
 
+#: 한 번에 모델에게 보여줄 항목 수 상한(휴지통이 크면 컨텍스트를 다 먹는다)
+_MAX_ITEMS = 100
+
 
 def _row(e: dict) -> dict:
     """모델에게 줄 최소 정보. 복원에 필요한 id와 사람이 알아볼 이름·시각."""
@@ -59,13 +62,16 @@ class ListTrash(SkillBase):
         needle = str(args.get("name_contains") or "").strip().lower()
         if needle:
             entries = [e for e in entries if needle in str(e.get("name", "")).lower()]
-        rows = [_row(e) for e in entries]
+        total = len(entries)
+        rows = [_row(e) for e in entries[:_MAX_ITEMS]]
         label = _KIND_LABEL.get(kind, "항목")
-        return SkillResult(
-            ok=True,
-            message=f"휴지통에 {label} {len(rows)}개",
-            data={"items": rows},
-        )
+        msg = f"휴지통에 {label} {total}개"
+        data: dict = {"items": rows}
+        if total > _MAX_ITEMS:
+            data["truncated"] = True
+            data["total"] = total
+            msg += f" (최근 {_MAX_ITEMS}개만 표시 — name_contains로 좁히세요)"
+        return SkillResult(ok=True, message=msg, data=data)
 
 
 class RestoreFromTrash(SkillBase):

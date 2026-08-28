@@ -178,12 +178,65 @@ class GoogleCalendar:
             params["timeMin"] = _rfc3339(frm)
         if to:
             params["timeMax"] = _rfc3339(to, end=True)
-        items = self._svc.events().list(**params).execute().get("items", [])
+        # 페이지를 끝까지 따라간다. maxResults만 두면 500건에서 조용히 잘려,
+        # 일괄 작업이 일부만 처리하고도 "전부 했다"고 보고한다.
+        items: list[dict] = []
+        page = 0
+        while True:
+            resp = self._svc.events().list(**params).execute()
+            items.extend(resp.get("items", []))
+            token = resp.get("nextPageToken")
+            page += 1
+            if not token or page >= 20:  # 20페이지(≈1만 건) 넘으면 조건이 너무 넓다
+                break
+            params["pageToken"] = token
         return [_to_internal(g) for g in items]
 
     def create(self, payload: dict) -> dict:
         g = self._svc.events().insert(calendarId=self._cid, body=_to_google(payload)).execute()
         return _to_internal(g)
+
+    def create_many(self, payloads: list) -> tuple:
+        """여러 건을 배치로 만든다. 낱개 insert를 반복하면 건당 왕복 1회다."""
+        made: list = []
+        fail: list = []
+
+        def _seq(chunk):
+            for p in chunk:
+                try:
+                    made.append(self.create(p))
+                except Exception as e:  # noqa: BLE001
+                    fail.append((str(p.get("title", "")), str(e)))
+
+        for i in range(0, len(payloads), _BATCH_SIZE):
+            chunk = payloads[i:i + _BATCH_SIZE]
+            try:
+                batch = self._svc.new_batch_http_request()
+            except Exception:  # noqa: BLE001
+                _seq(chunk)
+                continue
+
+            def _cb(title):
+                def done(_rid, resp, err):
+                    if err is None and resp:
+                        made.append(_to_internal(resp))
+                    else:
+                        fail.append((title, str(err)))
+                return done
+
+            try:
+                for n, p in enumerate(chunk):
+                    batch.add(
+                        self._svc.events().insert(calendarId=self._cid, body=_to_google(p)),
+                        request_id=str(n),
+                        callback=_cb(str(p.get("title", ""))),
+                    )
+                batch.execute()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("배치 생성 실패, 순차로 재시도: %s", e)
+                seen = {m.get("title") for m in made} | {f[0] for f in fail}
+                _seq([c for c in chunk if str(c.get("title", "")) not in seen])
+        return made, fail
 
     def update(self, eid: str, payload: dict) -> dict:
         """부분 수정도 안전하게 — 기존 값을 읽어 병합한 뒤 전체 본문으로 보낸다.
@@ -320,12 +373,30 @@ def _rfc3339(s: str, *, end: bool = False) -> str:
     return s + "+09:00"
 
 
+#: 유저별 서비스 캐시. build()는 디스커버리 문서를 파싱하고 자격증명을 새로 만드는
+#: 무거운 작업인데 한 요청에서도 여러 번(list -> update -> ...) 불린다.
+#: 설정이 바뀌면 지문이 달라져 자연히 새로 만들어진다.
+_SERVICE_CACHE: dict = {}
+
+
 def get_google_calendar(settings: Settings, username: str) -> GoogleCalendar | None:
     """해당 유저의 Google Calendar. 미설정/오류면 None(내부 폴백)."""
     cfg = settings.google_config(username)
     if not cfg:
+        _SERVICE_CACHE.pop(username, None)
         return None
+    fp = (
+        cfg.get("refresh_token", ""),
+        cfg.get("client_id", ""),
+        cfg.get("calendar_id", "primary"),
+        bool(cfg.get("service_account_json")),
+    )
+    cached = _SERVICE_CACHE.get(username)
+    if cached and cached[0] == fp:
+        return cached[1]
     svc = _build_service(cfg)
     if svc is None:
         return None
-    return GoogleCalendar(svc, cfg.get("calendar_id", "primary"))
+    gc = GoogleCalendar(svc, cfg.get("calendar_id", "primary"))
+    _SERVICE_CACHE[username] = (fp, gc)
+    return gc

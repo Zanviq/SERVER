@@ -228,6 +228,39 @@ def create_event(user: SessionUser, settings: Settings, payload: dict) -> dict:
         return event
 
 
+def create_many(
+    user: SessionUser, settings: Settings, payloads: list[dict]
+) -> tuple[list[dict], list[tuple[str, str]]]:
+    """여러 건을 한 번에 만든다 - 파일을 한 번만 읽고 한 번만 쓴다."""
+    made: list[dict] = []
+    fail: list[tuple[str, str]] = []
+    with json_store.lock_for(_events_path(user, settings)):
+        events = _load(user, settings)
+        for p in payloads:
+            try:
+                ev = _normalize(p, {
+                    "id": uuid.uuid4().hex,
+                    "title": str(p.get("title", "")).strip() or "(제목 없음)",
+                    "description": "",
+                    "start": p["start"],
+                    "end": p.get("end", p["start"]),
+                    "allDay": False,
+                    "color": "2",
+                    "recurrence": "none",
+                    "interval": 1,
+                    "recur_until": "",
+                    "exdates": [],
+                    "remind_minutes": 0,
+                })
+                ev["title"] = str(ev.get("title", "")).strip() or "(제목 없음)"
+                events.append(ev)
+                made.append(ev)
+            except Exception as e:  # noqa: BLE001
+                fail.append((str(p.get("title", "")), str(e)))
+        _save(events, user, settings)
+    return made, fail
+
+
 def _base_id(eid: str) -> str:
     """규칙은 calendar_ids 한 곳에서만 정한다."""
     from .calendar_ids import base_id

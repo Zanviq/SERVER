@@ -936,6 +936,58 @@ def test_mutating_skills_declare_what_they_change():
     assert not missing, f"mutates 선언이 빠진 스킬: {missing}"
 
 
+def test_ai_round2_hardening():
+    """2차 점검 수정분 — 상한·식별자 충돌·폴더 목록·입력 제한."""
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.ai.skills.documents import _ident, _resolve
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    from backend.storage import user_data_root
+
+    s = get_settings()
+    u = SessionUser(username="round2", display_name="R2", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-27")
+    reg = default_registry()
+    root = user_data_root(u, s)
+
+    # 확장자 없는 파일과 .md가 같은 식별자가 되어 .md가 가려지던 문제
+    (root / "메모").write_text("확장자 없음", encoding="utf-8")
+    (root / "메모.md").write_text("마크다운", encoding="utf-8")
+    (root / "보통.md").write_text("보통", encoding="utf-8")
+    assert _ident(root, root / "메모.md") == "메모.md"   # 충돌하면 확장자 유지
+    assert _ident(root, root / "보통.md") == "보통"       # 충돌 없으면 그대로 생략
+    assert _resolve(root, "메모.md").read_text(encoding="utf-8") == "마크다운"
+    assert _resolve(root, "메모").read_text(encoding="utf-8") == "확장자 없음"
+    idents = [d["path"] for d in reg.dispatch("list_documents", {}, ctx).data["documents"]]
+    assert len(idents) == len(set(idents)), idents  # 목록에 같은 값이 두 번 나오지 않는다
+
+    # 빈 폴더도 AI가 볼 수 있어야 한다(오타 폴더가 조용히 생기는 것을 막는다)
+    (root / "빈폴더").mkdir(exist_ok=True)
+    folders = reg.dispatch("list_folders", {}, ctx)
+    assert folders.ok and "빈폴더" in folders.data["folders"], folders.data
+
+    # 일정 목록 상한 — 수백 건을 통째로 모델에 싣지 않는다
+    from backend.ai.skills.calendar import _MAX_LIST
+
+    reg.dispatch("bulk_create_calendar_events", {"events": [
+        {"title": f"e{i}", "start": f"2026-09-{(i % 28) + 1:02d}T10:00:00"}
+        for i in range(_MAX_LIST + 20)
+    ]}, ctx)
+    listed = reg.dispatch("list_calendar_events",
+                          {"from_date": "2026-09-01", "to_date": "2026-09-30"}, ctx)
+    assert len(listed.data["events"]) == _MAX_LIST
+    assert listed.data["truncated"] is True and listed.data["total"] == _MAX_LIST + 20
+    assert "기간을 좁히세요" in listed.message
+
+    # 채팅 입력 상한이 존재한다(주인 키를 무제한으로 태울 수 없게)
+    from backend.routers.ai import MAX_HISTORY_CHARS, MAX_HISTORY_TURNS, MAX_MESSAGE_CHARS
+
+    assert MAX_MESSAGE_CHARS > 0 and MAX_HISTORY_TURNS > 0 and MAX_HISTORY_CHARS > 0
+    _login()
+    assert client.post("/api/ai/chat", json={"message": "   "}).status_code == 400
+
+
 def test_ai_document_safety_rules():
     """전면 점검에서 확인된 문서 스킬 결함들(전부 데이터 손실 경로였다)."""
     from backend.ai.skill_base import SkillContext

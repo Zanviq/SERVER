@@ -21,6 +21,7 @@ from .documents import (
     DeleteDocument,
     DocumentBacklinks,
     ListDocuments,
+    ListFolders,
     MoveDocument,
     ReadDocument,
     RenameDocument,
@@ -36,6 +37,7 @@ ALL_SKILLS = [
     ThinkSkill(),
     # 문서(파일·노트 통합)
     ListDocuments(),
+    ListFolders(),
     ReadDocument(),
     SearchDocuments(),
     WriteDocument(),

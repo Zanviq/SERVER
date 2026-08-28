@@ -32,9 +32,17 @@ _PATH_PROP = {
 
 
 def _ident(root: Path, p: Path) -> str:
-    """식별자 — 마크다운은 .md를 떼고, 나머지는 확장자를 유지한다."""
+    """식별자 — 마크다운은 .md를 떼고, 나머지는 확장자를 유지한다.
+
+    단, 확장자를 뗀 이름의 파일이 실제로 옆에 있으면 떼지 않는다.
+    `메모`와 `메모.md`가 함께 있으면 둘 다 식별자가 `메모`가 되어, 목록에 같은
+    값이 두 번 나오고 _resolve는 확장자 없는 쪽을 먼저 집어 .md 문서에 영영
+    도달할 수 없었다(확장자 없는 파일 생성을 허용하면서 실제로 닿는 경로가 됐다).
+    """
     rel = to_rel(root, p)
-    return rel[:-3] if rel.endswith(".md") else rel
+    if rel.endswith(".md") and not (root / rel[:-3]).exists():
+        return rel[:-3]
+    return rel
 
 
 class _Ambiguous(Exception):
@@ -144,6 +152,26 @@ class ListDocuments(SkillBase):
             if p.is_file()
         ]
         return SkillResult(ok=True, message=f"{len(items)}개 문서", data={"documents": items})
+
+
+class ListFolders(SkillBase):
+    name = "list_folders"
+    description = (
+        "폴더 목록을 본다. 문서를 어디에 만들지 정하기 전에 확인하면 "
+        "오타로 새 폴더가 생기는 것을 막을 수 있다(빈 폴더는 문서 목록에 안 나온다)."
+    )
+    parameters = {"type": "object", "properties": {}}
+
+    def run(self, args, ctx):
+        root = user_data_root(ctx.user, ctx.settings)
+        folders = sorted(
+            to_rel(root, p) for p in root.rglob("*") if p.is_dir()
+        )
+        return SkillResult(
+            ok=True,
+            message=f"{len(folders)}개 폴더",
+            data={"folders": folders},
+        )
 
 
 class ReadDocument(SkillBase):
