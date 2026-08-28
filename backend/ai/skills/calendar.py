@@ -109,8 +109,13 @@ def _wide_window(ctx) -> tuple[str, str]:
     )
 
 
-def _select(args, ctx) -> tuple[list[dict], str, str]:
-    """기간·색·제목으로 일정을 고른다. (고른 목록, 시작, 끝)"""
+def _select(args, ctx) -> tuple[list[dict], str, str, list[dict]]:
+    """기간·색·제목으로 일정을 고른다.
+
+    반환: (고른 목록, 시작, 끝, 그 기간의 전체 목록)
+    마지막 값은 "하나도 없을 때 왜 없는지" 설명(_empty_hint)에 쓴다. 예전에는
+    그쪽에서 같은 기간을 한 번 더 조회해, 구글 계정이면 네트워크 왕복이 두 배였다.
+    """
     frm = args.get("from_date")
     to = args.get("to_date")
     if not frm and not to:
@@ -119,20 +124,23 @@ def _select(args, ctx) -> tuple[list[dict], str, str]:
     color_id = _strict_color(args["color"]) if args.get("color") else None
     needle = str(args["title_contains"]).strip().lower() if args.get("title_contains") else None
     events = calendar_service.list_events(ctx.user, ctx.settings, frm, to)
-    return [e for e in events if _matches(e, color_id, needle)], frm or "", to or ""
+    return [e for e in events if _matches(e, color_id, needle)], frm or "", to or "", events
 
 
-def _empty_hint(args, ctx, frm: str, to: str) -> dict:
+def _empty_hint(args, ctx, frm: str, to: str, window: list[dict] | None = None) -> dict:
     """조건에 맞는 게 하나도 없을 때, 다음 수를 알려 줄 정보를 모은다.
 
     "없습니다"로 끝나면 사용자는 왜 없는지 모른다(기간을 잘못 잡았는지, 색을
     잘못 짚었는지). 그 기간에 어떤 색이 있는지와, 찾는 색이 언제 있는지를 준다.
     """
     hint: dict = {}
-    try:
-        in_window = calendar_service.list_events(ctx.user, ctx.settings, frm, to)
-    except Exception:  # noqa: BLE001
-        return hint
+    if window is not None:
+        in_window = window
+    else:
+        try:
+            in_window = calendar_service.list_events(ctx.user, ctx.settings, frm, to)
+        except Exception:  # noqa: BLE001
+            return hint
     counts: dict[str, int] = {}
     for e in in_window:
         cid = str(e.get("color", ""))
@@ -168,6 +176,93 @@ def _empty_hint(args, ctx, frm: str, to: str) -> dict:
     return hint
 
 
+class _Stop(Exception):
+    """대상 고르기 단계에서 바로 돌려줄 결과가 정해졌을 때."""
+
+    def __init__(self, result: SkillResult):
+        self.result = result
+
+
+def _pick_targets(args, ctx, *, dry_run_verb: str):
+    """일괄 수정·삭제가 공유하는 '무엇을 건드릴지 고르기'.
+
+    이 골격이 두 스킬에 복붙돼 있었고, 그 사이에서 이미 두 번 어긋났다
+    (색 해석이 한쪽만 엄격했고, id 정규화가 한쪽만 돼 있었다).
+    한 군데로 모아 두 스킬이 같은 규칙을 쓰게 한다.
+
+    반환: (by_series, instances, frm, to)
+      by_series : 시리즈 id → 대표 일정. 반복 일정은 인스턴스로 펼쳐져 오므로
+                  시리즈당 한 번만 건드리기 위해 접는다.
+      instances : 시리즈 id → 펼쳐진 인스턴스 수(반복 여부 판단용)
+    조기 종료가 필요한 경우는 _Stop(SkillResult)로 던진다.
+    """
+    ids = [str(i) for i in (args.get("event_ids") or [])]
+    if not (ids or args.get("color") or args.get("title_contains")
+            or args.get("from_date") or args.get("to_date")):
+        raise _Stop(SkillResult(
+            ok=False, error_code="invalid",
+            message="대상이 너무 넓습니다. 기간·색·제목 중 하나로 좁혀 주세요.",
+        ))
+
+    try:
+        events, frm, to, window = _select(args, ctx)
+    except _BadColor as e:
+        # 모르는 색을 그냥 넘기면 색 조건이 사라져 기간 내 전체가 대상이 된다
+        raise _Stop(SkillResult(ok=False, error_code="invalid", message=str(e)))
+    except Exception as e:  # noqa: BLE001
+        raise _Stop(SkillResult(
+            ok=False, error_code="error",
+            message=f"일정 조회 실패: {getattr(e, 'detail', e)}",
+        ))
+
+    if ids:
+        want = {_base_id(i) for i in ids}
+        events = [e for e in events if _base_id(e.get("id", "")) in want]
+        missing = want - {_base_id(e.get("id", "")) for e in events}
+        if missing:
+            raise _Stop(SkillResult(
+                ok=False, error_code="not_found",
+                message=("찾지 못한 일정이 있습니다: " + ", ".join(sorted(missing)) +
+                         f". 조회 기간({frm[:10]}~{to[:10]}) 밖일 수 있으니 "
+                         "from_date/to_date를 함께 주세요."),
+                data={"missing": sorted(missing)},
+            ))
+
+    by_series: dict[str, dict] = {}
+    instances: dict[str, int] = {}
+    for e in events:
+        sid = _base_id(e.get("id", ""))
+        by_series.setdefault(sid, e)
+        instances[sid] = instances.get(sid, 0) + 1
+
+    if not by_series:
+        raise _Stop(_nothing_selected(args, ctx, frm, to, dry_run_verb, window))
+    return by_series, instances, frm, to
+
+
+def _nothing_selected(args, ctx, frm: str, to: str, verb: str,
+                      window: list[dict] | None = None) -> SkillResult:
+    """고른 게 하나도 없을 때 — 왜 없는지까지 알려 준다."""
+    data: dict = {"count": 0}
+    msg = f"{verb} 일정이 없습니다 ({frm[:10]}~{to[:10]})."
+    hint = _empty_hint(args, ctx, frm, to, window)
+    if hint:
+        data["hint"] = hint
+        other = hint.get("same_color_other_months")
+        if other:
+            months = ", ".join(f"{m}({n}건)" for m, n in other.items())
+            msg += f" 같은 색이 {months}에 있습니다 — 기간을 그쪽으로 잡을까요?"
+    return SkillResult(ok=True, message=msg, data=data)
+
+
+def _too_many(n: int, cap: int) -> SkillResult:
+    return SkillResult(
+        ok=False, error_code="too_many",
+        message=f"대상이 {n}개로 너무 많습니다(최대 {cap}). 기간이나 조건을 좁혀 주세요.",
+        data={"count": n},
+    )
+
+
 class ListCalendarEvents(SkillBase):
     name = "list_calendar_events"
     description = (
@@ -193,7 +288,7 @@ class ListCalendarEvents(SkillBase):
 
     def run(self, args, ctx):
         try:
-            events, frm, to = _select(args, ctx)
+            events, frm, to, window = _select(args, ctx)
         except _BadColor as e:
             return SkillResult(ok=False, message=str(e), error_code="invalid")
         except Exception as e:  # noqa: BLE001 - Google API 오류 등
@@ -218,7 +313,7 @@ class ListCalendarEvents(SkillBase):
             suffix += f" — {len(events)}건 중 {_MAX_LIST}건만 표시(기간을 좁히세요)"
         if not events:
             # 그냥 "없습니다"로 끝내면 사용자가 다음에 뭘 해야 할지 모른다.
-            hint = _empty_hint(args, ctx, frm, to)
+            hint = _empty_hint(args, ctx, frm, to, window)
             if hint:
                 data["hint"] = hint
                 other = hint.get("same_color_other_months")
@@ -392,44 +487,10 @@ class BulkUpdateCalendarEvents(SkillBase):
                 message="무엇을 바꿀지 없습니다. title_prefix·title_suffix·replace_from/replace_to·set_color 중 하나는 주세요.",
             )
 
-        ids = [str(i) for i in (args.get("event_ids") or [])]
-        has_filter = bool(ids or args.get("color") or args.get("title_contains")
-                          or args.get("from_date") or args.get("to_date"))
-        if not has_filter:
-            return SkillResult(
-                ok=False,
-                error_code="invalid",
-                message="대상이 너무 넓습니다. 기간·색·제목 중 하나로 좁혀 주세요.",
-            )
-
         try:
-            events, frm, to = _select(args, ctx)
-        except _BadColor as e:
-            # 모르는 색을 그냥 넘기면 색 조건이 사라져 기간 내 전체가 대상이 된다
-            return SkillResult(ok=False, message=str(e), error_code="invalid")
-        except Exception as e:  # noqa: BLE001
-            return SkillResult(ok=False, message=f"일정 조회 실패: {getattr(e, 'detail', e)}", error_code="error")
-
-        if ids:
-            want = {_base_id(i) for i in ids}
-            events = [e for e in events if _base_id(e.get("id", "")) in want]
-            missing = want - {_base_id(e.get("id", "")) for e in events}
-            if missing:
-                return SkillResult(
-                    ok=False, error_code="not_found",
-                    message=("찾지 못한 일정이 있습니다: " + ", ".join(sorted(missing)) +
-                             f". 조회 기간({frm[:10]}~{to[:10]}) 밖일 수 있으니 "
-                             "from_date/to_date를 함께 주세요."),
-                    data={"missing": sorted(missing)},
-                )
-
-        # 반복 일정은 인스턴스로 펼쳐져 있다 — 시리즈당 한 번만 고친다.
-        by_series: dict[str, dict] = {}
-        instances: dict[str, int] = {}
-        for e in events:
-            sid = _base_id(e.get("id", ""))
-            by_series.setdefault(sid, e)
-            instances[sid] = instances.get(sid, 0) + 1
+            by_series, instances, frm, to = _pick_targets(args, ctx, dry_run_verb="바꿀")
+        except _Stop as stop:
+            return stop.result
         recurring = sum(1 for n in instances.values() if n > 1)
 
         planned = []
@@ -454,24 +515,16 @@ class BulkUpdateCalendarEvents(SkillBase):
             })
 
         if not planned:
-            data: dict = {"changed": [], "count": 0}
-            msg = f"바꿀 일정이 없습니다 ({frm[:10]}~{to[:10]}). 이미 반영돼 있거나 조건에 맞는 일정이 없습니다."
-            if not events:  # 애초에 고른 게 없다 — 왜 없는지 알려 준다
-                hint = _empty_hint(args, ctx, frm, to)
-                if hint:
-                    data["hint"] = hint
-                    other = hint.get("same_color_other_months")
-                    if other:
-                        months = ", ".join(f"{m}({n}건)" for m, n in other.items())
-                        msg += f" 같은 색이 {months}에 있습니다 — 기간을 그쪽으로 잡을까요?"
-            return SkillResult(ok=True, message=msg, data=data)
-        if len(planned) > self.MAX:
+            # 고른 게 아예 없는 경우는 _pick_targets가 이미 걸렀다.
+            # 여기까지 왔다면 대상은 있는데 이미 원하는 상태라는 뜻이다.
             return SkillResult(
-                ok=False,
-                error_code="too_many",
-                message=f"대상이 {len(planned)}개로 너무 많습니다(최대 {self.MAX}). 기간이나 조건을 좁혀 주세요.",
-                data={"count": len(planned)},
+                ok=True,
+                message=(f"{len(by_series)}개를 확인했지만 바꿀 게 없습니다 "
+                         f"({frm[:10]}~{to[:10]}) — 이미 반영돼 있습니다."),
+                data={"changed": [], "count": 0, "checked": len(by_series)},
             )
+        if len(planned) > self.MAX:
+            return _too_many(len(planned), self.MAX)
 
         # 반복 일정의 제목·색은 시리즈 속성이라, 고치면 기간 밖 회차까지 함께 바뀐다.
         # 조용히 넘어가면 사용자가 나중에 알게 되므로 결과에 적어 준다.
@@ -637,53 +690,15 @@ class BulkDeleteCalendarEvents(SkillBase):
     MAX = 100
 
     def run(self, args, ctx):
-        ids = [str(i) for i in (args.get("event_ids") or [])]
-        if not (ids or args.get("color") or args.get("title_contains")
-                or args.get("from_date") or args.get("to_date")):
-            return SkillResult(ok=False, error_code="invalid",
-                               message="대상이 너무 넓습니다. 기간·색·제목 중 하나로 좁혀 주세요.")
         try:
-            events, frm, to = _select(args, ctx)
-        except _BadColor as e:
-            return SkillResult(ok=False, error_code="invalid", message=str(e))
-        except Exception as e:  # noqa: BLE001
-            return SkillResult(ok=False, message=f"일정 조회 실패: {getattr(e, 'detail', e)}", error_code="error")
-
-        if ids:
-            want = {_base_id(i) for i in ids}
-            events = [e for e in events if _base_id(e.get("id", "")) in want]
-            missing = want - {_base_id(e.get("id", "")) for e in events}
-            if missing:
-                return SkillResult(
-                    ok=False, error_code="not_found",
-                    message=("찾지 못한 일정이 있습니다: " + ", ".join(sorted(missing)) +
-                             f". 조회 기간({frm[:10]}~{to[:10]}) 밖일 수 있으니 "
-                             "from_date/to_date를 함께 주세요."),
-                    data={"missing": sorted(missing)},
-                )
-
-        # 반복은 시리즈당 한 번만 지운다(인스턴스마다 부르면 이미 없는 것을 계속 지운다)
-        by_series: dict[str, dict] = {}
-        for e in events:
-            by_series.setdefault(_base_id(e.get("id", "")), e)
+            # 반복은 시리즈당 한 번만 지운다(인스턴스마다 부르면 이미 없는 것을 계속 지운다)
+            by_series, _instances, frm, to = _pick_targets(args, ctx, dry_run_verb="지울")
+        except _Stop as stop:
+            return stop.result
         targets = list(by_series.values())
 
-        if not targets:
-            data: dict = {"deleted": [], "count": 0}
-            msg = f"지울 일정이 없습니다 ({frm[:10]}~{to[:10]})."
-            hint = _empty_hint(args, ctx, frm, to)
-            if hint:
-                data["hint"] = hint
-                other = hint.get("same_color_other_months")
-                if other:
-                    months = ", ".join(f"{m}({n}건)" for m, n in other.items())
-                    msg += f" 같은 색이 {months}에 있습니다."
-            return SkillResult(ok=True, message=msg, data=data)
-
         if len(targets) > self.MAX:
-            return SkillResult(ok=False, error_code="too_many",
-                               message=f"대상이 {len(targets)}개로 너무 많습니다(최대 {self.MAX}). 조건을 좁혀 주세요.",
-                               data={"count": len(targets)})
+            return _too_many(len(targets), self.MAX)
 
         listing = [{"id": _base_id(e.get("id", "")), "title": e.get("title", ""),
                     "start": e.get("start", ""), "color": e.get("color", "")} for e in targets]

@@ -2293,3 +2293,72 @@ def test_ai_result_contract():
     (root / "대상.md").write_text("x", encoding="utf-8")
     hit = reg.dispatch("document_backlinks", {"path": "대상"}, ctx)
     assert hit.ok and hit.data["backlinks"] == [], hit.data
+
+
+def test_bulk_calendar_skills_agree():
+    """일괄 수정·삭제가 '대상 고르기'에서 같은 규칙을 쓰는지.
+
+    두 스킬이 같은 골격을 복붙하고 있었고 그 사이에서 이미 두 번 어긋났다
+    (색 해석이 한쪽만 엄격했고, id 정규화가 한쪽만 돼 있었다).
+    골격을 하나로 모았으니, 다시 갈라지면 여기서 걸린다.
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="bulkparity", display_name="B", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-09-01")
+    reg = default_registry()
+
+    reg.dispatch("bulk_create_calendar_events", {"events": [
+        {"title": "회의 A", "start": "2026-09-10T10:00:00", "color": "2"},
+        {"title": "회의 B", "start": "2026-09-11T10:00:00", "color": "2"},
+    ]}, ctx)
+
+    common = {"from_date": "2026-09-01", "to_date": "2026-09-30"}
+    pairs = [
+        ("bulk_update_calendar_events", {"title_prefix": "[x] "}),
+        ("bulk_delete_calendar_events", {}),
+    ]
+
+    for name, extra in pairs:
+        # 1) 조건 없이 부르면 둘 다 거절한다 (전체를 건드리지 않는다)
+        r = reg.dispatch(name, dict(extra), ctx)
+        assert r.ok is False and r.error_code == "invalid", (name, r)
+
+        # 2) 모르는 색은 둘 다 오류다. 조용히 무시하면 색 조건이 사라져
+        #    기간 내 전체가 대상이 된다 — 예전에 한쪽만 엄격했다.
+        #    ('형광연두'처럼 아는 색 이름을 품은 말은 부분 매칭으로 통과한다)
+        r = reg.dispatch(name, {**common, **extra, "color": "무지개색"}, ctx)
+        assert r.ok is False and r.error_code == "invalid", (name, r)
+
+        # 3) 없는 id를 주면 둘 다 not_found + missing 목록
+        r = reg.dispatch(name, {**common, **extra, "event_ids": ["없는id"]}, ctx)
+        assert r.ok is False and r.error_code == "not_found", (name, r)
+        assert r.data["missing"] == ["없는id"], (name, r.data)
+
+        # 4) 조건에 맞는 게 없으면 둘 다 ok=True + 왜 없는지 힌트
+        r = reg.dispatch(name, {"from_date": "2027-01-01", "to_date": "2027-01-31",
+                                "color": "5", **extra}, ctx)
+        assert r.ok is True and r.data["count"] == 0, (name, r)
+
+        # 5) dry_run 은 아무것도 바꾸지 않는다
+        r = reg.dispatch(name, {**common, **extra, "dry_run": True}, ctx)
+        assert r.ok and r.data["dry_run"] is True and r.data["count"] == 2, (name, r.data)
+
+    # dry_run 뒤에도 원본이 그대로다
+    listed = reg.dispatch("list_calendar_events", common, ctx)
+    assert [e["title"] for e in listed.data["events"]] == ["회의 A", "회의 B"], listed.data
+
+    # 실제 수정 → 삭제까지 흐름이 이어진다
+    up = reg.dispatch("bulk_update_calendar_events", {**common, "title_prefix": "[x] "}, ctx)
+    assert up.ok and up.data["count"] == 2, up
+    # 같은 지시를 두 번 받아도 접두어가 겹치지 않는다
+    again = reg.dispatch("bulk_update_calendar_events", {**common, "title_prefix": "[x] "}, ctx)
+    assert again.ok and again.data["count"] == 0 and again.data["checked"] == 2, again.data
+
+    dele = reg.dispatch("bulk_delete_calendar_events", common, ctx)
+    assert dele.ok and dele.data["count"] == 2, dele
+    assert reg.dispatch("list_calendar_events", common, ctx).data["events"] == []
