@@ -2810,3 +2810,198 @@ def test_whole_series_delete_snapshots_the_real_series():
     assert reg.dispatch("restore_from_trash", {"id": item["id"]}, ctx).ok
     assert n() == total, (n(), total)
     assert n("2026-01-01", "2026-03-01") == 8, n("2026-01-01", "2026-03-01")
+
+
+def test_calendar_times_are_validated_at_the_boundary():
+    """모델이 준 시각을 그대로 저장하지 않는다.
+
+    검증이 없던 시절의 실측:
+    - '2026-9-3T16:00:00'(자리수 부족)으로 수정하면 "일정 수정됨"이라 답한 뒤
+      그 일정이 모든 조회에서 사라졌다(_parse_dt가 datetime.min을 돌려줬다).
+    - '+09:00'이 붙은 start 하나가 들어가면 그 사용자의 캘린더 전체가
+      "can't compare offset-naive and offset-aware datetimes"로 죽었다.
+    """
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("dtguard")
+
+    def n(frm="2026-01-01", to="2026-12-31"):
+        r = reg.dispatch("list_calendar_events", {"from_date": frm, "to_date": to}, ctx)
+        assert r.ok, r
+        return len(r.data["events"])
+
+    c = reg.dispatch("create_calendar_event", {
+        "title": "회의", "start": "2026-09-03T14:00:00", "end": "2026-09-03T15:00:00"}, ctx)
+    assert c.ok and n() == 1
+
+    # 느슨한 표기는 정규화해서 받아들인다(거절보다 낫다) — 사라지면 안 된다
+    up = reg.dispatch("update_calendar_event",
+                      {"event_id": c.data["event"]["id"], "start": "2026-9-3T16:00:00"}, ctx)
+    assert up.ok, up
+    assert n() == 1, n()
+    assert up.data["event"]["start"] == "2026-09-03T16:00:00", up.data["event"]
+
+    # 타임존이 붙어도 캘린더가 죽지 않는다
+    tz = reg.dispatch("create_calendar_event",
+                      {"title": "TZ", "start": "2026-09-02T10:00:00+09:00"}, ctx)
+    assert tz.ok, tz
+    assert n() == 2, n()
+
+    # 진짜 못 알아듣는 값은 거절한다(조용히 저장하지 않는다)
+    bad = reg.dispatch("create_calendar_event", {"title": "x", "start": "다음 주 월요일"}, ctx)
+    assert bad.ok is False and bad.error_code == "invalid", bad
+    bad2 = reg.dispatch("create_calendar_event", {"title": "x", "start": "2026-02-30T10:00:00"}, ctx)
+    assert bad2.ok is False and bad2.error_code == "invalid", bad2
+    assert n() == 2, n()
+
+    # 일괄 생성도 같다 — 한 건이라도 이상하면 통째로 거절
+    blk = reg.dispatch("bulk_create_calendar_events", {"events": [
+        {"title": "좋음", "start": "2026-10-01T10:00:00"},
+        {"title": "나쁨", "start": "내일"},
+    ]}, ctx)
+    assert blk.ok is False and blk.error_code == "invalid", blk
+    assert n() == 2, n()
+
+
+def test_calendar_query_window_is_validated():
+    """조회 기간을 못 알아들으면 조용히 '전 기간'이 되지 않는다."""
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("winguard")
+    reg.dispatch("bulk_create_calendar_events", {"events": [
+        {"title": "옛날", "start": "2020-01-01T10:00:00"},
+        {"title": "미래", "start": "2030-01-01T10:00:00"},
+        {"title": "이번달", "start": "2026-09-10T10:00:00"},
+    ]}, ctx)
+
+    junk = reg.dispatch("list_calendar_events", {"from_date": "다음주", "to_date": "그담주"}, ctx)
+    assert junk.ok is False and junk.error_code == "invalid", junk
+
+    # 한쪽만 주면 반대쪽은 기본창이다 — 무한이 되어 몇 년 뒤까지 걸리면 안 된다
+    one = reg.dispatch("bulk_delete_calendar_events",
+                       {"from_date": "2026-09-01", "dry_run": True}, ctx)
+    assert one.ok, one
+    assert [p["title"] for p in one.data["planned"]] == ["이번달"], one.data["planned"]
+
+    # 거꾸로 준 기간은 거절
+    rev = reg.dispatch("list_calendar_events",
+                       {"from_date": "2026-12-01", "to_date": "2026-01-01"}, ctx)
+    assert rev.ok is False and rev.error_code == "invalid", rev
+
+    # 같은 날 하루 조회는 여전히 된다(경계 비교가 문자열이면 여기서 뒤집혔다)
+    same = reg.dispatch("list_calendar_events",
+                        {"from_date": "2026-09-10", "to_date": "2026-09-10"}, ctx)
+    assert same.ok and len(same.data["events"]) == 1, same.data
+
+
+def test_huge_recurrence_interval_does_not_kill_the_calendar():
+    """반복 간격이 커도 조회가 죽지 않는다(year out of range → 500이었다)."""
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("bigstep")
+    r = reg.dispatch("create_calendar_event", {
+        "title": "폭탄", "start": "2026-01-01T10:00:00",
+        "recurrence": "yearly", "interval": 100000,
+    }, ctx)
+    assert r.ok, r
+    q = reg.dispatch("list_calendar_events",
+                     {"from_date": "2026-01-01", "to_date": "2026-12-31"}, ctx)
+    assert q.ok, q
+    assert len(q.data["events"]) == 1, q.data
+
+
+def test_single_event_delete_is_not_reported_as_series():
+    """반복이 아닌 일정을 '반복 일정 전체'로 안내하지 않는다."""
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("notseries")
+    reg.dispatch("create_calendar_event", {"title": "치과", "start": "2026-09-10T10:00:00"}, ctx)
+    eid = reg.dispatch("list_calendar_events",
+                       {"from_date": "2026-09-10", "to_date": "2026-09-10"}, ctx).data["events"][0]["id"]
+    d = reg.dispatch("bulk_delete_calendar_events", {"event_ids": [eid], "dry_run": True}, ctx)
+    assert d.ok and "반복" not in d.message, d.message
+    assert d.data["planned"][0]["scope"] == "single", d.data
+
+
+def test_bulk_delete_by_ids_does_not_refetch_every_event():
+    """id로 고른 평범한 일정마다 find_event를 다시 부르지 않는다.
+
+    이 저장소는 '건당 왕복'을 없애려고 일괄 경로를 만들었다(78건 156회에
+    nginx가 응답을 끊었다). 시리즈 스냅샷 보정이 전부에 걸리면 그게 되살아난다.
+    """
+    import backend.calendar_service as csvc
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("norefetch")
+    reg.dispatch("bulk_create_calendar_events", {"events": [
+        {"title": f"e{i}", "start": f"2026-09-{i:02d}T10:00:00"} for i in range(1, 21)
+    ]}, ctx)
+    ids = [e["id"] for e in reg.dispatch(
+        "list_calendar_events", {"from_date": "2026-09-01", "to_date": "2026-09-30"},
+        ctx).data["events"]]
+
+    real = csvc.find_event
+    calls = []
+
+    def spy(user, settings, eid):
+        calls.append(eid)
+        return real(user, settings, eid)
+
+    csvc.find_event = spy
+    try:
+        r = reg.dispatch("bulk_delete_calendar_events", {"event_ids": ids, "dry_run": True}, ctx)
+    finally:
+        csvc.find_event = real
+    assert r.ok and r.data["count"] == 20, r
+    assert calls == [], calls
+
+
+def test_rename_document_does_not_invent_extensions_from_dates():
+    """이름만 바꿨는데 못 읽는 문서가 되면 안 된다."""
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("renameext")
+    reg.dispatch("write_document", {"path": "결산", "content": "# 내용"}, ctx)
+    rn = reg.dispatch("rename_document", {"path": "결산", "new_name": "월간정리 2026.08"}, ctx)
+    assert rn.ok, rn
+    rd = reg.dispatch("read_document", {"path": "월간정리 2026.08"}, ctx)
+    assert rd.ok and "내용" in rd.data["content"], rd
+
+    # UI 경로도 같다
+    _login()
+    client.put("/api/notes/save", json={"path": "ui결산.md", "content": "# UI"})
+    r = client.post("/api/notes/rename", json={"path": "ui결산.md", "new_name": "정리 2026.08"})
+    assert r.status_code == 200, r.text
+    got = client.get("/api/notes/get?path=" + r.json()["path"])
+    assert got.status_code == 200, got.text
+
+
+def test_saving_over_a_folder_is_a_clean_conflict():
+    """폴더와 같은 이름으로 저장하면 500이 아니라 409."""
+    _login()
+    client.post("/api/notes/folder", json={"path": "충돌폴더"})
+    r = client.put("/api/notes/save", json={"path": "충돌폴더", "content": "x"})
+    assert r.status_code == 409, (r.status_code, r.text)
+
+
+def test_http_calendar_rejects_bad_times():
+    """UI로 들어오는 시각도 검증한다(AI 쪽만 막으면 반쪽이다)."""
+    _login()
+    ok = client.post("/api/calendar/events",
+                     json={"title": "정상", "start": "2026-09-01T10:00:00"})
+    assert ok.status_code == 200, ok.text
+    bad = client.post("/api/calendar/events", json={"title": "x", "start": "다음주"})
+    assert bad.status_code == 422, (bad.status_code, bad.text)
+    huge = client.post("/api/calendar/events", json={
+        "title": "x", "start": "2026-09-01T10:00:00",
+        "recurrence": "yearly", "interval": 100000})
+    assert huge.status_code == 422, (huge.status_code, huge.text)
+    # 그리고 캘린더는 여전히 조회된다
+    q = client.get("/api/calendar/events?from=2026-09-01&to=2026-09-30")
+    assert q.status_code == 200, q.text

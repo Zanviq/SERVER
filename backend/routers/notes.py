@@ -355,6 +355,14 @@ async def upload(
     return _summary(root, dest)
 
 
+#: 확장자로 볼 꼬리 — 글자가 하나는 있어야 한다('2026.08'·'v1.2'는 확장자가 아니다)
+_EXT_RE = re.compile(r"\.(?=[A-Za-z0-9]{1,8}$)[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*$")
+
+
+def _looks_like_extension(name: str) -> bool:
+    return bool(_EXT_RE.search(name.rsplit("/", 1)[-1]))
+
+
 @router.put("/save", response_model=NoteSummary)
 def save_note(
     req: SaveNote,
@@ -364,6 +372,10 @@ def save_note(
     root = user_data_root(user, settings)
     # 저장은 받은 경로 그대로. 확장자는 만든 사람이 정한다.
     target = _existing(root, req.path)
+    # 같은 이름의 폴더가 있으면 os.replace가 PermissionError를 내고 500이 됐다
+    # (UI '새 문서'에서 폴더 이름을 그대로 치면 도달한다).
+    if target.is_dir():
+        raise HTTPException(status_code=409, detail="같은 이름의 폴더가 이미 있습니다.")
     if target.exists() and not is_editable(target.name):
         raise HTTPException(status_code=415, detail="텍스트 문서만 편집할 수 있습니다.")
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -402,8 +414,9 @@ def rename_note(
     new_name = (req.new_name or "").strip()
     if not new_name or "/" in new_name or "\\" in new_name or ".." in new_name:
         raise HTTPException(status_code=400, detail="잘못된 이름입니다.")
-    # 확장자를 안 적었으면 원래 것을 유지한다(.png를 .png.md로 만들지 않도록)
-    if not Path(new_name).suffix:
+    # 확장자를 안 적었으면 원래 것을 유지한다(.png를 .png.md로 만들지 않도록).
+    # Path(...).suffix는 '2026.08'의 '.08'도 확장자로 보므로 쓰지 않는다.
+    if not _looks_like_extension(new_name):
         new_name = f"{new_name}{src.suffix}"
     rel_dir = src.parent.relative_to(root).as_posix()
     dst_rel = new_name if rel_dir in ("", ".") else f"{rel_dir}/{new_name}"

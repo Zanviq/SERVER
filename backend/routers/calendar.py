@@ -4,13 +4,30 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from .. import calendar_service
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
+from ..datetimes import MAX_INTERVAL, BadDateTime
+from ..datetimes import has_time as dt_has_time
+from ..datetimes import to_iso as dt_to_iso
 
 router = APIRouter(prefix="/api/calendar", tags=["calendar"])
+
+
+def _check_time(v, field: str):
+    """UI가 보내는 시각도 저장 전에 검증한다.
+
+    AI 스킬 쪽만 막으면 반쪽이다. 여기로 이상한 값이 들어오면 마찬가지로
+    일정이 조회에서 사라지거나(파싱 실패) 캘린더 전체가 죽는다(타임존).
+    """
+    if v in (None, ""):
+        return v
+    try:
+        return dt_to_iso(v, field=field, date_only=not dt_has_time(v))
+    except BadDateTime as e:
+        raise ValueError(str(e)) from e
 
 
 class EventInput(BaseModel):
@@ -21,9 +38,14 @@ class EventInput(BaseModel):
     allDay: bool = False
     color: str = "2"
     recurrence: str = "none"  # none|daily|weekly|monthly|yearly
-    interval: int = 1
+    interval: int = Field(1, ge=1, le=MAX_INTERVAL)
     recur_until: str = ""
     remind_minutes: int = 0
+
+    @field_validator("start", "end")
+    @classmethod
+    def _times(cls, v, info):
+        return _check_time(v, "시작" if info.field_name == "start" else "종료")
 
 
 class EventPatch(BaseModel):
@@ -34,9 +56,14 @@ class EventPatch(BaseModel):
     allDay: bool | None = None
     color: str | None = None
     recurrence: str | None = None
-    interval: int | None = None
+    interval: int | None = Field(None, ge=1, le=MAX_INTERVAL)
     recur_until: str | None = None
     remind_minutes: int | None = None
+
+    @field_validator("start", "end")
+    @classmethod
+    def _times(cls, v, info):
+        return _check_time(v, "시작" if info.field_name == "start" else "종료")
 
 
 @router.get("/source")

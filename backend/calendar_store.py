@@ -23,6 +23,9 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from . import json_store
+from .datetimes import BadDateTime, clamp_interval
+from .datetimes import naive as dt_naive
+from .datetimes import parse as dt_parse
 from .auth import SessionUser
 from .config import Settings
 
@@ -77,7 +80,7 @@ def _normalize(payload: dict, existing: dict | None = None) -> dict:
     if rec is not None:
         base["recurrence"] = rec if rec in _RECUR else "none"
     if payload.get("interval") is not None:
-        base["interval"] = max(1, int(payload["interval"]))
+        base["interval"] = clamp_interval(payload["interval"])
     if payload.get("recur_until") is not None:
         base["recur_until"] = str(payload["recur_until"])[:10]
     if payload.get("remind_minutes") is not None:
@@ -94,13 +97,23 @@ def merge_event(payload: dict, existing: dict) -> dict:
 
 
 def _parse_dt(s: str) -> datetime:
-    s = s.strip()
+    """저장된 값을 읽는다. **여기서 검증하지 않는다** — 입력 검증은
+    datetimes.to_iso가 경계에서 한다. 여기서는 예전에 들어간 이상한 값 때문에
+    조회 전체가 죽지 않도록 방어만 한다.
+
+    특히 타임존이 붙은 값 하나가 남아 있으면 naive와 비교하다 TypeError가 나
+    그 사용자의 캘린더가 통째로 조회 불가가 됐다.
+    """
+    s = str(s).strip()
     try:
         if "T" in s:
-            return datetime.fromisoformat(s)
+            return dt_naive(datetime.fromisoformat(s))
         return datetime.combine(date.fromisoformat(s[:10]), datetime.min.time())
     except ValueError:
-        return datetime.min
+        try:  # 'YYYY-M-D' 같은 느슨한 표기까지는 살려 준다
+            return dt_parse(s)
+        except BadDateTime:
+            return datetime.min
 
 
 def _parse_dt_end(s: str) -> datetime:
@@ -110,10 +123,10 @@ def _parse_dt_end(s: str) -> datetime:
     `to=2026-08-20` 조회가 그날 00:00에서 끝나 당일 일정이 통째로 빠진다.
     시각까지 준 경우(2026-08-20T12:00:00)는 그 시각 그대로 쓴다.
     """
-    if "T" in s.strip():
+    if "T" in str(s).strip():
         return _parse_dt(s)
     try:
-        return datetime.combine(date.fromisoformat(s.strip()[:10]), datetime.max.time())
+        return datetime.combine(date.fromisoformat(str(s).strip()[:10]), datetime.max.time())
     except ValueError:
         return datetime.max
 
@@ -123,14 +136,29 @@ def _fmt_dt(dt: datetime, all_day: bool) -> str:
 
 
 def _add_months(dt: datetime, months: int) -> datetime:
+    """달 단위 이동. 표현 범위를 벗어나면 datetime.max로 끝낸다.
+
+    예전에는 interval이 크면 `year 102026 is out of range`가 그대로 올라와,
+    그런 일정 하나가 그 사용자의 모든 캘린더 조회를 500으로 만들었다.
+    """
     m = dt.month - 1 + months
     year = dt.year + m // 12
     month = m % 12 + 1
+    if not (datetime.min.year <= year <= datetime.max.year):
+        return datetime.max
     day = min(dt.day, _cal.monthrange(year, month)[1])
     return dt.replace(year=year, month=month, day=day)
 
 
 def _step(dt: datetime, rule: str, interval: int) -> datetime:
+    try:
+        return _step_raw(dt, rule, interval)
+    except (OverflowError, ValueError):
+        # 더 갈 수 없으면 창 밖으로 보내 루프를 끝낸다(예외로 조회를 죽이지 않는다)
+        return datetime.max
+
+
+def _step_raw(dt: datetime, rule: str, interval: int) -> datetime:
     if rule == "daily":
         return dt + timedelta(days=interval)
     if rule == "weekly":
@@ -157,7 +185,7 @@ def _occurrences(ev: dict, win_start: datetime, win_end: datetime) -> list[dict]
             return [dict(ev)]
         return []
 
-    interval = max(1, int(ev.get("interval", 1)))
+    interval = clamp_interval(ev.get("interval", 1))
     exdates = set(ev.get("exdates", []))
     until = None
     if ev.get("recur_until"):
@@ -183,7 +211,10 @@ def _occurrences(ev: dict, win_start: datetime, win_end: datetime) -> list[dict]
             inst["series_id"] = ev["id"]
             inst["is_recurring"] = True
             out.append(inst)
-        cur = _step(cur, rule, interval)
+        nxt = _step(cur, rule, interval)
+        if nxt <= cur:  # 전진하지 않으면 무한루프다
+            break
+        cur = nxt
     return out
 
 

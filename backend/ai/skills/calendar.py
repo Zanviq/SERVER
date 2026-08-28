@@ -8,6 +8,10 @@ from ... import calendar_service, user_settings
 from ...calendar_colors import COLOR_NAMES, resolve_color
 from ...calendar_ids import base_id as calendar_base_id
 from ...calendar_ids import is_instance
+from ...datetimes import BadDateTime
+from ...datetimes import has_time as dt_has_time
+from ...datetimes import parse as dt_parse
+from ...datetimes import to_iso as dt_to_iso
 from ..skill_base import SkillBase, SkillResult
 
 
@@ -79,6 +83,51 @@ class _BadColor(Exception):
     """색 이름을 못 알아들었다."""
 
 
+def _norm_times(payload: dict) -> None:
+    """payload의 start/end를 정규화한다(제자리). 못 알아들으면 BadDateTime.
+
+    예전에는 모델이 준 문자열을 그대로 저장했다. '2026-9-3T16:00:00'처럼 자리수만
+    안 맞아도 "일정 수정됨"이라 답한 뒤 그 일정이 모든 조회에서 사라졌고,
+    '+09:00'이 붙으면 그 사용자의 캘린더 전체가 조회 불가가 됐다.
+    """
+    all_day = bool(payload.get("allDay"))
+    for key in ("start", "end"):
+        if payload.get(key) in (None, ""):
+            continue
+        label = "시작" if key == "start" else "종료"
+        # 종일 일정이거나 시각을 안 준 표기면 날짜만 남긴다
+        date_only = all_day or not dt_has_time(payload[key])
+        payload[key] = dt_to_iso(payload[key], field=label, date_only=date_only)
+
+
+def _norm_window(args: dict) -> tuple[str, str]:
+    """조회 기간을 정규화한다. 한쪽만 줬으면 반대쪽은 기본창 값으로 채운다.
+
+    한쪽만 주면 반대쪽이 무한이 됐다 — from_date만 준 일괄 삭제가 몇 년 뒤
+    일정까지 대상으로 삼았다. 알아들을 수 없는 값('다음주')은 조용히 전 기간이
+    됐는데, 그건 조건이 사라진 것이라 일괄 작업에서는 사고다.
+    """
+    frm = args.get("from_date")
+    to = args.get("to_date")
+    if not frm and not to:
+        return "", ""
+    d_from, d_to = _default_window_pair(args)
+    frm = dt_to_iso(frm, field="from_date") if frm else d_from
+    # to는 날짜만 주면 날짜 그대로 둔다 — 저장소가 '그날 끝'으로 해석한다
+    # (여기서 T00:00:00을 붙이면 그날 일정이 통째로 빠진다).
+    to = dt_to_iso(to, field="to_date", date_only=not dt_has_time(to)) if to else d_to
+    # 문자열로 비교하면 '2026-09-21T00:00:00' > '2026-09-21'이라 같은 날이 뒤집힌다
+    if dt_parse(frm) > _end_of(to):
+        raise BadDateTime(f"from_date({frm[:10]})가 to_date({to[:10]})보다 뒤입니다.")
+    return frm, to
+
+
+def _end_of(value: str) -> datetime:
+    """날짜만이면 그날 끝, 시각까지면 그 시각."""
+    d = dt_parse(value)
+    return d if dt_has_time(value) else d.replace(hour=23, minute=59, second=59)
+
+
 def _strict_color(value) -> str:
     """색 이름 → colorId. 못 알아들으면 **예외**를 던진다.
 
@@ -110,6 +159,13 @@ def _wide_window(ctx) -> tuple[str, str]:
     )
 
 
+def _default_window_pair(args: dict) -> tuple[str, str]:
+    """기본 조회창. _norm_window가 한쪽만 주어졌을 때 채워 넣는 값."""
+    ctx = args.get("_ctx")
+    return _default_window(ctx) if ctx is not None else ("1900-01-01T00:00:00",
+                                                         "2999-12-31T23:59:59")
+
+
 def _select(args, ctx) -> tuple[list[dict], str, str, list[dict]]:
     """기간·색·제목으로 일정을 고른다.
 
@@ -117,8 +173,7 @@ def _select(args, ctx) -> tuple[list[dict], str, str, list[dict]]:
     마지막 값은 "하나도 없을 때 왜 없는지" 설명(_empty_hint)에 쓴다. 예전에는
     그쪽에서 같은 기간을 한 번 더 조회해, 구글 계정이면 네트워크 왕복이 두 배였다.
     """
-    frm = args.get("from_date")
-    to = args.get("to_date")
+    frm, to = _norm_window({**args, "_ctx": ctx})
     if not frm and not to:
         # id를 직접 줬으면 기간으로 다시 좁히지 않는다(파라미터 설명이 "기간보다 우선"이다)
         frm, to = _wide_window(ctx) if args.get("event_ids") else _default_window(ctx)
@@ -250,8 +305,8 @@ def _pick_targets(args, ctx, *, dry_run_verb: str, fold_series: bool = True):
 
     try:
         events, frm, to, window = _select(args, ctx)
-    except _BadColor as e:
-        # 모르는 색을 그냥 넘기면 색 조건이 사라져 기간 내 전체가 대상이 된다
+    except (_BadColor, BadDateTime) as e:
+        # 조건을 못 알아들었는데 그냥 넘기면 조건이 사라져 기간 내 전체가 대상이 된다
         raise _Stop(SkillResult(ok=False, error_code="invalid", message=str(e)))
     except Exception as e:  # noqa: BLE001
         raise _Stop(SkillResult(
@@ -296,8 +351,11 @@ def _pick_targets(args, ctx, *, dry_run_verb: str, fold_series: bool = True):
         if fold_series:
             # 수정은 제목·색이 시리즈 속성이라 시리즈당 한 번만 건드린다
             by_series.setdefault(sid, e)
-        elif sid in whole_series:
-            # 시리즈 id를 직접 줬다 = 시리즈 전체를 지우겠다는 뜻
+        elif sid in whole_series and _is_recurring(e):
+            # 시리즈 id를 직접 줬다 = 시리즈 전체를 지우겠다는 뜻.
+            # **반복 일정일 때만이다** — 평범한 단발 일정의 id도 인스턴스 형태가
+            # 아니라는 이유로 여기 걸려서, "반복 일정 전체를 지웁니다"라는
+            # 거짓 안내를 하고 쓸데없는 재조회까지 돌았다.
             by_series.setdefault(sid, {**e, "id": sid, "_whole_series": True})
         else:
             # 그 외에는 회차 단위. "9월 것만"이 몇 년치를 날리면 안 된다.
@@ -357,7 +415,7 @@ class ListCalendarEvents(SkillBase):
     def run(self, args, ctx):
         try:
             events, frm, to, window = _select(args, ctx)
-        except _BadColor as e:
+        except (_BadColor, BadDateTime) as e:
             return SkillResult(ok=False, message=str(e), error_code="invalid")
         except Exception as e:  # noqa: BLE001 - Google API 오류 등
             return SkillResult(ok=False, message=f"일정 조회 실패: {getattr(e, 'detail', e)}", error_code="error")
@@ -423,15 +481,27 @@ class CreateCalendarEvent(SkillBase):
         # 알림: 명시하지 않으면 사용자 기본값(default_remind, 0=없음)
         remind = args.get("remind_minutes")
         remind = int(remind) if remind is not None else int(cal.get("default_remind", 0))
+        payload = {
+            "start": args["start"],
+            "end": args.get("end", args["start"]),
+            "allDay": bool(args.get("all_day", False)),
+        }
+        try:
+            # 모델이 준 시각을 그대로 저장하면 안 된다. '2026-9-3T16:00:00'은
+            # 성공 보고 뒤 모든 조회에서 사라지고, '+09:00'이 붙으면 그 사용자의
+            # 캘린더 전체가 조회 불가가 됐다.
+            _norm_times(payload)
+        except BadDateTime as e:
+            return SkillResult(ok=False, message=str(e), error_code="invalid")
         try:
             ev = calendar_service.create_event(
                 ctx.user,
                 ctx.settings,
                 {
                     "title": args["title"],
-                    "start": args["start"],
-                    "end": args.get("end", args["start"]),
-                    "allDay": bool(args.get("all_day", False)),
+                    "start": payload["start"],
+                    "end": payload["end"],
+                    "allDay": payload["allDay"],
                     "description": args.get("description", ""),
                     "color": color,
                     "recurrence": args.get("recurrence", "none"),
@@ -489,6 +559,10 @@ class UpdateCalendarEvent(SkillBase):
             payload["allDay"] = bool(args["all_day"])
         if args.get("remind_minutes") is not None:
             payload["remind_minutes"] = int(args["remind_minutes"])
+        try:
+            _norm_times(payload)
+        except BadDateTime as e:
+            return SkillResult(ok=False, message=str(e), error_code="invalid")
         try:
             ev = calendar_service.update_event(ctx.user, ctx.settings, args["event_id"], payload)
         except Exception as e:  # noqa: BLE001
@@ -693,6 +767,16 @@ class BulkCreateCalendarEvents(SkillBase):
             if not it.get("title") or not it.get("start"):
                 return SkillResult(ok=False, error_code="invalid",
                                    message="각 일정에 title과 start가 있어야 합니다.")
+            # 단건 생성과 같은 검증. 한 건이라도 이상하면 통째로 거절한다 —
+            # 절반만 만들고 "성공"이라고 답하면 무엇이 들어갔는지 알 수 없다.
+            times = {"start": it["start"], "end": it.get("end") or it["start"],
+                     "allDay": bool(it.get("all_day") or it.get("allDay"))}
+            try:
+                _norm_times(times)
+            except BadDateTime as e:
+                return SkillResult(ok=False, error_code="invalid",
+                                   message=f"'{it.get('title')}': {e}")
+            it = {**it, "start": times["start"], "end": times["end"]}
             try:
                 color = _strict_color(it["color"]) if it.get("color") else (common_color or default_color)
             except _BadColor as e:

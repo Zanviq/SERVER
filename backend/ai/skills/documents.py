@@ -407,7 +407,10 @@ class RenameDocument(SkillBase):
         new = (args["new_name"] or "").strip()
         if not new or "/" in new or ".." in new:
             return SkillResult(ok=False, message="잘못된 이름입니다.", error_code="invalid")
-        if not Path(new).suffix:
+        # Path(...).suffix를 쓰면 '월간정리 2026.08'의 '.08'을 확장자로 봐서
+        # 원래 .md를 안 붙인다 → kind가 'other'가 되어 이름만 바꿔도 못 읽는
+        # 문서가 된다. 쓰기 경로와 같은 판정을 쓴다.
+        if not _has_extension(new):
             new = f"{new}{src.suffix}"
         dst = src.parent / new
         if dst.exists():
