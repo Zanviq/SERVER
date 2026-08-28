@@ -160,6 +160,9 @@ def run(
                             "name": name,
                             "response": {
                                 "ok": skill_result.ok,
+                                # 분류를 모델에게도 준다. 예전엔 message만 가서
+                                # "왜 실패했는지"를 문장에서 추측해야 했다.
+                                "error_code": skill_result.error_code,
                                 "message": skill_result.message,
                                 "data": skill_result.data,
                             },
@@ -184,6 +187,13 @@ def run(
             if did else "최대 단계에 도달했습니다."
         )
 
+    if not (final_text or "").strip():
+        # 모델이 텍스트 없이 끝내면 빈 말풍선만 남는다. 무슨 일이 있었는지는 알려준다.
+        did = [n for n, ok in executed if ok]
+        final_text = (
+            "작업을 마쳤습니다: " + ", ".join(did) if did
+            else "응답을 생성하지 못했습니다. 다시 말씀해 주세요."
+        )
     yield {"type": "text", "text": final_text}
     yield {"type": "done"}
 

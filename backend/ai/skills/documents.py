@@ -22,6 +22,9 @@ from ...trash import move_to_trash
 from ..skill_base import SkillBase, SkillResult
 from ._common import _MAX_READ, _is_sensitive
 
+#: 한 번에 모델에게 보여줄 문서·폴더 수 상한
+_MAX_DOCS = 200
+
 _PATH_PROP = {
     "type": "string",
     "description": (
@@ -164,12 +167,34 @@ class ListDocuments(SkillBase):
         base = safe_join(root, args.get("folder") or "")
         if not base.is_dir():
             return SkillResult(ok=False, message="폴더를 찾을 수 없습니다.", error_code="not_found")
-        items = [
-            {"path": _ident(root, p), "kind": kind_of(p.name), "size": p.stat().st_size}
-            for p in sorted(base.rglob("*"))
-            if p.is_file()
-        ]
-        return SkillResult(ok=True, message=f"{len(items)}개 문서", data={"documents": items})
+        import datetime as _dt
+
+        items = []
+        for p in sorted(base.rglob("*")):
+            if not p.is_file():
+                continue
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            items.append({
+                "path": _ident(root, p),
+                "kind": kind_of(p.name),
+                "size": st.st_size,
+                # 수정시각이 없으면 "최근 문서", "안 쓰는 문서" 같은 요청을
+                # 아예 수행할 수 없다(모델이 짐작으로 답하게 된다).
+                "modified": _dt.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%dT%H:%M:%S"),
+            })
+        total = len(items)
+        items.sort(key=lambda d: d["modified"], reverse=True)
+        shown = items[:_MAX_DOCS]
+        data: dict = {"documents": shown}
+        msg = f"{total}개 문서"
+        if total > _MAX_DOCS:
+            data["truncated"] = True
+            data["total"] = total
+            msg += f" (최근 {_MAX_DOCS}개만 표시 — folder로 좁히거나 search_documents를 쓰세요)"
+        return SkillResult(ok=True, message=msg, data=data)
 
 
 class ListFolders(SkillBase):
@@ -182,14 +207,15 @@ class ListFolders(SkillBase):
 
     def run(self, args, ctx):
         root = user_data_root(ctx.user, ctx.settings)
-        folders = sorted(
-            to_rel(root, p) for p in root.rglob("*") if p.is_dir()
-        )
-        return SkillResult(
-            ok=True,
-            message=f"{len(folders)}개 폴더",
-            data={"folders": folders},
-        )
+        folders = sorted(to_rel(root, p) for p in root.rglob("*") if p.is_dir())
+        total = len(folders)
+        data: dict = {"folders": folders[:_MAX_DOCS]}
+        msg = f"{total}개 폴더"
+        if total > _MAX_DOCS:
+            data["truncated"] = True
+            data["total"] = total
+            msg += f" ({_MAX_DOCS}개만 표시)"
+        return SkillResult(ok=True, message=msg, data=data)
 
 
 class ReadDocument(SkillBase):
@@ -452,25 +478,46 @@ class SearchDocuments(SkillBase):
     }
 
     _LIMIT = 30
+    #: 본문 검색 대상 크기 상한. 큰 파일을 통째로 메모리에 올리지 않는다.
+    _MAX_SCAN_BYTES = 1_000_000
 
     def run(self, args, ctx):
         root = user_data_root(ctx.user, ctx.settings)
         ql = args["query"].lower()
         hits = []
+        scanned = 0
         for p in sorted(root.rglob("*")):
             if not p.is_file():
                 continue
+            scanned += 1
+            rel = to_rel(root, p)
             name_hit = ql in p.name.lower()
-            if not is_editable(p.name):
+            # 민감 문서는 **본문을 읽지 않는다**. 읽어서 매칭하고 경로만 돌려줘도
+            # "그 문서에 이 단어가 있다"를 알려주는 셈이라 차단이 무의미해진다.
+            if _is_sensitive(rel) or not is_editable(p.name):
                 if name_hit:
                     hits.append({"path": _ident(root, p), "kind": kind_of(p.name)})
+            elif name_hit:
+                hits.append({"path": _ident(root, p), "kind": kind_of(p.name)})
             else:
-                # 이름이 이미 맞으면 본문을 읽지 않는다(불필요한 디스크 read 제거)
-                if name_hit or ql in p.read_text(encoding="utf-8", errors="replace").lower():
-                    hits.append({"path": _ident(root, p), "kind": kind_of(p.name)})
+                try:
+                    if p.stat().st_size > self._MAX_SCAN_BYTES:
+                        continue
+                    if ql in p.read_text(encoding="utf-8", errors="replace").lower():
+                        hits.append({"path": _ident(root, p), "kind": kind_of(p.name)})
+                except OSError:
+                    continue
             if len(hits) >= self._LIMIT:
                 break
-        return SkillResult(ok=True, message=f"{len(hits)}개 검색됨", data={"matches": hits})
+        truncated = len(hits) >= self._LIMIT
+        msg = f"{len(hits)}개 검색됨"
+        if truncated:
+            # 조용히 30건에서 끊으면 모델이 "이게 전부"라고 답한다
+            msg += f" (상한 {self._LIMIT}건에 도달 — 더 있을 수 있으니 검색어를 좁히세요)"
+        return SkillResult(
+            ok=True, message=msg,
+            data={"matches": hits, "truncated": truncated, "scanned": scanned},
+        )
 
 
 class DocumentBacklinks(SkillBase):
@@ -484,7 +531,24 @@ class DocumentBacklinks(SkillBase):
 
     def run(self, args, ctx):
         root = user_data_root(ctx.user, ctx.settings)
-        title = args["path"].rsplit("/", 1)[-1]
+        # 대상이 실재하는지 먼저 본다. 예전엔 오타를 넣어도 ok=True + 빈 목록이라
+        # "가리키는 문서가 없다"와 "그런 문서가 없다"가 구분되지 않았다.
+        try:
+            target = _resolve(root, args["path"])
+        except _Ambiguous as e:
+            return _ambiguous_result(e)
+        if target is None:
+            return SkillResult(
+                ok=False,
+                message=f"'{args['path']}' 문서를 찾을 수 없습니다.",
+                error_code="not_found",
+            )
+        title = target.name
         if title.endswith(".md"):
             title = title[:-3]
-        return SkillResult(ok=True, message="백링크 조회", data={"backlinks": backlinks_for(root, title)})
+        links = backlinks_for(root, title)
+        return SkillResult(
+            ok=True,
+            message=f"'{title}'을(를) 가리키는 문서 {len(links)}개",
+            data={"path": _ident(root, target), "backlinks": links},
+        )

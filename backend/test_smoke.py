@@ -135,7 +135,11 @@ def test_save_keeps_extension_verbatim():
 
 
 def test_notes_wikilinks_and_graph():
-    _login()
+    # 노드 '개수'를 단언하므로 다른 테스트가 쓰는 tester 루트를 쓰면 안 된다.
+    # (ext/*.md 를 만드는 테스트가 먼저 돌면 노드가 5개가 되어 실행 순서에 의존했다.)
+    client = TestClient(app)
+    assert client.post("/api/auth/login",
+                       json={"username": "tester2", "password": "pw456"}).status_code == 200
     client.put("/api/notes/save", json={"path": "A.md", "content": "see [[B]] and [[C|alias]]"})
     client.put("/api/notes/save", json={"path": "B.md", "content": "back to [[A]]"})
     client.put("/api/notes/save", json={"path": "C.md", "content": "leaf"})
@@ -145,7 +149,7 @@ def test_notes_wikilinks_and_graph():
     assert a["backlinks"] == ["B"]  # B가 A를 가리킴
     # 그래프: 노드 3, 링크 A->B, A->C, B->A
     g = client.get("/api/notes/graph").json()
-    assert len(g["nodes"]) == 3
+    assert len(g["nodes"]) == 3, g["nodes"]
     pairs = {(l["source"], l["target"]) for l in g["links"]}
     assert ("A", "B") in pairs and ("A", "C") in pairs and ("B", "A") in pairs
     # 전문 검색: 내용("alias")으로 매칭
@@ -1096,10 +1100,18 @@ def test_ai_round2_hardening():
     # 일정 목록 상한 — 수백 건을 통째로 모델에 싣지 않는다
     from backend.ai.skills.calendar import _MAX_LIST
 
-    reg.dispatch("bulk_create_calendar_events", {"events": [
-        {"title": f"e{i}", "start": f"2026-09-{(i % 28) + 1:02d}T10:00:00"}
-        for i in range(_MAX_LIST + 20)
-    ]}, ctx)
+    from backend.ai.skills.calendar import BulkCreateCalendarEvents
+
+    # 일괄 생성에는 호출당 상한이 있다 — 나눠서 넣는다.
+    per = BulkCreateCalendarEvents.MAX
+    total_want = _MAX_LIST + 20
+    for off in range(0, total_want, per):
+        chunk = [
+            {"title": f"e{i}", "start": f"2026-09-{(i % 28) + 1:02d}T10:00:00"}
+            for i in range(off, min(off + per, total_want))
+        ]
+        r = reg.dispatch("bulk_create_calendar_events", {"events": chunk}, ctx)
+        assert r.ok, r.message
     listed = reg.dispatch("list_calendar_events",
                           {"from_date": "2026-09-01", "to_date": "2026-09-30"}, ctx)
     assert len(listed.data["events"]) == _MAX_LIST
@@ -2184,3 +2196,100 @@ if __name__ == "__main__":
     test_folder_archive_download()
     test_user_isolation()
     print("ALL SMOKE TESTS PASSED")
+
+
+def test_ai_result_contract():
+    """스킬 결과가 모델에게 '판단할 수 있는 형태'로 전달되는지.
+
+    실패 분류·잘림 표시·수정시각이 없으면 모델은 문장에서 추측하거나
+    "이게 전부"라고 단정해 버린다. 여기서 막는다.
+    """
+    from backend.ai import orchestrator
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.ai.skills.documents import SearchDocuments
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    from backend.storage import user_data_root
+
+    s = get_settings()
+    u = SessionUser(username="contract", display_name="C", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-28")
+    reg = default_registry()
+    root = user_data_root(u, s)
+    root.mkdir(parents=True, exist_ok=True)
+
+    # 1) 실패 분류가 모델에게 전달된다 (예전엔 message만 갔다)
+    class _FakeLLM:
+        def __init__(self):
+            self.seen = []
+            self.n = 0
+
+        def chat(self, contents, catalog, system):
+            self.seen = contents
+            self.n += 1
+            if self.n == 1:
+                return orchestrator.LLMResult(
+                    text="", tool_uses=[{"name": "read_document", "args": {"path": "없는문서"}}]
+                )
+            return orchestrator.LLMResult(text="알겠습니다.")
+
+    fake = _FakeLLM()
+    list(orchestrator.run(u, s, "없는문서 읽어줘", "2026-08-28", llm=fake, registry=reg))
+    responses = [
+        part["function_response"]["response"]
+        for turn in fake.seen
+        for part in turn.get("parts", [])
+        if "function_response" in part
+    ]
+    assert responses, fake.seen
+    assert responses[0]["ok"] is False
+    assert responses[0]["error_code"] == "not_found", responses[0]
+
+    # 2) 모델이 빈 텍스트로 끝내도 빈 말풍선이 아니다
+    class _Silent:
+        def chat(self, contents, catalog, system):
+            return orchestrator.LLMResult(text="   ")
+
+    texts = [e["text"] for e in orchestrator.run(u, s, "안녕", "2026-08-28", llm=_Silent(), registry=reg)
+             if e["type"] == "text"]
+    assert texts and texts[0].strip(), texts
+
+    # 3) HTTPException 이 "internal" 로 뭉개지지 않는다
+    from fastapi import HTTPException
+
+    from backend.ai.skill_base import SkillBase, SkillResult
+
+    class _Boom(SkillBase):
+        name = "boom"
+        description = "x"
+        parameters = {"type": "object", "properties": {}}
+
+        def run(self, args, ctx):
+            raise HTTPException(status_code=409, detail="이미 있습니다.")
+
+    reg.register(_Boom())
+    r = reg.dispatch("boom", {}, ctx)
+    assert r.ok is False and r.error_code == "conflict" and r.message == "이미 있습니다.", r
+
+    # 4) 검색: 30건에서 끊기면 그렇다고 말한다
+    for i in range(SearchDocuments._LIMIT + 5):
+        (root / f"찾기{i}.md").write_text("본문", encoding="utf-8")
+    res = reg.dispatch("search_documents", {"query": "찾기"}, ctx)
+    assert res.data["truncated"] is True and "상한" in res.message, res.message
+
+    # 5) 검색이 민감 문서의 '본문'을 오라클로 흘리지 않는다
+    (root / ".env").write_text("SECRET_TOKEN=abcdef", encoding="utf-8")
+    leak = reg.dispatch("search_documents", {"query": "abcdef"}, ctx)
+    assert not [m for m in leak.data["matches"] if ".env" in m["path"]], leak.data
+
+    # 6) 문서 목록에 수정시각이 있다 ("최근 문서" 같은 요청의 전제)
+    docs = reg.dispatch("list_documents", {}, ctx).data["documents"]
+    assert docs and all("modified" in d for d in docs), docs[:3]
+
+    # 7) 백링크: 없는 문서와 백링크 0건을 구분한다
+    miss = reg.dispatch("document_backlinks", {"path": "이런거없음"}, ctx)
+    assert miss.ok is False and miss.error_code == "not_found", miss
+    (root / "대상.md").write_text("x", encoding="utf-8")
+    hit = reg.dispatch("document_backlinks", {"path": "대상"}, ctx)
+    assert hit.ok and hit.data["backlinks"] == [], hit.data

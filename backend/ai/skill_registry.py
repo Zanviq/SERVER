@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import logging
 
+from fastapi import HTTPException
+
 from .skill_base import SkillBase, SkillContext, SkillResult
 
 logger = logging.getLogger("server.ai")
@@ -27,6 +29,12 @@ class SkillRegistry:
             return SkillResult(ok=False, message=f"스킬 '{name}' 없음", error_code="not_found")
         try:
             return skill.run(args or {}, ctx)
+        except HTTPException as e:
+            # 404/409 같은 의미 있는 실패를 "internal"로 뭉개면 모델이 스스로
+            # 고칠 수 없다(메시지에 상태코드가 섞여 나가기도 했다).
+            code = {400: "invalid", 403: "forbidden", 404: "not_found",
+                    409: "conflict", 410: "gone", 415: "unsupported"}.get(e.status_code, "error")
+            return SkillResult(ok=False, message=str(e.detail), error_code=code)
         except Exception as e:  # noqa: BLE001
             logger.exception("스킬 실행 오류: %s", name)
             return SkillResult(ok=False, message=str(e), error_code="internal")
