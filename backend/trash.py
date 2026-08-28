@@ -164,8 +164,12 @@ def restore(entry_id: str, user: SessionUser, settings: Settings) -> dict:
                 entries = [e for e in entries if e.get("id") != entry_id]
                 write_atomic(idx_path, entries)
                 raise HTTPException(status_code=410, detail="복원할 일정 내용이 없습니다.")
-            # 캘린더 생성은 **락 밖에서** 한다. 구글이면 네트워크 왕복이라,
-            # 락을 쥔 채 기다리면 그동안 다른 휴지통 작업이 전부 멈춘다.
+            # 캘린더 생성은 락 밖에서 한다(구글이면 네트워크 왕복이라, 락을 쥔 채
+            # 기다리면 다른 휴지통 작업이 전부 멈춘다). 다만 **락 안에서 엔트리를
+            # 먼저 걷어내 선점한다** — 확인만 하고 나가면 동시 요청 둘이 같은
+            # 엔트리를 보고 각자 일정을 만들어 중복된다(실측: 2건 생성).
+            entries = [e for e in entries if e.get("id") != entry_id]
+            write_atomic(idx_path, entries)
             pending_event = payload
 
     if pending_event is not None:
@@ -174,10 +178,16 @@ def restore(entry_id: str, user: SessionUser, settings: Settings) -> dict:
         from . import calendar_service
 
         pending_event.pop("id", None)
-        ev = calendar_service.create_event(user, settings, pending_event)
-        with lock_for(idx_path):
-            entries = [e for e in read_json(idx_path, []) if e.get("id") != entry_id]
-            write_atomic(idx_path, entries)
+        try:
+            ev = calendar_service.create_event(user, settings, pending_event)
+        except Exception:
+            # 선점만 해놓고 못 만들면 휴지통에서 사라진다 — 되돌려 놓는다.
+            with lock_for(idx_path):
+                back = read_json(idx_path, [])
+                if not any(e.get("id") == entry_id for e in back):
+                    back.append(entry)
+                    write_atomic(idx_path, back)
+            raise
         shutil.rmtree(_trash_root(user, settings) / "data" / entry_id, ignore_errors=True)
         # 새 id를 돌려준다 — 복원 직후 이어서 수정하려면 필요하다
         return {"ok": True, "kind": KIND_EVENT, "event": ev,

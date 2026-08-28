@@ -163,6 +163,33 @@ def _to_google(p: dict) -> dict:
     return body
 
 
+def _to_google_partial(p: dict) -> dict:
+    """**바뀐 필드만** 담은 patch 본문.
+
+    events.patch는 부분 수정이라 준 필드만 바뀐다. 그런데 예전에는 _to_google로
+    전체 본문을 만들어 보냈고, 그 안에 start/end가 항상 들어갔다. 일괄 수정은
+    조회로 펼쳐진 '인스턴스'를 기준값으로 썼으므로, 제목만 바꾸라는 요청이
+    시리즈 마스터의 시작일을 그 회차 날짜로 옮겨 이전 회차를 전부 없앴다.
+    바꿀 것만 보내면 그 사고 자체가 성립하지 않는다.
+    """
+    body: dict = {}
+    if "title" in p:
+        body["summary"] = str(p.get("title", ""))
+    if "description" in p:
+        body["description"] = str(p.get("description", ""))
+    if "color" in p:
+        body["colorId"] = str(p.get("color", "2"))
+    if "remind_minutes" in p:
+        remind = int(p.get("remind_minutes", 0) or 0)
+        body["reminders"] = (
+            {"useDefault": False, "overrides": [{"method": "popup", "minutes": remind}]}
+            if remind > 0 else {"useDefault": True}
+        )
+    # 시각·반복은 일괄 수정이 다루지 않는다. 다루게 되면 그때 명시적으로 넣는다
+    # (여기에 슬쩍 넣으면 A와 같은 사고가 다시 난다).
+    return body
+
+
 class GoogleCalendar:
     def __init__(self, service, calendar_id: str):
         self._svc = service
@@ -198,45 +225,52 @@ class GoogleCalendar:
         return _to_internal(g)
 
     def create_many(self, payloads: list) -> tuple:
-        """여러 건을 배치로 만든다. 낱개 insert를 반복하면 건당 왕복 1회다."""
-        made: list = []
-        fail: list = []
+        """여러 건을 배치로 만든다. 낱개 insert를 반복하면 건당 왕복 1회다.
 
-        def _seq(chunk):
-            for p in chunk:
+        실패는 (요청 인덱스, 사유)로 돌려준다. 예전에는 제목을 키로 썼는데,
+        같은 제목이 여러 건이면 (1) 폴백이 "이미 처리됨"으로 오판해 나머지를
+        건너뛰고(5건 중 4건이 조용히 사라졌다) (2) 실패 건수도 뭉개졌다.
+        """
+        made: list = []
+        fail: list = []          # [(payload 인덱스, 사유)]
+        handled: set = set()     # 배치 콜백이 이미 처리한 인덱스
+
+        def _seq(pairs):
+            for idx, p in pairs:
                 try:
                     made.append(self.create(p))
                 except Exception as e:  # noqa: BLE001
-                    fail.append((str(p.get("title", "")), str(e)))
+                    fail.append((idx, str(e)))
+                handled.add(idx)
 
         for i in range(0, len(payloads), _BATCH_SIZE):
-            chunk = payloads[i:i + _BATCH_SIZE]
+            chunk = list(enumerate(payloads[i:i + _BATCH_SIZE], start=i))
             try:
                 batch = self._svc.new_batch_http_request()
             except Exception:  # noqa: BLE001
                 _seq(chunk)
                 continue
 
-            def _cb(title):
+            def _cb(idx):  # 루프 변수를 그대로 닫으면 전부 마지막 값이 된다
                 def done(_rid, resp, err):
+                    handled.add(idx)
                     if err is None and resp:
                         made.append(_to_internal(resp))
                     else:
-                        fail.append((title, str(err)))
+                        fail.append((idx, str(err)))
                 return done
 
             try:
-                for n, p in enumerate(chunk):
+                for n, (idx, p) in enumerate(chunk):
                     batch.add(
                         self._svc.events().insert(calendarId=self._cid, body=_to_google(p)),
                         request_id=str(n),
-                        callback=_cb(str(p.get("title", ""))),
+                        callback=_cb(idx),
                     )
                 batch.execute()
             except Exception as e:  # noqa: BLE001
                 logger.warning("배치 생성 실패, 순차로 재시도: %s", e)
-                seen = {m.get("title") for m in made} | {f[0] for f in fail}
-                _seq([c for c in chunk if str(c.get("title", "")) not in seen])
+                _seq([(idx, p) for idx, p in chunk if idx not in handled])
         return made, fail
 
     def update(self, eid: str, payload: dict) -> dict:
@@ -265,8 +299,12 @@ class GoogleCalendar:
 
         낱개 update()는 건마다 get + patch로 **왕복 2회**다. 78건이면 156회가 되어
         라즈베리파이에서 1분을 넘고, nginx가 응답을 끊는다(실제로 그렇게 실패했다).
-        여기서는 (1) current를 이미 알고 있으므로 get을 생략하고,
-        (2) 구글 배치 HTTP로 50건씩 묶어 요청 수를 왕복 2회 수준으로 줄인다.
+        여기서는 구글 배치 HTTP로 50건씩 묶어 요청 수를 왕복 2회 수준으로 줄인다.
+
+        **바뀔 필드만 보낸다**(_to_google_partial). 예전에는 current와 병합해 전체
+        본문을 만들었는데, current가 조회로 펼쳐진 '인스턴스'라서 시리즈 마스터의
+        시작일이 그 회차로 옮겨졌다 — 제목만 바꿔도 이전 회차가 전부 사라졌다.
+        current는 이제 쓰지 않지만 시그니처는 내부 저장소와 맞추기 위해 남긴다.
 
         배치가 막히는 환경도 있으므로 실패하면 순차 patch로 자동 폴백한다.
         """
@@ -274,9 +312,9 @@ class GoogleCalendar:
         fail: list[tuple[str, str]] = []
 
         def _seq(chunk):
-            for eid, payload, current in chunk:
+            for eid, payload, _current in chunk:
                 try:
-                    body = _to_google(merge_event(payload, current))
+                    body = _to_google_partial(payload)
                     self._svc.events().patch(calendarId=self._cid, eventId=eid, body=body).execute()
                     ok.append(eid)
                 except Exception as e:  # noqa: BLE001
@@ -299,8 +337,8 @@ class GoogleCalendar:
                 return done
 
             try:
-                for n, (eid, payload, current) in enumerate(chunk):
-                    body = _to_google(merge_event(payload, current))
+                for n, (eid, payload, _current) in enumerate(chunk):
+                    body = _to_google_partial(payload)
                     batch.add(
                         self._svc.events().patch(calendarId=self._cid, eventId=eid, body=body),
                         request_id=str(n),

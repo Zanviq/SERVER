@@ -236,7 +236,7 @@ def create_many(
     fail: list[tuple[str, str]] = []
     with json_store.lock_for(_events_path(user, settings)):
         events = _load(user, settings)
-        for p in payloads:
+        for idx, p in enumerate(payloads):
             try:
                 ev = _normalize(p, {
                     "id": uuid.uuid4().hex,
@@ -256,7 +256,9 @@ def create_many(
                 events.append(ev)
                 made.append(ev)
             except Exception as e:  # noqa: BLE001
-                fail.append((str(p.get("title", "")), str(e)))
+                # 제목이 아니라 요청 인덱스로 돌려준다 — 같은 제목이 여럿이면
+                # 제목을 키로 쓰는 순간 건수가 뭉개진다.
+                fail.append((idx, str(e)))
         _save(events, user, settings)
     return made, fail
 
@@ -308,21 +310,32 @@ def update_many(user: SessionUser, settings: Settings,
 
 def delete_many(user: SessionUser, settings: Settings,
                 eids: list[str]) -> tuple[list[str], list[tuple[str, str]]]:
-    """여러 건을 한 번에 삭제(시리즈 단위). 파일 접근 1회."""
+    """여러 건을 한 번에 삭제. 파일 접근 1회.
+
+    인스턴스 id(`base@YYYY-MM-DD`)면 **그 회차만** 예외 처리한다 — 단건
+    delete_event와 같은 규칙이다. 예전에는 전부 base로 접어 시리즈를 통째로
+    지웠고, "9월 것만 지워줘"가 몇 년치를 날렸다.
+    """
     ok: list[str] = []
     fail: list[tuple[str, str]] = []
     with json_store.lock_for(_events_path(user, settings)):
         events = _load(user, settings)
-        present = {e["id"] for e in events}
-        want: set[str] = set()
+        by_id = {e["id"]: e for e in events}
+        drop: set[str] = set()
         for eid in eids:
             base = _base_id(eid)
-            if base in present:
-                want.add(base)
-                ok.append(base)
-            else:
+            target = by_id.get(base)
+            if target is None:
                 fail.append((eid, "이벤트를 찾을 수 없습니다."))
-        _save([e for e in events if e["id"] not in want], user, settings)
+                continue
+            if "@" in str(eid):
+                ex = set(target.get("exdates", []))
+                ex.add(str(eid).split("@", 1)[1][:10])
+                target["exdates"] = sorted(ex)
+            else:
+                drop.add(base)
+            ok.append(eid)
+        _save([e for e in events if e["id"] not in drop], user, settings)
     return ok, fail
 
 

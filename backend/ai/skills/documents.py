@@ -125,7 +125,10 @@ def _backup_before_overwrite(root: Path, target: Path, ctx) -> None:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-_EXT_RE = __import__("re").compile(r"\.[A-Za-z0-9]{1,8}$")
+#: 확장자로 볼 꼬리. **글자가 하나는 있어야 한다** — 숫자만이면 확장자가 아니라
+#: '2026.08'·'v1.2'·'예산 1.5' 같은 날짜·버전이다. 예전 규칙은 이것들을 확장자로
+#: 보고 .md를 안 붙여, kind가 'other'인 파일을 만든 뒤 다시 읽지 못했다.
+_EXT_RE = __import__("re").compile(r"\.(?=[A-Za-z0-9]{1,8}$)[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*$")
 
 
 def _has_extension(name: str) -> bool:

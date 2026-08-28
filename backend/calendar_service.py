@@ -78,15 +78,23 @@ def delete_many(
     """
     from . import trash
 
+    # **id를 접지 않는다.** 예전에는 base_id로 접어 넘겨서, 조회가 준 인스턴스 id
+    # 하나가 시리즈 전체 삭제가 됐다(실측: 52회차 → 0). 단건 delete_event는 그
+    # 회차만 지우므로 같은 식별자를 정반대로 해석한 셈이었다.
     for ev in events:
         try:
-            trash.move_event_to_trash(ev, user, settings)
+            eid = str(ev.get("id", ""))
+            # 인스턴스면 '그 날짜의 단발 일정'으로 담는다. 시리즈째 담으면
+            # 복원할 때 없던 회차까지 되살아나거나(중복), 시작일이 밀린다.
+            snap = {k: v for k, v in _occurrence_snapshot(ev, eid).items()
+                    if not k.startswith("_")}  # 스킬 내부 표식은 담지 않는다
+            trash.move_event_to_trash(snap, user, settings)
         except Exception:  # noqa: BLE001 - 보관 실패가 삭제를 막지는 않는다
             pass
     eids = [str(e.get("id", "")) for e in events]
     gc = get_google_calendar(settings, user.username)
     if gc:
-        return gc.delete_many([base_id(e) for e in eids])
+        return gc.delete_many(eids)
     return calendar_store.delete_many(user, settings, eids)
 
 

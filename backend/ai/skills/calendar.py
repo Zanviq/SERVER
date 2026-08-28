@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from ... import calendar_service, user_settings
 from ...calendar_colors import COLOR_NAMES, resolve_color
 from ...calendar_ids import base_id as calendar_base_id
+from ...calendar_ids import is_instance
 from ..skill_base import SkillBase, SkillResult
 
 
@@ -176,6 +177,19 @@ def _empty_hint(args, ctx, frm: str, to: str, window: list[dict] | None = None) 
     return hint
 
 
+def _service_error(e: Exception) -> SkillResult:
+    """캘린더 서비스 예외를 분류해 돌려준다.
+
+    스킬이 자기 안에서 HTTPException을 삼키면 dispatch의 상태코드 매핑이
+    무력화되고, 없는 일정도 error_code="error"로 나가 모델이 "다시 조회할지"를
+    판단하지 못했다.
+    """
+    status = int(getattr(e, "status_code", 0) or 0)
+    code = {400: "invalid", 403: "forbidden", 404: "not_found",
+            409: "conflict", 410: "gone", 415: "unsupported"}.get(status, "error")
+    return SkillResult(ok=False, message=str(getattr(e, "detail", e)), error_code=code)
+
+
 class _Stop(Exception):
     """대상 고르기 단계에서 바로 돌려줄 결과가 정해졌을 때."""
 
@@ -183,7 +197,37 @@ class _Stop(Exception):
         self.result = result
 
 
-def _pick_targets(args, ctx, *, dry_run_verb: str):
+def _is_recurring(ev: dict) -> bool:
+    """이 일정이 반복 시리즈의 한 회차인가.
+
+    창 안 인스턴스 개수로 세면 안 된다 — 조회 기간이 하루면 주간 반복도 1건이라
+    "반복입니다" 경고가 통째로 사라진다(실측). 일정 자체의 표시를 본다.
+    """
+    if ev.get("is_recurring") or ev.get("series_id"):
+        return True
+    if str(ev.get("recurrence", "none")) not in ("", "none"):
+        return True
+    return is_instance(str(ev.get("id", "")))
+
+
+def _series_note(targets: list[dict], instances: dict) -> str:
+    """무엇이 지워지는지 범위를 말해 준다.
+
+    "1개가 삭제됩니다"만 보여주고 승인을 받아 놓고 실제로는 몇 년치 반복을
+    지우면 안 된다. 회차 하나인지 시리즈 전체인지 구분해서 적는다.
+    """
+    whole = [e for e in targets if e.get("_whole_series")]
+    occ = [e for e in targets if not e.get("_whole_series") and _is_recurring(e)]
+    parts = []
+    if whole:
+        n = sum(instances.get(_base_id(str(e.get("id", ""))), 1) for e in whole)
+        parts.append(f"{len(whole)}건은 반복 일정 **전체**(이 기간 {n}회차 포함)")
+    if occ:
+        parts.append(f"{len(occ)}건은 반복 일정의 개별 회차")
+    return f" ({', '.join(parts)})" if parts else ""
+
+
+def _pick_targets(args, ctx, *, dry_run_verb: str, fold_series: bool = True):
     """일괄 수정·삭제가 공유하는 '무엇을 건드릴지 고르기'.
 
     이 골격이 두 스킬에 복붙돼 있었고, 그 사이에서 이미 두 번 어긋났다
@@ -215,10 +259,25 @@ def _pick_targets(args, ctx, *, dry_run_verb: str):
             message=f"일정 조회 실패: {getattr(e, 'detail', e)}",
         ))
 
+    # 회차 단위로 다룰 때(삭제) 시리즈 id를 직접 준 것들 — 이건 "시리즈 전체"다
+    whole_series: set[str] = set()
     if ids:
-        want = {_base_id(i) for i in ids}
-        events = [e for e in events if _base_id(e.get("id", "")) in want]
-        missing = want - {_base_id(e.get("id", "")) for e in events}
+        # **인스턴스 id와 시리즈 id를 구분한다.** 예전에는 전부 base_id로 접어
+        # 대조해서, 9월 회차 id 하나를 줬는데 시리즈 52회차가 전부 걸렸다.
+        want_exact = {str(i) for i in ids if is_instance(str(i))}
+        want_series = {_base_id(str(i)) for i in ids if not is_instance(str(i))}
+        whole_series = set(want_series)
+        kept, hit = [], set()
+        for e in events:
+            eid = str(e.get("id", ""))
+            if eid in want_exact:
+                kept.append(e)
+                hit.add(eid)
+            elif _base_id(eid) in want_series:
+                kept.append(e)
+                hit.add(_base_id(eid))
+        events = kept
+        missing = (want_exact | want_series) - hit
         if missing:
             raise _Stop(SkillResult(
                 ok=False, error_code="not_found",
@@ -231,9 +290,18 @@ def _pick_targets(args, ctx, *, dry_run_verb: str):
     by_series: dict[str, dict] = {}
     instances: dict[str, int] = {}
     for e in events:
-        sid = _base_id(e.get("id", ""))
-        by_series.setdefault(sid, e)
+        eid = str(e.get("id", ""))
+        sid = _base_id(eid)
         instances[sid] = instances.get(sid, 0) + 1
+        if fold_series:
+            # 수정은 제목·색이 시리즈 속성이라 시리즈당 한 번만 건드린다
+            by_series.setdefault(sid, e)
+        elif sid in whole_series:
+            # 시리즈 id를 직접 줬다 = 시리즈 전체를 지우겠다는 뜻
+            by_series.setdefault(sid, {**e, "id": sid, "_whole_series": True})
+        else:
+            # 그 외에는 회차 단위. "9월 것만"이 몇 년치를 날리면 안 된다.
+            by_series.setdefault(eid, e)
 
     if not by_series:
         raise _Stop(_nothing_selected(args, ctx, frm, to, dry_run_verb, window))
@@ -423,8 +491,8 @@ class UpdateCalendarEvent(SkillBase):
             payload["remind_minutes"] = int(args["remind_minutes"])
         try:
             ev = calendar_service.update_event(ctx.user, ctx.settings, args["event_id"], payload)
-        except Exception as e:  # HTTPException 등
-            return SkillResult(ok=False, message=getattr(e, "detail", str(e)), error_code="error")
+        except Exception as e:  # noqa: BLE001
+            return _service_error(e)
         return SkillResult(ok=True, message="일정 수정됨", data={"event": ev})
 
 
@@ -491,7 +559,8 @@ class BulkUpdateCalendarEvents(SkillBase):
             by_series, instances, frm, to = _pick_targets(args, ctx, dry_run_verb="바꿀")
         except _Stop as stop:
             return stop.result
-        recurring = sum(1 for n in instances.values() if n > 1)
+        # 창 안 인스턴스 개수로 세면 하루짜리 조회에서 경고가 사라진다
+        recurring = sum(1 for e in by_series.values() if _is_recurring(e))
 
         planned = []
         for sid, ev in by_series.items():
@@ -651,11 +720,18 @@ class BulkCreateCalendarEvents(SkillBase):
         # 건당 파일 read/write다. 한 번에 넘긴다.
         made, fail_pairs = calendar_service.create_many(ctx.user, ctx.settings, planned)
         created = made
-        err_by_title = dict(fail_pairs)
-        failed = [
-            {"title": t, "error": err}
-            for t, err in err_by_title.items()
-        ]
+        # 실패는 (요청 인덱스, 사유)다. 제목을 키로 dict를 만들면 같은 제목
+        # 3건 실패가 1건으로 뭉개진다(실측).
+        failed = []
+        for key, err in fail_pairs:
+            row: dict = {"error": err}
+            if isinstance(key, int) and 0 <= key < len(planned):
+                row["index"] = key
+                row["title"] = str(planned[key].get("title", ""))
+                row["start"] = str(planned[key].get("start", ""))
+            else:
+                row["title"] = str(key)
+            failed.append(row)
         msg = f"{len(created)}개 일정을 만들었습니다"
         if failed:
             msg += f" — {len(failed)}개 실패"
@@ -682,7 +758,9 @@ class BulkDeleteCalendarEvents(SkillBase):
             "color": {"type": "string", "description": "이 색만 (이름 또는 colorId)."},
             "title_contains": {"type": "string", "description": "제목에 이 말이 든 것만."},
             "event_ids": {"type": "array", "items": {"type": "string"},
-                          "description": "직접 고른 id들. 주면 다른 조건보다 우선."},
+                          "description": ("직접 고른 id들. 주면 다른 조건보다 우선. "
+                                          "반복 인스턴스 id(...@날짜)를 주면 그 회차만, "
+                                          "시리즈 id를 주면 반복 전체가 삭제된다.")},
             "dry_run": {"type": "boolean", "description": "true면 지우지 않고 대상만 돌려준다."},
         },
     }
@@ -691,32 +769,41 @@ class BulkDeleteCalendarEvents(SkillBase):
 
     def run(self, args, ctx):
         try:
-            # 반복은 시리즈당 한 번만 지운다(인스턴스마다 부르면 이미 없는 것을 계속 지운다)
-            by_series, _instances, frm, to = _pick_targets(args, ctx, dry_run_verb="지울")
+            by_series, instances, frm, to = _pick_targets(
+                args, ctx, dry_run_verb="지울", fold_series=False
+            )
         except _Stop as stop:
             return stop.result
+        # 조회가 준 회차를 그대로 지운다. 시리즈로 접으면 "9월 것만"이 몇 년치를
+        # 날린다(실측: 52회차 → 0). 단건 삭제와 같은 규칙이어야 한다.
         targets = list(by_series.values())
+        series_hit = _series_note(targets, instances)
 
         if len(targets) > self.MAX:
             return _too_many(len(targets), self.MAX)
 
-        listing = [{"id": _base_id(e.get("id", "")), "title": e.get("title", ""),
-                    "start": e.get("start", ""), "color": e.get("color", "")} for e in targets]
+        listing = [{"id": e.get("id", ""), "title": e.get("title", ""),
+                    "start": e.get("start", ""), "color": e.get("color", ""),
+                    "scope": "series" if e.get("_whole_series")
+                             else ("occurrence" if _is_recurring(e) else "single")}
+                   for e in targets]
         if args.get("dry_run"):
             return SkillResult(
                 ok=True,
-                message=f"{len(listing)}개가 삭제됩니다(아직 지우지 않음). 확인 후 dry_run 없이 다시 요청하세요.",
-                data={"planned": listing, "count": len(listing), "dry_run": True},
+                message=(f"{len(listing)}개가 삭제됩니다(아직 지우지 않음){series_hit}. "
+                         "확인 후 dry_run 없이 다시 요청하세요."),
+                data={"planned": listing, "count": len(listing), "dry_run": True,
+                      "recurring_occurrences": series_hit != ""},
             )
 
         # 한 번에 넘긴다(휴지통 보관도 서비스 계층이 함께 처리한다)
         ok_ids, fail_pairs = calendar_service.delete_many(ctx.user, ctx.settings, targets)
-        # 백엔드가 인스턴스 id를 돌려줘도 시리즈 id와 대조되도록 한 번 더 정규화한다
-        done = {_base_id(i) for i in ok_ids}
-        err_by_id = {_base_id(k): v for k, v in fail_pairs}
+        done = set(ok_ids)
+        err_by_id = dict(fail_pairs)
         deleted = [i for i in listing if i["id"] in done]
         failed = [{**i, "error": err_by_id.get(i["id"], "")} for i in listing if i["id"] not in done]
-        msg = f"{len(deleted)}개 일정을 삭제했습니다 — 휴지통의 '일정'에서 되돌릴 수 있습니다"
+        msg = (f"{len(deleted)}개 일정을 삭제했습니다{series_hit}"
+               " — 휴지통의 '일정'에서 되돌릴 수 있습니다")
         if failed:
             msg += f" ({len(failed)}개 실패)"
         return SkillResult(ok=bool(deleted) or not failed, message=msg,
@@ -736,8 +823,8 @@ class DeleteCalendarEvent(SkillBase):
     def run(self, args, ctx):
         try:
             calendar_service.delete_event(ctx.user, ctx.settings, args["event_id"])
-        except Exception as e:
-            return SkillResult(ok=False, message=getattr(e, "detail", str(e)), error_code="error")
+        except Exception as e:  # noqa: BLE001
+            return _service_error(e)
         return SkillResult(ok=True, message="일정 삭제됨", data={})
 
 

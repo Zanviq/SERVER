@@ -2479,3 +2479,298 @@ def test_find_free_slots_over_a_range():
         "date": "2026-09-07", "duration_minutes": 60, "work_start": "아홉시",
     }, ctx)
     assert junk.ok is False and junk.error_code == "invalid", junk
+
+
+def _cal_ctx(name, today="2026-09-01"):
+    from backend.ai.skill_base import SkillContext
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    st = get_settings()
+    u = SessionUser(username=name, display_name=name, expires_at=0, remaining=0)
+    return u, SkillContext(user=u, settings=st, today=today), st
+
+
+def test_bulk_delete_is_per_occurrence_not_series():
+    """일괄 삭제는 '회차'를 지운다. 시리즈를 통째로 날리면 안 된다.
+
+    배포 전 점검에서 실측으로 잡힌 결함: list_calendar_events가 준 인스턴스 id
+    하나를 bulk_delete에 넘기면 52회차가 0이 됐다. 같은 id를 단건 삭제에 주면
+    그 회차만 지워진다 — 같은 식별자를 정반대로 해석하고 있었다.
+    """
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("occdel")
+
+    def n():
+        return len(reg.dispatch("list_calendar_events",
+                                {"from_date": "2026-01-01", "to_date": "2026-12-31"},
+                                ctx).data["events"])
+
+    reg.dispatch("create_calendar_event", {
+        "title": "스탠드업", "start": "2026-01-05T09:00:00", "end": "2026-01-05T09:15:00",
+        "recurrence": "weekly", "recur_until": "2026-12-28",
+    }, ctx)
+    total = n()
+    assert total > 40, total
+
+    day = reg.dispatch("list_calendar_events",
+                       {"from_date": "2026-09-21", "to_date": "2026-09-21"}, ctx)
+    inst = day.data["events"][0]["id"]
+    assert "@" in inst, inst
+
+    r = reg.dispatch("bulk_delete_calendar_events", {"event_ids": [inst]}, ctx)
+    assert r.ok and r.data["count"] == 1, r
+    assert n() == total - 1, (n(), total)          # 시리즈가 아니라 한 회차만
+
+    # 휴지통에서 되돌리면 그 회차가 돌아온다
+    tid = reg.dispatch("list_trash", {"kind": "event"}, ctx).data["items"][0]["id"]
+    assert reg.dispatch("restore_from_trash", {"id": tid}, ctx).ok
+    assert n() == total, n()
+
+    # 기간 조건으로 골라도 회차 단위다 — 9월 4회차만
+    r = reg.dispatch("bulk_delete_calendar_events",
+                     {"from_date": "2026-09-01", "to_date": "2026-09-30"}, ctx)
+    assert r.data["count"] == 4, r.data
+    assert n() == total - 4, n()
+    assert "반복 일정의 개별 회차" in r.message, r.message
+
+    # 시리즈 id를 직접 주면 그때는 시리즈 전체다(그리고 그렇다고 말한다)
+    base = inst.split("@", 1)[0]
+    dry = reg.dispatch("bulk_delete_calendar_events",
+                       {"event_ids": [base], "dry_run": True}, ctx)
+    assert dry.data["planned"][0]["scope"] == "series", dry.data
+    assert "전체" in dry.message, dry.message
+    reg.dispatch("bulk_delete_calendar_events", {"event_ids": [base]}, ctx)
+    assert n() == 0, n()
+
+
+def test_bulk_update_warns_about_series_in_narrow_window():
+    """반복 경고가 조회 기간 폭에 좌우되면 안 된다.
+
+    창 안 인스턴스 개수로 세던 시절에는, 하루짜리 조회에서 주간 반복도 1건이라
+    "시리즈 전체가 바뀝니다" 경고가 통째로 사라졌다.
+    """
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("narrowwin")
+    reg.dispatch("create_calendar_event", {
+        "title": "주간 회의", "start": "2026-01-05T10:00:00", "end": "2026-01-05T11:00:00",
+        "recurrence": "weekly", "recur_until": "2026-12-28",
+    }, ctx)
+    r = reg.dispatch("bulk_update_calendar_events", {
+        "from_date": "2026-09-07", "to_date": "2026-09-07",
+        "title_prefix": "[x] ", "dry_run": True,
+    }, ctx)
+    assert r.ok and r.data["count"] == 1, r
+    assert "시리즈 전체가 바뀝니다" in r.message, r.message
+
+
+def test_google_bulk_update_sends_only_changed_fields():
+    """구글 일괄 수정은 바뀔 필드만 보낸다.
+
+    예전에는 전체 본문을 만들어 보냈고 거기에 start/end가 항상 들어갔다.
+    기준값이 조회로 펼쳐진 '인스턴스'였으므로, 제목만 바꾸라는 요청이 시리즈
+    마스터의 시작일을 그 회차로 옮겨 이전 회차를 전부 없앴다.
+    """
+    from backend.calendar_google import GoogleCalendar
+
+    sent = []
+
+    class _Req:
+        def __init__(self, body=None):
+            self.body = body
+
+        def execute(self):
+            return {"id": "abc123", **(self.body or {})}
+
+    class _Events:
+        def patch(self, calendarId, eventId, body):
+            sent.append((eventId, body))
+            return _Req(body)
+
+    class _Svc:
+        def events(self):
+            return _Events()
+
+        def new_batch_http_request(self):
+            raise RuntimeError("배치 미지원")
+
+    gc = GoogleCalendar.__new__(GoogleCalendar)
+    gc._svc = _Svc()
+    gc._cid = "primary"
+
+    instance = {"id": "abc123_20260907T000000Z", "title": "스탠드업",
+                "start": "2026-09-07T09:00:00", "end": "2026-09-07T09:15:00", "color": "2"}
+    ok, fail = gc.patch_many([("abc123", {"title": "[취소] 스탠드업"}, instance)])
+    assert ok == ["abc123"] and not fail, (ok, fail)
+    eid, body = sent[0]
+    assert eid == "abc123"
+    assert body == {"summary": "[취소] 스탠드업"}, body   # start/end가 없어야 한다
+
+
+def test_google_batch_create_fallback_keeps_same_title_events():
+    """배치가 도중에 깨져도 같은 제목 일정이 사라지지 않는다.
+
+    폴백이 '제목'으로 처리 여부를 판정해서, 같은 제목 5건 중 4건이 조용히
+    누락되고도 "1개 생성, 0개 실패"로 보고됐다.
+    """
+    from backend.calendar_google import GoogleCalendar
+
+    inserted = []
+
+    class _Ins:
+        def __init__(self, body):
+            self.body = body
+
+        def execute(self):
+            inserted.append(self.body)
+            return {"id": f"id{len(inserted)}", **self.body}
+
+    class _Events:
+        def insert(self, calendarId, body):
+            return _Ins(body)
+
+    class _Batch:
+        """첫 건만 콜백을 돌리고 그다음 터지는 배치(부분 성공)."""
+
+        def __init__(self):
+            self.items = []
+
+        def add(self, req, request_id, callback):
+            self.items.append((req, callback))
+
+        def execute(self):
+            req, cb = self.items[0]
+            cb("0", {"id": "batch1", **req.body}, None)
+            raise RuntimeError("전송 중 연결 끊김")
+
+    class _Svc:
+        def events(self):
+            return _Events()
+
+        def new_batch_http_request(self):
+            return _Batch()
+
+    gc = GoogleCalendar.__new__(GoogleCalendar)
+    gc._svc = _Svc()
+    gc._cid = "primary"
+
+    payloads = [{"title": "회의", "start": f"2026-09-0{i}T10:00:00",
+                 "end": f"2026-09-0{i}T11:00:00"} for i in range(1, 6)]
+    made, fail = gc.create_many(payloads)
+    assert len(made) + len(fail) == 5, (len(made), len(fail))
+    assert len(made) == 5, len(made)
+    # 실패는 제목이 아니라 요청 인덱스로 온다
+    assert all(isinstance(k, int) for k, _ in fail), fail
+
+
+def test_bulk_create_reports_every_failure():
+    """같은 제목 3건이 실패하면 3건으로 보고한다(1건으로 뭉치지 않는다)."""
+    import backend.calendar_store as cstore
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("failagg")
+    real = cstore.create_many
+    cstore.create_many = lambda user, settings, payloads: (
+        [], [(i, "강제 실패") for i, _p in enumerate(payloads)]
+    )
+    try:
+        r = reg.dispatch("bulk_create_calendar_events", {"events": [
+            {"title": "같은제목", "start": "2026-09-01T10:00:00"},
+            {"title": "같은제목", "start": "2026-09-02T10:00:00"},
+            {"title": "같은제목", "start": "2026-09-03T10:00:00"},
+        ]}, ctx)
+    finally:
+        cstore.create_many = real
+    assert len(r.data["failed"]) == 3, r.data["failed"]
+    assert "3개 실패" in r.message, r.message
+    # 어느 건이 실패했는지 알 수 있어야 재시도가 된다
+    assert [f["start"] for f in r.data["failed"]] == [
+        "2026-09-01T10:00:00", "2026-09-02T10:00:00", "2026-09-03T10:00:00"], r.data["failed"]
+
+
+def test_single_calendar_errors_keep_their_classification():
+    """없는 일정 수정·삭제는 not_found다. 'error'로 뭉개면 모델이 못 고친다."""
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("errcode")
+    for name, args in [("delete_calendar_event", {"event_id": "없음"}),
+                       ("update_calendar_event", {"event_id": "없음", "title": "x"})]:
+        r = reg.dispatch(name, args, ctx)
+        assert r.ok is False and r.error_code == "not_found", (name, r)
+
+
+def test_trash_event_restore_is_claimed_under_lock():
+    """같은 항목을 동시에 복원해도 일정이 하나만 생긴다.
+
+    락을 짧게 하려고 확인만 하고 나갔더니, 두 요청이 같은 엔트리를 보고
+    각자 일정을 만들어 중복됐다(실측 2건).
+    """
+    import threading
+    import time
+
+    import backend.calendar_service as csvc
+    from backend import trash as trash_mod
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    u, ctx, st = _cal_ctx("restorerace")
+    reg.dispatch("create_calendar_event",
+                 {"title": "복원대상", "start": "2026-09-01T10:00:00"}, ctx)
+    ev = reg.dispatch("list_calendar_events",
+                      {"from_date": "2026-09-01", "to_date": "2026-09-01"}, ctx)
+    reg.dispatch("delete_calendar_event", {"event_id": ev.data["events"][0]["id"]}, ctx)
+    tid = reg.dispatch("list_trash", {"kind": "event"}, ctx).data["items"][0]["id"]
+
+    real = csvc.create_event
+    csvc.create_event = lambda user, settings, payload: (
+        time.sleep(0.2) or real(user, settings, payload)
+    )
+    out = []
+
+    def go():
+        try:
+            out.append(("ok", trash_mod.restore(tid, u, st)))
+        except Exception as e:  # noqa: BLE001
+            out.append(("err", str(getattr(e, "detail", e))))
+
+    try:
+        ts = [threading.Thread(target=go) for _ in range(2)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+    finally:
+        csvc.create_event = real
+
+    made = reg.dispatch("list_calendar_events",
+                        {"from_date": "2026-09-01", "to_date": "2026-09-01"}, ctx)
+    assert len(made.data["events"]) == 1, made.data["events"]
+    assert sum(1 for kind, _ in out if kind == "ok") == 1, out
+
+
+def test_write_document_does_not_invent_extensions_from_dates():
+    """'월간정리 2026.08'의 .08은 확장자가 아니다.
+
+    확장자로 오판해 .md를 안 붙였고, kind가 'other'인 파일이 만들어져
+    바로 다음 read_document가 실패했다 — 만들자마자 못 읽는 문서였다.
+    """
+    from backend.ai.skill_registry import default_registry
+    from backend.ai.skills.documents import _has_extension
+
+    for name in ["월간정리 2026.08", "예산 1.5", "회의록 v1.2", "정리 2026.8"]:
+        assert not _has_extension(name), name
+    for name in ["todo.txt", "그림.png", "문서.md", "묶음.7z"]:
+        assert _has_extension(name), name
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("extguess")
+    w = reg.dispatch("write_document", {"path": "월간정리 2026.08", "content": "내용"}, ctx)
+    assert w.ok, w
+    r = reg.dispatch("read_document", {"path": "월간정리 2026.08"}, ctx)
+    assert r.ok and "내용" in r.data["content"], r
