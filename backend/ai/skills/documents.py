@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ...file_kinds import is_editable, kind_of
+from ...json_store import lock_for, write_text_atomic
 from ...notes_graph import backlinks_for
 from ...security_paths import safe_join, to_rel
 from ...storage import user_data_root
@@ -271,19 +272,27 @@ class WriteDocument(SkillBase):
         # 거치는데 덮어쓰기만 아무 흔적도 안 남겼다. 이전 내용을 휴지통에 넣어
         # restore_from_trash로 되돌릴 수 있게 한다.
         backed_up = False
-        if target.exists() and target.read_text(encoding="utf-8", errors="replace") != args["content"]:
-            try:
-                _backup_before_overwrite(root, target, ctx)
-                backed_up = True
-            except Exception:  # noqa: BLE001 - 백업 실패가 저장을 막지는 않는다
-                pass
-
-        target.write_text(args["content"], encoding="utf-8")
+        backup_failed = False
+        # 같은 문서에 대한 다른 쓰기(UI 자동저장 등)와 겹치지 않게 직렬화한다
+        with lock_for(target):
+            if target.exists() and target.read_text(encoding="utf-8", errors="replace") != args["content"]:
+                try:
+                    _backup_before_overwrite(root, target, ctx)
+                    backed_up = True
+                except Exception:  # noqa: BLE001 - 백업 실패가 저장을 막지는 않는다
+                    backup_failed = True
+            write_text_atomic(target, args["content"])
         ident = _ident(root, target)
         msg = f"'{ident}' 저장됨"
         if backed_up:
             msg += " (이전 내용은 휴지통에 있습니다)"
-        return SkillResult(ok=True, message=msg, data={"path": ident, "backed_up": backed_up})
+        elif backup_failed:
+            # 백업 실패를 '백업 불필요'와 같이 취급하면 안 된다 — 되돌릴 수 없는 상태다
+            msg += " (경고: 이전 내용을 휴지통에 남기지 못했습니다)"
+        return SkillResult(
+            ok=True, message=msg,
+            data={"path": ident, "backed_up": backed_up, "backup_failed": backup_failed},
+        )
 
 
 class AppendDocument(SkillBase):
@@ -306,9 +315,12 @@ class AppendDocument(SkillBase):
             return SkillResult(ok=False, message="텍스트 문서만 편집할 수 있습니다.", error_code="unsupported")
         target.parent.mkdir(parents=True, exist_ok=True)
         title = args["path"].rsplit("/", 1)[-1]
-        prev = target.read_text(encoding="utf-8", errors="replace") if target.exists() else f"# {title}\n"
-        sep = "" if prev.endswith("\n") else "\n"
-        target.write_text(prev + sep + args["content"] + "\n", encoding="utf-8")
+        # 읽고-고쳐-쓰기라 락이 없으면 동시에 들어온 덧붙이기가 서로를 덮어쓴다
+        # (실측: 락 없이 동시 20건 중 2건만 남았다).
+        with lock_for(target):
+            prev = target.read_text(encoding="utf-8", errors="replace") if target.exists() else f"# {title}\n"
+            sep = "" if prev.endswith("\n") else "\n"
+            write_text_atomic(target, prev + sep + args["content"] + "\n")
         ident = _ident(root, target)
         return SkillResult(ok=True, message=f"'{ident}'에 덧붙임", data={"path": ident})
 

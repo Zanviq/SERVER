@@ -22,6 +22,7 @@ from starlette.background import BackgroundTask
 
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
+from ..json_store import lock_for, write_text_atomic
 from ..file_kinds import inline_media_type, is_editable, kind_of
 from ..notes_graph import backlinks_for, build_graph, parse_wikilinks
 from ..security_paths import safe_join, to_rel
@@ -366,7 +367,9 @@ def save_note(
     if target.exists() and not is_editable(target.name):
         raise HTTPException(status_code=415, detail="텍스트 문서만 편집할 수 있습니다.")
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(req.content, encoding="utf-8")
+    # AI 쓰기와 같은 락·원자성 규약을 쓴다(자동저장과 AI append가 서로 덮어썼다)
+    with lock_for(target):
+        write_text_atomic(target, req.content)
     return _summary(root, target)
 
 

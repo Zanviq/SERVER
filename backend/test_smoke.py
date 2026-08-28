@@ -936,6 +936,62 @@ def test_mutating_skills_declare_what_they_change():
     assert not missing, f"mutates 선언이 빠진 스킬: {missing}"
 
 
+def test_document_writes_are_serialized_and_atomic():
+    """동시 쓰기에서 내용이 사라지거나 섞이지 않아야 한다.
+
+    문서 저장에 락도 원자성도 없었다. AI append와 UI 자동저장이 read-modify-write를
+    겹쳐 서로를 덮어썼고(실측: 락 없이 동시 20건 중 2건만 남음), plain write_text라
+    쓰는 도중 죽으면 파일이 잘린 채 남았다.
+    """
+    import threading
+
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    from backend.storage import user_data_root
+
+    s = get_settings()
+    u = SessionUser(username="concur", display_name="CC", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=s, today="2026-08-27")
+    reg = default_registry()
+    root = user_data_root(u, s)
+
+    reg.dispatch("write_document", {"path": "일지", "content": "시작"}, ctx)
+    failures: list[str] = []
+
+    def add_line(i: int) -> None:
+        r = reg.dispatch("append_document", {"path": "일지", "content": f"줄{i}"}, ctx)
+        if not r.ok:
+            failures.append(r.message)
+
+    threads = [threading.Thread(target=add_line, args=(i,)) for i in range(20)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    text = (root / "일지.md").read_text(encoding="utf-8")
+    kept = [i for i in range(20) if f"줄{i}" in text]
+    assert not failures, failures
+    assert len(kept) == 20, f"{len(kept)}/20만 남았다 — 덧붙이기가 서로를 덮어쓴다"
+
+    # 동시 덮어쓰기는 '어느 한 값'으로 끝나야 한다(섞이면 안 된다)
+    def overwrite(i: int) -> None:
+        reg.dispatch("write_document", {"path": "덮어", "content": f"v{i}"}, ctx)
+
+    threads = [threading.Thread(target=overwrite, args=(i,)) for i in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    final = (root / "덮어.md").read_text(encoding="utf-8")
+    assert final in {f"v{i}" for i in range(10)}, repr(final)
+
+    # 임시파일이 남지 않는다(이름이 PID만이면 스레드끼리 충돌해 남았다)
+    assert not list(root.rglob("*.tmp*")), list(root.rglob("*.tmp*"))
+
+
 def test_recurring_single_occurrence_roundtrip():
     """반복 일정 '한 회차만' 삭제 → 휴지통 → 복원.
 

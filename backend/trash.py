@@ -62,21 +62,22 @@ def move_to_trash(
 
     entry_id = uuid.uuid4().hex
     root = _trash_root(user, settings)
-    dest_dir = root / "data" / entry_id
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / source.name
-    shutil.move(str(source), str(dest))
-
-    entry = {
-        "id": entry_id,
-        "kind": KIND_DOCUMENT,
-        "orig_rel": orig_rel,
-        "name": source.name,
-        "is_dir": dest.is_dir(),
-        "deleted_at": time.time(),
-    }
     idx_path = _index_path(user, settings)
+    # 실물 이동과 인덱스 기록을 같은 락 안에서 한다. 예전에는 이동이 락 밖이라
+    # 그 사이에 '비우기'가 data/를 통째로 지우면 문서가 영구히 사라졌다.
     with lock_for(idx_path):
+        dest_dir = root / "data" / entry_id
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / source.name
+        shutil.move(str(source), str(dest))
+        entry = {
+            "id": entry_id,
+            "kind": KIND_DOCUMENT,
+            "orig_rel": orig_rel,
+            "name": source.name,
+            "is_dir": dest.is_dir(),
+            "deleted_at": time.time(),
+        }
         entries = read_json(idx_path, [])
         entries.append(entry)
         write_atomic(idx_path, entries)
@@ -149,6 +150,7 @@ def _unique_target(root: Path, rel: str) -> Path:
 
 def restore(entry_id: str, user: SessionUser, settings: Settings) -> dict:
     idx_path = _index_path(user, settings)
+    pending_event: dict | None = None
     with lock_for(idx_path):
         entries = read_json(idx_path, [])
         entry = next((e for e in entries if e.get("id") == entry_id), None)
@@ -162,17 +164,30 @@ def restore(entry_id: str, user: SessionUser, settings: Settings) -> dict:
                 entries = [e for e in entries if e.get("id") != entry_id]
                 write_atomic(idx_path, entries)
                 raise HTTPException(status_code=410, detail="복원할 일정 내용이 없습니다.")
-            # 일정은 파일이 아니라 캘린더에 **새로 만들어** 되돌린다.
-            # 원래 id는 되살릴 수 없다(구글은 서버가 발급하고, 지운 id는 재사용 못 한다).
-            # 순환 import를 피하려고 여기서 가져온다(calendar_service → trash 방향이 이미 있다).
-            from . import calendar_service
+            # 캘린더 생성은 **락 밖에서** 한다. 구글이면 네트워크 왕복이라,
+            # 락을 쥔 채 기다리면 그동안 다른 휴지통 작업이 전부 멈춘다.
+            pending_event = payload
 
-            payload.pop("id", None)
-            ev = calendar_service.create_event(user, settings, payload)
-            shutil.rmtree(src.parent, ignore_errors=True)
-            entries = [e for e in entries if e.get("id") != entry_id]
+    if pending_event is not None:
+        # 일정은 파일이 아니라 캘린더에 새로 만들어 되돌린다.
+        # 원래 id는 되살릴 수 없다(구글은 서버가 발급하고 지운 id는 재사용 못 한다).
+        from . import calendar_service
+
+        pending_event.pop("id", None)
+        ev = calendar_service.create_event(user, settings, pending_event)
+        with lock_for(idx_path):
+            entries = [e for e in read_json(idx_path, []) if e.get("id") != entry_id]
             write_atomic(idx_path, entries)
-            return {"ok": True, "kind": KIND_EVENT, "event": ev, "restored_to": ev.get("title", "")}
+        shutil.rmtree(_trash_root(user, settings) / "data" / entry_id, ignore_errors=True)
+        # 새 id를 돌려준다 — 복원 직후 이어서 수정하려면 필요하다
+        return {"ok": True, "kind": KIND_EVENT, "event": ev,
+                "event_id": ev.get("id", ""), "restored_to": ev.get("title", "")}
+
+    with lock_for(idx_path):
+        entries = read_json(idx_path, [])
+        entry = next((e for e in entries if e.get("id") == entry_id), None)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="휴지통 항목을 찾을 수 없습니다.")
 
         data_item = _trash_root(user, settings) / "data" / entry_id / entry["name"]
         if not data_item.exists():

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from datetime import date, timedelta
 
 from .calendar_store import merge_event
@@ -376,14 +377,22 @@ def _rfc3339(s: str, *, end: bool = False) -> str:
 #: 유저별 서비스 캐시. build()는 디스커버리 문서를 파싱하고 자격증명을 새로 만드는
 #: 무거운 작업인데 한 요청에서도 여러 번(list -> update -> ...) 불린다.
 #: 설정이 바뀌면 지문이 달라져 자연히 새로 만들어진다.
-_SERVICE_CACHE: dict = {}
+#:
+#: **스레드별로 둔다.** 내부 http 객체(httplib2)는 스레드 안전하지 않은데,
+#: FastAPI는 동기 엔드포인트를 스레드풀에서 돌리므로 캐시를 공유하면 두 요청이
+#: 커넥션 하나를 동시에 쓰게 된다.
+_SERVICE_CACHE = threading.local()
 
 
 def get_google_calendar(settings: Settings, username: str) -> GoogleCalendar | None:
     """해당 유저의 Google Calendar. 미설정/오류면 None(내부 폴백)."""
     cfg = settings.google_config(username)
+    store = getattr(_SERVICE_CACHE, "by_user", None)
+    if store is None:
+        store = {}
+        _SERVICE_CACHE.by_user = store
     if not cfg:
-        _SERVICE_CACHE.pop(username, None)
+        store.pop(username, None)
         return None
     fp = (
         cfg.get("refresh_token", ""),
@@ -391,12 +400,12 @@ def get_google_calendar(settings: Settings, username: str) -> GoogleCalendar | N
         cfg.get("calendar_id", "primary"),
         bool(cfg.get("service_account_json")),
     )
-    cached = _SERVICE_CACHE.get(username)
+    cached = store.get(username)
     if cached and cached[0] == fp:
         return cached[1]
     svc = _build_service(cfg)
     if svc is None:
         return None
     gc = GoogleCalendar(svc, cfg.get("calendar_id", "primary"))
-    _SERVICE_CACHE[username] = (fp, gc)
+    store[username] = (fp, gc)
     return gc
