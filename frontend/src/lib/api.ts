@@ -169,6 +169,38 @@ export const api = {
   trashPurge: (id: string) => req(`/api/trash/purge?${q({ id })}`, { method: "DELETE" }),
   trashEmpty: () => req("/api/trash/empty", { method: "DELETE" }),
 
+  // ── 할 일 ──
+  todoCategories: () => req<TodoCategory[]>("/api/todo/categories"),
+  todoCategoryCreate: (body: { name: string; color?: string; parent_id?: string }) =>
+    req<TodoCategory>("/api/todo/categories", jsonInit("POST", body)),
+  todoCategoryUpdate: (id: string, body: Partial<TodoCategory>) =>
+    req<TodoCategory>(`/api/todo/categories/${encodeURIComponent(id)}`, jsonInit("PUT", body)),
+  todoCategoryDelete: (id: string) =>
+    req(`/api/todo/categories/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  todoList: (p: {
+    category_id?: string;
+    include_done?: boolean;
+    from?: string;
+    to?: string;
+    include_undated?: boolean;
+  } = {}) => {
+    const s: Record<string, string> = {};
+    if (p.category_id !== undefined) s.category_id = p.category_id;
+    if (p.include_done !== undefined) s.include_done = String(p.include_done);
+    if (p.from) s.from = p.from;
+    if (p.to) s.to = p.to;
+    if (p.include_undated !== undefined) s.include_undated = String(p.include_undated);
+    const qs = q(s);
+    return req<Todo[]>(`/api/todo/list${qs ? `?${qs}` : ""}`);
+  },
+  todoCounts: () => req<TodoCounts>("/api/todo/counts"),
+  todoCreate: (body: Partial<Todo>) => req<Todo>("/api/todo/create", jsonInit("POST", body)),
+  todoUpdate: (id: string, body: Partial<Todo>) =>
+    req<Todo>(`/api/todo/${encodeURIComponent(id)}`, jsonInit("PUT", body)),
+  todoDelete: (id: string) =>
+    req<{ ok: boolean; id: string; title: string }>(
+      `/api/todo/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
   /** 폴더를 zip으로 받는 URL(비어 있으면 전체). 앵커 이동으로 세션 쿠키가 실린다. */
   noteArchiveUrl: (path = "") => `${BASE}/api/notes/archive?${q({ path })}`,
 
@@ -283,6 +315,35 @@ export interface CalEvent {
   is_recurring?: boolean;
 }
 
+/** 할 일 — 캘린더와 별개 저장소(구글 동기화 없음). */
+export interface Todo {
+  id: string;
+  title: string;
+  description: string;
+  category_id: string;
+  /** "" = 기한 없음. 날짜만이면 all_day. */
+  due: string;
+  all_day: boolean;
+  /** "" 이면 카테고리 색을 따른다. */
+  color: string;
+  done: boolean;
+  done_at: number;
+  order: number;
+  created_at?: number;
+  updated_at?: number;
+}
+
+export interface TodoCategory {
+  id: string;
+  name: string;
+  color: string;
+  parent_id: string;
+  order: number;
+}
+
+/** 카테고리별 개수(키 ""는 미분류). */
+export type TodoCounts = Record<string, { total: number; done: number }>;
+
 /** 문서 종류 — 프런트가 어떤 뷰어를 쓸지 정하는 기준(백엔드가 내려준다). */
 export type DocKind = "md" | "text" | "image" | "pdf" | "video" | "audio" | "other";
 
@@ -312,7 +373,7 @@ export interface NotesTree {
 }
 export interface TrashEntry {
   id: string;
-  /** "document" | "event". 예전 엔트리는 서버가 document로 채워 준다. */
+  /** "document" | "event" | "todo". 예전 엔트리는 서버가 document로 채워 준다. */
   kind: string;
   orig_rel: string;
   name: string;

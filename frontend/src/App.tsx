@@ -15,6 +15,7 @@ const loaders = {
   notes: () => import("./pages/Notes"),
   graph: () => import("./pages/Graph"),
   calendar: () => import("./pages/Calendar"),
+  todo: () => import("./pages/Todo"),
   assistant: () => import("./pages/Assistant"),
   settings: () => import("./pages/Settings"),
   profile: () => import("./pages/Profile"),
@@ -25,6 +26,7 @@ const loaders = {
 const Notes = lazyChunk(() => loaders.notes().then((m) => ({ default: m.Notes })));
 const Graph = lazyChunk(() => loaders.graph().then((m) => ({ default: m.Graph })));
 const Calendar = lazyChunk(() => loaders.calendar().then((m) => ({ default: m.Calendar })));
+const Todo = lazyChunk(() => loaders.todo().then((m) => ({ default: m.Todo })));
 const Assistant = lazyChunk(() => loaders.assistant().then((m) => ({ default: m.Assistant })));
 const Settings = lazyChunk(() => loaders.settings().then((m) => ({ default: m.Settings })));
 const Profile = lazyChunk(() => loaders.profile().then((m) => ({ default: m.Profile })));
@@ -59,6 +61,7 @@ function AuthedRoutes() {
         <Route path="/notes" element={<Notes />} />
         <Route path="/graph" element={<Graph />} />
         <Route path="/calendar" element={<Calendar />} />
+        <Route path="/todo" element={<Todo />} />
         <Route path="/assistant" element={<Assistant />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/profile" element={<Profile />} />

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
@@ -9,7 +10,7 @@ import { Loader2, Bot } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { EventDialog, GCAL_COLORS, GCAL_COLOR_NAMES } from "../components/calendar/EventDialog";
 import { ChatPanel } from "../components/ai/ChatPanel";
-import { api, CalEvent } from "../lib/api";
+import { api, CalEvent, Todo, TodoCategory } from "../lib/api";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -18,8 +19,26 @@ const CAL_SUGGESTIONS = [
   "이번 주 일정 정리해줘",
   "내일 오후 3시에 운동 일정 잡아줘",
   "다음 주 회의 가능한 빈 시간 찾아줘",
-  "이번 달 일정 몇 개야?",
+  "이번 달 할 일 뭐 남았어?",
 ];
+
+/** 달력에 무엇을 그릴지. 일정과 할 일은 저장소가 달라 섞어 보면 헷갈린다. */
+type CalMode = "events" | "todos";
+
+// FullCalendar의 customButtons는 text/icon만 받는다(임의 DOM 불가). 눈 아이콘은
+// 버튼이 붙은 뒤 DOM에 직접 넣는다 — 매 렌더 다시 넣으므로 FC가 다시 그려도 남는다.
+const EYE_ON =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" ' +
+  'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/>' +
+  '<circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" ' +
+  'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/>' +
+  '<path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/>' +
+  '<path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/>' +
+  '<path d="m2 2 20 20"/></svg>';
 
 /** Date를 로컬 naive ISO("YYYY-MM-DDTHH:mm:ss")로. 저장 이벤트와 동일 규약. */
 function localISO(d: Date): string {
@@ -29,7 +48,13 @@ function localISO(d: Date): string {
 
 export function Calendar() {
   const s = useSettings((st) => st.settings);
+  const navigate = useNavigate();
   const [events, setEvents] = useState<CalEvent[]>([]);
+  const [todos, setTodos] = useState<Todo[]>([]);
+  const [todoCats, setTodoCats] = useState<TodoCategory[]>([]);
+  const [mode, setMode] = useState<CalMode>("events");
+  // 기본은 '완료도 보임'. 지운 게 아니라 끝낸 것이라 흔적이 남아야 한다.
+  const [showDone, setShowDone] = useState(true);
   const [dialog, setDialog] = useState<Partial<CalEvent> | null>(null);
   const [source, setSource] = useState("internal");
   const [loading, setLoading] = useState(false);
@@ -47,7 +72,19 @@ export function Calendar() {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      setEvents(await api.calEvents(range.current.from, range.current.to));
+      // 두 갈래를 함께 받아 둔다 — 토글할 때마다 왕복하면 화면이 깜빡인다.
+      const [evs, tds, cts] = await Promise.all([
+        api.calEvents(range.current.from, range.current.to),
+        api.todoList({
+          from: range.current.from,
+          to: range.current.to,
+          include_undated: false, // 기한 없는 할 일은 달력에 놓을 자리가 없다
+        }),
+        api.todoCategories(),
+      ]);
+      setEvents(evs);
+      setTodos(tds);
+      setTodoCats(cts);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "이벤트 로드 실패");
     } finally {
@@ -66,6 +103,9 @@ export function Calendar() {
   };
 
   const onDateClick = (arg: DateClickArg) => {
+    // 할 일 보기에서 빈 칸을 누르면 '일정'이 만들어져 엉뚱한 곳에 쌓인다.
+    // 할 일은 할 일 화면에서 만든다.
+    if (mode === "todos") return;
     setDialog({
       start: `${arg.dateStr}T09:00:00`,
       end: `${arg.dateStr}T10:00:00`,
@@ -75,7 +115,13 @@ export function Calendar() {
   };
 
   const onEventClick = (arg: EventClickArg) => {
-    const ev = events.find((e) => e.id === arg.event.id);
+    const id = arg.event.id;
+    if (id.startsWith("todo:")) {
+      // 할 일 편집은 할 일 화면이 담당한다(상세 폼이 거기 있다)
+      navigate("/todo");
+      return;
+    }
+    const ev = events.find((e) => e.id === id);
     if (ev) setDialog(ev);
   };
 
@@ -135,7 +181,7 @@ export function Calendar() {
     return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}`;
   };
 
-  const fcEvents = events.map((e) => ({
+  const eventItems = events.map((e) => ({
     id: e.id,
     title: e.title,
     start: e.start,
@@ -145,13 +191,54 @@ export function Calendar() {
     borderColor: GCAL_COLORS[e.color] ?? GCAL_COLORS["2"],
   }));
 
+  /** 할 일 색: 직접 지정한 게 없으면 카테고리 색을 따른다(할 일 화면과 같은 규칙). */
+  const todoColor = (t: Todo) =>
+    t.color || todoCats.find((c) => c.id === t.category_id)?.color || "2";
+
+  const todoItems = todos
+    .filter((t) => showDone || !t.done)
+    .map((t) => {
+      const hex = GCAL_COLORS[todoColor(t)] ?? GCAL_COLORS["2"];
+      return {
+        id: `todo:${t.id}`,
+        title: (t.done ? "✓ " : "") + t.title,
+        start: t.due,
+        allDay: t.all_day || t.due.length <= 10,
+        // 완료한 것은 옅게 — 남은 것과 한눈에 구분되어야 한다
+        backgroundColor: t.done ? "transparent" : hex,
+        borderColor: hex,
+        textColor: t.done ? "rgb(var(--fg-subtle))" : undefined,
+        classNames: t.done ? ["fc-todo-done"] : ["fc-todo"],
+      };
+    });
+
+  const fcEvents = mode === "events" ? eventItems : todoItems;
+
+  const doneCount = todos.filter((t) => t.done).length;
+
+  // customButtons가 만든 버튼에 눈 아이콘을 심는다(FC는 text/icon만 받는다).
+  useEffect(() => {
+    const btn = document.querySelector<HTMLButtonElement>(".fc-doneToggle-button");
+    if (!btn) return;
+    btn.innerHTML = showDone ? EYE_ON : EYE_OFF;
+    btn.setAttribute("aria-label", showDone ? "완료한 할 일 숨기기" : "완료한 할 일 보기");
+    btn.setAttribute("title", showDone ? "완료한 할 일 숨기기" : "완료한 할 일 보기");
+    btn.setAttribute("aria-pressed", String(!showDone));
+  });
+
   return (
     <Shell
       title="캘린더"
       actions={
         <div className="flex items-center gap-2">
           {loading && <Loader2 size={14} className="animate-spin text-fg-muted" />}
-          <span className="badge">{source === "google" ? "Google 동기화" : "내부 저장"}</span>
+          {mode === "todos" ? (
+            <span className="badge">
+              할 일 {todos.length}개{showDone ? "" : ` (완료 ${doneCount}개 숨김)`}
+            </span>
+          ) : (
+            <span className="badge">{source === "google" ? "Google 동기화" : "내부 저장"}</span>
+          )}
         </div>
       }
     >
@@ -168,10 +255,31 @@ export function Calendar() {
               locale="ko"
               // 좁은 화면에서 한 줄에 7개를 밀어넣으면 제목과 버튼이 서로 뭉갠다.
               // 모바일은 두 줄로 나눈다(위: 이동+제목, 아래: 보기 전환).
+              customButtons={{
+                modeToggle: {
+                  text: mode === "events" ? "일정" : "할 일",
+                  hint: "일정 / 할 일 전환",
+                  click: () => setMode((m) => (m === "events" ? "todos" : "events")),
+                },
+                doneToggle: {
+                  text: "완료",
+                  hint: "완료한 할 일 표시",
+                  click: () => setShowDone((v) => !v),
+                },
+              }}
+              // 토글은 '<> 오늘' 바로 옆에 둔다. 눈 아이콘은 할 일 보기일 때만 나온다.
               headerToolbar={
                 isNarrow
-                  ? { left: "prev,next", center: "title", right: "today" }
-                  : { left: "prev,next today", center: "title", right: "dayGridMonth,timeGridWeek,timeGridDay" }
+                  ? {
+                      left: `prev,next ${mode === "todos" ? "modeToggle,doneToggle" : "modeToggle"}`,
+                      center: "title",
+                      right: "today",
+                    }
+                  : {
+                      left: `prev,next today ${mode === "todos" ? "modeToggle,doneToggle" : "modeToggle"}`,
+                      center: "title",
+                      right: "dayGridMonth,timeGridWeek,timeGridDay",
+                    }
               }
               footerToolbar={isNarrow ? { center: "dayGridMonth,timeGridWeek,timeGridDay" } : undefined}
               buttonText={{ today: "오늘", month: "월", week: "주", day: "일" }}
