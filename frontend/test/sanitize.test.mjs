@@ -1,0 +1,158 @@
+/**
+ * 읽기 뷰 살균 규칙 회귀 테스트.  실행: npm test  (frontend 폴더에서)
+ *
+ * 문서 본문은 사용자가 쓴 것만이 아니다 — AI가 웹에서 가져와 붙여 넣기도 하고,
+ * 남이 만든 파일을 열기도 한다. 그래서 본문에 든 HTML은 남이 준 것으로 보고
+ * 다뤄야 한다. 이 서버는 세션 쿠키가 HttpOnly라 토큰 자체는 못 훔치지만,
+ * 스크립트가 한 번 돌면 그 사람 권한으로 API를 그대로 호출할 수 있다
+ * (문서 전체 열람·삭제·터미널까지).
+ *
+ * 통과 목록에 태그를 하나 더 넣는 일은 쉽고 그게 위험한지 눈으로 아는 건
+ * 어렵다. 그래서 규칙(lib/sanitizeSchema)에 실제 페이로드를 먹여 확인한다.
+ *
+ * 앱과 같은 단계를 재현한다: 마크다운 파싱 → HTML 허용 → rehype-raw → 살균.
+ * (react-markdown 이 내부에서 하는 것과 같은 순서)
+ */
+import { execFileSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const dir = mkdtempSync(join(tmpdir(), "san-"));
+const outFile = join(dir, "schema.mjs");
+const src = join(here, "..", "src", "lib", "sanitizeSchema.ts");
+execFileSync("npx", ["esbuild", src, "--bundle", "--format=esm", `--outfile=${outFile}`],
+  { stdio: "pipe", shell: true });
+const { mdSanitizeSchema } = await import("file://" + outFile.replace(/\\/g, "/"));
+
+const { unified } = await import("unified");
+const remarkParse = (await import("remark-parse")).default;
+const remarkGfm = (await import("remark-gfm")).default;
+const remarkRehype = (await import("remark-rehype")).default;
+const rehypeRaw = (await import("rehype-raw")).default;
+const rehypeSanitize = (await import("rehype-sanitize")).default;
+
+const pipeline = unified()
+  .use(remarkParse)
+  .use(remarkGfm)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypeRaw)
+  .use(rehypeSanitize, mdSanitizeSchema);
+
+function render(md) {
+  return pipeline.runSync(pipeline.parse(md));
+}
+
+/** 트리를 훑어 태그·속성을 전부 모은다(문자열 매칭보다 정확하다). */
+function collect(tree) {
+  const tags = [];
+  const attrs = [];
+  const values = [];
+  (function walk(n) {
+    if (n.type === "element") {
+      tags.push(n.tagName);
+      for (const [k, v] of Object.entries(n.properties ?? {})) {
+        attrs.push(k);
+        values.push(String(Array.isArray(v) ? v.join(" ") : v));
+      }
+    }
+    if (n.type === "raw") values.push(String(n.value)); // 살균 후에도 남았다면 그 자체가 문제
+    (n.children ?? []).forEach(walk);
+  })(tree);
+  return { tags, attrs, values };
+}
+
+let fails = 0;
+function check(label, ok, extra = "") {
+  if (ok) {
+    console.log(`  OK   ${label}`);
+  } else {
+    fails++;
+    console.log(`  FAIL ${label}${extra ? "\n       " + extra : ""}`);
+  }
+}
+
+/** 이 페이로드가 살균을 통과해도 스크립트가 될 수 없는지 확인한다. */
+function blocked(label, md, { tag, attr, value } = {}) {
+  const { tags, attrs, values } = collect(render(md));
+  const hits = [];
+  if (tag && tags.includes(tag)) hits.push(`태그 ${tag} 남음`);
+  if (attr && attrs.some((a) => a.toLowerCase() === attr.toLowerCase())) hits.push(`속성 ${attr} 남음`);
+  if (value && values.some((v) => v.toLowerCase().includes(value.toLowerCase()))) {
+    hits.push(`값 ${value} 남음`);
+  }
+  // 무엇을 지정했든, 이벤트 핸들러와 script/style 은 언제나 없어야 한다
+  const handler = attrs.find((a) => /^on[a-z]/i.test(a));
+  if (handler) hits.push(`이벤트 핸들러 ${handler}`);
+  for (const t of ["script", "style", "iframe", "object", "embed", "form", "base", "meta", "link"]) {
+    if (tags.includes(t)) hits.push(`위험 태그 ${t}`);
+  }
+  if (values.some((v) => /javascript\s*:/i.test(v))) hits.push("javascript: URL");
+  check(label, hits.length === 0, hits.join(", "));
+}
+
+console.log("살균 — 막아야 하는 것");
+blocked("script 태그", "<script>window.__x=1</script>", { tag: "script" });
+blocked("script 대소문자", "<ScRiPt>window.__x=1</ScRiPt>", { tag: "script" });
+blocked("img onerror", '<img src=x onerror="window.__x=1">');
+blocked("body onload", '<body onload="window.__x=1">글</body>');
+blocked("svg onload", '<svg onload="window.__x=1"></svg>');
+blocked("a javascript:", "[누르기](javascript:window.__x=1)");
+blocked("a javascript 대소문자", "[누르기](JaVaScRiPt:alert(1))");
+blocked("a javascript 공백/개행", "<a href='java\nscript:alert(1)'>누르기</a>");
+blocked("img data: URL", "![](data:text/html;base64,PHNjcmlwdD4x)", { value: "data:" });
+blocked("iframe", '<iframe src="https://evil.example"></iframe>', { tag: "iframe" });
+blocked("object/embed", '<object data="x"></object><embed src="x">');
+blocked("form + formaction", '<form action="https://evil.example"><button formaction="x">보내기</button></form>');
+blocked("base 태그", '<base href="https://evil.example/">', { tag: "base" });
+blocked("meta refresh", '<meta http-equiv="refresh" content="0;url=https://evil.example">', { tag: "meta" });
+blocked("link stylesheet", '<link rel="stylesheet" href="https://evil.example/x.css">', { tag: "link" });
+blocked("style 태그", "<style>body{display:none}</style>", { tag: "style" });
+blocked("style 속성", '<p style="position:fixed;inset:0">덮기</p>', { attr: "style" });
+blocked("svg foreignObject", '<svg><foreignObject><script>1</script></foreignObject></svg>', { tag: "foreignObject" });
+blocked("svg animate href 바꿔치기",
+  '<svg><a><animate attributeName="href" values="javascript:alert(1)"/><text>x</text></a></svg>',
+  { tag: "animate" });
+blocked("svg set", '<svg><set attributeName="onload" to="alert(1)"/></svg>', { tag: "set" });
+blocked("svg script", "<svg><script>window.__x=1</script></svg>", { tag: "script" });
+blocked("use xlink:href javascript", '<svg><use xlink:href="javascript:alert(1)"/></svg>');
+blocked("use href javascript", '<svg><use href="javascript:alert(1)"/></svg>');
+blocked("image href javascript", '<svg><image href="javascript:alert(1)"/></svg>');
+blocked("details ontoggle", '<details ontoggle="window.__x=1"><summary>열기</summary>내용</details>');
+blocked("mark onmouseover", '<mark onmouseover="window.__x=1">형광펜</mark>');
+blocked("텍스트 노드 위장", "<div>&lt;script&gt;alert(1)&lt;/script&gt;</div>", { tag: "script" });
+blocked("주석 안 스크립트", "<!--><script>window.__x=1</script>-->", { tag: "script" });
+blocked("srcdoc", '<iframe srcdoc="&lt;script&gt;alert(1)&lt;/script&gt;"></iframe>', { attr: "srcdoc" });
+blocked("표 안 스크립트", "| 값 |\n| --- |\n| <script>alert(1)</script> |", { tag: "script" });
+blocked("코드펜스 안은 텍스트", "```\n<script>alert(1)</script>\n```", { tag: "script" });
+blocked("링크 title 이벤트", '<a href="https://x.example" onclick="alert(1)">링크</a>');
+
+console.log("\n살균 — 통과해야 하는 것(기능이 죽으면 안 된다)");
+function survives(label, md, tag) {
+  const { tags } = collect(render(md));
+  check(label, tags.includes(tag), `남은 태그: ${tags.join(",")}`);
+}
+survives("형광펜 mark", "<mark>강조</mark>", "mark");
+survives("토글 details", "<details><summary>열기</summary>내용</details>", "details");
+survives("토글 summary", "<details><summary>열기</summary>내용</details>", "summary");
+survives("인라인 svg", '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>', "svg");
+survives("표", "| 이름 | 값 |\n| --- | --- |\n| 가 | 1 |", "table");
+survives("체크박스", "- [x] 끝난 일", "input");
+survives("코드블록", "```js\nlet a = 1;\n```", "code");
+survives("이미지(https)", "![그림](https://example.com/a.png)", "img");
+survives("링크(https)", "[링크](https://example.com)", "a");
+
+{
+  const { values } = collect(render("![그림](https://example.com/a.png)"));
+  check("이미지 src 유지", values.some((v) => v.includes("example.com/a.png")), values.join(" | "));
+}
+{
+  // 위키링크는 앱이 `#wiki/...` 로 바꿔 넣는다 — 살균이 이걸 지우면 링크가 죽는다
+  const { values } = collect(render("[제목](#wiki/%EC%A0%9C%EB%AA%A9)"));
+  check("위키링크 href 유지", values.some((v) => v.startsWith("#wiki/")), values.join(" | "));
+}
+
+console.log(fails === 0 ? "\n모두 통과" : `\n실패 ${fails}건`);
+process.exit(fails === 0 ? 0 : 1);

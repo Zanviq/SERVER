@@ -4,10 +4,11 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import rehypeRaw from "rehype-raw";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import rehypeSanitize from "rehype-sanitize";
 import { EmbedResolver, parseWikiEmbed } from "../../lib/embeds";
 import { remarkHighlight } from "../../lib/markdownExtras";
 import { CALLOUTS, parseCallout } from "../../lib/callouts";
+import { mdSanitizeSchema } from "../../lib/sanitizeSchema";
 
 /**
  * `![[대상]]` 임베드와 `[[제목]]` 링크를 표준 마크다운으로 바꾼다.
@@ -29,40 +30,6 @@ function transformWiki(text: string, resolve?: EmbedResolver): string {
     return `[${(alias ?? target).trim()}](#wiki/${encodeURIComponent(t)})`;
   });
 }
-
-// 인라인 SVG/HTML을 허용하되 script·이벤트 핸들러·위험 프로토콜은 계속 차단(살균).
-// foreignObject(임의 HTML 삽입)·xlink:href(프로토콜 필터 우회) 등 위험 요소는 제외.
-const SVG_TAGS = [
-  "svg", "g", "path", "circle", "ellipse", "line", "polyline", "polygon", "rect",
-  "text", "tspan", "defs", "linearGradient", "radialGradient", "stop", "use",
-  "marker", "clipPath", "mask", "pattern", "image", "title", "desc", "symbol",
-];
-// hast는 SVG 속성을 property-information의 camelCase 프로퍼티로 다룬다(하이픈 이름은 매칭 안 됨).
-const SVG_ATTRS = [
-  "viewBox", "xmlns", "fill", "stroke", "strokeWidth", "strokeLinecap", "strokeLinejoin",
-  "strokeDasharray", "strokeDashoffset", "strokeOpacity", "fillOpacity", "fillRule",
-  "clipRule", "clipPath", "d", "cx", "cy", "r", "rx", "ry", "x", "y", "x1", "x2", "y1", "y2",
-  "width", "height", "points", "transform", "offset", "stopColor", "stopOpacity",
-  "gradientUnits", "gradientTransform", "preserveAspectRatio", "opacity", "textAnchor",
-  "fontSize", "fontFamily", "dominantBaseline", "markerEnd", "markerStart", "role",
-  "href", // svg <a>/<use> href — 아래 protocols로 javascript: 등 차단
-];
-const SAFE_PROTOCOLS = defaultSchema.protocols?.href ?? ["http", "https", "mailto", "tel"];
-const schema = {
-  ...defaultSchema,
-  // mark = 형광펜(==강조==), details/summary = 토글.
-  // 기본 스키마에 없어 그냥 두면 살균 단계에서 조용히 사라진다.
-  tagNames: [...(defaultSchema.tagNames ?? []), "mark", "details", "summary", ...SVG_TAGS],
-  protocols: {
-    ...defaultSchema.protocols,
-    href: SAFE_PROTOCOLS,
-    xlinkHref: SAFE_PROTOCOLS, // 방어: 혹시 남아도 위험 프로토콜 차단
-  },
-  attributes: {
-    ...defaultSchema.attributes,
-    "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", ...SVG_ATTRS],
-  },
-};
 
 // 코드블록: 뚜렷한 테두리 + 우측 상단 복사 버튼. 버튼은 <pre> 바깥이라 복사 텍스트에 안 섞임.
 function CodeBlock({ children }: { children?: ReactNode }) {
@@ -123,7 +90,7 @@ export function MarkdownView({
         // 단일 엔터 줄바꿈(remarkBreaks) + GFM(표/체크박스/취소선/자동링크)
         remarkPlugins={[remarkGfm, remarkBreaks, remarkHighlight]}
         // 인라인 HTML/SVG 파싱(rehypeRaw) 후 살균(rehypeSanitize, svg 허용 스키마)
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, schema]]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema]]}
         components={{
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
           blockquote: ({ children, ...props }) => {

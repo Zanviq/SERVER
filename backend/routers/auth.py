@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from ..auth import (
@@ -13,9 +13,27 @@ from ..auth import (
     require_session,
 )
 from ..config import Settings, get_settings
-from .. import accounts, user_settings
+from .. import accounts, login_guard, user_settings
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+def _cookie_secure(request: Request, settings: Settings) -> bool:
+    """이 요청이 HTTPS로 왔으면 세션 쿠키에 Secure를 붙인다.
+
+    설정으로 못 박지 않는 이유는 접속 경로가 둘이기 때문이다 — 밖에서는
+    https://server.zanviq.dev(클라우드플레어 터널), 집 안에서는 http://192.168.0.43.
+    COOKIE_SECURE=true로 고정하면 LAN 접속이 로그인 자체를 못 하고(브라우저가
+    Secure 쿠키를 평문 연결에 보내지 않는다), false로 고정하면 HTTPS로 들어온
+    사람의 쿠키가 평문으로도 오갈 수 있다. 그래서 요청마다 정한다.
+
+    X-Forwarded-Proto는 지어낼 수 있지만, 거짓으로 https라고 하면 자기 쿠키가
+    안 붙을 뿐 남에게 피해가 없다(방어가 강해지는 쪽으로만 틀린다).
+    """
+    if settings.cookie_secure:
+        return True
+    proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    return proto == "https" or request.url.scheme == "https"
 
 
 class LoginRequest(BaseModel):
@@ -41,14 +59,33 @@ class SessionInfo(BaseModel):
 @router.post("/login", response_model=SessionInfo)
 def login(
     req: LoginRequest,
+    request: Request,
     response: Response,
     settings: Settings = Depends(get_settings),
 ):
     """비밀번호 검증 후 세션 쿠키 발급. 승인 전 계정은 로그인할 수 없다."""
+    # 무차별 대입 차단: 잠겨 있으면 비밀번호를 확인조차 하지 않는다.
+    # (확인해 주면 맞았는지 틀렸는지가 새어 나가 제한이 무의미해진다)
+    wait = login_guard.retry_after(req.username)
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail=f"로그인 시도가 너무 많습니다. {wait}초 후 다시 시도해 주세요.",
+            headers={"Retry-After": str(wait)},
+        )
+
     acc = accounts.authenticate(req.username, req.password, settings)
     if acc is None:
+        delay = login_guard.record_failure(req.username)
         # 아이디 존재 여부를 흘리지 않도록 한 가지 메시지로 통일
+        if delay:
+            raise HTTPException(
+                status_code=429,
+                detail=f"로그인 시도가 너무 많습니다. {delay}초 후 다시 시도해 주세요.",
+                headers={"Retry-After": str(delay)},
+            )
         raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
+    login_guard.record_success(req.username)
     if acc.status == accounts.STATUS_PENDING:
         raise HTTPException(status_code=403, detail="가입 승인을 기다리는 중입니다. 관리자 승인 후 로그인할 수 있습니다.")
     if acc.status == accounts.STATUS_REJECTED:
@@ -64,7 +101,7 @@ def login(
         max_age=ttl,
         httponly=True,
         samesite="lax",
-        secure=settings.cookie_secure,  # HTTPS 운영 시 COOKIE_SECURE=true
+        secure=_cookie_secure(request, settings),
         path="/",
     )
     return SessionInfo(
@@ -90,10 +127,15 @@ def signup(req: SignupRequest, settings: Settings = Depends(get_settings)):
 
 
 @router.post("/logout")
-def logout(response: Response, settings: Settings = Depends(get_settings)):
+def logout(
+    request: Request,
+    response: Response,
+    settings: Settings = Depends(get_settings),
+):
     """세션 쿠키 제거."""
+    # 지울 때도 발급 때와 같은 속성이어야 브라우저가 같은 쿠키로 알아본다.
     response.delete_cookie(
-        COOKIE_NAME, path="/", samesite="lax", secure=settings.cookie_secure
+        COOKIE_NAME, path="/", samesite="lax", secure=_cookie_secure(request, settings)
     )
     return {"ok": True}
 

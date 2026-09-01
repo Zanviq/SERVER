@@ -17,6 +17,8 @@ os.environ["DEBUG"] = "true"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from backend import accounts, login_guard  # noqa: E402
+from backend.config import get_settings  # noqa: E402
 from backend.main import app  # noqa: E402
 
 client = TestClient(app)
@@ -49,6 +51,78 @@ def test_wrong_password():
     bad = TestClient(app)
     r = bad.post("/api/auth/login", json={"username": "tester", "password": "nope"})
     assert r.status_code == 401
+    login_guard.reset()
+
+
+def test_login_throttled_after_repeated_failures():
+    """무차별 대입은 몇 번 만에 막혀야 한다 — 401만 계속 돌려주면 제한이 없는 것."""
+    login_guard.reset()
+    c = TestClient(app)
+    wrong = {"username": "tester", "password": "nope"}
+    codes = [c.post("/api/auth/login", json=wrong).status_code
+             for _ in range(login_guard.FREE_TRIES + 1)]
+    assert codes[:login_guard.FREE_TRIES] == [401] * login_guard.FREE_TRIES
+    assert codes[-1] == 429
+
+    # 잠긴 동안에는 올바른 비밀번호도 확인해 주지 않는다.
+    # (확인해 주면 맞았는지 틀렸는지가 새어 나가 제한이 무의미해진다)
+    r = c.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    assert r.status_code == 429
+    assert int(r.headers["Retry-After"]) > 0
+
+    login_guard.reset()
+    assert c.post("/api/auth/login", json={"username": "tester", "password": "pw123"}).status_code == 200
+
+
+def test_login_guard_counts_per_account_and_forgets():
+    login_guard.reset()
+    t0 = 1_000_000.0
+    for _ in range(login_guard.FREE_TRIES):
+        assert login_guard.record_failure("갑", t0) == 0
+    assert login_guard.record_failure("갑", t0) == login_guard.FIRST_DELAY
+    # 다른 아이디는 말려들지 않는다
+    assert login_guard.retry_after("을", t0) == 0
+    # 성공하면 기록이 사라진다
+    login_guard.record_success("갑")
+    assert login_guard.retry_after("갑", t0) == 0
+    # 창이 지나면 처음부터 다시 센다
+    for _ in range(login_guard.FREE_TRIES):
+        login_guard.record_failure("갑", t0)
+    assert login_guard.record_failure("갑", t0 + login_guard.WINDOW + 1) == 0
+    login_guard.reset()
+
+
+def test_session_cookie_secure_follows_request_protocol():
+    """HTTPS로 들어오면 Secure, 집 안 평문 접속이면 빼야 한다(빼지 않으면 로그인 불가)."""
+    login_guard.reset()
+    creds = {"username": "tester", "password": "pw123"}
+    https = TestClient(app).post("/api/auth/login", json=creds,
+                                 headers={"X-Forwarded-Proto": "https"})
+    assert "secure" in https.headers["set-cookie"].lower()
+    plain = TestClient(app).post("/api/auth/login", json=creds)
+    assert "secure" not in plain.headers["set-cookie"].lower()
+    for sc in (https.headers["set-cookie"].lower(), plain.headers["set-cookie"].lower()):
+        assert "httponly" in sc and "samesite=lax" in sc
+
+
+def test_signup_pending_queue_is_capped(monkeypatch):
+    """가입은 로그인 없이 부를 수 있다 — 승인 대기 줄이 무한히 쌓이면 안 된다."""
+    monkeypatch.setattr(accounts, "MAX_PENDING", 2)
+    anon = TestClient(app)
+    made = []
+    try:
+        for i in range(2):
+            r = anon.post("/api/auth/signup",
+                          json={"username": f"대기{i}".replace("대기", "wait"),
+                                "password": "pw-long-enough"})
+            assert r.status_code == 201, r.text
+            made.append(r.json()["username"])
+        over = anon.post("/api/auth/signup",
+                         json={"username": "waitover", "password": "pw-long-enough"})
+        assert over.status_code == 429, over.text
+    finally:
+        for u in made:
+            accounts.delete(u, get_settings())
 
 
 def test_logout():

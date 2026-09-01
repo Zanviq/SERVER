@@ -9,10 +9,12 @@
 """
 from __future__ import annotations
 
+import errno
 import logging
 import re
 import tempfile
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -139,6 +141,41 @@ def _summary_of(rel: str, st) -> NoteSummary:
     )
 
 
+# 서버 쪽 사정으로 실패한 것들 — 이름을 바꿔도 소용없으니 500이 맞다.
+_SERVER_FAULT_ERRNOS = {
+    e
+    for e in (
+        getattr(errno, n, None)
+        for n in ("ENOSPC", "EACCES", "EPERM", "EROFS", "EIO", "EDQUOT", "EMFILE", "ENFILE")
+    )
+    if e is not None
+}
+
+
+@contextmanager
+def _fs_errors_are_bad_requests(what: str):
+    """파일시스템이 이름을 거부하면 500이 아니라 400으로 돌려준다.
+
+    무엇이 유효한 이름인지는 OS마다 다르다 — 리눅스는 `...`·`CON`을 그냥
+    파일로 만들지만 Windows는 거부한다. 플랫폼별 금지 목록을 들고 있으면
+    한쪽에서 멀쩡한 이름을 막게 되므로, **실제로 해 보고 실패하면** 사용자
+    입력 오류로 돌려준다(경로 탈출은 safe_join이 이미 막는다).
+
+    단 디스크가 찼거나 권한이 없는 것은 이름 탓이 아니다. 그건 500으로 두고
+    스택까지 남긴다 — 사용자에게 "이름을 바꿔 보라"고 하면 안 된다.
+    """
+    try:
+        yield
+    except OSError as e:
+        if e.errno in _SERVER_FAULT_ERRNOS:
+            logger.exception("%s 실패(서버 문제)", what)
+            raise HTTPException(status_code=500, detail=f"{what}에 실패했습니다.") from e
+        logger.info("%s 실패(이름 문제로 보임): %s", what, e)
+        raise HTTPException(
+            status_code=400, detail=f"이 이름은 쓸 수 없습니다: {what}"
+        ) from e
+
+
 def _sanitize_filename(name: str) -> str:
     base = Path(name).name
     cleaned = _ILLEGAL_FILENAME.sub("_", base).strip().strip(".")
@@ -181,7 +218,8 @@ def create_folder(
         raise HTTPException(status_code=400, detail="폴더 이름이 비어 있습니다.")
     if target.exists():
         raise HTTPException(status_code=409, detail="이미 존재합니다.")
-    target.mkdir(parents=True)
+    with _fs_errors_are_bad_requests("폴더 생성"):
+        target.mkdir(parents=True)
     return {"ok": True, "path": to_rel(root, target)}
 
 
@@ -332,30 +370,32 @@ async def upload(
     safe_name = _sanitize_filename(file.filename)
     dest = safe_join(root, f"{to_rel(root, dest_dir)}/{safe_name}")
 
-    try:
+    with _fs_errors_are_bad_requests("업로드 폴더 생성"):
         dest_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        logger.exception("업로드 폴더 생성 실패: %s", dest_dir)
-        detail = f"폴더 생성 실패: {e}" if settings.debug else "폴더 생성에 실패했습니다."
-        raise HTTPException(status_code=500, detail=detail) from e
+
+    # 같은 이름의 폴더가 이미 있으면 열기부터 실패한다. 미리 걸러야 "서버 오류"가
+    # 아니라 무엇이 문제인지 알 수 있다.
+    if dest.is_dir():
+        raise HTTPException(status_code=409, detail="같은 이름의 폴더가 이미 있습니다.")
 
     written = 0
     try:
-        with dest.open("wb") as out:
-            while chunk := await file.read(1024 * 1024):
-                written += len(chunk)
-                if written > settings.max_upload_bytes:
-                    out.close()
-                    dest.unlink(missing_ok=True)
-                    raise HTTPException(status_code=413, detail="파일이 너무 큽니다.")
-                out.write(chunk)
+        with _fs_errors_are_bad_requests("업로드"):
+            with dest.open("wb") as out:
+                while chunk := await file.read(1024 * 1024):
+                    written += len(chunk)
+                    if written > settings.max_upload_bytes:
+                        out.close()
+                        dest.unlink(missing_ok=True)
+                        raise HTTPException(status_code=413, detail="파일이 너무 큽니다.")
+                    out.write(chunk)
     except HTTPException:
+        # 중간까지 쓰다 만 파일을 남기지 않는다(크기 초과·이름 거부 모두)
+        try:
+            dest.unlink(missing_ok=True)
+        except OSError:
+            pass
         raise
-    except OSError as e:
-        logger.exception("파일 저장 실패: %s", dest)
-        dest.unlink(missing_ok=True)
-        detail = f"저장 실패: {e}" if settings.debug else "파일 저장에 실패했습니다."
-        raise HTTPException(status_code=500, detail=detail) from e
     return _summary(root, dest)
 
 
@@ -382,10 +422,11 @@ def save_note(
         raise HTTPException(status_code=409, detail="같은 이름의 폴더가 이미 있습니다.")
     if target.exists() and not is_editable(target.name):
         raise HTTPException(status_code=415, detail="텍스트 문서만 편집할 수 있습니다.")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    # AI 쓰기와 같은 락·원자성 규약을 쓴다(자동저장과 AI append가 서로 덮어썼다)
-    with lock_for(target):
-        write_text_atomic(target, req.content)
+    with _fs_errors_are_bad_requests("문서 저장"):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # AI 쓰기와 같은 락·원자성 규약을 쓴다(자동저장과 AI append가 서로 덮어썼다)
+        with lock_for(target):
+            write_text_atomic(target, req.content)
     return _summary(root, target)
 
 
@@ -427,7 +468,8 @@ def rename_note(
     dst = safe_join(root, dst_rel)
     if dst.exists():
         raise HTTPException(status_code=409, detail="같은 이름의 문서가 이미 있습니다.")
-    src.rename(dst)
+    with _fs_errors_are_bad_requests("이름 변경"):
+        src.rename(dst)
     return _summary(root, dst)
 
 
@@ -451,8 +493,9 @@ def move_note(
         return _summary(root, src)
     if dst.exists():
         raise HTTPException(status_code=409, detail="대상 폴더에 같은 이름의 문서가 있습니다.")
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    src.rename(dst)
+    with _fs_errors_are_bad_requests("문서 이동"):
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src.rename(dst)
     return _summary(root, dst)
 
 

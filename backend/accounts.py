@@ -30,6 +30,8 @@ _ITERATIONS = 600_000
 
 USERNAME_RE = re.compile(r"^[a-z0-9_-]{3,32}$")
 MIN_PASSWORD = 8
+# 승인 대기 줄의 상한 — 가입은 인증 없이 부를 수 있어서 막지 않으면 무한히 쌓인다.
+MAX_PENDING = 50
 
 ORIGIN_BOOTSTRAP = "bootstrap"   # .env AUTH_USERS로 만들어진 서버 주인
 ORIGIN_SIGNUP = "signup"         # 웹 회원가입
@@ -219,6 +221,14 @@ def signup(username: str, password: str, display_name: str, settings: Settings) 
         rows = read_json(p, [])
         if any(r["username"] == username for r in rows):
             raise HTTPException(status_code=409, detail="이미 사용 중인 아이디입니다.")
+        # 가입은 로그인 없이 누구나 부를 수 있다. 상한이 없으면 승인 대기 줄만
+        # 무한히 쌓여서, 계정 파일이 커지고 그걸 매 요청마다 읽는 인증이 같이
+        # 느려진다. 개인 서버라 대기 인원이 이만큼 될 일도 없다.
+        if sum(1 for r in rows if r.get("status") == STATUS_PENDING) >= MAX_PENDING:
+            raise HTTPException(
+                status_code=429,
+                detail="승인 대기 중인 가입 신청이 많습니다. 관리자 처리 후 다시 시도해 주세요.",
+            )
         rows.append(
             {
                 "username": username,

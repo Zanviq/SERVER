@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "node test/mdTable.test.mjs"
+    "test": "node test/mdTable.test.mjs && node test/sanitize.test.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
