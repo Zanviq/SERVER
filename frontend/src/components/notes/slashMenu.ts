@@ -46,14 +46,9 @@ const SNIPPETS: Snippet[] = [
   { label: "번호 목록", detail: "1. 목록", text: `1. ${CURSOR}`, keywords: "ordered list ol 번호" },
   { label: "체크박스", detail: "- [ ] 할 일", text: `- [ ] ${CURSOR}`, keywords: "todo task checkbox 체크 할일" },
   { label: "인용", detail: "> 인용문", text: `> ${CURSOR}`, keywords: "quote blockquote 인용" },
-  {
-    label: "표",
-    detail: "3열 표",
-    // 머리글 첫 칸에 커서를 둔다 — 넣자마자 바로 항목 이름을 칠 수 있게
-    text: `| ${CURSOR} |  |  |\n| --- | --- | --- |\n|  |  |  |\n`,
-    keywords: "table 표 테이블",
-    boost: 6,
-  },
+  // 크기를 고를 수 있게 여러 개 둔다("어떤 표를 넣을지" 고르는 게 요점이다).
+  // 넣은 뒤에도 툴바로 행·열을 더할 수 있으니 흔한 크기만 준비한다.
+  ...tableSnippets(),
   {
     label: "코드 블록",
     detail: "``` 코드 ```",
@@ -91,6 +86,32 @@ const SNIPPETS: Snippet[] = [
   { label: "문서 링크", detail: "[[다른 문서]]", text: `[[${CURSOR}`, keywords: "link wiki 링크 문서" },
 ];
 
+/**
+ * 표 조각 만들기.
+ *
+ * 머리글 첫 칸에 커서를 둔다 — 넣자마자 바로 항목 이름을 칠 수 있게.
+ * 빈 칸은 공백 하나로 둔다(칸이 아예 비면 일부 렌더러가 열을 지운다).
+ */
+function tableSnippet(cols: number, bodyRows: number): string {
+  // 머리글도 본문과 같은 여백으로 — 넣자마자 원본이 들쭉날쭉하면 지저분하다
+  const head = Array(cols).fill("  ");
+  head[0] = ` ${CURSOR} `;
+  const sep = Array(cols).fill(" --- ");
+  const row = Array(cols).fill("  ");
+  const line = (cells: string[]) => `|${cells.join("|")}|`;
+  return [line(head), line(sep), ...Array(bodyRows).fill(line(row))].join("\n") + "\n";
+}
+
+function tableSnippets(): Snippet[] {
+  return [2, 3, 4].map((cols) => ({
+    label: `표 ${cols}열`,
+    detail: `${cols}열 × 2행`,
+    text: tableSnippet(cols, 2),
+    keywords: `table 표 테이블 ${cols}열 ${cols}컬럼 column`,
+    boost: cols === 3 ? 6 : 5,
+  }));
+}
+
 /** CURSOR 자리에 커서를 두도록 텍스트와 커서 오프셋으로 나눈다. */
 function place(text: string): { body: string; cursor: number } {
   const at = text.indexOf(CURSOR);
@@ -100,19 +121,23 @@ function place(text: string): { body: string; cursor: number } {
 
 /** 라벨·설명·검색어 중 아무 데나 걸리면 후보로 둔다(한글 라벨 + 영문 키워드). */
 function matches(sn: Snippet, query: string): boolean {
-  if (!query) return true;
-  const q = query.toLowerCase();
-  return (
-    sn.label.toLowerCase().includes(q) ||
-    sn.detail.toLowerCase().includes(q) ||
-    (sn.keywords ?? "").toLowerCase().includes(q)
-  );
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  // 공백을 지운 형태로도 맞춰 본다 — "표2열"로 쳐도 "표 2열"이 걸리게.
+  const bare = (x: string) => x.toLowerCase().replace(/\s+/g, "");
+  const qb = bare(q);
+  const hay = [sn.label, sn.detail, sn.keywords ?? ""];
+  return hay.some((h) => h.toLowerCase().includes(q) || bare(h).includes(qb));
 }
 
 export function makeSlashSource(actions: () => SlashActions) {
   return (ctx: CompletionContext): CompletionResult | null => {
-    // 줄 시작 또는 목록 기호 뒤의 `/` 만 인정한다
-    const before = ctx.matchBefore(/(^|\n)[\s>*\-+]*\/([^\s/]*)$/);
+    // 줄 시작 또는 목록 기호 뒤의 `/` 만 인정한다.
+    // 검색어에 **공백을 허용한다** — 라벨이 "표 2열"·"콜아웃(참고)" 처럼 띄어져
+    // 있어서, 공백을 막으면 그걸 좁혀서 고를 방법이 아예 없다.
+    // 대신 걸리는 게 하나도 없으면 아래에서 null 을 돌려 메뉴가 닫히므로,
+    // "/" 로 시작하는 평범한 문장을 쓸 때 계속 따라붙지는 않는다.
+    const before = ctx.matchBefore(/(^|\n)[\s>*\-+]*\/([^/\n]{0,30})$/);
     if (!before) return null;
     const slash = before.text.lastIndexOf("/");
     const from = before.from + slash;
@@ -122,9 +147,16 @@ export function makeSlashSource(actions: () => SlashActions) {
 
     const apply = (snippet: Snippet) => (view: EditorView, _c: Completion, f: number, to: number) => {
       const { body, cursor } = place(snippet.text);
+      // 여러 줄짜리 블록(표·코드블록·토글)은 **줄 처음부터** 갈아 끼운다.
+      // 인용문(`> `)이나 목록 기호 뒤에서 넣으면 그 기호가 블록 안으로 빨려
+      // 들어간다 — 실측에서 `> ` 뒤에 표를 넣었더니 첫 칸이 `| > |` 가 됐다.
+      const line = view.state.doc.lineAt(f);
+      const multiline = body.includes("\n");
+      const prefixOnly = /^[\s>*\-+]*$/.test(view.state.sliceDoc(line.from, f));
+      const start = multiline && prefixOnly ? line.from : f;
       view.dispatch({
-        changes: { from: f, to, insert: body },
-        selection: { anchor: f + cursor },
+        changes: { from: start, to, insert: body },
+        selection: { anchor: start + cursor },
       });
     };
 

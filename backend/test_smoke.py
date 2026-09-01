@@ -3327,3 +3327,52 @@ def test_todo_is_archived_before_it_is_removed():
     todo_store.delete_todo(u, st, made["id"])
     assert reg.dispatch("list_todos", {}, ctx).data["count"] == 0
     assert len(reg.dispatch("list_trash", {"kind": "todo"}, ctx).data["items"]) == 1
+
+
+def test_rich_markdown_survives_round_trip():
+    """앱이 그려 주는 문법이 저장·조회·링크·검색에서 온전한가.
+
+    콜아웃·표·형광펜·토글은 편집기와 읽기 뷰가 따로 처리한다. 저장 계층이
+    한 글자라도 바꾸면 두 화면이 어긋나므로 왕복이 완전히 같아야 한다.
+    """
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("richmd")
+
+    rich = (
+        "# 회의 정리\n\n"
+        "> [!IMPORTANT] 마감\n"
+        "> 금요일까지 [[보고서]] 제출\n\n"
+        "| 항목 | 담당 | 상태 |\n"
+        "| --- | :---: | ---: |\n"
+        "| 설계 | 나 | ==완료== |\n\n"
+        "<details>\n<summary>세부</summary>\n\n- [ ] 항목 1\n\n</details>\n"
+    )
+    assert reg.dispatch("write_document", {"path": "회의정리", "content": rich}, ctx).ok
+    assert reg.dispatch("write_document", {"path": "보고서", "content": "# 보고서"}, ctx).ok
+
+    got = reg.dispatch("read_document", {"path": "회의정리"}, ctx)
+    assert got.ok and got.data["content"] == rich, "왕복에서 내용이 바뀌었다"
+
+    # 콜아웃·표 안의 [[링크]]도 백링크로 잡혀야 한다
+    back = reg.dispatch("document_backlinks", {"path": "보고서"}, ctx)
+    assert back.ok and back.data["backlinks"] == ["회의정리"], back.data
+
+    # 형광펜 안의 글자도 검색에 걸린다(마크업을 벗겨 저장하지 않는다는 뜻)
+    hit = reg.dispatch("search_documents", {"query": "완료"}, ctx)
+    assert hit.ok and any("회의정리" in m["path"] for m in hit.data["matches"]), hit.data
+
+
+def test_prompt_tells_the_model_which_syntax_renders():
+    """앱이 지원하는 문법을 모델에게 알려 준다.
+
+    표·형광펜·콜아웃·토글을 그려 줄 수 있는데 모델이 그걸 모르면 쓰지 않는다.
+    """
+    from backend.ai.prompt_builder import build_system
+    from backend.auth import SessionUser
+
+    u = SessionUser(username="p", display_name="P", expires_at=0, remaining=0)
+    sp = build_system(u, "assistant", "2026-09-01", {})
+    for kw in ["[!NOTE]", "==강조==", "<details>", "![[사진.png|400]]", "[[문서 제목]]"]:
+        assert kw in sp, kw

@@ -1,12 +1,12 @@
 import { useEffect, useRef } from "react";
 import { EditorView, keymap, ViewPlugin, Decoration, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
-import { EditorState, StateEffect, StateField } from "@codemirror/state";
+import { EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
 import type { Range } from "@codemirror/state";
 import {
   history, historyKeymap, defaultKeymap, indentMore, indentLess,
 } from "@codemirror/commands";
-import { markdown, markdownKeymap, markdownLanguage } from "@codemirror/lang-markdown";
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
@@ -184,6 +184,27 @@ class CopyBtn extends WidgetType {
     return true;
   }
 }
+
+/**
+ * 빈 인용문 줄에서 Enter → 인용에서 빠져나온다.
+ *
+ * markdownKeymap 은 목록에서는 빈 항목을 지우고 나가지만 인용문에서는
+ * `>` 를 계속 이어 붙인다. 그러면 콜아웃을 쓰다가 밖으로 나올 방법이
+ * Backspace 밖에 없다(노션·옵시디언은 Enter 두 번이면 나온다).
+ */
+const exitEmptyQuote = (view: EditorView): boolean => {
+  const sel = view.state.selection.main;
+  if (!sel.empty) return false;
+  const line = view.state.doc.lineAt(sel.head);
+  // `>`·`> `·`> > ` 처럼 내용이 없는 인용 줄이고, 커서가 그 끝일 때만
+  if (sel.head !== line.to || !/^\s*(?:>\s*)+$/.test(line.text)) return false;
+  view.dispatch({
+    changes: { from: line.from, to: line.to, insert: "" },
+    selection: { anchor: line.from },
+    userEvent: "input",
+  });
+  return true;
+};
 
 const lineDeco = (cls: string) => Decoration.line({ class: cls });
 
@@ -561,13 +582,16 @@ export function LiveEditor({
       doc: value,
       extensions: [
         history(),
+        // 빈 인용문 탈출은 markdown() 의 Prec.high 이어쓰기보다 먼저 와야 한다.
+        // 조건이 아주 좁아서(내용 없는 `>` 줄 + 커서가 줄 끝) 다른 Enter 를
+        // 가로채지 않는다.
+        Prec.highest(keymap.of([{ key: "Enter", run: exitEmptyQuote }])),
         keymap.of([
           { key: "Mod-s", run: () => { cbs.current.onSave?.(); return true; } },
           ...closeBracketsKeymap,
           ...completionKeymap,
-          // 목록·인용에서 Enter 를 누르면 다음 항목이 이어진다(`- `, `1. `, `> `).
-          // 이게 없으면 글머리를 매번 손으로 쳐야 해서 목록 쓰기가 고통스럽다.
-          ...markdownKeymap,
+          // 목록·인용의 Enter 이어쓰기(`- `, `1. `, `> `)는 markdown() 이
+          // 이미 Prec.high 로 넣어 준다 — 여기서 또 넣을 필요가 없다.
           // Tab 은 들여쓰기. 이게 없으면 Tab 이 편집기 밖으로 포커스를 옮겨
           // 숨은 파일 입력까지 갔고, 거기서 Enter 를 누르면 파일 선택창이 떴다.
           // (표 안에서는 tableTools 의 Prec.high 키맵이 먼저 집는다.)
