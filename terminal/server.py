@@ -167,23 +167,31 @@ async def handler(ws):
             except Exception:
                 break
 
+    def write_all(data: bytes) -> None:
+        """PTY에 전부 쓴다. os.write는 한 번에 다 못 쓸 수 있다(긴 붙여넣기)."""
+        view = memoryview(data)
+        while view:
+            view = view[os.write(fd, view):]
+
     out_task = asyncio.create_task(pump_out())
     try:
         async for msg in ws:
             if isinstance(msg, bytes):
-                os.write(fd, msg)
+                write_all(msg)
             else:
                 try:
                     obj = json.loads(msg)
                 except Exception:
-                    os.write(fd, msg.encode())
+                    write_all(msg.encode())
                     continue
                 if "resize" in obj:
-                    cols, rows = obj["resize"]
-                    fcntl.ioctl(
-                        fd, termios.TIOCSWINSZ,
-                        struct.pack("HHHH", int(rows), int(cols), 0, 0),
-                    )
+                    # 형식이 어긋난 메시지 하나로 셸이 끊기면 안 된다.
+                    try:
+                        cols, rows = obj["resize"]
+                        size = struct.pack("HHHH", int(rows), int(cols), 0, 0)
+                    except (TypeError, ValueError, struct.error):
+                        continue
+                    fcntl.ioctl(fd, termios.TIOCSWINSZ, size)
     except websockets.ConnectionClosed:
         pass
     finally:
