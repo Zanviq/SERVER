@@ -30,8 +30,11 @@ const terminalAvailable = (user: string): Promise<boolean> => {
 
 // 대시보드는 서버 주인 전용(시스템 상태를 담고 있다) — 아래에서 걸러낸다.
 // primary는 모바일 하단 탭에 직접 나오는 것. 나머지는 "더보기" 시트로 간다.
+// 할 일이 늘면서 모바일 탭 4칸이 꽉 찼다. 대시보드는 주인 전용이고 매일 쓰는
+// 화면이 아니라 더보기로 내린다 — 그러지 않으면 주인 계정에서 AI 비서가 탭바
+// 밖으로 밀린다(실측). 데스크톱 레일에는 그대로 다 보인다.
 const NAV = [
-  { to: "/", icon: LayoutDashboard, label: "대시보드", end: true, ownerOnly: true, primary: true },
+  { to: "/", icon: LayoutDashboard, label: "대시보드", end: true, ownerOnly: true },
   { to: "/notes", icon: NotebookPen, label: "문서", primary: true },
   { to: "/calendar", icon: CalendarDays, label: "캘린더", primary: true },
   { to: "/todo", icon: ListTodo, label: "할 일", primary: true },
