@@ -9,6 +9,7 @@
 kind 는 휴지통을 갈래별로 보기 위한 것이다.
   - "document" : 파일/폴더. data/<id>/<name> 에 실물이 들어 있다.
   - "event"    : 캘린더 일정. 파일이 아니라 data/<id>/event.json 에 내용을 적어 둔다.
+  - "todo"     : 할 일. data/<id>/todo.json 에 내용을 적어 둔다(원래 id 되살림).
 kind 가 없는 예전 엔트리는 문서로 본다(기존 휴지통이 비지 않도록).
 
 .trash 는 개인 루트 바로 아래(data/ 형제)에 있으므로
@@ -32,7 +33,9 @@ TRASH_DIRNAME = ".trash"
 
 KIND_DOCUMENT = "document"
 KIND_EVENT = "event"
+KIND_TODO = "todo"
 EVENT_FILE = "event.json"
+TODO_FILE = "todo.json"
 
 
 def entry_kind(entry: dict) -> str:
@@ -110,6 +113,35 @@ def move_event_to_trash(event: dict, user: SessionUser, settings: Settings) -> s
     return entry_id
 
 
+def move_todo_to_trash(todo: dict, user: SessionUser, settings: Settings) -> str:
+    """할 일을 휴지통에 넣는다(파일이 아니라 내용을 적어 둔다).
+
+    캘린더 일정과 달리 **원래 id를 되살릴 수 있다** — 우리 저장소가 발급한
+    값이라 재사용해도 충돌하지 않는다.
+    """
+    entry_id = uuid.uuid4().hex
+    dest_dir = _trash_root(user, settings) / "data" / entry_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    write_atomic(dest_dir / TODO_FILE, todo)
+
+    entry = {
+        "id": entry_id,
+        "kind": KIND_TODO,
+        "orig_rel": "",
+        "name": str(todo.get("title") or "(제목 없음)"),
+        "is_dir": False,
+        "deleted_at": time.time(),
+        "todo_due": str(todo.get("due", "")),
+        "todo_done": bool(todo.get("done")),
+    }
+    idx_path = _index_path(user, settings)
+    with lock_for(idx_path):
+        entries = read_json(idx_path, [])
+        entries.append(entry)
+        write_atomic(idx_path, entries)
+    return entry_id
+
+
 def list_trash(user: SessionUser, settings: Settings, kind: str = "") -> list[dict]:
     entries = read_json(_index_path(user, settings), [])
     if kind:
@@ -123,7 +155,7 @@ def list_trash(user: SessionUser, settings: Settings, kind: str = "") -> list[di
 def counts_by_kind(user: SessionUser, settings: Settings) -> dict:
     """갈래별 개수 — 휴지통 탭에 숫자를 띄우기 위한 것."""
     entries = read_json(_index_path(user, settings), [])
-    out = {KIND_DOCUMENT: 0, KIND_EVENT: 0}
+    out = {KIND_DOCUMENT: 0, KIND_EVENT: 0, KIND_TODO: 0}
     for e in entries:
         k = entry_kind(e)
         out[k] = out.get(k, 0) + 1
@@ -151,13 +183,26 @@ def _unique_target(root: Path, rel: str) -> Path:
 def restore(entry_id: str, user: SessionUser, settings: Settings) -> dict:
     idx_path = _index_path(user, settings)
     pending_event: dict | None = None
+    pending_todo: dict | None = None
     with lock_for(idx_path):
         entries = read_json(idx_path, [])
         entry = next((e for e in entries if e.get("id") == entry_id), None)
         if entry is None:
             raise HTTPException(status_code=404, detail="휴지통 항목을 찾을 수 없습니다.")
 
-        if entry_kind(entry) == KIND_EVENT:
+        if entry_kind(entry) == KIND_TODO:
+            src = _trash_root(user, settings) / "data" / entry_id / TODO_FILE
+            payload = read_json(src, None)
+            if payload is None:
+                entries = [e for e in entries if e.get("id") != entry_id]
+                write_atomic(idx_path, entries)
+                raise HTTPException(status_code=410, detail="복원할 할 일 내용이 없습니다.")
+            # 일정과 같은 이유로 락 안에서 엔트리를 선점한다(동시 복원 중복 방지)
+            entries = [e for e in entries if e.get("id") != entry_id]
+            write_atomic(idx_path, entries)
+            pending_todo = payload
+
+        elif entry_kind(entry) == KIND_EVENT:
             src = _trash_root(user, settings) / "data" / entry_id / EVENT_FILE
             payload = read_json(src, None)
             if payload is None:
@@ -171,6 +216,22 @@ def restore(entry_id: str, user: SessionUser, settings: Settings) -> dict:
             entries = [e for e in entries if e.get("id") != entry_id]
             write_atomic(idx_path, entries)
             pending_event = payload
+
+    if pending_todo is not None:
+        from . import todo_store
+
+        try:
+            restored = todo_store.restore_todo(user, settings, pending_todo)
+        except Exception:
+            with lock_for(idx_path):
+                back = read_json(idx_path, [])
+                if not any(e.get("id") == entry_id for e in back):
+                    back.append(entry)
+                    write_atomic(idx_path, back)
+            raise
+        shutil.rmtree(_trash_root(user, settings) / "data" / entry_id, ignore_errors=True)
+        return {"ok": True, "kind": KIND_TODO, "todo": restored,
+                "todo_id": restored.get("id", ""), "restored_to": restored.get("title", "")}
 
     if pending_event is not None:
         # 일정은 파일이 아니라 캘린더에 새로 만들어 되돌린다.

@@ -3125,3 +3125,133 @@ def test_restore_gives_back_an_identifier_the_next_skill_can_use():
     assert dr.ok and dr.data.get("path"), dr.data
     rd = reg.dispatch("read_document", {"path": dr.data["path"]}, ctx)
     assert rd.ok and "내용" in rd.data["content"], rd
+
+
+def _todo_ctx(name):
+    from backend.ai.skill_base import SkillContext
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    st = get_settings()
+    u = SessionUser(username=name, display_name=name, expires_at=0, remaining=0)
+    return u, SkillContext(user=u, settings=st, today="2026-09-01"), st
+
+
+def test_todo_skills_round_trip():
+    """할 일: 조회가 준 id를 수정·완료·삭제·복원이 그대로 쓸 수 있어야 한다.
+
+    이 저장소가 반복해서 깨뜨린 지점이라 새 도메인에서는 처음부터 묶어 둔다.
+    """
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _todo_ctx("todoskill")
+
+    a = reg.dispatch("create_todo_category", {"name": "A", "color": "보라"}, ctx)
+    assert a.ok, a
+    sub = reg.dispatch("create_todo_category", {"name": "a-sub", "parent": "A"}, ctx)
+    assert sub.ok and sub.data["category"] == "A/a-sub", sub.data
+    assert reg.dispatch("create_todo_category", {"name": "X", "parent": "없는것"}, ctx).error_code == "not_found"
+
+    t = reg.dispatch("create_todo", {"title": "보고서", "category": "A", "due": "2026-09-10"}, ctx)
+    assert t.ok and t.data["todo"]["due"] == "2026-09-10", t.data
+    assert t.data["todo"]["category"] == "A", t.data
+    reg.dispatch("create_todo", {"title": "언젠가", "category": "A/a-sub"}, ctx)
+
+    # 이상한 마감은 조용히 저장되지 않는다(캘린더와 같은 규칙)
+    bad = reg.dispatch("create_todo", {"title": "x", "due": "다음주"}, ctx)
+    assert bad.ok is False and bad.error_code == "invalid", bad
+
+    tid = t.data["todo_id"]
+    up = reg.dispatch("update_todo", {"todo_id": tid, "title": "보고서 최종"}, ctx)
+    assert up.ok and up.data["todo"]["title"] == "보고서 최종", up.data
+
+    done = reg.dispatch("complete_todo", {"todo_id": tid}, ctx)
+    assert done.ok and done.data["todo"]["done"], done.data
+    assert reg.dispatch("list_todos", {"include_done": False}, ctx).data["count"] == 1
+    assert reg.dispatch("list_todos", {"only_done": True}, ctx).data["count"] == 1
+    reg.dispatch("complete_todo", {"todo_id": tid, "done": False}, ctx)
+
+    # 기간 조회는 기한 있는 것만
+    ranged = reg.dispatch("list_todos", {"from_date": "2026-09-01", "to_date": "2026-09-30",
+                                         "include_undated": False}, ctx)
+    assert ranged.data["count"] == 1, ranged.data
+
+
+def test_todo_delete_is_restorable_with_same_id():
+    """삭제한 할 일은 휴지통에서 **원래 id로** 돌아온다(이어서 수정 가능)."""
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _todo_ctx("todotrash")
+    made = reg.dispatch("create_todo", {"title": "지울 것"}, ctx)
+    tid = made.data["todo_id"]
+    assert reg.dispatch("delete_todo", {"todo_id": tid}, ctx).ok
+    assert reg.dispatch("list_todos", {}, ctx).data["count"] == 0
+
+    items = reg.dispatch("list_trash", {"kind": "todo"}, ctx).data["items"]
+    assert len(items) == 1 and items[0]["kind_label"] == "할 일", items
+    rs = reg.dispatch("restore_from_trash", {"id": items[0]["id"]}, ctx)
+    assert rs.ok and rs.data["todo_id"] == tid, rs.data
+    assert reg.dispatch("update_todo", {"todo_id": rs.data["todo_id"], "title": "복원 후"}, ctx).ok
+    assert reg.dispatch("list_todos", {}, ctx).data["count"] == 1
+
+
+def test_deleting_a_category_does_not_delete_its_todos():
+    """카테고리 정리가 할 일 대량 삭제가 되면 안 된다 — 위로 올린다."""
+    from backend import todo_store
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    u, ctx, st = _todo_ctx("todocat")
+    top = reg.dispatch("create_todo_category", {"name": "상위"}, ctx).data["category_id"]
+    reg.dispatch("create_todo_category", {"name": "하위", "parent": "상위"}, ctx)
+    reg.dispatch("create_todo", {"title": "t1", "category": "상위"}, ctx)
+    reg.dispatch("create_todo", {"title": "t2", "category": "상위/하위"}, ctx)
+    before = reg.dispatch("list_todos", {}, ctx).data["count"]
+
+    res = todo_store.delete_category(u, st, top)
+    assert res["moved_todos"] == 1 and res["moved_categories"] == 1, res
+    assert reg.dispatch("list_todos", {}, ctx).data["count"] == before, "할 일이 사라졌다"
+
+
+def test_todo_categories_cannot_form_a_cycle():
+    """자기 자신이나 자손 아래로 옮기면 트리가 끊겨 화면에서 사라진다."""
+    from backend import todo_store
+    from backend.ai.skill_registry import default_registry
+    from fastapi import HTTPException
+
+    reg = default_registry()
+    u, ctx, st = _todo_ctx("todocycle")
+    p = reg.dispatch("create_todo_category", {"name": "P"}, ctx).data["category_id"]
+    c = reg.dispatch("create_todo_category", {"name": "C", "parent": "P"}, ctx).data["category_id"]
+    for cid, parent in [(p, p), (p, c)]:
+        try:
+            todo_store.update_category(u, st, cid, {"parent_id": parent})
+            raise AssertionError(f"순환을 허용했다: {cid} -> {parent}")
+        except HTTPException as e:
+            assert e.status_code == 409, e.status_code
+
+
+def test_todo_http_validates_like_the_calendar():
+    """UI로 들어오는 마감도 검증한다(AI 쪽만 막으면 반쪽이다)."""
+    _login()
+    cat = client.post("/api/todo/categories", json={"name": "업무"})
+    assert cat.status_code == 200, cat.text
+    ok = client.post("/api/todo/create", json={
+        "title": "정상", "due": "2026-09-15", "all_day": True,
+        "category_id": cat.json()["id"]})
+    assert ok.status_code == 200 and ok.json()["due"] == "2026-09-15", ok.text
+    bad = client.post("/api/todo/create", json={"title": "x", "due": "내일쯤"})
+    assert bad.status_code == 422, (bad.status_code, bad.text)
+    # 느슨한 표기는 정규화해서 받는다
+    loose = client.post("/api/todo/create", json={"title": "느슨", "due": "2026-9-5T9:00"})
+    assert loose.status_code == 200 and loose.json()["due"] == "2026-09-05T09:00:00", loose.text
+    # 거절된 것은 저장되지 않았으므로 2건이다
+    lst = client.get("/api/todo/list")
+    assert lst.status_code == 200 and len(lst.json()) == 2, lst.text
+    # 캘린더 표시용 기간 조회 — 기한 없는 것은 뺀다
+    ranged = client.get("/api/todo/list?from=2026-09-01&to=2026-09-30&include_undated=false")
+    assert ranged.status_code == 200 and len(ranged.json()) == 2, ranged.json()
+    narrow = client.get("/api/todo/list?from=2026-09-10&to=2026-09-30&include_undated=false")
+    assert [t["title"] for t in narrow.json()] == ["정상"], narrow.json()

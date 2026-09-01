@@ -17,7 +17,7 @@ from fastapi import HTTPException
 from ... import trash
 from ..skill_base import SkillBase, SkillResult
 
-_KIND_LABEL = {trash.KIND_DOCUMENT: "문서", trash.KIND_EVENT: "일정"}
+_KIND_LABEL = {trash.KIND_DOCUMENT: "문서", trash.KIND_EVENT: "일정", trash.KIND_TODO: "할 일"}
 
 #: 한 번에 모델에게 보여줄 항목 수 상한(휴지통이 크면 컨텍스트를 다 먹는다)
 _MAX_ITEMS = 100
@@ -50,6 +50,9 @@ def _row(e: dict, now: float) -> dict:
     }
     if kind == trash.KIND_EVENT:
         out["event_start"] = e.get("event_start", "")
+    elif kind == trash.KIND_TODO:
+        out["todo_due"] = e.get("todo_due", "")
+        out["todo_done"] = bool(e.get("todo_done"))
     else:
         out["orig_path"] = e.get("orig_rel", "")
     return out
@@ -58,7 +61,7 @@ def _row(e: dict, now: float) -> dict:
 class ListTrash(SkillBase):
     name = "list_trash"
     description = (
-        "휴지통 목록을 본다. kind로 '문서'(document)나 '일정'(event)만 볼 수 있다. "
+        "휴지통 목록을 본다. kind로 '문서'(document)·'일정'(event)·'할 일'(todo)만 볼 수 있다. "
         "여기서 얻은 id를 restore_from_trash에 그대로 넘기면 복원된다."
     )
     parameters = {
@@ -66,7 +69,7 @@ class ListTrash(SkillBase):
         "properties": {
             "kind": {
                 "type": "string",
-                "enum": ["document", "event"],
+                "enum": ["document", "event", "todo"],
                 "description": "생략하면 전체.",
             },
             "name_contains": {"type": "string", "description": "이름에 이 말이 든 것만."},
@@ -120,7 +123,7 @@ class RestoreFromTrash(SkillBase):
     description = (
         "휴지통에서 되돌린다. id는 list_trash로 얻는다. "
         "문서는 원래 경로로, 일정은 캘린더에 다시 만들어진다"
-        "(일정은 원래 id를 되살릴 수 없어 새 일정으로 생긴다)."
+        "(일정은 원래 id를 되살릴 수 없어 새 일정으로 생긴다). 할 일은 원래 id로 돌아온다."
     )
     parameters = {
         "type": "object",
@@ -147,12 +150,16 @@ class RestoreFromTrash(SkillBase):
         where = result.get("restored_to", "")
         label = _KIND_LABEL.get(kind, kind)
         data: dict = {"kind": kind, "restored_to": where}
-        if kind == trash.KIND_EVENT:
+        if kind == trash.KIND_TODO:
+            # 할 일은 원래 id를 되살린다 — 이어서 수정·완료할 수 있게 그대로 준다
+            data["todo_id"] = str(result.get("todo_id") or "")
+            data["todo"] = result.get("todo") or {}
+        elif kind == trash.KIND_EVENT:
             # 일정은 원래 id를 되살릴 수 없어 **새 id**로 생긴다. 그 값을 안 주면
             # "복원하고 시간도 바꿔줘"에서 다음 스킬이 쓸 식별자가 없어 끊긴다.
             data["event_id"] = str(result.get("event_id") or "")
             data["event"] = result.get("event") or {}
-        else:
+        elif kind == trash.KIND_DOCUMENT:
             data["path"] = where
         return SkillResult(
             ok=True,

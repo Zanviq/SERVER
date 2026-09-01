@@ -29,6 +29,17 @@ from .documents import (
     WriteDocument,
 )
 from .system import GetSystemStatus
+from .todo import (
+    BulkCompleteTodos,
+    BulkDeleteTodos,
+    CompleteTodo,
+    CreateTodo,
+    CreateTodoCategory,
+    DeleteTodo,
+    ListTodoCategories,
+    ListTodos,
+    UpdateTodo,
+)
 from .trash import ListTrash, RestoreFromTrash
 from .think import ThinkSkill
 
@@ -56,6 +67,16 @@ ALL_SKILLS = [
     BulkDeleteCalendarEvents(),
     DeleteCalendarEvent(),
     FindFreeSlots(),
+    # 할 일(내부 전용 — 구글과 동기화하지 않는다)
+    ListTodos(),
+    ListTodoCategories(),
+    CreateTodo(),
+    UpdateTodo(),
+    CompleteTodo(),
+    DeleteTodo(),
+    BulkCompleteTodos(),
+    BulkDeleteTodos(),
+    CreateTodoCategory(),
     # 휴지통(되돌리기)
     ListTrash(),
     RestoreFromTrash(),
@@ -71,4 +92,7 @@ __all__ = [
     "CreateFolder", "DocumentBacklinks",
     "ListCalendarEvents", "CreateCalendarEvent", "UpdateCalendarEvent",
     "DeleteCalendarEvent", "FindFreeSlots", "GetSystemStatus",
+    "ListTodos", "ListTodoCategories", "CreateTodo", "UpdateTodo",
+    "CompleteTodo", "DeleteTodo", "BulkCompleteTodos", "BulkDeleteTodos",
+    "CreateTodoCategory",
 ]

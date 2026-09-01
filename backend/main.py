@@ -23,6 +23,7 @@ from .routers import (
     settings as settings_router,
     system,
     terminal,
+    todo,
     trash,
 )
 
@@ -83,6 +84,7 @@ app.include_router(notes.router, dependencies=_PROTECTED)
 app.include_router(calendar.router, dependencies=_PROTECTED)
 app.include_router(settings_router.router, dependencies=_PROTECTED)
 app.include_router(ai.router, dependencies=_PROTECTED)
+app.include_router(todo.router, dependencies=_PROTECTED)
 app.include_router(trash.router, dependencies=_PROTECTED)
 app.include_router(terminal.router, dependencies=_PROTECTED)
 app.include_router(admin.router, dependencies=_OWNER_ONLY)
