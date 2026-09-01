@@ -63,7 +63,7 @@ def disable(
     admin: SessionUser = Depends(require_admin),
     settings: Settings = Depends(get_settings),
 ):
-    """비활성화 — 세션도 즉시 무효가 된다(verify_token이 상태를 본다)."""
+    """비활성화 — 세션도 즉시 무효가 된다(auth._verify가 상태를 본다)."""
     _not_self(username, admin)
     return accounts.set_status(username, accounts.STATUS_DISABLED, admin.username, settings)
 

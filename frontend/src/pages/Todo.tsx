@@ -183,14 +183,11 @@ export function Todo() {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [c, t, n] = await Promise.all([
-        api.todoCategories(),
-        api.todoList(),
-        api.todoCounts(),
-      ]);
-      setCats(c);
-      setTodos(t);
-      setCounts(n);
+      // 한 번의 왕복으로 셋을 다 받는다(서버도 파일을 한 번만 읽는다)
+      const b = await api.todoBoard();
+      setCats(b.categories);
+      setTodos(b.todos);
+      setCounts(b.counts);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "할 일 로드 실패");
     } finally {

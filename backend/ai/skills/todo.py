@@ -32,23 +32,38 @@ def _fail(e: Exception) -> SkillResult:
     return SkillResult(ok=False, message=str(getattr(e, "detail", e)), error_code=code)
 
 
-def _cat_name(cats: list[dict], cid: str) -> str:
-    return next((c["name"] for c in cats if c["id"] == cid), "")
+def _path_map(cats: list[dict]) -> dict[str, str]:
+    """카테고리 id → '상위/하위' 경로. **한 번에 전부 만든다.**
+
+    예전에는 줄마다 _cat_path 를 불렀고 그 안에서 매번 id 색인을 새로 만들었다
+    (할 일 n개 × 카테고리 m개 = O(n·m)).
+    """
+    by_id = {c["id"]: c for c in cats}
+    out: dict[str, str] = {}
+
+    def path_of(cid: str, seen: frozenset) -> str:
+        if cid in out:
+            return out[cid]
+        cur = by_id.get(cid)
+        if cur is None or cid in seen:
+            return ""
+        parent = str(cur.get("parent_id") or "")
+        prefix = path_of(parent, seen | {cid}) if parent else ""
+        val = f"{prefix}/{cur['name']}" if prefix else str(cur["name"])
+        out[cid] = val
+        return val
+
+    for c in cats:
+        path_of(c["id"], frozenset())
+    return out
 
 
 def _cat_path(cats: list[dict], cid: str) -> str:
-    """'상위/하위' 형태의 읽기 쉬운 경로. 같은 이름이 여러 갈래에 있을 때 구분된다."""
-    by_id = {c["id"]: c for c in cats}
-    parts, cur, seen = [], by_id.get(cid), set()
-    while cur and cur["id"] not in seen:
-        seen.add(cur["id"])
-        parts.append(cur["name"])
-        pid = cur.get("parent_id") or ""
-        cur = by_id.get(pid) if pid else None
-    return "/".join(reversed(parts))
+    """단건용. 목록을 만들 때는 _path_map 을 써라."""
+    return _path_map(cats).get(cid, "")
 
 
-def _row(t: dict, cats: list[dict]) -> dict:
+def _row(t: dict, paths: dict[str, str]) -> dict:
     cid = str(t.get("category_id", ""))
     return {
         "id": t["id"],
@@ -57,7 +72,7 @@ def _row(t: dict, cats: list[dict]) -> dict:
         "due": str(t.get("due", "")),
         "all_day": bool(t.get("all_day")),
         "category_id": cid,
-        "category": _cat_path(cats, cid) if cid else "",
+        "category": paths.get(cid, ""),
         "color": str(t.get("color", "")),
         "description": t.get("description", ""),
     }
@@ -77,8 +92,9 @@ def _resolve_category(cats: list[dict], ident: str) -> str:
     if any(c["id"] == ident for c in cats):
         return ident
     low = ident.lower()
+    paths = _path_map(cats)
     # 경로로 지정한 경우가 가장 정확하다
-    exact_path = [c for c in cats if _cat_path(cats, c["id"]).lower() == low]
+    exact_path = [c for c in cats if paths[c["id"]].lower() == low]
     if len(exact_path) == 1:
         return exact_path[0]["id"]
     hits = [c for c in cats if str(c.get("name", "")).lower() == low]
@@ -95,7 +111,8 @@ def _resolve_category(cats: list[dict], ident: str) -> str:
 
 
 def _ambiguous_result(cats: list[dict], e: _Ambiguous) -> SkillResult:
-    names = [{"id": c["id"], "category": _cat_path(cats, c["id"])} for c in e.hits]
+    paths = _path_map(cats)
+    names = [{"id": c["id"], "category": paths.get(c["id"], "")} for c in e.hits]
     return SkillResult(
         ok=False, error_code="ambiguous",
         message=(f"'{e.name}'에 해당하는 카테고리가 여러 개입니다. "
@@ -131,7 +148,9 @@ class ListTodos(SkillBase):
     }
 
     def run(self, args, ctx):
-        cats = todo_store.list_categories(ctx.user, ctx.settings)
+        # 카테고리와 할 일을 따로 부르면 같은 파일을 두 번 읽는다
+        loaded = todo_store.board(ctx.user, ctx.settings)
+        cats = loaded["categories"]
         cid = None
         if args.get("category"):
             try:
@@ -146,8 +165,8 @@ class ListTodos(SkillBase):
         except BadDateTime as e:
             return SkillResult(ok=False, message=str(e), error_code="invalid")
 
-        items = todo_store.list_todos(
-            ctx.user, ctx.settings,
+        items = todo_store.filter_todos(
+            loaded["todos"],
             category_id=cid,
             include_done=bool(args.get("include_done", True)),
             frm=frm, to=to,
@@ -160,7 +179,8 @@ class ListTodos(SkillBase):
             items = [t for t in items if needle in str(t.get("title", "")).lower()]
 
         total = len(items)
-        rows = [_row(t, cats) for t in items[:_MAX_ROWS]]
+        paths = _path_map(cats)
+        rows = [_row(t, paths) for t in items[:_MAX_ROWS]]
         left = sum(1 for t in items if not t.get("done"))
         msg = f"할 일 {total}개(남은 것 {left}개)"
         data: dict = {"todos": rows, "count": total, "remaining": left}
@@ -170,7 +190,7 @@ class ListTodos(SkillBase):
         if not total:
             # 왜 없는지 알려 준다 — "없습니다"로 끝내면 다음 수를 모른다
             data["categories"] = [
-                {"id": c["id"], "category": _cat_path(cats, c["id"])} for c in cats
+                {"id": c["id"], "category": paths.get(c["id"], "")} for c in cats
             ]
         return SkillResult(ok=True, message=msg, data=data)
 
@@ -181,12 +201,14 @@ class ListTodoCategories(SkillBase):
     parameters = {"type": "object", "properties": {}}
 
     def run(self, args, ctx):
-        cats = todo_store.list_categories(ctx.user, ctx.settings)
-        cnt = todo_store.counts(ctx.user, ctx.settings)
+        # 카테고리와 개수를 따로 부르면 같은 파일을 두 번 읽는다
+        data = todo_store.board(ctx.user, ctx.settings)
+        cats, cnt = data["categories"], data["counts"]
+        paths = _path_map(cats)
         rows = [{
             "id": c["id"],
             "name": c["name"],
-            "category": _cat_path(cats, c["id"]),
+            "category": paths.get(c["id"], ""),
             "parent_id": c.get("parent_id", ""),
             "color": c.get("color", ""),
             "total": cnt.get(c["id"], {}).get("total", 0),
@@ -289,7 +311,7 @@ class CreateTodo(SkillBase):
         return SkillResult(
             ok=True,
             message=f"할 일 '{todo['title']}'{where}{when} 추가됨",
-            data={"todo_id": todo["id"], "todo": _row(todo, cats)},
+            data={"todo_id": todo["id"], "todo": _row(todo, _path_map(cats))},
         )
 
 
@@ -343,7 +365,7 @@ class UpdateTodo(SkillBase):
             return _fail(e)
         return SkillResult(
             ok=True, message=f"할 일 '{todo['title']}' 수정됨",
-            data={"todo_id": todo["id"], "todo": _row(todo, cats)},
+            data={"todo_id": todo["id"], "todo": _row(todo, _path_map(cats))},
         )
 
 
@@ -372,7 +394,7 @@ class CompleteTodo(SkillBase):
         word = "완료" if done else "미완료로 되돌림"
         return SkillResult(
             ok=True, message=f"'{todo['title']}' {word}",
-            data={"todo_id": todo["id"], "todo": _row(todo, cats)},
+            data={"todo_id": todo["id"], "todo": _row(todo, _path_map(cats))},
         )
 
 
@@ -460,7 +482,8 @@ class BulkCompleteTodos(SkillBase):
                 message=f"대상이 {len(targets)}개로 너무 많습니다(최대 {self.MAX}).",
                 data={"count": len(targets)},
             )
-        listing = [_row(t, cats) for t in targets]
+        paths = _path_map(cats)
+        listing = [_row(t, paths) for t in targets]
         if args.get("dry_run"):
             return SkillResult(
                 ok=True,
@@ -539,7 +562,8 @@ class BulkDeleteTodos(SkillBase):
             return SkillResult(ok=False, error_code="too_many",
                                message=f"대상이 {len(targets)}개로 너무 많습니다(최대 {self.MAX}).",
                                data={"count": len(targets)})
-        listing = [_row(t, cats) for t in targets]
+        paths = _path_map(cats)
+        listing = [_row(t, paths) for t in targets]
         if args.get("dry_run"):
             return SkillResult(
                 ok=True,

@@ -106,12 +106,6 @@ def _verify(token: str, settings: Settings):
     return username, acc, ts.timestamp() + ttl
 
 
-def verify_token(token: str, settings: Settings | None = None) -> dict | None:
-    """토큰 검증. 유효하면 {'username'} 반환, 만료/위조면 None."""
-    got = _verify(token, settings or get_settings())
-    return {"username": got[0]} if got else None
-
-
 def require_session(
     request: Request, settings: Settings = Depends(get_settings)
 ) -> SessionUser:

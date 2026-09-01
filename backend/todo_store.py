@@ -275,7 +275,26 @@ def list_todos(
     frm/to 를 주면 **기한이 있는 것만** 그 범위로 거른다(캘린더 표시용).
     include_undated=False 면 기한 없는 것을 아예 뺀다.
     """
-    todos = _load(user, settings)["todos"]
+    return filter_todos(
+        _load(user, settings)["todos"],
+        category_id=category_id, include_done=include_done,
+        frm=frm, to=to, include_undated=include_undated,
+    )
+
+
+def filter_todos(
+    todos: list[dict],
+    *,
+    category_id: str | None = None,
+    include_done: bool = True,
+    frm: str = "",
+    to: str = "",
+    include_undated: bool = True,
+) -> list[dict]:
+    """이미 읽어 둔 목록을 거른다(파일을 다시 읽지 않는다).
+
+    board() 로 한 번에 읽은 쪽이 이걸 쓴다.
+    """
     out = []
     for t in todos:
         if category_id is not None and str(t.get("category_id", "")) != category_id:
@@ -293,10 +312,7 @@ def list_todos(
             if to and day > to[:10]:
                 continue
         out.append(t)
-    # 기한 있는 것 먼저(날짜순), 그다음 order·제목
-    out.sort(key=lambda t: (not t.get("due"), str(t.get("due", "")),
-                            int(t.get("order", 0)), str(t.get("title", ""))))
-    return out
+    return _sorted(out)
 
 
 def get_todo(user: SessionUser, settings: Settings, tid: str) -> dict | None:
@@ -398,14 +414,35 @@ def restore_todo(user: SessionUser, settings: Settings, payload: dict) -> dict:
     return item
 
 
-def counts(user: SessionUser, settings: Settings) -> dict:
-    """카테고리별 개수 — 화면의 트리 배지용."""
-    todos = _load(user, settings)["todos"]
+def board(user: SessionUser, settings: Settings) -> dict:
+    """카테고리·할 일·개수를 **파일 한 번 읽어** 함께 돌려준다.
+
+    화면과 AI 스킬이 셋을 따로 부르면 같은 파일을 세 번 읽는다(실측: 할 일
+    화면 최초 로드가 todo.json 3회 + accounts.json 3회).
+    """
+    data = _load(user, settings)
+    cats = sorted(data["categories"],
+                  key=lambda c: (int(c.get("order", 0)), str(c.get("name", ""))))
+    todos = _sorted(data["todos"])
+    return {"categories": cats, "todos": todos, "counts": _counts_of(todos)}
+
+
+def _counts_of(todos: list[dict]) -> dict:
     out: dict[str, dict] = {}
     for t in todos:
-        cid = str(t.get("category_id", ""))
-        row = out.setdefault(cid, {"total": 0, "done": 0})
+        row = out.setdefault(str(t.get("category_id", "")), {"total": 0, "done": 0})
         row["total"] += 1
         if t.get("done"):
             row["done"] += 1
     return out
+
+
+def _sorted(todos: list[dict]) -> list[dict]:
+    """기한 있는 것 먼저(날짜순), 그다음 order·제목."""
+    return sorted(todos, key=lambda t: (not t.get("due"), str(t.get("due", "")),
+                                        int(t.get("order", 0)), str(t.get("title", ""))))
+
+
+def counts(user: SessionUser, settings: Settings) -> dict:
+    """카테고리별 개수 — 화면의 트리 배지용."""
+    return _counts_of(_load(user, settings)["todos"])

@@ -133,6 +133,18 @@ def todos(
     )
 
 
+@router.get("/board")
+def board(
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """할 일 화면이 처음에 필요한 전부(카테고리+할 일+개수)를 한 번에.
+
+    셋을 따로 부르면 같은 파일을 세 번 읽는다.
+    """
+    return todo_store.board(user, settings)
+
+
 @router.get("/counts")
 def todo_counts(
     user: SessionUser = Depends(require_session),

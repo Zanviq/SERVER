@@ -17,7 +17,7 @@ from ...file_kinds import is_editable, kind_of
 from ...json_store import lock_for, write_text_atomic
 from ...notes_graph import backlinks_for
 from ...security_paths import safe_join, to_rel
-from ...storage import user_data_root
+from ...storage import user_data_root, walk_dirs, walk_files
 from ...trash import move_to_trash
 from ..skill_base import SkillBase, SkillResult
 from ._common import _MAX_READ, _is_sensitive
@@ -35,18 +35,32 @@ _PATH_PROP = {
 }
 
 
-def _ident(root: Path, p: Path) -> str:
+def _ident_rel(rel: str, known: set[str]) -> str:
+    """이미 상대경로를 알고 있을 때의 식별자(파일시스템을 건드리지 않는다)."""
+    if not rel.endswith(".md"):
+        return rel
+    stem = rel[:-3]
+    return rel if stem in known else stem
+
+
+def _ident(root: Path, p: Path, known: set[str] | None = None) -> str:
     """식별자 — 마크다운은 .md를 떼고, 나머지는 확장자를 유지한다.
 
     단, 확장자를 뗀 이름의 파일이 실제로 옆에 있으면 떼지 않는다.
     `메모`와 `메모.md`가 함께 있으면 둘 다 식별자가 `메모`가 되어, 목록에 같은
     값이 두 번 나오고 _resolve는 확장자 없는 쪽을 먼저 집어 .md 문서에 영영
     도달할 수 없었다(확장자 없는 파일 생성을 허용하면서 실제로 닿는 경로가 됐다).
+
+    `known`은 이미 알고 있는 상대경로 집합이다. 목록·검색처럼 트리를 이미
+    걷고 있는 쪽은 이걸 넘겨라 — 안 넘기면 **마크다운 파일마다 exists() 스탯이
+    한 번씩** 나간다(문서 200개에서 list_documents가 114ms였다).
     """
     rel = to_rel(root, p)
-    if rel.endswith(".md") and not (root / rel[:-3]).exists():
-        return rel[:-3]
-    return rel
+    if not rel.endswith(".md"):
+        return rel
+    stem = rel[:-3]
+    sibling = (stem in known) if known is not None else (root / stem).exists()
+    return rel if sibling else stem
 
 
 class _Ambiguous(Exception):
@@ -64,14 +78,14 @@ def _find_by_name(root: Path, ident: str, *, editable_only: bool = False) -> lis
     name = ident.rsplit("/", 1)[-1]
     stem = name[:-3] if name.endswith(".md") else name
     out = []
-    for p in root.rglob("*"):
-        if not p.is_file():
-            continue
-        if editable_only and not is_editable(p.name):
+    for f in walk_files(root):
+        if editable_only and not is_editable(f.name):
             continue  # 쓰기 대상 탐색에서는 이미지·PDF를 후보로 삼지 않는다
-        if p.name == name or p.stem == stem:
-            out.append(p)
-    return sorted(out)
+        fname = f.name
+        fstem = fname[:-3] if fname.endswith(".md") else fname
+        if fname == name or fstem == stem:
+            out.append(f.path)
+    return out
 
 
 def _resolve(root: Path, ident: str, *, editable_only: bool = False):
@@ -172,21 +186,22 @@ class ListDocuments(SkillBase):
             return SkillResult(ok=False, message="폴더를 찾을 수 없습니다.", error_code="not_found")
         import datetime as _dt
 
+        # 트리를 한 번만 걷는다(stat 은 순회에 딸려온다). 그 결과를 _ident 에
+        # 넘겨 파일당 추가 스탯도 없앤다.
+        prefix = to_rel(root, base)
+        prefix = "" if prefix in ("", ".") else f"{prefix}/"
+        files = walk_files(base)
+        known = {f"{prefix}{f.rel}" for f in files}
         items = []
-        for p in sorted(base.rglob("*")):
-            if not p.is_file():
-                continue
-            try:
-                st = p.stat()
-            except OSError:
-                continue
+        for f in files:
+            rel = f"{prefix}{f.rel}"
             items.append({
-                "path": _ident(root, p),
-                "kind": kind_of(p.name),
-                "size": st.st_size,
+                "path": _ident_rel(rel, known),
+                "kind": kind_of(f.name),
+                "size": f.stat.st_size,
                 # 수정시각이 없으면 "최근 문서", "안 쓰는 문서" 같은 요청을
                 # 아예 수행할 수 없다(모델이 짐작으로 답하게 된다).
-                "modified": _dt.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%dT%H:%M:%S"),
+                "modified": _dt.datetime.fromtimestamp(f.stat.st_mtime).strftime("%Y-%m-%dT%H:%M:%S"),
             })
         total = len(items)
         items.sort(key=lambda d: d["modified"], reverse=True)
@@ -210,7 +225,7 @@ class ListFolders(SkillBase):
 
     def run(self, args, ctx):
         root = user_data_root(ctx.user, ctx.settings)
-        folders = sorted(to_rel(root, p) for p in root.rglob("*") if p.is_dir())
+        folders = walk_dirs(root)
         total = len(folders)
         data: dict = {"folders": folders[:_MAX_DOCS]}
         msg = f"{total}개 폴더"
@@ -490,27 +505,29 @@ class SearchDocuments(SkillBase):
     def run(self, args, ctx):
         root = user_data_root(ctx.user, ctx.settings)
         ql = args["query"].lower()
+        # 순회 한 번에 stat 까지 받아 둔다. 상한(_LIMIT)에서 끊더라도 순회 자체는
+        # 싸다(scandir) — 대신 본문 읽기는 필요한 것만 한다.
+        files = walk_files(root)
+        known = {f.rel for f in files}
         hits = []
         scanned = 0
-        for p in sorted(root.rglob("*")):
-            if not p.is_file():
-                continue
+        for f in files:
             scanned += 1
-            rel = to_rel(root, p)
-            name_hit = ql in p.name.lower()
+            rel = f.rel
+            name_hit = ql in f.name.lower()
             # 민감 문서는 **본문을 읽지 않는다**. 읽어서 매칭하고 경로만 돌려줘도
             # "그 문서에 이 단어가 있다"를 알려주는 셈이라 차단이 무의미해진다.
-            if _is_sensitive(rel) or not is_editable(p.name):
+            if _is_sensitive(rel) or not is_editable(f.name):
                 if name_hit:
-                    hits.append({"path": _ident(root, p), "kind": kind_of(p.name)})
+                    hits.append({"path": _ident_rel(rel, known), "kind": kind_of(f.name)})
             elif name_hit:
-                hits.append({"path": _ident(root, p), "kind": kind_of(p.name)})
+                hits.append({"path": _ident_rel(rel, known), "kind": kind_of(f.name)})
             else:
                 try:
-                    if p.stat().st_size > self._MAX_SCAN_BYTES:
+                    if f.stat.st_size > self._MAX_SCAN_BYTES:
                         continue
-                    if ql in p.read_text(encoding="utf-8", errors="replace").lower():
-                        hits.append({"path": _ident(root, p), "kind": kind_of(p.name)})
+                    if ql in f.path.read_text(encoding="utf-8", errors="replace").lower():
+                        hits.append({"path": _ident_rel(rel, known), "kind": kind_of(f.name)})
                 except OSError:
                     continue
             if len(hits) >= self._LIMIT:

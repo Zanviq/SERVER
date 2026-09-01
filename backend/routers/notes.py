@@ -26,7 +26,7 @@ from ..json_store import lock_for, write_text_atomic
 from ..file_kinds import inline_media_type, is_editable, kind_of
 from ..notes_graph import backlinks_for, build_graph, parse_wikilinks
 from ..security_paths import safe_join, to_rel
-from ..storage import resolve, user_data_root
+from ..storage import resolve, user_data_root, walk_dirs, walk_files
 from ..trash import move_to_trash
 
 logger = logging.getLogger("server.notes")
@@ -122,14 +122,20 @@ def _existing(root: Path, rel: str) -> Path:
 
 
 def _summary(root: Path, p: Path) -> NoteSummary:
-    st = p.stat()
+    return _summary_of(to_rel(root, p), p.stat())
+
+
+def _summary_of(rel: str, st) -> NoteSummary:
+    """순회에서 받아 둔 stat 으로 만든다 — 파일마다 다시 stat 하지 않는다."""
+    name = rel.rsplit("/", 1)[-1]
+    stem = name[:-3] if name.endswith(".md") else (name.rsplit(".", 1)[0] if "." in name else name)
     return NoteSummary(
-        path=to_rel(root, p),
-        title=p.stem,
+        path=rel,
+        title=stem,
         modified=st.st_mtime,
-        kind=kind_of(p.name),
+        kind=kind_of(name),
         size=st.st_size,
-        editable=is_editable(p.name),
+        editable=is_editable(name),
     )
 
 
@@ -145,7 +151,7 @@ def list_notes(
     settings: Settings = Depends(get_settings),
 ):
     root = user_data_root(user, settings)
-    return [_summary(root, p) for p in sorted(root.rglob("*")) if p.is_file()]
+    return [_summary_of(f.rel, f.stat) for f in walk_files(root)]
 
 
 @router.get("/tree", response_model=NoteTree)
@@ -155,14 +161,10 @@ def notes_tree(
 ):
     """폴더 목록 + 문서 목록(모든 종류). 프런트에서 중첩 트리로 구성."""
     root = user_data_root(user, settings)
-    folders: list[str] = []
-    notes: list[NoteSummary] = []
-    for p in sorted(root.rglob("*")):
-        if p.is_dir():
-            folders.append(to_rel(root, p))
-        elif p.is_file():
-            notes.append(_summary(root, p))
-    return NoteTree(folders=folders, notes=notes)
+    return NoteTree(
+        folders=walk_dirs(root),
+        notes=[_summary_of(f.rel, f.stat) for f in walk_files(root)],
+    )
 
 
 @router.post("/folder")
@@ -462,15 +464,14 @@ def search_notes(
     root = user_data_root(user, settings)
     ql = q.lower()
     hits: list[SearchHit] = []
-    for p in sorted(root.rglob("*")):
-        if not p.is_file():
-            continue
-        title = p.stem
+    for f in walk_files(root):
+        p, name = f.path, f.name
+        title = name[:-3] if name.endswith(".md") else (name.rsplit(".", 1)[0] if "." in name else name)
         title_hit = ql in title.lower()
-        if not is_editable(p.name):
+        if not is_editable(name):
             # 이미지·PDF 등은 파일명으로만 찾는다
             if title_hit:
-                hits.append(SearchHit(path=to_rel(root, p), title=title, snippet=""))
+                hits.append(SearchHit(path=f.rel, title=title, snippet=""))
             if len(hits) >= 50:
                 break
             continue

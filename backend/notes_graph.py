@@ -9,6 +9,8 @@ import re
 import stat as _stat
 from pathlib import Path
 
+from .storage import walk_dirs, walk_files
+
 _WIKILINK = re.compile(r"\[\[([^\[\]]+?)\]\]")
 
 # (notes_dir, folder, mode) -> (fingerprint, result). 파일시스템 지문으로 자가 무효화.
@@ -20,29 +22,25 @@ def clear_cache() -> None:
 
 
 def _tree_fingerprint(base: Path) -> tuple:
-    """base 하위를 stat만으로 1회 순회한 값싼 지문(.md수·디렉터리수·최대mtime·총크기).
+    """base 하위를 1회 순회한 값싼 지문(.md수·디렉터리수·최대mtime·총크기).
 
     본문을 읽지 않으므로 read_text 그래프 빌드보다 훨씬 싸다. 저장 시 mtime이
     바뀌므로 지문이 바뀌어 캐시가 자연히 무효화된다.
+
+    순회는 walk_files/walk_dirs(scandir)를 쓴다 — 캐시가 맞아떨어져도 이 지문은
+    매번 계산하므로, 여기가 느리면 캐시의 이득이 사라진다.
     """
     if not base.exists():
         return (0, 0, 0, 0)
-    md = dirs = 0
+    md = 0
     mx = total = 0
-    for p in base.rglob("*"):
-        try:
-            st = p.stat()
-        except OSError:
-            continue
-        if _stat.S_ISDIR(st.st_mode):
-            dirs += 1
-            continue
-        if p.name.endswith(".md"):
+    for f in walk_files(base, sort=False):
+        if f.rel.endswith(".md"):
             md += 1
-            total += st.st_size
-        if st.st_mtime_ns > mx:
-            mx = st.st_mtime_ns
-    return (md, dirs, mx, total)
+            total += f.stat.st_size
+        if f.stat.st_mtime_ns > mx:
+            mx = f.stat.st_mtime_ns
+    return (md, len(walk_dirs(base, sort=False)), mx, total)
 
 
 def parse_wikilinks(text: str) -> list[str]:
@@ -55,12 +53,6 @@ def parse_wikilinks(text: str) -> list[str]:
         if target and target not in out:
             out.append(target)
     return out
-
-
-def _iter_notes(notes_dir: Path) -> list[Path]:
-    if not notes_dir.exists():
-        return []
-    return sorted(p for p in notes_dir.rglob("*.md") if p.is_file())
 
 
 def _resolve_base(notes_dir: Path, folder: str | None) -> Path:
@@ -97,7 +89,7 @@ def build_graph(
         _CACHE[cache_key] = (fp, result)
         return result
 
-    notes = sorted(p for p in base.rglob("*.md") if p.is_file())
+    notes = [f.path for f in walk_files(base) if f.rel.endswith(".md")]
     by_key: dict[str, str] = {}
     nodes = []
     for p in notes:
@@ -140,7 +132,7 @@ def _folder_graph(notes_dir: Path, base: Path) -> dict:
     nodes: list[dict] = []
     for d in subdirs:
         rel = d.relative_to(notes_dir).as_posix()
-        count = sum(1 for p in d.rglob("*.md") if p.is_file())
+        count = sum(1 for f in walk_files(d, sort=False) if f.rel.endswith(".md"))
         nodes.append(
             {"id": rel, "title": d.name, "path": rel, "type": "folder", "count": count}
         )
@@ -165,7 +157,7 @@ def _folder_graph(notes_dir: Path, base: Path) -> dict:
         return (base / rel_parts[0]).relative_to(notes_dir).as_posix()
 
     # 전체 스템 → 경로 (base 하위만) 로 위키링크 대상 해석
-    all_notes = [p for p in base.rglob("*.md") if p.is_file()]
+    all_notes = [f.path for f in walk_files(base, sort=False) if f.rel.endswith(".md")]
     by_key: dict[str, Path] = {}
     for p in all_notes:
         by_key.setdefault(p.stem.lower(), p)

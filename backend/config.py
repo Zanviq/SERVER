@@ -119,13 +119,6 @@ class Settings:
     def user_root(self, username: str) -> Path:
         return self.users_root / username
 
-    def find_user(self, username: str) -> UserAccount | None:
-        """.env의 부트스트랩 계정 조회 — 계정 조회는 accounts 저장소를 쓴다."""
-        for u in self.users:
-            if u.username == username:
-                return u
-        return None
-
     def google_config(self, username: str) -> dict | None:
         """유저별 Google Calendar 설정.
 

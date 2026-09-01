@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import datetime
 
 #: 'YYYY-M-D' 처럼 자리수가 덜 맞는 표기도 받는다 — 모델이 흔히 그렇게 준다.
 _LOOSE = re.compile(
@@ -82,7 +82,3 @@ def clamp_interval(value) -> int:
     except (TypeError, ValueError):
         return 1
     return max(1, min(MAX_INTERVAL, n))
-
-
-def parse_date_only(value, *, field: str = "날짜") -> date:
-    return parse(value, field=field).date()

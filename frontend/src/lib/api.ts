@@ -34,14 +34,6 @@ export interface AdminUser {
   approved_by: string | null;
 }
 
-export interface FileEntry {
-  name: string;
-  path: string;
-  is_dir: boolean;
-  size: number;
-  modified: number;
-}
-
 export interface SystemStats {
   cpu_percent: number;
   cpu_count: number;
@@ -194,6 +186,9 @@ export const api = {
     return req<Todo[]>(`/api/todo/list${qs ? `?${qs}` : ""}`);
   },
   todoCounts: () => req<TodoCounts>("/api/todo/counts"),
+  /** 할 일 화면 최초 로드 — 셋을 따로 부르면 서버가 같은 파일을 세 번 읽는다. */
+  todoBoard: () =>
+    req<{ categories: TodoCategory[]; todos: Todo[]; counts: TodoCounts }>("/api/todo/board"),
   todoCreate: (body: Partial<Todo>) => req<Todo>("/api/todo/create", jsonInit("POST", body)),
   todoUpdate: (id: string, body: Partial<Todo>) =>
     req<Todo>(`/api/todo/${encodeURIComponent(id)}`, jsonInit("PUT", body)),
