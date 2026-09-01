@@ -276,20 +276,22 @@ export function cellOffset(text: string, row: number, col: number): number {
   let off = 0;
   for (let i = 0; i < lineIdx; i++) off += lines[i].length + 1;
   const line = lines[lineIdx];
-  let bars = 0;
+  // 이 줄의 칸 구분자 위치들(이스케이프 `\|` 와 인라인 코드 안은 제외)
+  const bars: number[] = [];
   let inCode = false;
   for (let k = 0; k < line.length; k++) {
     if (line[k] === "\\" && line[k + 1] === "|") { k++; continue; }
     if (line[k] === "`") inCode = !inCode;
-    if (line[k] === "|" && !inCode) {
-      bars++;
-      if (bars === col + 1) {
-        // `| ` 다음이 칸의 시작
-        let s = k + 1;
-        while (s < line.length && line[s] === " ") s++;
-        return off + s;
-      }
-    }
+    if (line[k] === "|" && !inCode) bars.push(k);
   }
-  return off + line.length;
+  const open = bars[col];
+  if (open === undefined) return off + line.length;
+  // 칸의 오른쪽 끝. **여백을 건너뛸 때 이 선을 넘으면 안 된다** — 넘으면 빈 칸에서
+  // 커서가 오른쪽 파이프에 가서 붙고, Tab 으로 옮겨 가 글자를 치면
+  // `|     값|` 처럼 칸 밖에 붙어 버린다(브라우저에서 실측).
+  const close = bars[col + 1] ?? line.length;
+  let s = open + 1;
+  while (s < close && line[s] === " ") s++;
+  if (s >= close) s = Math.min(open + 2, close); // 빈 칸이면 `| ` 바로 뒤
+  return off + s;
 }

@@ -100,5 +100,18 @@ check("1행 1열 시작 글자", txt.slice(off, off + 1), "1");
 const off2 = T.cellOffset(txt, 0, 2);
 check("머리글 2열 시작", txt.slice(off2, off2 + 2), "비고");
 
+// 빈 칸: 여백을 다 건너뛰면 오른쪽 파이프에 붙는다. 슬래시 메뉴로 빈 표를 넣고
+// Tab 으로 옮겨 글자를 치면 `|     값|` 이 됐다(브라우저에서 실측).
+const 빈표 = T.formatTable([["", "", ""], ["", "", ""]], ["none", "none", "none"]);
+for (const col of [0, 1, 2]) {
+  const o = T.cellOffset(빈표, 0, col);
+  const 넣은뒤 = 빈표.slice(0, o) + "값" + 빈표.slice(o);
+  check(`빈 칸 ${col} 에 글자를 넣으면 칸 안`, 넣은뒤.split("\n")[0].includes("| 값"), true);
+  check(`빈 칸 ${col} 에서 파이프에 안 붙는다`, 빈표[o] !== "|", true);
+}
+// 내용이 있는 칸은 그대로 내용 첫 글자
+const 섞인표 = T.formatTable([["가", "", "다"]], ["none", "none", "none"]);
+check("빈 칸 옆에 내용 칸", 섞인표.slice(T.cellOffset(섞인표, 0, 2), T.cellOffset(섞인표, 0, 2) + 1), "다");
+
 console.log(`\n실패: ${fails}`);
 process.exit(fails ? 1 : 0);
