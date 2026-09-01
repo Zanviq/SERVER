@@ -21,6 +21,18 @@ const EQUALS = 61; // "=" 문자 코드
 const HighlightDelim = { resolve: "Highlight", mark: "HighlightMark" };
 
 /**
+ * 구분자가 내용에 붙어 있는가.
+ *
+ * `a == b 이고 c == d` 처럼 **산문에 섞인 비교 연산자**가 형광펜이 되면 안 된다
+ * (실제로 그렇게 칠해졌다 — `a` 와 `d` 사이가 통째로 형광펜이 됐다).
+ * 굵게(`**`)와 같은 규칙을 쓴다: 여는 쪽은 뒤에 공백이 오면 안 되고,
+ * 닫는 쪽은 앞에 공백이 오면 안 된다.
+ */
+function isBlank(code: number): boolean {
+  return code === -1 || Number.isNaN(code) || code === 32 || code === 9 || code === 10 || code === 13;
+}
+
+/**
  * `==...==` 을 인라인 노드로 파싱한다.
  *
  * Emphasis 뒤에 끼워 넣는다 — 앞에 두면 `**==굵고 강조==**` 같은 중첩에서
@@ -39,7 +51,11 @@ export const cmHighlightExtension: MarkdownConfig = {
         if (next !== EQUALS || cx.char(pos + 1) !== EQUALS) return -1;
         // 세 개 이상(`===`)은 구분선·제목 밑줄일 수 있으니 건드리지 않는다
         if (cx.char(pos + 2) === EQUALS) return -1;
-        return cx.addDelimiter(HighlightDelim, pos, pos + 2, true, true);
+        const before = pos > cx.offset ? cx.char(pos - 1) : -1;
+        const canOpen = !isBlank(cx.char(pos + 2));
+        const canClose = !isBlank(before);
+        if (!canOpen && !canClose) return -1;
+        return cx.addDelimiter(HighlightDelim, pos, pos + 2, canOpen, canClose);
       },
     },
   ],
@@ -55,7 +71,12 @@ interface MdNode {
   [k: string]: unknown;
 }
 
-const HIGHLIGHT_RE = /==(?!=)([\s\S]+?)==/g;
+// 편집기 쪽 규칙(isBlank)과 같은 뜻: 여는 `==` 뒤와 닫는 `==` 앞에 공백이 없어야 한다.
+// 그래서 `a == b` 는 형광펜이 아니고 `==여기==` 는 형광펜이다.
+// 한 줄 안으로 제한한다 — 떠돌이 `==` 하나가 문단을 통째로 삼키지 않게.
+// 한 글자짜리를 먼저 시도한다. `(\S(?:...)?)` 로 쓰면 선택 그룹이 탐욕적이라
+// `==앞== 가운데 ==뒤==` 가 통째로 한 덩어리가 된다(테스트로 잡았다).
+const HIGHLIGHT_RE = /==(?!=)(\S|\S[^\n]*?\S)==/g;
 
 /**
  * `==x==` → `<mark>x</mark>`.
