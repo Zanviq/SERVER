@@ -1726,8 +1726,14 @@ def test_ai_skill_catalog_and_ops():
     # delete_document
     assert reg.dispatch("delete_document", {"path": "log"}, ctx).ok
     # find_free_slots (일정 없으면 근무시간 전체가 빈 시간)
-    fr = reg.dispatch("find_free_slots", {"date": "2026-09-01", "duration_minutes": 60}, ctx)
-    assert fr.ok and len(fr.data["free_slots"]) >= 1
+    # **미래 날짜로 물어야 한다.** 오늘 날짜를 박아 두면, 지난 시간대는 제안하지
+    # 않는 규칙 때문에 그날 오후에 돌릴 때 0건이 되어 시계에 따라 깨진다.
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    future = (_date.today() + _td(days=30)).isoformat()
+    fr = reg.dispatch("find_free_slots", {"date": future, "duration_minutes": 60}, ctx)
+    assert fr.ok and len(fr.data["free_slots"]) >= 1, (future, fr.data)
     # get_system_status — 주인 전용이라 일반 컨텍스트에서는 거절된다
     assert reg.dispatch("get_system_status", {}, ctx).error_code == "forbidden"
     owner_ctx = SkillContext(

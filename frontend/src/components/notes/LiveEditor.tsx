@@ -13,6 +13,8 @@ import {
 } from "@codemirror/autocomplete";
 import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { EmbedResolver, eachWikiEmbed, isImagePath } from "../../lib/embeds";
+import { cmHighlightExtension, highlightTag } from "../../lib/markdownExtras";
+import { makeSlashSource, SlashActions } from "./slashMenu";
 import { Paperclip } from "lucide-react";
 import { toast } from "../../store/toast";
 import { useMediaQuery } from "../../lib/useMediaQuery";
@@ -40,28 +42,100 @@ const mdHighlight = HighlightStyle.define([
   { tag: t.list, color: "rgb(var(--accent))" },
   { tag: t.processingInstruction, color: "rgb(var(--fg-subtle))" },
   { tag: t.contentSeparator, color: "rgb(var(--fg-subtle))" },
+  // 형광펜(==강조==) — 읽기 뷰의 <mark>와 같은 느낌으로
+  {
+    tag: highlightTag,
+    backgroundColor: "rgb(var(--warning) / 0.3)",
+    color: "rgb(var(--fg))",
+    borderRadius: "3px",
+  },
 ]);
 
 // 커서가 없는 줄에서 숨길 인라인 구문기호 노드
-const HIDE = new Set(["EmphasisMark", "CodeMark", "StrikethroughMark", "HeaderMark"]);
+const HIDE = new Set([
+  "EmphasisMark", "CodeMark", "StrikethroughMark", "HeaderMark", "HighlightMark",
+]);
 
-/** ![[사진.png]] 을 편집 중에도 그림으로 보여주는 위젯(옵시디언 라이브 프리뷰). */
+/**
+ * ![[사진.png]] 을 편집 중에도 그림으로 보여주는 위젯(옵시디언 라이브 프리뷰).
+ *
+ * 오른쪽 아래 손잡이를 끌면 크기가 바뀌고, 놓는 순간 **문서의 `|너비`가 갱신된다**
+ * — 화면에서만 커지고 저장이 안 되면 다시 열었을 때 원래대로 돌아간다.
+ *
+ * from/to 는 이 임베드 문자열(`![[...]]`)의 문서 상의 범위다. 위젯은 문서가
+ * 바뀔 때마다 다시 만들어지므로(embedDeco), 손댈 때의 범위는 항상 최신이다.
+ */
 class ImageWidget extends WidgetType {
-  constructor(readonly url: string, readonly alt: string, readonly width?: number) {
+  constructor(
+    readonly url: string,
+    readonly target: string,
+    readonly width: number | undefined,
+    readonly from: number,
+    readonly to: number,
+  ) {
     super();
   }
   eq(o: ImageWidget) {
-    return o.url === this.url && o.width === this.width;
+    return (
+      o.url === this.url &&
+      o.width === this.width &&
+      o.from === this.from &&
+      o.to === this.to
+    );
   }
-  toDOM() {
+  toDOM(view: EditorView) {
     const wrap = document.createElement("div");
     wrap.className = "cm-embed-img";
     const img = document.createElement("img");
     img.src = this.url;
-    img.alt = this.alt;
+    img.alt = this.target;
     img.loading = "lazy";
     if (this.width) img.style.width = `${this.width}px`;
     wrap.appendChild(img);
+
+    const grip = document.createElement("span");
+    grip.className = "cm-embed-grip";
+    grip.title = "끌어서 크기 조절 (두 번 누르면 원래 크기)";
+    grip.setAttribute("aria-label", "이미지 크기 조절");
+    wrap.appendChild(grip);
+
+    const writeWidth = (w: number | null) => {
+      // 위젯이 만들어진 뒤 문서가 바뀌었을 수 있다. 그 자리에 아직 같은
+      // 임베드가 있을 때만 고친다(아니면 엉뚱한 글자를 덮어쓴다).
+      const cur = view.state.sliceDoc(this.from, this.to);
+      if (!cur.startsWith("![[")) return;
+      const body = w ? `![[${this.target}|${w}]]` : `![[${this.target}]]`;
+      if (body === cur) return;
+      view.dispatch({ changes: { from: this.from, to: this.to, insert: body } });
+    };
+
+    let startX = 0;
+    let startW = 0;
+    const onMove = (e: PointerEvent) => {
+      const w = Math.max(60, Math.round(startW + (e.clientX - startX)));
+      img.style.width = `${w}px`;
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      grip.classList.remove("is-dragging");
+      writeWidth(Math.round(img.getBoundingClientRect().width));
+    };
+    grip.addEventListener("pointerdown", (e) => {
+      e.preventDefault(); // 에디터로 선택이 번지지 않게
+      e.stopPropagation();
+      startX = e.clientX;
+      startW = img.getBoundingClientRect().width;
+      grip.classList.add("is-dragging");
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
+    grip.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      img.style.width = "";
+      writeWidth(null); // 너비 지정을 지워 원래 크기로
+    });
     return wrap;
   }
   ignoreEvent() {
@@ -164,13 +238,17 @@ function buildEmbeds(state: EditorState): DecorationSet {
   for (const text of state.doc.iterLines()) {
     const end = pos + text.length;
     if (text.includes("![[")) {
-      eachWikiEmbed(text, ({ embed }) => {
+      const lineStart = pos;
+      eachWikiEmbed(text, ({ start, end: stop, embed }) => {
         if (!isImagePath(embed.target)) return;
         const hit = resolve(embed.target);
         if (!hit) return;
         ranges.push(
           Decoration.widget({
-            widget: new ImageWidget(hit.url, embed.target, embed.width),
+            widget: new ImageWidget(
+              hit.url, embed.target, embed.width,
+              lineStart + start, lineStart + stop,
+            ),
             side: 1,
             block: true,
           }).range(end),
@@ -291,13 +369,28 @@ const editorTheme = EditorView.theme({
   },
   ".cm-copy-btn:hover": { color: "rgb(var(--fg))" },
   // 인라인 이미지 임베드(편집 중에도 보이는 그림)
-  ".cm-embed-img": { padding: "4px 0" },
+  ".cm-embed-img": { padding: "4px 0", position: "relative", display: "inline-block" },
   ".cm-embed-img img": {
     maxWidth: "100%",
     borderRadius: "6px",
     border: "1px solid rgb(var(--line))",
     display: "block",
   },
+  // 크기 조절 손잡이 — 평소엔 옅게, 그림에 올리면 또렷하게
+  ".cm-embed-grip": {
+    position: "absolute",
+    right: "-5px",
+    bottom: "1px",
+    width: "14px",
+    height: "14px",
+    borderRadius: "3px",
+    border: "1px solid rgb(var(--line-strong))",
+    backgroundColor: "rgb(var(--bg-elevated))",
+    cursor: "ew-resize",
+    opacity: "0",
+    transition: "opacity 120ms",
+  },
+  ".cm-embed-img:hover .cm-embed-grip, .cm-embed-grip.is-dragging": { opacity: "1" },
 });
 
 export interface LiveEditorProps {
@@ -314,6 +407,8 @@ export interface LiveEditorProps {
   onDropFiles?: (files: File[]) => Promise<string[]>;
   /** 문서 트리에서 끌어온 경로 → 삽입할 마크다운 */
   onDropPath?: (path: string) => string;
+  /** `/` 메뉴의 "새 문서 만들어 링크" — 만든 문서 제목을 돌려준다(취소면 null) */
+  onCreateDoc?: () => Promise<string | null>;
 }
 
 export function LiveEditor({
@@ -325,11 +420,17 @@ export function LiveEditor({
   resolveEmbed,
   onDropFiles,
   onDropPath,
+  onCreateDoc,
 }: LiveEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const cbs = useRef({ onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey });
-  cbs.current = { onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey };
+  const cbs = useRef({
+    onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey, onCreateDoc,
+  });
+  cbs.current = {
+    onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey, onCreateDoc,
+  };
+  const fileRef = useRef<HTMLInputElement>(null);
   // 터치 기기이거나 화면이 좁을 때. 터치엔 드래그앤드롭이 없고, 좁은 창에서는
   // 트리에서 편집기로 끌어올 공간 자체가 없다(둘을 번갈아 보여주므로).
   const needsAttachButton = useMediaQuery("(pointer: coarse), (max-width: 639px)");
@@ -340,6 +441,38 @@ export function LiveEditor({
   useEffect(() => {
     viewRef.current?.dispatch({ effects: setResolver.of(resolveEmbed) });
   }, [resolveEmbed]);
+
+  /** 커서(또는 지정 위치)에 블록을 넣는다. 줄 한가운데면 앞뒤로 줄을 나눈다. */
+  const insertBlock = (view: EditorView, at: number, body: string) => {
+    const pos = Math.min(at, view.state.doc.length);
+    const line = view.state.doc.lineAt(pos);
+    const text = (pos > line.from ? "\n" : "") + body + (pos < line.to ? "\n" : "");
+    view.dispatch({
+      changes: { from: pos, insert: text },
+      selection: { anchor: pos + text.length },
+    });
+    view.focus();
+  };
+
+  /**
+   * 파일 업로드 → 삽입. 드롭·붙여넣기·첨부 버튼이 모두 이걸 쓴다.
+   *
+   * 업로드가 끝날 때쯤엔 다른 문서가 열려 있을 수 있다. 그때 삽입하면 엉뚱한
+   * 문서가 오염되고 자동저장까지 된다 — 시작 시점의 문서를 붙잡아 대조한다.
+   */
+  const uploadInto = (view: EditorView, at: number, files: File[]) => {
+    const insert = cbs.current.onDropFiles;
+    if (!insert || !files.length) return;
+    const startedIn = cbs.current.docKey;
+    insert(files).then((snippets) => {
+      if (!snippets.length) return;
+      if (viewRef.current !== view || cbs.current.docKey !== startedIn) {
+        toast.error("다른 문서로 이동해 링크를 넣지 못했습니다. 올린 파일은 목록에 있습니다.");
+        return;
+      }
+      insertBlock(view, at, snippets.join("\n"));
+    });
+  };
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -356,6 +489,12 @@ export function LiveEditor({
       return { from: before.from + 2, options };
     };
 
+    const slashActions = (): SlashActions => ({
+      attachImage: cbs.current.onDropFiles ? () => fileRef.current?.click() : undefined,
+      createDoc: cbs.current.onCreateDoc,
+    });
+    const slashSource = makeSlashSource(slashActions);
+
     const state = EditorState.create({
       doc: value,
       extensions: [
@@ -367,7 +506,12 @@ export function LiveEditor({
           ...defaultKeymap,
           ...historyKeymap,
         ]),
-        markdown({ base: markdownLanguage, codeLanguages: languages }),
+        markdown({
+          base: markdownLanguage,
+          codeLanguages: languages,
+          // 형광펜(==강조==)은 표준 마크다운에 없다. 읽기 뷰와 같은 규칙을 쓴다.
+          extensions: [cmHighlightExtension],
+        }),
         // 드래그&드롭: 떨어뜨린 '그 위치'에 삽입한다(옵시디언과 동일).
         EditorView.domEventHandlers({
           dragover(e) {
@@ -385,34 +529,11 @@ export function LiveEditor({
             const pos =
               view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? view.state.selection.main.head;
 
-            /** 줄 한가운데면 앞뒤로 줄을 나눈다 — 임베드 두 개가 한 줄에 붙지 않도록. */
-            const place = (at: number, body: string) => {
-              const line = view.state.doc.lineAt(at);
-              const text = (at > line.from ? "\n" : "") + body + (at < line.to ? "\n" : "");
-              view.dispatch({
-                changes: { from: at, insert: text },
-                selection: { anchor: at + text.length },
-              });
-              view.focus();
-            };
-
             const files = Array.from(dt.files ?? []);
             if (files.length) {
               e.preventDefault();
-              const insert = cbs.current.onDropFiles;
-              if (!insert) return true;
-              // 업로드가 끝날 때쯤엔 다른 문서가 열려 있을 수 있다. 그때 삽입하면
-              // 엉뚱한 문서가 오염되고 자동저장까지 된다 — 드롭 당시 문서를 붙잡아 둔다.
-              const droppedIn = cbs.current.docKey;
-              insert(files).then((snippets) => {
-                if (!snippets.length) return;
-                if (viewRef.current !== view || cbs.current.docKey !== droppedIn) {
-                  toast.error("다른 문서로 이동해 링크를 넣지 못했습니다. 올린 파일은 목록에 있습니다.");
-                  return;
-                }
-                // 그 사이 사용자가 입력했을 수 있으니 삽입 시점 길이로 한 번 더 클램프
-                place(Math.min(pos, view.state.doc.length), snippets.join("\n"));
-              });
+              if (!cbs.current.onDropFiles) return true;
+              uploadInto(view, pos, files);
               return true;
             }
 
@@ -422,11 +543,41 @@ export function LiveEditor({
               const snippet = cbs.current.onDropPath(path);
               if (snippet) {
                 e.preventDefault();
-                place(pos, snippet);
+                insertBlock(view, pos, snippet);
                 return true;
               }
             }
             return false;
+          },
+          /**
+           * 클립보드의 그림을 그대로 붙여넣는다(캡처·다른 앱에서 복사한 이미지).
+           *
+           * 파일명은 대개 "image.png"로 다 같아서, 그대로 올리면 두 번째 붙여넣기가
+           * 첫 번째를 덮어쓴다. 시각을 붙여 고유하게 만든다.
+           */
+          paste(e, view) {
+            const dt = e.clipboardData;
+            if (!dt || !cbs.current.onDropFiles) return false;
+            const images: File[] = [];
+            for (const item of Array.from(dt.items ?? [])) {
+              if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+              const f = item.getAsFile();
+              if (f) images.push(f);
+            }
+            if (!images.length) return false; // 글자 붙여넣기는 CM6 기본 동작에 맡긴다
+            e.preventDefault();
+            const stamp = new Date()
+              .toISOString()
+              .replace(/[-:]/g, "")
+              .replace("T", "-")
+              .slice(0, 15);
+            const named = images.map((f, i) => {
+              const ext = (f.type.split("/")[1] || "png").replace("jpeg", "jpg");
+              const suffix = images.length > 1 ? `-${i + 1}` : "";
+              return new File([f], `붙여넣기-${stamp}${suffix}.${ext}`, { type: f.type });
+            });
+            uploadInto(view, view.state.selection.main.head, named);
+            return true;
           },
         }),
         syntaxHighlighting(mdHighlight),
@@ -437,7 +588,11 @@ export function LiveEditor({
         embedDeco,
         EditorView.lineWrapping,
         closeBrackets(),
-        autocompletion({ override: [wikiComplete] }),
+        autocompletion({
+          override: [wikiComplete, slashSource],
+          // 슬래시 메뉴는 고르는 목록이라 첫 항목이 미리 선택돼 있어야 Enter로 바로 넣는다
+          defaultKeymap: true,
+        }),
         EditorView.updateListener.of((u) => {
           if (u.docChanged && !applyingExternal.current) {
             cbs.current.onChange(u.state.doc.toString());
@@ -467,29 +622,28 @@ export function LiveEditor({
     applyingExternal.current = false;
   }, [value]);
 
-  /** 파일 선택 → 업로드 → 커서 위치에 임베드 삽입. 드롭 경로와 같은 일을 한다. */
-  const attach = async (files: FileList | null) => {
+  /** 파일 선택 → 업로드 → 커서 위치에 임베드 삽입. 드롭·붙여넣기와 같은 일을 한다. */
+  const attach = (files: FileList | null) => {
     const view = viewRef.current;
-    const insert = cbs.current.onDropFiles;
-    if (!view || !insert || !files?.length) return;
-    const droppedIn = cbs.current.docKey;
-    const snippets = await insert(Array.from(files));
-    if (!snippets.length) return;
-    if (viewRef.current !== view || cbs.current.docKey !== droppedIn) {
-      toast.error("다른 문서로 이동해 링크를 넣지 못했습니다. 올린 파일은 목록에 있습니다.");
-      return;
-    }
-    const at = Math.min(view.state.selection.main.head, view.state.doc.length);
-    const line = view.state.doc.lineAt(at);
-    const body = snippets.join("\n");
-    const text = (at > line.from ? "\n" : "") + body + (at < line.to ? "\n" : "");
-    view.dispatch({ changes: { from: at, insert: text }, selection: { anchor: at + text.length } });
-    view.focus();
+    if (!view || !files?.length) return;
+    uploadInto(view, view.state.selection.main.head, Array.from(files));
   };
 
   return (
     <div className="relative h-full min-h-0">
       <div ref={hostRef} className="h-full min-h-0 overflow-hidden" />
+      {/* `/이미지` 메뉴가 여는 파일 선택. 화면에는 보이지 않는다. */}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="sr-only"
+        onChange={(e) => {
+          attach(e.target.files);
+          e.target.value = ""; // 같은 파일을 다시 골라도 change가 오도록
+        }}
+      />
       {/* 터치 기기에는 드래그앤드롭이 없어 이미지를 넣을 방법이 아예 없었다.
           (HTML5 DnD는 모바일 브라우저에서 발화하지 않는다) */}
       {needsAttachButton && onDropFiles && (

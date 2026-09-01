@@ -6,6 +6,7 @@ import remarkBreaks from "remark-breaks";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { EmbedResolver, parseWikiEmbed } from "../../lib/embeds";
+import { remarkHighlight } from "../../lib/markdownExtras";
 
 /**
  * `![[대상]]` 임베드와 `[[제목]]` 링크를 표준 마크다운으로 바꾼다.
@@ -48,7 +49,8 @@ const SVG_ATTRS = [
 const SAFE_PROTOCOLS = defaultSchema.protocols?.href ?? ["http", "https", "mailto", "tel"];
 const schema = {
   ...defaultSchema,
-  tagNames: [...(defaultSchema.tagNames ?? []), ...SVG_TAGS],
+  // mark = 형광펜(==강조==). 기본 스키마에 없어 그냥 두면 살균 단계에서 사라진다.
+  tagNames: [...(defaultSchema.tagNames ?? []), "mark", ...SVG_TAGS],
   protocols: {
     ...defaultSchema.protocols,
     href: SAFE_PROTOCOLS,
@@ -117,7 +119,7 @@ export function MarkdownView({
     <div className="prose-server">
       <ReactMarkdown
         // 단일 엔터 줄바꿈(remarkBreaks) + GFM(표/체크박스/취소선/자동링크)
-        remarkPlugins={[remarkGfm, remarkBreaks]}
+        remarkPlugins={[remarkGfm, remarkBreaks, remarkHighlight]}
         // 인라인 HTML/SVG 파싱(rehypeRaw) 후 살균(rehypeSanitize, svg 허용 스키마)
         rehypePlugins={[rehypeRaw, [rehypeSanitize, schema]]}
         components={{

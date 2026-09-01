@@ -36,7 +36,7 @@ function dueTone(due: string): { label: string; cls: string } {
   const days = Math.round((d - t0) / 86400000);
   if (days < 0) return { label: `${-days}일 지남`, cls: "text-danger" };
   if (days === 0) return { label: "오늘", cls: "text-accent-fg font-semibold" };
-  if (days === 1) return { label: "내일", cls: "text-warn" };
+  if (days === 1) return { label: "내일", cls: "text-warning" };
   if (days <= 7) return { label: `${days}일 뒤`, cls: "text-fg-muted" };
   return { label: `${days}일 뒤`, cls: "text-fg-subtle" };
 }

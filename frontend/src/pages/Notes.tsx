@@ -493,6 +493,26 @@ export function Notes() {
   /** 트리에서 편집기로 끌어다 놓은 항목 → 삽입할 마크다운. */
   const onDropPath = useCallback((p: string) => embedMarkdownFor(p, notes), [notes]);
 
+  /** `/` 메뉴의 "새 문서 만들어 링크" — 만들고 제목을 돌려준다(취소면 null). */
+  const onCreateDoc = useCallback(async (): Promise<string | null> => {
+    const title = window.prompt("새 문서 제목")?.trim();
+    if (!title) return null;
+    // 위키링크는 확장자를 쓰지 않으므로 제목에 확장자가 있으면 링크가 어긋난다
+    if (/\.[A-Za-z0-9]{1,8}$/.test(title)) {
+      toast.error("확장자 없이 제목만 적어 주세요.");
+      return null;
+    }
+    const dir = curFolder ? `${curFolder}/` : "";
+    try {
+      await api.noteSave(`${dir}${title}.md`, `# ${title}\n\n`);
+      await reloadTree();
+      return title;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "문서 생성 실패");
+      return null;
+    }
+  }, [curFolder, reloadTree]);
+
   const actions = (
     <div className="flex items-center gap-2">
       <a href={api.noteArchiveUrl(curFolder)} download className="btn btn-ghost h-8"
@@ -683,6 +703,7 @@ export function Notes() {
               resolveEmbed={resolveEmbed}
               onDropFiles={onDropFiles}
               onDropPath={onDropPath}
+              onCreateDoc={onCreateDoc}
             />
           )}
           {/* current도 본다 — 닫은 뒤 늦게 도착한 save 응답이 detail을 다시 채울 수 있다 */}

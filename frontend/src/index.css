@@ -152,6 +152,17 @@
   .prose-server hr {
     @apply my-4 border-line;
   }
+  /* 표 머리글을 옅게 깔아 본문과 구분한다(칸이 많을 때 줄을 놓치지 않도록) */
+  .prose-server th {
+    @apply bg-subtle font-semibold text-fg;
+  }
+  /* 형광펜(==강조==). 편집기의 highlightTag와 같은 색을 쓴다. */
+  .prose-server mark {
+    background-color: rgb(var(--warning) / 0.3);
+    color: rgb(var(--fg));
+    border-radius: 3px;
+    padding: 0 2px;
+  }
 
   /* FullCalendar 테마 매핑 */
   .fc-server {
