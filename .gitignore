@@ -30,3 +30,6 @@ Thumbs.db
 
 # 브라우저 자동화 산출물(콘솔 로그·스크린샷)
 .playwright-mcp/
+
+# 로컬 검증용 개발 서버 스크립트
+_devserver.ps1
