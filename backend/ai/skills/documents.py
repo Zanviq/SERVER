@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ... import doc_cache
 from ...file_kinds import is_editable, kind_of
 from ...json_store import lock_for, write_text_atomic
 from ...notes_graph import backlinks_for
@@ -523,13 +524,11 @@ class SearchDocuments(SkillBase):
             elif name_hit:
                 hits.append({"path": _ident_rel(rel, known), "kind": kind_of(f.name)})
             else:
-                try:
-                    if f.stat.st_size > self._MAX_SCAN_BYTES:
-                        continue
-                    if ql in f.path.read_text(encoding="utf-8", errors="replace").lower():
-                        hits.append({"path": _ident_rel(rel, known), "kind": kind_of(f.name)})
-                except OSError:
+                if f.stat.st_size > self._MAX_SCAN_BYTES:
                     continue
+                text = doc_cache.text_of(f.path, f.stat)  # 두 번째부터는 안 읽는다
+                if text is not None and ql in text.lower():
+                    hits.append({"path": _ident_rel(rel, known), "kind": kind_of(f.name)})
             if len(hits) >= self._LIMIT:
                 break
         truncated = len(hits) >= self._LIMIT

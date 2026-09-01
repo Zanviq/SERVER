@@ -12,6 +12,8 @@ import time
 import uuid
 from pathlib import Path
 
+from . import doc_cache
+
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
@@ -52,6 +54,10 @@ def write_text_atomic(path: Path, text: str) -> None:
             f.flush()
             os.fsync(f.fileno())
         _replace_with_retry(tmp, path)
+        # 담아 둔 옛 본문을 버린다. doc_cache는 mtime·크기로도 무효화하지만,
+        # 파일시스템 시각 해상도가 거친 곳에서는 짧은 간격의 두 번 저장이 같은
+        # mtime을 받을 수 있다(길이까지 같으면 옛 내용이 남는다).
+        doc_cache.invalidate(path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise

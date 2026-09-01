@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
+from .. import doc_cache
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..json_store import lock_for, write_text_atomic
@@ -396,6 +397,9 @@ async def upload(
         except OSError:
             pass
         raise
+    finally:
+        # 여기는 write_text_atomic을 거치지 않는 유일한 쓰기 경로다.
+        doc_cache.invalidate(dest)
     return _summary(root, dest)
 
 
@@ -520,9 +524,9 @@ def search_notes(
             if len(hits) >= 50:
                 break
             continue
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        # 검색은 타자를 칠 때마다 불린다 — 두 번째부터는 캐시에서 온다.
+        text = doc_cache.text_of(p, f.stat)
+        if text is None:
             continue
         if title_hit or ql in text.lower():
             hits.append(

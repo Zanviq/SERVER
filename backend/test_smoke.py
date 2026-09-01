@@ -232,6 +232,27 @@ def test_notes_wikilinks_and_graph():
     assert all("snippet" in h for h in hits)
 
 
+def test_search_sees_edits_immediately():
+    """검색은 본문을 캐시해 둔다 — 고친 뒤 옛 내용이 잡히면 안 된다."""
+    _login()
+    p = "캐시확인.md"
+    client.put("/api/notes/save", json={"path": p, "content": "사과나무"})
+    assert any(h["path"] == p for h in client.get("/api/notes/search?q=사과나무").json())
+
+    # 글자 수가 같은 내용으로 바꾼다. 파일시스템 시각 해상도가 거칠면
+    # mtime·크기가 모두 그대로일 수 있어, 여기가 캐시 무효화의 최악 조건이다.
+    client.put("/api/notes/save", json={"path": p, "content": "바나나무"})
+    assert not any(h["path"] == p for h in client.get("/api/notes/search?q=사과나무").json())
+    assert any(h["path"] == p for h in client.get("/api/notes/search?q=바나나무").json())
+
+    # 발췌는 원문 그대로여야 한다(소문자로 담아 두면 여기서 드러난다)
+    client.put("/api/notes/save", json={"path": p, "content": "Hello World 문서"})
+    hit = [h for h in client.get("/api/notes/search?q=hello").json() if h["path"] == p]
+    assert hit and "Hello World" in hit[0]["snippet"], hit
+
+    client.delete(f"/api/notes/delete?path={p}")
+
+
 def test_notes_rename_and_move():
     _login()
     client.put("/api/notes/save", json={"path": "RM원본.md", "content": "본문"})
