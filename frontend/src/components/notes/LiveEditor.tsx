@@ -257,18 +257,23 @@ const editorTheme = EditorView.theme({
     fontFamily: "ui-monospace, SFMono-Regular, monospace",
     fontSize: "13px",
   },
+  // ⚠️ .cm-line 에는 **margin 을 주지 말 것**(padding 만).
+  // CM6는 줄 높이를 getBoundingClientRect()로 재는데(테두리 박스), 마진은 거기
+  // 포함되지 않는다. 그래서 마진을 주면 화면에 그려지는 위치와 CM6의 높이 지도가
+  // 어긋나고, 그 아래 모든 줄의 클릭 좌표가 누적으로 밀린다.
+  // 실측(4px+4px): 코드블록 다음 줄들의 아래쪽을 클릭하면 한 줄 아래가 찍혔다.
   ".cm-mdcode-first": {
     position: "relative",
     borderTop: "1px solid rgb(var(--line-strong))",
     borderTopLeftRadius: "6px",
     borderTopRightRadius: "6px",
-    marginTop: "4px",
+    paddingTop: "4px",
   },
   ".cm-mdcode-last": {
     borderBottom: "1px solid rgb(var(--line-strong))",
     borderBottomLeftRadius: "6px",
     borderBottomRightRadius: "6px",
-    marginBottom: "4px",
+    paddingBottom: "4px",
   },
   ".cm-copy-btn": {
     position: "absolute",
