@@ -156,6 +156,51 @@
   .prose-server th {
     @apply bg-subtle font-semibold text-fg;
   }
+  /* 콜아웃 — `> [!NOTE]`. 갈래마다 왼쪽 띠와 옅은 배경만 다르게 한다. */
+  .prose-server .callout {
+    @apply my-3 rounded-md border-l-4 px-3 py-2;
+  }
+  .prose-server .callout-head {
+    @apply mb-1 flex items-center gap-1.5 text-[13px] font-semibold;
+  }
+  .prose-server .callout-body > :first-child {
+    @apply mt-0;
+  }
+  .prose-server .callout-body > :last-child {
+    @apply mb-0;
+  }
+  .prose-server .callout-note {
+    border-color: rgb(var(--info));
+    background-color: rgb(var(--info) / 0.08);
+  }
+  .prose-server .callout-tip {
+    border-color: rgb(var(--positive));
+    background-color: rgb(var(--positive) / 0.08);
+  }
+  .prose-server .callout-important {
+    border-color: rgb(var(--accent));
+    background-color: rgb(var(--accent) / 0.1);
+  }
+  .prose-server .callout-warning {
+    border-color: rgb(var(--warning));
+    background-color: rgb(var(--warning) / 0.1);
+  }
+  .prose-server .callout-caution {
+    border-color: rgb(var(--danger));
+    background-color: rgb(var(--danger) / 0.08);
+  }
+
+  /* 토글 — <details>. 삼각형을 우리 색으로 바꾸고 여백을 준다. */
+  .prose-server details {
+    @apply my-2 rounded-md border border-line px-3 py-2;
+  }
+  .prose-server details > summary {
+    @apply cursor-pointer select-none font-medium text-fg;
+  }
+  .prose-server details[open] > summary {
+    @apply mb-2 border-b border-line/60 pb-2;
+  }
+
   /* 형광펜(==강조==). 편집기의 highlightTag와 같은 색을 쓴다. */
   .prose-server mark {
     background-color: rgb(var(--warning) / 0.3);

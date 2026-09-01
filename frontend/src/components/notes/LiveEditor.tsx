@@ -15,6 +15,7 @@ import type { CompletionContext, CompletionResult } from "@codemirror/autocomple
 import { EmbedResolver, eachWikiEmbed, isImagePath } from "../../lib/embeds";
 import { cmHighlightExtension, highlightTag } from "../../lib/markdownExtras";
 import { makeSlashSource, SlashActions } from "./slashMenu";
+import { tableTools } from "./tableTools";
 import { Paperclip } from "lucide-react";
 import { toast } from "../../store/toast";
 import { useMediaQuery } from "../../lib/useMediaQuery";
@@ -586,6 +587,9 @@ export function LiveEditor({
             return true;
           },
         }),
+        // 표 안에서만 뜨는 툴바 + Tab 칸 이동. keymap 은 defaultKeymap 보다
+        // 앞에 와야 Tab 을 먼저 집는다(표 밖에서는 false 를 돌려 넘긴다).
+        tableTools(),
         syntaxHighlighting(mdHighlight),
         livePreview,
         // embedDeco보다 먼저 선언해야 같은 트랜잭션에서 갱신된 값을 읽는다.

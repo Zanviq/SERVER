@@ -62,6 +62,32 @@ const SNIPPETS: Snippet[] = [
   },
   { label: "구분선", detail: "가로줄", text: `---\n${CURSOR}`, keywords: "hr divider 구분선" },
   { label: "형광펜", detail: "==강조==", text: `==${CURSOR}==`, keywords: "highlight mark 형광펜 강조" },
+  {
+    label: "콜아웃(참고)",
+    detail: "> [!NOTE] 강조 상자",
+    text: `> [!NOTE] ${CURSOR}`,
+    keywords: "callout note info 콜아웃 참고 정보 상자",
+    boost: 4,
+  },
+  {
+    label: "콜아웃(팁)",
+    detail: "> [!TIP]",
+    text: `> [!TIP] ${CURSOR}`,
+    keywords: "callout tip 콜아웃 팁",
+  },
+  {
+    label: "콜아웃(주의)",
+    detail: "> [!WARNING]",
+    text: `> [!WARNING] ${CURSOR}`,
+    keywords: "callout warning 콜아웃 주의 경고",
+  },
+  {
+    label: "토글",
+    detail: "접었다 펴는 블록",
+    text: `<details>\n<summary>${CURSOR}</summary>\n\n내용\n\n</details>`,
+    keywords: "toggle details fold 토글 접기 펼치기",
+    boost: 4,
+  },
   { label: "문서 링크", detail: "[[다른 문서]]", text: `[[${CURSOR}`, keywords: "link wiki 링크 문서" },
 ];
 

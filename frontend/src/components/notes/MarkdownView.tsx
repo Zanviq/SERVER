@@ -7,6 +7,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { EmbedResolver, parseWikiEmbed } from "../../lib/embeds";
 import { remarkHighlight } from "../../lib/markdownExtras";
+import { CALLOUTS, parseCallout } from "../../lib/callouts";
 
 /**
  * `![[대상]]` 임베드와 `[[제목]]` 링크를 표준 마크다운으로 바꾼다.
@@ -49,8 +50,9 @@ const SVG_ATTRS = [
 const SAFE_PROTOCOLS = defaultSchema.protocols?.href ?? ["http", "https", "mailto", "tel"];
 const schema = {
   ...defaultSchema,
-  // mark = 형광펜(==강조==). 기본 스키마에 없어 그냥 두면 살균 단계에서 사라진다.
-  tagNames: [...(defaultSchema.tagNames ?? []), "mark", ...SVG_TAGS],
+  // mark = 형광펜(==강조==), details/summary = 토글.
+  // 기본 스키마에 없어 그냥 두면 살균 단계에서 조용히 사라진다.
+  tagNames: [...(defaultSchema.tagNames ?? []), "mark", "details", "summary", ...SVG_TAGS],
   protocols: {
     ...defaultSchema.protocols,
     href: SAFE_PROTOCOLS,
@@ -124,6 +126,21 @@ export function MarkdownView({
         rehypePlugins={[rehypeRaw, [rehypeSanitize, schema]]}
         components={{
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+          blockquote: ({ children, ...props }) => {
+            // `> [!NOTE] 제목` 형태면 콜아웃으로 그린다(GitHub·옵시디언과 같은 표기).
+            const hit = parseCallout(children);
+            if (!hit) return <blockquote {...props}>{children}</blockquote>;
+            const spec = CALLOUTS[hit.kind];
+            return (
+              <div className={`callout callout-${hit.kind}`}>
+                <div className="callout-head">
+                  <span aria-hidden="true">{spec.icon}</span>
+                  <span>{hit.title || spec.label}</span>
+                </div>
+                {hit.body.length > 0 && <div className="callout-body">{hit.body}</div>}
+              </div>
+            );
+          },
           img({ src, alt, ...props }) {
             // 상대경로(`![](사진.png)`)도 벌트에서 찾아 실제 URL로 바꾼다.
             let url = src ?? "";
