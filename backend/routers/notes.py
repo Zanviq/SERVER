@@ -26,7 +26,7 @@ from ..json_store import lock_for, write_text_atomic
 from ..file_kinds import inline_media_type, is_editable, kind_of
 from ..notes_graph import backlinks_for, build_graph, parse_wikilinks
 from ..security_paths import safe_join, to_rel
-from ..storage import resolve, user_data_root, walk_dirs, walk_files
+from ..storage import resolve, user_data_root, walk_all, walk_files
 from ..trash import move_to_trash
 
 logger = logging.getLogger("server.notes")
@@ -161,9 +161,11 @@ def notes_tree(
 ):
     """폴더 목록 + 문서 목록(모든 종류). 프런트에서 중첩 트리로 구성."""
     root = user_data_root(user, settings)
+    # 파일과 폴더를 따로 훑으면 트리를 두 번 걷는다
+    files, folders = walk_all(root)
     return NoteTree(
-        folders=walk_dirs(root),
-        notes=[_summary_of(f.rel, f.stat) for f in walk_files(root)],
+        folders=folders,
+        notes=[_summary_of(f.rel, f.stat) for f in files],
     )
 
 

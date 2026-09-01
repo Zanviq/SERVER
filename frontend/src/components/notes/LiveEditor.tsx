@@ -638,11 +638,11 @@ export function LiveEditor({
   return (
     <div className="relative h-full min-h-0">
       <div ref={hostRef} className="h-full min-h-0 overflow-hidden" />
-      {/* `/이미지` 메뉴가 여는 파일 선택. 화면에는 보이지 않는다. */}
+      {/* `/이미지` 메뉴와 첨부 버튼이 함께 여는 파일 선택. 화면에는 보이지 않는다.
+          입력을 둘로 두면 accept·초기화 규칙이 서로 어긋난다. */}
       <input
         ref={fileRef}
         type="file"
-        accept="image/*"
         multiple
         className="sr-only"
         onChange={(e) => {
@@ -653,21 +653,15 @@ export function LiveEditor({
       {/* 터치 기기에는 드래그앤드롭이 없어 이미지를 넣을 방법이 아예 없었다.
           (HTML5 DnD는 모바일 브라우저에서 발화하지 않는다) */}
       {needsAttachButton && onDropFiles && (
-        <label
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
           className="absolute bottom-3 right-3 grid h-11 w-11 cursor-pointer place-items-center rounded-full border border-line bg-surface text-fg-muted shadow-md active:bg-hovered"
           title="사진·파일 첨부"
+          aria-label="사진·파일 첨부"
         >
           <Paperclip size={18} />
-          <input
-            type="file"
-            multiple
-            className="sr-only"
-            onChange={(e) => {
-              attach(e.target.files);
-              e.target.value = ""; // 같은 파일을 다시 골라도 change가 오도록
-            }}
-          />
-        </label>
+        </button>
       )}
     </div>
   );

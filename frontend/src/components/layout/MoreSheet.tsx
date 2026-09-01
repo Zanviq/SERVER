@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useDismissable } from "../../lib/useDismissable";
 import { createPortal } from "react-dom";
 import { NavLink } from "react-router-dom";
 import { LogOut, User, X } from "lucide-react";
@@ -30,17 +30,7 @@ export function MoreSheet({
 }) {
   const { session, logout } = useAuth();
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
-    };
-  }, [open, onClose]);
+  useDismissable(open, onClose);
 
   if (!open) return null;
 

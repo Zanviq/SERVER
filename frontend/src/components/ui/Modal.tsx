@@ -1,4 +1,5 @@
 import { ReactNode, useEffect, useRef } from "react";
+import { useDismissable } from "../../lib/useDismissable";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
@@ -13,12 +14,11 @@ interface ModalProps {
 export function Modal({ open, onClose, title, children, width = "max-w-lg" }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
+  // Esc 닫기 + 배경 스크롤 잠금은 바텀시트와 공유한다
+  useDismissable(open, onClose);
+
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     // 열릴 때 첫 입력 요소로 포커스 이동
     const focusTimer = window.setTimeout(() => {
       const el = panelRef.current?.querySelector<HTMLElement>(
@@ -26,12 +26,8 @@ export function Modal({ open, onClose, title, children, width = "max-w-lg" }: Mo
       );
       el?.focus();
     }, 0);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.clearTimeout(focusTimer);
-      document.body.style.overflow = prev;
-    };
-  }, [open, onClose]);
+    return () => window.clearTimeout(focusTimer);
+  }, [open]);
 
   if (!open) return null;
 

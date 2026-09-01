@@ -121,6 +121,27 @@ def _ambiguous_result(cats: list[dict], e: _Ambiguous) -> SkillResult:
     )
 
 
+class _Stop(Exception):
+    """바로 돌려줄 결과가 정해졌을 때(카테고리 해석 실패·모호)."""
+
+    def __init__(self, result: SkillResult):
+        self.result = result
+
+
+def _need_category(cats: list[dict], ident) -> str:
+    """카테고리 지목을 id로 바꾼다. 실패하면 _Stop 으로 결과를 던진다.
+
+    이 try/except 짝이 여섯 군데에 복붙돼 있었다 — 한 곳만 고치면 나머지가
+    조용히 다르게 동작한다(이 저장소에서 이미 두 번 겪은 패턴이다).
+    """
+    try:
+        return _resolve_category(cats, ident)
+    except _Ambiguous as e:
+        raise _Stop(_ambiguous_result(cats, e)) from e
+    except HTTPException as e:
+        raise _Stop(_fail(e)) from e
+
+
 _CAT_PROP = {
     "type": "string",
     "description": "카테고리 id 또는 이름('상위/하위' 경로도 가능). 생략하면 미분류.",
@@ -148,53 +169,51 @@ class ListTodos(SkillBase):
     }
 
     def run(self, args, ctx):
-        # 카테고리와 할 일을 따로 부르면 같은 파일을 두 번 읽는다
-        loaded = todo_store.board(ctx.user, ctx.settings)
-        cats = loaded["categories"]
-        cid = None
-        if args.get("category"):
-            try:
-                cid = _resolve_category(cats, args["category"])
-            except _Ambiguous as e:
-                return _ambiguous_result(cats, e)
-            except HTTPException as e:
-                return _fail(e)
         try:
-            frm = dt_to_iso(args["from_date"], field="from_date", date_only=True) if args.get("from_date") else ""
-            to = dt_to_iso(args["to_date"], field="to_date", date_only=True) if args.get("to_date") else ""
-        except BadDateTime as e:
-            return SkillResult(ok=False, message=str(e), error_code="invalid")
+            # 카테고리와 할 일을 따로 부르면 같은 파일을 두 번 읽는다
+            loaded = todo_store.board(ctx.user, ctx.settings)
+            cats = loaded["categories"]
+            cid = None
+            if args.get("category"):
+                cid = _need_category(cats, args["category"])
+            try:
+                frm = dt_to_iso(args["from_date"], field="from_date", date_only=True) if args.get("from_date") else ""
+                to = dt_to_iso(args["to_date"], field="to_date", date_only=True) if args.get("to_date") else ""
+            except BadDateTime as e:
+                return SkillResult(ok=False, message=str(e), error_code="invalid")
 
-        items = todo_store.filter_todos(
-            loaded["todos"],
-            category_id=cid,
-            include_done=bool(args.get("include_done", True)),
-            frm=frm, to=to,
-            include_undated=bool(args.get("include_undated", True)),
-        )
-        if args.get("only_done"):
-            items = [t for t in items if t.get("done")]
-        needle = str(args.get("title_contains") or "").strip().lower()
-        if needle:
-            items = [t for t in items if needle in str(t.get("title", "")).lower()]
+            items = todo_store.filter_todos(
+                loaded["todos"],
+                category_id=cid,
+                include_done=bool(args.get("include_done", True)),
+                frm=frm, to=to,
+                include_undated=bool(args.get("include_undated", True)),
+            )
+            if args.get("only_done"):
+                items = [t for t in items if t.get("done")]
+            needle = str(args.get("title_contains") or "").strip().lower()
+            if needle:
+                items = [t for t in items if needle in str(t.get("title", "")).lower()]
 
-        total = len(items)
-        paths = _path_map(cats)
-        rows = [_row(t, paths) for t in items[:_MAX_ROWS]]
-        left = sum(1 for t in items if not t.get("done"))
-        msg = f"할 일 {total}개(남은 것 {left}개)"
-        data: dict = {"todos": rows, "count": total, "remaining": left}
-        if total > _MAX_ROWS:
-            data["truncated"] = True
-            msg += f" — {_MAX_ROWS}개만 표시(카테고리·기간으로 좁히세요)"
-        if not total:
-            # 왜 없는지 알려 준다 — "없습니다"로 끝내면 다음 수를 모른다
-            data["categories"] = [
-                {"id": c["id"], "category": paths.get(c["id"], "")} for c in cats
-            ]
-        return SkillResult(ok=True, message=msg, data=data)
+            total = len(items)
+            paths = _path_map(cats)
+            rows = [_row(t, paths) for t in items[:_MAX_ROWS]]
+            left = sum(1 for t in items if not t.get("done"))
+            msg = f"할 일 {total}개(남은 것 {left}개)"
+            data: dict = {"todos": rows, "count": total, "remaining": left}
+            if total > _MAX_ROWS:
+                data["truncated"] = True
+                msg += f" — {_MAX_ROWS}개만 표시(카테고리·기간으로 좁히세요)"
+            if not total:
+                # 왜 없는지 알려 준다 — "없습니다"로 끝내면 다음 수를 모른다
+                data["categories"] = [
+                    {"id": c["id"], "category": paths.get(c["id"], "")} for c in cats
+                ]
+            return SkillResult(ok=True, message=msg, data=data)
 
 
+        except _Stop as stop:
+            return stop.result
 class ListTodoCategories(SkillBase):
     name = "list_todo_categories"
     description = "할 일 카테고리 목록(트리). 여기서 얻은 id나 이름을 다른 할 일 스킬에 쓴다."
@@ -237,30 +256,28 @@ class CreateTodoCategory(SkillBase):
     }
 
     def run(self, args, ctx):
-        cats = todo_store.list_categories(ctx.user, ctx.settings)
-        parent = ""
-        if args.get("parent"):
+        try:
+            cats = todo_store.list_categories(ctx.user, ctx.settings)
+            parent = ""
+            if args.get("parent"):
+                parent = _need_category(cats, args["parent"])
+            payload = {"name": args["name"], "parent_id": parent}
+            if args.get("color"):
+                payload["color"] = resolve_color(args["color"], "2")
             try:
-                parent = _resolve_category(cats, args["parent"])
-            except _Ambiguous as e:
-                return _ambiguous_result(cats, e)
+                cat = todo_store.create_category(ctx.user, ctx.settings, payload)
             except HTTPException as e:
                 return _fail(e)
-        payload = {"name": args["name"], "parent_id": parent}
-        if args.get("color"):
-            payload["color"] = resolve_color(args["color"], "2")
-        try:
-            cat = todo_store.create_category(ctx.user, ctx.settings, payload)
-        except HTTPException as e:
-            return _fail(e)
-        fresh = todo_store.list_categories(ctx.user, ctx.settings)
-        return SkillResult(
-            ok=True,
-            message=f"카테고리 '{_cat_path(fresh, cat['id'])}' 생성됨",
-            data={"category_id": cat["id"], "category": _cat_path(fresh, cat["id"])},
-        )
+            fresh = todo_store.list_categories(ctx.user, ctx.settings)
+            return SkillResult(
+                ok=True,
+                message=f"카테고리 '{_cat_path(fresh, cat['id'])}' 생성됨",
+                data={"category_id": cat["id"], "category": _cat_path(fresh, cat["id"])},
+            )
 
 
+        except _Stop as stop:
+            return stop.result
 class CreateTodo(SkillBase):
     mutates = "todo"
     name = "create_todo"
@@ -283,38 +300,36 @@ class CreateTodo(SkillBase):
     }
 
     def run(self, args, ctx):
-        cats = todo_store.list_categories(ctx.user, ctx.settings)
-        cid = ""
-        if args.get("category"):
+        try:
+            cats = todo_store.list_categories(ctx.user, ctx.settings)
+            cid = ""
+            if args.get("category"):
+                cid = _need_category(cats, args["category"])
+            due = str(args.get("due") or "")
+            all_day = bool(args.get("all_day")) or (bool(due) and not dt_has_time(due))
+            payload = {
+                "title": args["title"],
+                "description": args.get("description", ""),
+                "category_id": cid,
+                "due": due,
+                "all_day": all_day,
+                "color": resolve_color(args["color"], "2") if args.get("color") else "",
+            }
             try:
-                cid = _resolve_category(cats, args["category"])
-            except _Ambiguous as e:
-                return _ambiguous_result(cats, e)
+                todo = todo_store.create_todo(ctx.user, ctx.settings, payload)
             except HTTPException as e:
                 return _fail(e)
-        due = str(args.get("due") or "")
-        all_day = bool(args.get("all_day")) or (bool(due) and not dt_has_time(due))
-        payload = {
-            "title": args["title"],
-            "description": args.get("description", ""),
-            "category_id": cid,
-            "due": due,
-            "all_day": all_day,
-            "color": resolve_color(args["color"], "2") if args.get("color") else "",
-        }
-        try:
-            todo = todo_store.create_todo(ctx.user, ctx.settings, payload)
-        except HTTPException as e:
-            return _fail(e)
-        where = f" [{_cat_path(cats, cid)}]" if cid else ""
-        when = f" (마감 {todo['due'][:16].replace('T', ' ')})" if todo.get("due") else ""
-        return SkillResult(
-            ok=True,
-            message=f"할 일 '{todo['title']}'{where}{when} 추가됨",
-            data={"todo_id": todo["id"], "todo": _row(todo, _path_map(cats))},
-        )
+            where = f" [{_cat_path(cats, cid)}]" if cid else ""
+            when = f" (마감 {todo['due'][:16].replace('T', ' ')})" if todo.get("due") else ""
+            return SkillResult(
+                ok=True,
+                message=f"할 일 '{todo['title']}'{where}{when} 추가됨",
+                data={"todo_id": todo["id"], "todo": _row(todo, _path_map(cats))},
+            )
 
 
+        except _Stop as stop:
+            return stop.result
 class UpdateTodo(SkillBase):
     mutates = "todo"
     name = "update_todo"
@@ -334,41 +349,39 @@ class UpdateTodo(SkillBase):
     }
 
     def run(self, args, ctx):
-        cats = todo_store.list_categories(ctx.user, ctx.settings)
-        payload: dict = {}
-        for k in ("title", "description"):
-            if args.get(k) is not None:
-                payload[k] = args[k]
-        if args.get("category") is not None:
+        try:
+            cats = todo_store.list_categories(ctx.user, ctx.settings)
+            payload: dict = {}
+            for k in ("title", "description"):
+                if args.get(k) is not None:
+                    payload[k] = args[k]
+            if args.get("category") is not None:
+                payload["category_id"] = _need_category(cats, args["category"])
+            if args.get("color"):
+                payload["color"] = resolve_color(args["color"], "2")
+            if args.get("all_day") is not None:
+                payload["all_day"] = bool(args["all_day"])
+            if "due" in args and args["due"] is not None:
+                payload["due"] = str(args["due"])
+                if payload["due"] and "all_day" not in payload:
+                    payload["all_day"] = not dt_has_time(payload["due"])
+            if not payload:
+                return SkillResult(
+                    ok=False, error_code="invalid",
+                    message="무엇을 바꿀지 없습니다. title·description·due·category·color 중 하나는 주세요.",
+                )
             try:
-                payload["category_id"] = _resolve_category(cats, args["category"])
-            except _Ambiguous as e:
-                return _ambiguous_result(cats, e)
+                todo = todo_store.update_todo(ctx.user, ctx.settings, str(args["todo_id"]), payload)
             except HTTPException as e:
                 return _fail(e)
-        if args.get("color"):
-            payload["color"] = resolve_color(args["color"], "2")
-        if args.get("all_day") is not None:
-            payload["all_day"] = bool(args["all_day"])
-        if "due" in args and args["due"] is not None:
-            payload["due"] = str(args["due"])
-            if payload["due"] and "all_day" not in payload:
-                payload["all_day"] = not dt_has_time(payload["due"])
-        if not payload:
             return SkillResult(
-                ok=False, error_code="invalid",
-                message="무엇을 바꿀지 없습니다. title·description·due·category·color 중 하나는 주세요.",
+                ok=True, message=f"할 일 '{todo['title']}' 수정됨",
+                data={"todo_id": todo["id"], "todo": _row(todo, _path_map(cats))},
             )
-        try:
-            todo = todo_store.update_todo(ctx.user, ctx.settings, str(args["todo_id"]), payload)
-        except HTTPException as e:
-            return _fail(e)
-        return SkillResult(
-            ok=True, message=f"할 일 '{todo['title']}' 수정됨",
-            data={"todo_id": todo["id"], "todo": _row(todo, _path_map(cats))},
-        )
 
 
+        except _Stop as stop:
+            return stop.result
 class CompleteTodo(SkillBase):
     mutates = "todo"
     name = "complete_todo"
@@ -443,68 +456,66 @@ class BulkCompleteTodos(SkillBase):
     MAX = 200
 
     def run(self, args, ctx):
-        cats = todo_store.list_categories(ctx.user, ctx.settings)
-        ids = [str(i) for i in (args.get("todo_ids") or [])]
-        if not ids and not args.get("category"):
-            return SkillResult(
-                ok=False, error_code="invalid",
-                message="대상이 너무 넓습니다. todo_ids나 category로 좁혀 주세요.",
-            )
-        done = True if args.get("done") is None else bool(args["done"])
-        if ids:
-            targets = []
-            missing = []
-            for i in ids:
-                t = todo_store.get_todo(ctx.user, ctx.settings, i)
-                (targets if t else missing).append(t or i)
-            if missing:
+        try:
+            cats = todo_store.list_categories(ctx.user, ctx.settings)
+            ids = [str(i) for i in (args.get("todo_ids") or [])]
+            if not ids and not args.get("category"):
                 return SkillResult(
-                    ok=False, error_code="not_found",
-                    message="찾지 못한 할 일이 있습니다: " + ", ".join(missing),
-                    data={"missing": missing},
+                    ok=False, error_code="invalid",
+                    message="대상이 너무 넓습니다. todo_ids나 category로 좁혀 주세요.",
                 )
-        else:
-            try:
-                cid = _resolve_category(cats, args["category"])
-            except _Ambiguous as e:
-                return _ambiguous_result(cats, e)
-            except HTTPException as e:
-                return _fail(e)
-            targets = todo_store.list_todos(ctx.user, ctx.settings, category_id=cid)
-        # 이미 그 상태인 것은 건드리지 않는다(같은 지시를 두 번 받아도 안전)
-        targets = [t for t in targets if bool(t.get("done")) != done]
-        if not targets:
-            return SkillResult(ok=True, message="바꿀 할 일이 없습니다(이미 반영돼 있습니다).",
-                               data={"count": 0, "changed": []})
-        if len(targets) > self.MAX:
-            return SkillResult(
-                ok=False, error_code="too_many",
-                message=f"대상이 {len(targets)}개로 너무 많습니다(최대 {self.MAX}).",
-                data={"count": len(targets)},
-            )
-        paths = _path_map(cats)
-        listing = [_row(t, paths) for t in targets]
-        if args.get("dry_run"):
-            return SkillResult(
-                ok=True,
-                message=f"{len(listing)}개가 바뀝니다(아직 적용 안 함). 확인 후 dry_run 없이 다시 요청하세요.",
-                data={"planned": listing, "count": len(listing), "dry_run": True},
-            )
-        changed, failed = [], []
-        for t in targets:
-            try:
-                todo_store.update_todo(ctx.user, ctx.settings, t["id"], {"done": done})
-                changed.append(t["id"])
-            except HTTPException as e:
-                failed.append({"id": t["id"], "error": str(e.detail)})
-        word = "완료" if done else "미완료"
-        msg = f"{len(changed)}개를 {word} 처리했습니다"
-        if failed:
-            msg += f" — {len(failed)}개 실패"
-        return SkillResult(ok=bool(changed) or not failed, message=msg,
-                           data={"changed": changed, "failed": failed, "count": len(changed)})
+            done = True if args.get("done") is None else bool(args["done"])
+            if ids:
+                targets = []
+                missing = []
+                for i in ids:
+                    t = todo_store.get_todo(ctx.user, ctx.settings, i)
+                    (targets if t else missing).append(t or i)
+                if missing:
+                    return SkillResult(
+                        ok=False, error_code="not_found",
+                        message="찾지 못한 할 일이 있습니다: " + ", ".join(missing),
+                        data={"missing": missing},
+                    )
+            else:
+                cid = _need_category(cats, args["category"])
+                targets = todo_store.list_todos(ctx.user, ctx.settings, category_id=cid)
+            # 이미 그 상태인 것은 건드리지 않는다(같은 지시를 두 번 받아도 안전)
+            targets = [t for t in targets if bool(t.get("done")) != done]
+            if not targets:
+                return SkillResult(ok=True, message="바꿀 할 일이 없습니다(이미 반영돼 있습니다).",
+                                   data={"count": 0, "changed": []})
+            if len(targets) > self.MAX:
+                return SkillResult(
+                    ok=False, error_code="too_many",
+                    message=f"대상이 {len(targets)}개로 너무 많습니다(최대 {self.MAX}).",
+                    data={"count": len(targets)},
+                )
+            paths = _path_map(cats)
+            listing = [_row(t, paths) for t in targets]
+            if args.get("dry_run"):
+                return SkillResult(
+                    ok=True,
+                    message=f"{len(listing)}개가 바뀝니다(아직 적용 안 함). 확인 후 dry_run 없이 다시 요청하세요.",
+                    data={"planned": listing, "count": len(listing), "dry_run": True},
+                )
+            changed, failed = [], []
+            for t in targets:
+                try:
+                    todo_store.update_todo(ctx.user, ctx.settings, t["id"], {"done": done})
+                    changed.append(t["id"])
+                except HTTPException as e:
+                    failed.append({"id": t["id"], "error": str(e.detail)})
+            word = "완료" if done else "미완료"
+            msg = f"{len(changed)}개를 {word} 처리했습니다"
+            if failed:
+                msg += f" — {len(failed)}개 실패"
+            return SkillResult(ok=bool(changed) or not failed, message=msg,
+                               data={"changed": changed, "failed": failed, "count": len(changed)})
 
 
+        except _Stop as stop:
+            return stop.result
 class BulkDeleteTodos(SkillBase):
     mutates = "todo"
     name = "bulk_delete_todos"
@@ -525,60 +536,58 @@ class BulkDeleteTodos(SkillBase):
     MAX = 100
 
     def run(self, args, ctx):
-        cats = todo_store.list_categories(ctx.user, ctx.settings)
-        ids = [str(i) for i in (args.get("todo_ids") or [])]
-        if not ids and not args.get("category") and not args.get("only_done"):
-            return SkillResult(
-                ok=False, error_code="invalid",
-                message="대상이 너무 넓습니다. todo_ids·category·only_done 중 하나로 좁혀 주세요.",
-            )
-        if ids:
-            targets, missing = [], []
-            for i in ids:
-                t = todo_store.get_todo(ctx.user, ctx.settings, i)
-                if t:
-                    targets.append(t)
-                else:
-                    missing.append(i)
-            if missing:
-                return SkillResult(ok=False, error_code="not_found",
-                                   message="찾지 못한 할 일이 있습니다: " + ", ".join(missing),
-                                   data={"missing": missing})
-        else:
-            cid = None
-            if args.get("category"):
+        try:
+            cats = todo_store.list_categories(ctx.user, ctx.settings)
+            ids = [str(i) for i in (args.get("todo_ids") or [])]
+            if not ids and not args.get("category") and not args.get("only_done"):
+                return SkillResult(
+                    ok=False, error_code="invalid",
+                    message="대상이 너무 넓습니다. todo_ids·category·only_done 중 하나로 좁혀 주세요.",
+                )
+            if ids:
+                targets, missing = [], []
+                for i in ids:
+                    t = todo_store.get_todo(ctx.user, ctx.settings, i)
+                    if t:
+                        targets.append(t)
+                    else:
+                        missing.append(i)
+                if missing:
+                    return SkillResult(ok=False, error_code="not_found",
+                                       message="찾지 못한 할 일이 있습니다: " + ", ".join(missing),
+                                       data={"missing": missing})
+            else:
+                cid = None
+                if args.get("category"):
+                    cid = _need_category(cats, args["category"])
+                targets = todo_store.list_todos(ctx.user, ctx.settings, category_id=cid)
+            if args.get("only_done"):
+                targets = [t for t in targets if t.get("done")]
+            if not targets:
+                return SkillResult(ok=True, message="지울 할 일이 없습니다.", data={"count": 0, "deleted": []})
+            if len(targets) > self.MAX:
+                return SkillResult(ok=False, error_code="too_many",
+                                   message=f"대상이 {len(targets)}개로 너무 많습니다(최대 {self.MAX}).",
+                                   data={"count": len(targets)})
+            paths = _path_map(cats)
+            listing = [_row(t, paths) for t in targets]
+            if args.get("dry_run"):
+                return SkillResult(
+                    ok=True,
+                    message=f"{len(listing)}개가 삭제됩니다(아직 지우지 않음). 확인 후 dry_run 없이 다시 요청하세요.",
+                    data={"planned": listing, "count": len(listing), "dry_run": True},
+                )
+            deleted, failed = [], []
+            for t in targets:
                 try:
-                    cid = _resolve_category(cats, args["category"])
-                except _Ambiguous as e:
-                    return _ambiguous_result(cats, e)
+                    todo_store.delete_todo(ctx.user, ctx.settings, t["id"])
+                    deleted.append(t["id"])
                 except HTTPException as e:
-                    return _fail(e)
-            targets = todo_store.list_todos(ctx.user, ctx.settings, category_id=cid)
-        if args.get("only_done"):
-            targets = [t for t in targets if t.get("done")]
-        if not targets:
-            return SkillResult(ok=True, message="지울 할 일이 없습니다.", data={"count": 0, "deleted": []})
-        if len(targets) > self.MAX:
-            return SkillResult(ok=False, error_code="too_many",
-                               message=f"대상이 {len(targets)}개로 너무 많습니다(최대 {self.MAX}).",
-                               data={"count": len(targets)})
-        paths = _path_map(cats)
-        listing = [_row(t, paths) for t in targets]
-        if args.get("dry_run"):
-            return SkillResult(
-                ok=True,
-                message=f"{len(listing)}개가 삭제됩니다(아직 지우지 않음). 확인 후 dry_run 없이 다시 요청하세요.",
-                data={"planned": listing, "count": len(listing), "dry_run": True},
-            )
-        deleted, failed = [], []
-        for t in targets:
-            try:
-                todo_store.delete_todo(ctx.user, ctx.settings, t["id"])
-                deleted.append(t["id"])
-            except HTTPException as e:
-                failed.append({"id": t["id"], "error": str(e.detail)})
-        msg = f"{len(deleted)}개를 삭제했습니다 — 휴지통의 '할 일'에서 되돌릴 수 있습니다"
-        if failed:
-            msg += f" ({len(failed)}개 실패)"
-        return SkillResult(ok=bool(deleted) or not failed, message=msg,
-                           data={"deleted": deleted, "failed": failed, "count": len(deleted)})
+                    failed.append({"id": t["id"], "error": str(e.detail)})
+            msg = f"{len(deleted)}개를 삭제했습니다 — 휴지통의 '할 일'에서 되돌릴 수 있습니다"
+            if failed:
+                msg += f" ({len(failed)}개 실패)"
+            return SkillResult(ok=bool(deleted) or not failed, message=msg,
+                               data={"deleted": deleted, "failed": failed, "count": len(deleted)})
+        except _Stop as stop:
+            return stop.result

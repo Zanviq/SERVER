@@ -199,6 +199,52 @@ class GoogleCalendar:
         self._svc = service
         self._cid = calendar_id
 
+    def _run_batch(self, items: list, make, on_ok, on_err, label: str) -> None:
+        """items 를 구글 배치로 묶어 보낸다. 실패하면 순차로 폴백한다.
+
+        생성·수정·삭제가 이 뼈대를 세 번 복붙하고 있었고, 그 사이에서 실제로
+        어긋난 적이 있다(생성만 '제목'으로 처리 여부를 판정해 같은 제목 일정이
+        조용히 사라졌다). 한 곳으로 모아 셋이 같은 규칙을 쓰게 한다.
+
+        items 는 (key, payload) 쌍이다. key 는 호출자가 결과를 짝지을 값이며,
+        **식별자여야 한다** — 제목처럼 겹칠 수 있는 값을 쓰면 폴백이 오판한다.
+        요청은 make(key, payload) 로 만든다.
+        """
+        handled: set = set()
+
+        def _seq(pairs):
+            for key, it in pairs:
+                try:
+                    on_ok(key, make(key, it).execute())
+                except Exception as e:  # noqa: BLE001
+                    on_err(key, e)
+                handled.add(key)
+
+        for i in range(0, len(items), _BATCH_SIZE):
+            chunk = items[i:i + _BATCH_SIZE]
+            try:
+                batch = self._svc.new_batch_http_request()
+            except Exception:  # noqa: BLE001 - 배치 미지원 환경
+                _seq(chunk)
+                continue
+
+            def _cb(idx):  # 루프 변수를 그대로 닫으면 전부 마지막 값이 된다
+                def done(_rid, resp, err):
+                    handled.add(idx)
+                    if err is None:
+                        on_ok(idx, resp)
+                    else:
+                        on_err(idx, err)
+                return done
+
+            try:
+                for n, (key, it) in enumerate(chunk):
+                    batch.add(make(key, it), request_id=str(n), callback=_cb(key))
+                batch.execute()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("배치 %s 실패, 순차로 재시도: %s", label, e)
+                _seq([c for c in chunk if c[0] not in handled])
+
     def list(self, frm: str | None, to: str | None) -> list[dict]:
         params = {
             "calendarId": self._cid,
@@ -236,45 +282,15 @@ class GoogleCalendar:
         건너뛰고(5건 중 4건이 조용히 사라졌다) (2) 실패 건수도 뭉개졌다.
         """
         made: list = []
-        fail: list = []          # [(payload 인덱스, 사유)]
-        handled: set = set()     # 배치 콜백이 이미 처리한 인덱스
-
-        def _seq(pairs):
-            for idx, p in pairs:
-                try:
-                    made.append(self.create(p))
-                except Exception as e:  # noqa: BLE001
-                    fail.append((idx, str(e)))
-                handled.add(idx)
-
-        for i in range(0, len(payloads), _BATCH_SIZE):
-            chunk = list(enumerate(payloads[i:i + _BATCH_SIZE], start=i))
-            try:
-                batch = self._svc.new_batch_http_request()
-            except Exception:  # noqa: BLE001
-                _seq(chunk)
-                continue
-
-            def _cb(idx):  # 루프 변수를 그대로 닫으면 전부 마지막 값이 된다
-                def done(_rid, resp, err):
-                    handled.add(idx)
-                    if err is None and resp:
-                        made.append(_to_internal(resp))
-                    else:
-                        fail.append((idx, str(err)))
-                return done
-
-            try:
-                for n, (idx, p) in enumerate(chunk):
-                    batch.add(
-                        self._svc.events().insert(calendarId=self._cid, body=_to_google(p)),
-                        request_id=str(n),
-                        callback=_cb(idx),
-                    )
-                batch.execute()
-            except Exception as e:  # noqa: BLE001
-                logger.warning("배치 생성 실패, 순차로 재시도: %s", e)
-                _seq([(idx, p) for idx, p in chunk if idx not in handled])
+        fail: list = []  # [(payload 인덱스, 사유)]
+        self._run_batch(
+            list(enumerate(payloads)),
+            lambda _idx, p: self._svc.events().insert(calendarId=self._cid, body=_to_google(p)),
+            lambda idx, resp: (made.append(_to_internal(resp)) if resp
+                               else fail.append((idx, "빈 응답"))),
+            lambda idx, err: fail.append((idx, str(err))),
+            "생성",
+        )
         return made, fail
 
     def update(self, eid: str, payload: dict) -> dict:
@@ -333,88 +349,28 @@ class GoogleCalendar:
         """
         ok: list[str] = []
         fail: list[tuple[str, str]] = []
-
-        def _seq(chunk):
-            for eid, payload, _current in chunk:
-                try:
-                    body = _to_google_partial(payload)
-                    self._svc.events().patch(calendarId=self._cid, eventId=eid, body=body).execute()
-                    ok.append(eid)
-                except Exception as e:  # noqa: BLE001
-                    fail.append((eid, str(e)))
-
-        for i in range(0, len(items), _BATCH_SIZE):
-            chunk = items[i:i + _BATCH_SIZE]
-            try:
-                batch = self._svc.new_batch_http_request()
-            except Exception:  # noqa: BLE001 - 배치 미지원
-                _seq(chunk)
-                continue
-
-            def _cb(eid):  # 루프 변수를 그대로 닫으면 전부 마지막 id가 된다
-                def done(_rid, _resp, err):
-                    if err is None:
-                        ok.append(eid)
-                    else:
-                        fail.append((eid, str(err)))
-                return done
-
-            try:
-                for n, (eid, payload, _current) in enumerate(chunk):
-                    body = _to_google_partial(payload)
-                    batch.add(
-                        self._svc.events().patch(calendarId=self._cid, eventId=eid, body=body),
-                        request_id=str(n),
-                        callback=_cb(eid),
-                    )
-                batch.execute()
-            except Exception as e:  # noqa: BLE001
-                logger.warning("배치 수정 실패, 순차로 재시도: %s", e)
-                done_ids = set(ok) | {f[0] for f in fail}
-                _seq([c for c in chunk if c[0] not in done_ids])
+        self._run_batch(
+            [(eid, payload) for eid, payload, _current in items],
+            lambda eid, payload: self._svc.events().patch(
+                calendarId=self._cid, eventId=eid, body=_to_google_partial(payload)
+            ),
+            lambda eid, _resp: ok.append(eid),
+            lambda eid, err: fail.append((eid, str(err))),
+            "수정",
+        )
         return ok, fail
 
     def delete_many(self, eids: list[str]) -> tuple[list[str], list[tuple[str, str]]]:
         """여러 건을 한 번에 삭제(배치, 실패 시 순차 폴백)."""
         ok: list[str] = []
         fail: list[tuple[str, str]] = []
-
-        def _seq(chunk):
-            for eid in chunk:
-                try:
-                    self._svc.events().delete(calendarId=self._cid, eventId=eid).execute()
-                    ok.append(eid)
-                except Exception as e:  # noqa: BLE001
-                    fail.append((eid, str(e)))
-
-        for i in range(0, len(eids), _BATCH_SIZE):
-            chunk = eids[i:i + _BATCH_SIZE]
-            try:
-                batch = self._svc.new_batch_http_request()
-            except Exception:  # noqa: BLE001
-                _seq(chunk)
-                continue
-
-            def _cb(eid):
-                def done(_rid, _resp, err):
-                    if err is None:
-                        ok.append(eid)
-                    else:
-                        fail.append((eid, str(err)))
-                return done
-
-            try:
-                for n, eid in enumerate(chunk):
-                    batch.add(
-                        self._svc.events().delete(calendarId=self._cid, eventId=eid),
-                        request_id=str(n),
-                        callback=_cb(eid),
-                    )
-                batch.execute()
-            except Exception as e:  # noqa: BLE001
-                logger.warning("배치 삭제 실패, 순차로 재시도: %s", e)
-                done_ids = set(ok) | {f[0] for f in fail}
-                _seq([c for c in chunk if c not in done_ids])
+        self._run_batch(
+            [(eid, eid) for eid in eids],
+            lambda eid, _p: self._svc.events().delete(calendarId=self._cid, eventId=eid),
+            lambda eid, _resp: ok.append(eid),
+            lambda eid, err: fail.append((eid, str(err))),
+            "삭제",
+        )
         return ok, fail
 
     def delete(self, eid: str) -> None:

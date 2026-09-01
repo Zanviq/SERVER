@@ -53,6 +53,28 @@ def _index_path(user: SessionUser, settings: Settings) -> Path:
     return _trash_root(user, settings) / "index.json"
 
 
+def _append_entry(entry: dict, user: SessionUser, settings: Settings) -> None:
+    """인덱스에 엔트리 하나를 단다(락 안에서 읽고 원자적으로 쓴다)."""
+    idx_path = _index_path(user, settings)
+    with lock_for(idx_path):
+        entries = read_json(idx_path, [])
+        entries.append(entry)
+        write_atomic(idx_path, entries)
+
+
+def _entry(kind: str, name: str, **extra) -> dict:
+    """공통 필드를 채운 엔트리. 갈래별 추가 필드는 extra 로."""
+    return {
+        "id": uuid.uuid4().hex,
+        "kind": kind,
+        "orig_rel": "",
+        "name": name,
+        "is_dir": False,
+        "deleted_at": time.time(),
+        **extra,
+    }
+
+
 def move_to_trash(
     source: Path,
     orig_rel: str,
@@ -89,28 +111,16 @@ def move_to_trash(
 
 def move_event_to_trash(event: dict, user: SessionUser, settings: Settings) -> str:
     """캘린더 일정을 휴지통에 넣는다(파일이 아니라 내용을 적어 둔다)."""
-    entry_id = uuid.uuid4().hex
-    dest_dir = _trash_root(user, settings) / "data" / entry_id
+    entry = _entry(
+        KIND_EVENT, str(event.get("title") or "(제목 없음)"),
+        # 목록에서 언제/무슨 색 일정이었는지 보이도록
+        event_start=str(event.get("start", "")), event_color=str(event.get("color", "")),
+    )
+    dest_dir = _trash_root(user, settings) / "data" / entry["id"]
     dest_dir.mkdir(parents=True, exist_ok=True)
     write_atomic(dest_dir / EVENT_FILE, event)
-
-    entry = {
-        "id": entry_id,
-        "kind": KIND_EVENT,
-        "orig_rel": "",  # 문서 전용 필드 — 일정은 되돌릴 경로가 없다
-        "name": str(event.get("title") or "(제목 없음)"),
-        "is_dir": False,
-        "deleted_at": time.time(),
-        # 목록에서 언제/무슨 색 일정이었는지 보이도록
-        "event_start": str(event.get("start", "")),
-        "event_color": str(event.get("color", "")),
-    }
-    idx_path = _index_path(user, settings)
-    with lock_for(idx_path):
-        entries = read_json(idx_path, [])
-        entries.append(entry)
-        write_atomic(idx_path, entries)
-    return entry_id
+    _append_entry(entry, user, settings)
+    return entry["id"]
 
 
 def move_todo_to_trash(todo: dict, user: SessionUser, settings: Settings) -> str:
@@ -119,27 +129,15 @@ def move_todo_to_trash(todo: dict, user: SessionUser, settings: Settings) -> str
     캘린더 일정과 달리 **원래 id를 되살릴 수 있다** — 우리 저장소가 발급한
     값이라 재사용해도 충돌하지 않는다.
     """
-    entry_id = uuid.uuid4().hex
-    dest_dir = _trash_root(user, settings) / "data" / entry_id
+    entry = _entry(
+        KIND_TODO, str(todo.get("title") or "(제목 없음)"),
+        todo_due=str(todo.get("due", "")), todo_done=bool(todo.get("done")),
+    )
+    dest_dir = _trash_root(user, settings) / "data" / entry["id"]
     dest_dir.mkdir(parents=True, exist_ok=True)
     write_atomic(dest_dir / TODO_FILE, todo)
-
-    entry = {
-        "id": entry_id,
-        "kind": KIND_TODO,
-        "orig_rel": "",
-        "name": str(todo.get("title") or "(제목 없음)"),
-        "is_dir": False,
-        "deleted_at": time.time(),
-        "todo_due": str(todo.get("due", "")),
-        "todo_done": bool(todo.get("done")),
-    }
-    idx_path = _index_path(user, settings)
-    with lock_for(idx_path):
-        entries = read_json(idx_path, [])
-        entries.append(entry)
-        write_atomic(idx_path, entries)
-    return entry_id
+    _append_entry(entry, user, settings)
+    return entry["id"]
 
 
 def list_trash(user: SessionUser, settings: Settings, kind: str = "") -> list[dict]:

@@ -53,7 +53,32 @@ def walk_files(root: Path, *, sort: bool = True) -> list[WalkedFile]:
 
     심볼릭 링크인 디렉터리는 따라가지 않는다(루프 방지).
     """
-    out: list[WalkedFile] = []
+    files, _ = _walk(root, want_files=True, want_dirs=False)
+    if sort:
+        files.sort(key=lambda f: f.rel)
+    return files
+
+
+def walk_dirs(root: Path, *, sort: bool = True) -> list[str]:
+    """루트 아래 모든 폴더의 상대경로."""
+    _, dirs = _walk(root, want_files=False, want_dirs=True)
+    if sort:
+        dirs.sort()
+    return dirs
+
+
+def walk_all(root: Path) -> tuple[list[WalkedFile], list[str]]:
+    """파일과 폴더를 **한 번의 순회로** 함께. 둘 다 필요한 곳(트리 화면)이 쓴다."""
+    files, dirs = _walk(root, want_files=True, want_dirs=True)
+    files.sort(key=lambda f: f.rel)
+    dirs.sort()
+    return files, dirs
+
+
+def _walk(root: Path, *, want_files: bool, want_dirs: bool):
+    """공통 순회. 파일·폴더 중 필요한 것만 담는다."""
+    files: list[WalkedFile] = []
+    dirs: list[str] = []
     stack: list[tuple[str, str]] = [("", str(root))]
     while stack:
         rel, cur = stack.pop()
@@ -63,34 +88,13 @@ def walk_files(root: Path, *, sort: bool = True) -> list[WalkedFile]:
                     child = f"{rel}/{e.name}" if rel else e.name
                     try:
                         if e.is_dir(follow_symlinks=False):
+                            if want_dirs:
+                                dirs.append(child)
                             stack.append((child, e.path))
-                        else:
-                            out.append(WalkedFile(child, Path(e.path), e.stat()))
+                        elif want_files:
+                            files.append(WalkedFile(child, Path(e.path), e.stat()))
                     except OSError:
                         continue
         except OSError:
             continue
-    if sort:
-        out.sort(key=lambda f: f.rel)
-    return out
-
-
-def walk_dirs(root: Path, *, sort: bool = True) -> list[str]:
-    """루트 아래 모든 폴더의 상대경로."""
-    out: list[str] = []
-    stack: list[tuple[str, str]] = [("", str(root))]
-    while stack:
-        rel, cur = stack.pop()
-        try:
-            with os.scandir(cur) as it:
-                for e in it:
-                    if not e.is_dir(follow_symlinks=False):
-                        continue
-                    child = f"{rel}/{e.name}" if rel else e.name
-                    out.append(child)
-                    stack.append((child, e.path))
-        except OSError:
-            continue
-    if sort:
-        out.sort()
-    return out
+    return files, dirs

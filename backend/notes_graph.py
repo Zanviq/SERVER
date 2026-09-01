@@ -9,7 +9,7 @@ import re
 import stat as _stat
 from pathlib import Path
 
-from .storage import walk_dirs, walk_files
+from .storage import walk_all, walk_files
 
 _WIKILINK = re.compile(r"\[\[([^\[\]]+?)\]\]")
 
@@ -27,20 +27,21 @@ def _tree_fingerprint(base: Path) -> tuple:
     본문을 읽지 않으므로 read_text 그래프 빌드보다 훨씬 싸다. 저장 시 mtime이
     바뀌므로 지문이 바뀌어 캐시가 자연히 무효화된다.
 
-    순회는 walk_files/walk_dirs(scandir)를 쓴다 — 캐시가 맞아떨어져도 이 지문은
+    순회는 walk_all(scandir)로 **한 번만** 한다 — 캐시가 맞아떨어져도 이 지문은
     매번 계산하므로, 여기가 느리면 캐시의 이득이 사라진다.
     """
     if not base.exists():
         return (0, 0, 0, 0)
+    files, dirs = walk_all(base)
     md = 0
     mx = total = 0
-    for f in walk_files(base, sort=False):
+    for f in files:
         if f.rel.endswith(".md"):
             md += 1
             total += f.stat.st_size
         if f.stat.st_mtime_ns > mx:
             mx = f.stat.st_mtime_ns
-    return (md, len(walk_dirs(base, sort=False)), mx, total)
+    return (md, len(dirs), mx, total)
 
 
 def parse_wikilinks(text: str) -> list[str]:
