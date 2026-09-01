@@ -2330,7 +2330,7 @@ def test_ai_result_contract():
     # 3) HTTPException 이 "internal" 로 뭉개지지 않는다
     from fastapi import HTTPException
 
-    from backend.ai.skill_base import SkillBase, SkillResult
+    from backend.ai.skill_base import SkillBase
 
     class _Boom(SkillBase):
         name = "boom"

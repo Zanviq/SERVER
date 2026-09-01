@@ -14,7 +14,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 
 from ... import todo_store
-from ...calendar_colors import COLOR_NAMES, resolve_color
+from ...calendar_colors import resolve_color
 from ...datetimes import BadDateTime
 from ...datetimes import has_time as dt_has_time
 from ...datetimes import to_iso as dt_to_iso

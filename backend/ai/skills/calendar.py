@@ -1,7 +1,6 @@
 """캘린더 관련 스킬 (스케줄링·수정·삭제·빈 시간 찾기)."""
 from __future__ import annotations
 
-import re
 from datetime import datetime, timedelta
 
 from ... import calendar_service, user_settings

@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from . import calendar_store
-from .calendar_ids import base_id, is_instance
+from .calendar_ids import is_instance
 from .auth import SessionUser
 from .calendar_google import get_google_calendar
 from .config import Settings

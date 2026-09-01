@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import re
-import stat as _stat
 from pathlib import Path
 
 from .storage import walk_all, walk_files
