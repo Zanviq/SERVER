@@ -37,3 +37,5 @@ _devserver.ps1
 # 성능 측정용 임시 스크립트
 _*.py
 _*.txt
+_*.mjs
+_*.ps1

@@ -1,13 +1,21 @@
-// mdTable 순수 함수 검증 — 편집기에 붙이기 전에.
+/**
+ * lib/mdTable 회귀 테스트.  실행: npm test  (frontend 폴더에서)
+ *
+ * 표 편집은 격자 계산이 조금만 틀려도 사용자의 표가 통째로 망가진다. 그런데
+ * 이 저장소에는 프런트 테스트 러너가 없어서, 의존성을 늘리지 않고 node 로
+ * 그냥 도는 형태로 뒀다(esbuild 는 vite 에 이미 딸려 있다).
+ */
 import { execFileSync } from "node:child_process";
-import { writeFileSync, mkdtempSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-// ts를 그대로 못 돌리므로 esbuild로 한 번 굴린다(vite에 딸려 있다)
+const here = dirname(fileURLToPath(import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), "mdt-"));
 const outFile = join(dir, "mdTable.mjs");
-const src = join(process.cwd(), "src", "lib", "mdTable.ts");
+// 어디서 실행하든 같은 파일을 본다(cwd 에 기대지 않는다)
+const src = join(here, "..", "src", "lib", "mdTable.ts");
 // 인자 배열로 넘긴다 — 셸을 거치지 않으므로 경로에 공백이 있어도 안전하다
 execFileSync("npx", ["esbuild", src, "--bundle", "--format=esm", `--outfile=${outFile}`],
   { stdio: "pipe", shell: true });

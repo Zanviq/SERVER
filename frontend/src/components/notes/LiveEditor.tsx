@@ -14,6 +14,7 @@ import {
 import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { EmbedResolver, eachWikiEmbed, isImagePath } from "../../lib/embeds";
 import { cmHighlightExtension, highlightTag } from "../../lib/markdownExtras";
+import { matchMarker } from "../../lib/callouts";
 import { makeSlashSource, SlashActions } from "./slashMenu";
 import { tableTools } from "./tableTools";
 import { Paperclip } from "lucide-react";
@@ -218,6 +219,19 @@ function buildDeco(view: EditorView): DecorationSet {
           );
           return false; // 코드 내부는 더 파고들지 않음(내부 기호 숨김 제외)
         }
+        // 콜아웃(`> [!NOTE]`): 편집 중에도 읽기 뷰와 같은 색으로 보이게 한다.
+        // 이게 없으면 편집으로 넘어가는 순간 그냥 인용문으로 보여 어색하다.
+        if (node.name === "Blockquote") {
+          const first = state.doc.lineAt(node.from);
+          const hit = matchMarker(first.text.replace(/^\s*>\s?/, ""));
+          if (hit) {
+            const last = state.doc.lineAt(Math.max(node.from, node.to - 1)).number;
+            for (let n = first.number; n <= last; n++) {
+              ranges.push(lineDeco(`cm-callout cm-callout-${hit.kind}`).range(state.doc.line(n).from));
+            }
+          }
+          return undefined;
+        }
         if (HIDE.has(node.name)) {
           const ln = state.doc.lineAt(node.from).number;
           if (!active.has(ln)) ranges.push(hide.range(node.from, node.to));
@@ -372,6 +386,31 @@ const editorTheme = EditorView.theme({
     cursor: "pointer",
   },
   ".cm-copy-btn:hover": { color: "rgb(var(--fg))" },
+  // 콜아웃 — 읽기 뷰(.callout)와 같은 색. 여기서는 줄 단위라 왼쪽 띠만 준다.
+  ".cm-callout": {
+    borderLeft: "3px solid rgb(var(--line-strong))",
+    paddingLeft: "8px",
+  },
+  ".cm-callout-note": {
+    borderLeftColor: "rgb(var(--info))",
+    backgroundColor: "rgb(var(--info) / 0.08)",
+  },
+  ".cm-callout-tip": {
+    borderLeftColor: "rgb(var(--positive))",
+    backgroundColor: "rgb(var(--positive) / 0.08)",
+  },
+  ".cm-callout-important": {
+    borderLeftColor: "rgb(var(--accent))",
+    backgroundColor: "rgb(var(--accent) / 0.1)",
+  },
+  ".cm-callout-warning": {
+    borderLeftColor: "rgb(var(--warning))",
+    backgroundColor: "rgb(var(--warning) / 0.1)",
+  },
+  ".cm-callout-caution": {
+    borderLeftColor: "rgb(var(--danger))",
+    backgroundColor: "rgb(var(--danger) / 0.08)",
+  },
   // 인라인 이미지 임베드(편집 중에도 보이는 그림)
   ".cm-embed-img": { padding: "4px 0", position: "relative", display: "inline-block" },
   ".cm-embed-img img": {
