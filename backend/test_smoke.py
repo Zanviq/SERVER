@@ -3261,3 +3261,69 @@ def test_todo_http_validates_like_the_calendar():
     assert ranged.status_code == 200 and len(ranged.json()) == 2, ranged.json()
     narrow = client.get("/api/todo/list?from=2026-09-10&to=2026-09-30&include_undated=false")
     assert [t["title"] for t in narrow.json()] == ["정상"], narrow.json()
+
+
+def test_todo_due_time_is_not_silently_truncated():
+    """종일 할 일에 시각을 넣으면 시각이 살아야 한다.
+
+    all_day 를 함께 주지 않았을 때 예전 값(종일=True)으로 판단해서
+    "9월 20일 14시 30분"이 "9월 20일"로 조용히 잘렸다.
+    """
+    from backend import todo_store
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    u, ctx, st = _todo_ctx("duetime")
+
+    made = todo_store.create_todo(u, st, {"title": "시각검사", "due": "2026-09-20", "all_day": True})
+    assert made["due"] == "2026-09-20" and made["all_day"] is True, made
+
+    # all_day 없이 시각만 준다
+    up = todo_store.update_todo(u, st, made["id"], {"due": "2026-09-20T14:30:00"})
+    assert up["due"] == "2026-09-20T14:30:00", up
+    assert up["all_day"] is False, up
+
+    # 반대로 시각 있던 것을 날짜만으로 바꾸면 종일이 된다
+    back = todo_store.update_todo(u, st, made["id"], {"due": "2026-09-21"})
+    assert back["due"] == "2026-09-21" and back["all_day"] is True, back
+
+    # all_day 를 명시하면 그 뜻을 따른다(사용자가 일부러 지정한 것)
+    forced = todo_store.update_todo(u, st, made["id"], {"due": "2026-09-22T09:00:00", "all_day": True})
+    assert forced["due"] == "2026-09-22" and forced["all_day"] is True, forced
+
+    # AI 스킬 경로도 같다
+    t = reg.dispatch("create_todo", {"title": "스킬", "due": "2026-10-01"}, ctx)
+    assert t.data["todo"]["due"] == "2026-10-01", t.data
+    up2 = reg.dispatch("update_todo", {"todo_id": t.data["todo_id"], "due": "2026-10-01T18:00:00"}, ctx)
+    assert up2.data["todo"]["due"] == "2026-10-01T18:00:00", up2.data
+
+
+def test_todo_is_archived_before_it_is_removed():
+    """보관이 실패하면 삭제도 일어나지 않는다.
+
+    지우고 나서 보관하면, 보관이 실패했을 때 되돌릴 방법이 없다.
+    """
+    from backend import todo_store, trash
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    u, ctx, st = _todo_ctx("archivefirst")
+    made = todo_store.create_todo(u, st, {"title": "소중한 것"})
+
+    real = trash.move_todo_to_trash
+    trash.move_todo_to_trash = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("보관 실패"))
+    try:
+        try:
+            todo_store.delete_todo(u, st, made["id"])
+            raise AssertionError("보관이 실패했는데 삭제가 진행됐다")
+        except RuntimeError:
+            pass
+    finally:
+        trash.move_todo_to_trash = real
+
+    # 할 일이 그대로 남아 있어야 한다
+    assert reg.dispatch("list_todos", {}, ctx).data["count"] == 1
+    # 정상 경로에서는 삭제되고 휴지통에 담긴다
+    todo_store.delete_todo(u, st, made["id"])
+    assert reg.dispatch("list_todos", {}, ctx).data["count"] == 0
+    assert len(reg.dispatch("list_trash", {"kind": "todo"}, ctx).data["items"]) == 1

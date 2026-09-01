@@ -95,7 +95,15 @@ def _norm_todo(payload: dict, existing: dict | None = None) -> dict:
     if "all_day" in payload and payload["all_day"] is not None:
         base["all_day"] = bool(payload["all_day"])
     if "due" in payload:
-        base["due"] = _clean_due(payload["due"], bool(base.get("all_day")))
+        # all_day 를 함께 주지 않았으면 **새 마감에서 판단한다**. 예전 값을 쓰면
+        # 종일이던 할 일에 "9월 5일 14시"를 넣었을 때 시각이 조용히 잘렸다.
+        raw = payload["due"]
+        if "all_day" in payload and payload["all_day"] is not None:
+            all_day = bool(payload["all_day"])
+        else:
+            all_day = bool(raw) and not dt_has_time(raw)
+            base["all_day"] = all_day
+        base["due"] = _clean_due(raw, all_day)
     if "done" in payload and payload["done"] is not None:
         now_done = bool(payload["done"])
         # 완료 시각은 완료 상태가 '바뀔 때만' 찍는다. 매 수정마다 갱신하면
@@ -341,23 +349,27 @@ def update_todo(user: SessionUser, settings: Settings, tid: str, payload: dict) 
 
 
 def delete_todo(user: SessionUser, settings: Settings, tid: str) -> dict:
-    """할 일 삭제. 지우기 전에 휴지통에 담아 되돌릴 수 있게 한다."""
+    """할 일 삭제. **먼저 휴지통에 담고** 지운다.
+
+    반대로 하면(지우고 나서 보관) 보관이 실패했을 때 되돌릴 방법이 없다.
+    이 순서면 최악이라도 휴지통에 항목 하나가 더 남을 뿐이고, 그건 눈에 보인다.
+    """
     from . import trash
 
     p = _path(user, settings)
     with json_store.lock_for(p):
+        target = next((t for t in _load(user, settings)["todos"] if t["id"] == tid), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="할 일을 찾을 수 없습니다.")
+
+    trash.move_todo_to_trash(target, user, settings)
+
+    with json_store.lock_for(p):
         data = _load(user, settings)
-        todos = data["todos"]
-        target = next((t for t in todos if t["id"] == tid), None)
-        if target is None:
-            raise HTTPException(status_code=404, detail="할 일을 찾을 수 없습니다.")
-        data["todos"] = [t for t in todos if t["id"] != tid]
-        _save(data, user, settings)
-    # 보관은 락 밖에서 — 실패해도 삭제 자체는 이미 끝났다
-    try:
-        trash.move_todo_to_trash(target, user, settings)
-    except Exception:  # noqa: BLE001
-        pass
+        before = len(data["todos"])
+        data["todos"] = [t for t in data["todos"] if t["id"] != tid]
+        if len(data["todos"]) != before:
+            _save(data, user, settings)
     return {"ok": True, "id": tid, "title": target.get("title", "")}
 
 

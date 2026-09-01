@@ -62,26 +62,20 @@ const HIDE = new Set([
  * 오른쪽 아래 손잡이를 끌면 크기가 바뀌고, 놓는 순간 **문서의 `|너비`가 갱신된다**
  * — 화면에서만 커지고 저장이 안 되면 다시 열었을 때 원래대로 돌아간다.
  *
- * from/to 는 이 임베드 문자열(`![[...]]`)의 문서 상의 범위다. 위젯은 문서가
- * 바뀔 때마다 다시 만들어지므로(embedDeco), 손댈 때의 범위는 항상 최신이다.
+ * 고칠 위치는 **손댈 때 DOM에서 되찾는다**(posAtDOM). 문서 위치를 위젯에
+ * 들고 있으면 eq()가 그 값까지 비교하게 되어, 이미지 위쪽에 한 글자만 쳐도
+ * 위젯이 통째로 다시 만들어진다(실측: 타이핑마다 <img> 재생성 → 깜빡임).
  */
 class ImageWidget extends WidgetType {
   constructor(
     readonly url: string,
     readonly target: string,
     readonly width: number | undefined,
-    readonly from: number,
-    readonly to: number,
   ) {
     super();
   }
   eq(o: ImageWidget) {
-    return (
-      o.url === this.url &&
-      o.width === this.width &&
-      o.from === this.from &&
-      o.to === this.to
-    );
+    return o.url === this.url && o.target === this.target && o.width === this.width;
   }
   toDOM(view: EditorView) {
     const wrap = document.createElement("div");
@@ -100,13 +94,26 @@ class ImageWidget extends WidgetType {
     wrap.appendChild(grip);
 
     const writeWidth = (w: number | null) => {
-      // 위젯이 만들어진 뒤 문서가 바뀌었을 수 있다. 그 자리에 아직 같은
-      // 임베드가 있을 때만 고친다(아니면 엉뚱한 글자를 덮어쓴다).
-      const cur = view.state.sliceDoc(this.from, this.to);
-      if (!cur.startsWith("![[")) return;
+      // 이 위젯이 붙어 있는 줄을 DOM에서 되찾아, 그 줄의 같은 임베드를 고친다.
+      // 위치를 들고 있지 않으므로 그 사이 문서가 어떻게 바뀌었든 정확하다.
+      let at: number;
+      try {
+        at = view.posAtDOM(wrap);
+      } catch {
+        return;
+      }
+      const line = view.state.doc.lineAt(Math.min(at, view.state.doc.length));
+      const hits: { from: number; to: number }[] = [];
+      eachWikiEmbed(line.text, ({ start, end, embed }) => {
+        if (embed.target === this.target) {
+          hits.push({ from: line.from + start, to: line.from + end });
+        }
+      });
+      const hit = hits[0];
+      if (!hit) return;
       const body = w ? `![[${this.target}|${w}]]` : `![[${this.target}]]`;
-      if (body === cur) return;
-      view.dispatch({ changes: { from: this.from, to: this.to, insert: body } });
+      if (body === view.state.sliceDoc(hit.from, hit.to)) return;
+      view.dispatch({ changes: { from: hit.from, to: hit.to, insert: body } });
     };
 
     let startX = 0;
@@ -238,17 +245,13 @@ function buildEmbeds(state: EditorState): DecorationSet {
   for (const text of state.doc.iterLines()) {
     const end = pos + text.length;
     if (text.includes("![[")) {
-      const lineStart = pos;
-      eachWikiEmbed(text, ({ start, end: stop, embed }) => {
+      eachWikiEmbed(text, ({ embed }) => {
         if (!isImagePath(embed.target)) return;
         const hit = resolve(embed.target);
         if (!hit) return;
         ranges.push(
           Decoration.widget({
-            widget: new ImageWidget(
-              hit.url, embed.target, embed.width,
-              lineStart + start, lineStart + stop,
-            ),
+            widget: new ImageWidget(hit.url, embed.target, embed.width),
             side: 1,
             block: true,
           }).range(end),
@@ -442,6 +445,9 @@ export function LiveEditor({
     viewRef.current?.dispatch({ effects: setResolver.of(resolveEmbed) });
   }, [resolveEmbed]);
 
+  // 아래 두 헬퍼는 렌더마다 새로 만들어지지만, 에디터를 만드는 useEffect가
+  // 첫 번째 것을 붙잡아 둔다. 둘 다 ref(cbs·viewRef)와 인자만 읽으므로
+  // 낡은 값을 보는 일이 없다.
   /** 커서(또는 지정 위치)에 블록을 넣는다. 줄 한가운데면 앞뒤로 줄을 나눈다. */
   const insertBlock = (view: EditorView, at: number, body: string) => {
     const pos = Math.min(at, view.state.doc.length);

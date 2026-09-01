@@ -65,6 +65,109 @@ function buildTree(cats: TodoCategory[]): TreeNode[] {
   return roots;
 }
 
+interface CatRowProps {
+  node: TreeNode;
+  depth: number;
+  rollup: Record<string, { total: number; done: number }>;
+  openSet: Set<string>;
+  selectedCat: string | null;
+  onToggle: (id: string) => void;
+  onSelect: (id: string) => void;
+  onRename: (c: TodoCategory) => void;
+  onRemove: (c: TodoCategory) => void;
+}
+
+/**
+ * 카테고리 한 줄(+하위).
+ *
+ * **컴포넌트 밖에 둔다.** 안에 두면 렌더마다 새 함수가 되어 React가 매번 다른
+ * 타입으로 보고 트리 전체를 버렸다 다시 만든다(열고 닫는 애니메이션이 튀고,
+ * 나중에 이 안에 입력칸을 넣으면 포커스가 빠진다).
+ */
+function CatRow({
+  node, depth, rollup, openSet, selectedCat, onToggle, onSelect, onRename, onRemove,
+}: CatRowProps) {
+  const { cat } = node;
+  const n = rollup[cat.id] ?? { total: 0, done: 0 };
+  const hasKids = node.children.length > 0;
+  const isOpen = openSet.has(cat.id);
+  const active = selectedCat === cat.id;
+  return (
+    <div>
+      <div
+        className={`group flex items-center gap-1 rounded-md pr-1 text-sm ${
+          active ? "bg-accent-muted text-accent-fg" : "hover:bg-hovered"
+        }`}
+        style={{ paddingLeft: 4 + depth * 12 }}
+      >
+        <button
+          type="button"
+          aria-label={hasKids ? (isOpen ? "접기" : "펼치기") : undefined}
+          onClick={() => onToggle(cat.id)}
+          className={`grid h-5 w-5 shrink-0 place-items-center text-fg-subtle ${
+            hasKids ? "" : "invisible"
+          }`}
+        >
+          <ChevronRight
+            size={13}
+            className={isOpen ? "rotate-90 transition-transform" : "transition-transform"}
+          />
+        </button>
+        <button
+          type="button"
+          onClick={() => onSelect(cat.id)}
+          className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left"
+        >
+          <span
+            className="h-2.5 w-2.5 shrink-0 rounded-full"
+            style={{ background: GCAL_COLORS[cat.color] ?? GCAL_COLORS["2"] }}
+          />
+          <span className="truncate">{cat.name}</span>
+          <span className="ml-auto shrink-0 text-[11px] text-fg-subtle">
+            {n.total - n.done}/{n.total}
+          </span>
+        </button>
+        <span className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            type="button"
+            onClick={() => onRename(cat)}
+            title="이름 바꾸기"
+            className="grid h-6 w-6 place-items-center text-fg-subtle hover:text-fg"
+          >
+            <Pencil size={12} />
+          </button>
+          <button
+            type="button"
+            onClick={() => onRemove(cat)}
+            title="카테고리 삭제"
+            className="grid h-6 w-6 place-items-center text-fg-subtle hover:text-danger"
+          >
+            <X size={13} />
+          </button>
+        </span>
+      </div>
+      {hasKids && isOpen && (
+        <div>
+          {node.children.map((k) => (
+            <CatRow
+              key={k.cat.id}
+              node={k}
+              depth={depth + 1}
+              rollup={rollup}
+              openSet={openSet}
+              selectedCat={selectedCat}
+              onToggle={onToggle}
+              onSelect={onSelect}
+              onRename={onRename}
+              onRemove={onRemove}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Todo() {
   const [cats, setCats] = useState<TodoCategory[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
@@ -224,88 +327,24 @@ export function Todo() {
     }, "카테고리 삭제됨");
   };
 
+  const toggleOpen = useCallback((id: string) => {
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectCategory = useCallback((id: string) => {
+    setSelectedCat(id);
+    setSelectedTodo(null);
+  }, []);
+
   const renameCategory = (c: TodoCategory) => {
     const name = window.prompt("카테고리 이름", c.name);
     if (!name?.trim() || name.trim() === c.name) return;
     guard(() => api.todoCategoryUpdate(c.id, { name: name.trim() }));
-  };
-
-  // ── 왼쪽: 카테고리 트리 ───────────────────────────────────────────
-  const CatRow = ({ node, depth }: { node: TreeNode; depth: number }) => {
-    const { cat } = node;
-    const n = rollup[cat.id] ?? { total: 0, done: 0 };
-    const hasKids = node.children.length > 0;
-    const isOpen = open.has(cat.id);
-    const active = selectedCat === cat.id;
-    return (
-      <div>
-        <div
-          className={`group flex items-center gap-1 rounded-md pr-1 text-sm ${
-            active ? "bg-accent-muted text-accent-fg" : "hover:bg-hovered"
-          }`}
-          style={{ paddingLeft: 4 + depth * 12 }}
-        >
-          <button
-            type="button"
-            aria-label={hasKids ? (isOpen ? "접기" : "펼치기") : undefined}
-            onClick={() =>
-              setOpen((prev) => {
-                const next = new Set(prev);
-                next.has(cat.id) ? next.delete(cat.id) : next.add(cat.id);
-                return next;
-              })
-            }
-            className={`grid h-5 w-5 shrink-0 place-items-center text-fg-subtle ${
-              hasKids ? "" : "invisible"
-            }`}
-          >
-            <ChevronRight size={13} className={isOpen ? "rotate-90 transition-transform" : "transition-transform"} />
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedCat(cat.id);
-              setSelectedTodo(null);
-            }}
-            className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left"
-          >
-            <span
-              className="h-2.5 w-2.5 shrink-0 rounded-full"
-              style={{ background: GCAL_COLORS[cat.color] ?? GCAL_COLORS["2"] }}
-            />
-            <span className="truncate">{cat.name}</span>
-            <span className="ml-auto shrink-0 text-[11px] text-fg-subtle">
-              {n.total - n.done}/{n.total}
-            </span>
-          </button>
-          <span className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100">
-            <button
-              type="button"
-              onClick={() => renameCategory(cat)}
-              title="이름 바꾸기"
-              className="grid h-6 w-6 place-items-center text-fg-subtle hover:text-fg"
-            >
-              <Pencil size={12} />
-            </button>
-            <button
-              type="button"
-              onClick={() => removeCategory(cat)}
-              title="카테고리 삭제"
-              className="grid h-6 w-6 place-items-center text-fg-subtle hover:text-danger"
-            >
-              <X size={13} />
-            </button>
-          </span>
-        </div>
-        {hasKids && isOpen && (
-          <div>
-            {node.children.map((k) => (
-              <CatRow key={k.cat.id} node={k} depth={depth + 1} />
-            ))}
-          </div>
-        )}
-      </div>
-    );
   };
 
   const uncategorized = counts[UNCATEGORIZED] ?? { total: 0, done: 0 };
@@ -342,7 +381,18 @@ export function Todo() {
           </span>
         </button>
         {tree.map((n) => (
-          <CatRow key={n.cat.id} node={n} depth={0} />
+          <CatRow
+            key={n.cat.id}
+            node={n}
+            depth={0}
+            rollup={rollup}
+            openSet={open}
+            selectedCat={selectedCat}
+            onToggle={toggleOpen}
+            onSelect={selectCategory}
+            onRename={renameCategory}
+            onRemove={removeCategory}
+          />
         ))}
         {uncategorized.total > 0 && (
           <button
