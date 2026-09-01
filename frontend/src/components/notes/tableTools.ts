@@ -7,7 +7,7 @@
  */
 import { EditorView, keymap, showTooltip } from "@codemirror/view";
 import type { Tooltip } from "@codemirror/view";
-import { StateField } from "@codemirror/state";
+import { Prec, StateField } from "@codemirror/state";
 import type { EditorState, Extension } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import {
@@ -102,13 +102,20 @@ const cmds = {
   prev: withTable((t) => nextCell(t, -1)),
 };
 
-const ICON = {
-  rowAbove: "위에 행",
-  rowBelow: "아래 행",
-  rowDelete: "행 삭제",
-  colLeft: "왼쪽 열",
-  colRight: "오른쪽 열",
-  colDelete: "열 삭제",
+/**
+ * 버튼 표시는 짧게, 뜻은 title 로.
+ *
+ * 처음엔 "위에 행" 처럼 풀어 썼는데 390px 화면에서 툴바가 407px 이 되어
+ * 오른쪽 정렬 버튼이 화면 밖으로 나갔다(실측). 짧은 기호로 줄이고 아래에서
+ * 줄바꿈까지 허용한다.
+ */
+const ICON: Record<string, [short: string, title: string]> = {
+  rowAbove: ["행+↑", "위에 행 추가"],
+  rowBelow: ["행+↓", "아래 행 추가"],
+  rowDelete: ["행−", "이 행 삭제"],
+  colLeft: ["열+←", "왼쪽에 열 추가"],
+  colRight: ["열+→", "오른쪽에 열 추가"],
+  colDelete: ["열−", "이 열 삭제"],
 };
 
 const ALIGN_LABEL: Record<Exclude<Align, "none">, string> = {
@@ -139,11 +146,11 @@ function toolbarDOM(view: EditorView, t: TableInfo): HTMLElement {
   const run = (c: Cmd) => () => c(view);
 
   (["rowAbove", "rowBelow", "rowDelete"] as const).forEach((k) =>
-    wrap.appendChild(button(ICON[k], ICON[k], run(cmds[k]))),
+    wrap.appendChild(button(ICON[k][0], ICON[k][1], run(cmds[k]))),
   );
   wrap.appendChild(Object.assign(document.createElement("span"), { className: "cm-tbl-sep" }));
   (["colLeft", "colRight", "colDelete"] as const).forEach((k) =>
-    wrap.appendChild(button(ICON[k], ICON[k], run(cmds[k]))),
+    wrap.appendChild(button(ICON[k][0], ICON[k][1], run(cmds[k]))),
   );
   wrap.appendChild(Object.assign(document.createElement("span"), { className: "cm-tbl-sep" }));
   const cur = t.aligns[t.col] ?? "none";
@@ -173,18 +180,24 @@ function build(state: EditorState): readonly Tooltip[] {
   }];
 }
 
-const tableKeymap = keymap.of([
-  // Tab 은 표 안에서만 가로챈다 — 밖에서는 기본 동작(들여쓰기)을 그대로 둔다.
+// Prec.high 로 올린다. 등록 순서에 기대면(다른 keymap 이 앞에 있으면) 표 밖의
+// Tab 처리에 가로채여 표 안에서 칸 이동이 안 된다.
+const tableKeymap = Prec.high(keymap.of([
+  // Tab 은 표 안에서만 가로챈다 — 표가 아니면 false 를 돌려 다음 키맵에 넘긴다.
   { key: "Tab", run: cmds.next },
   { key: "Shift-Tab", run: cmds.prev },
   // 폭이 흐트러졌을 때 손으로 다시 맞추는 단축키
   { key: "Mod-Shift-f", run: reformat },
-]);
+]));
 
 const tableTheme = EditorView.theme({
   ".cm-tbl-bar": {
     display: "flex",
     alignItems: "center",
+    // 좁은 화면에서 한 줄에 안 들어가면 접는다(밖으로 나가면 못 누른다)
+    flexWrap: "wrap",
+    justifyContent: "center",
+    maxWidth: "min(96vw, 420px)",
     gap: "2px",
     padding: "3px 4px",
     borderRadius: "8px",
@@ -218,6 +231,12 @@ const tableTheme = EditorView.theme({
     height: "14px",
     margin: "0 3px",
     backgroundColor: "rgb(var(--line))",
+  },
+  // 손가락으로 누르는 기기에서는 22px 짜리 버튼을 정확히 찍기 어렵다.
+  // 화면 폭 조건도 함께 건다 — 터치 기기 판정만 믿으면 좁은 창에서 놓친다.
+  "@media (pointer: coarse), (max-width: 639px)": {
+    ".cm-tbl-btn": { padding: "8px 10px", fontSize: "12px" },
+    ".cm-tbl-sep": { height: "20px" },
   },
 });
 

@@ -3,8 +3,10 @@ import { EditorView, keymap, ViewPlugin, Decoration, WidgetType } from "@codemir
 import type { DecorationSet } from "@codemirror/view";
 import { EditorState, StateEffect, StateField } from "@codemirror/state";
 import type { Range } from "@codemirror/state";
-import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
-import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import {
+  history, historyKeymap, defaultKeymap, indentMore, indentLess,
+} from "@codemirror/commands";
+import { markdown, markdownKeymap, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
@@ -530,7 +532,21 @@ export function LiveEditor({
       const options = (cbs.current.titles ?? [])
         .filter((tt) => tt.toLowerCase().includes(q))
         .slice(0, 8)
-        .map((tt) => ({ label: tt, apply: `${tt}]]` }));
+        .map((tt) => ({
+          label: tt,
+          // 닫는 괄호를 **이미 있으면 또 넣지 않는다.** closeBrackets 가 `[[` 를
+          // 칠 때 `]]` 를 자동으로 넣어 두는데, 여기서도 붙이면 `[[제목]]]]` 가
+          // 되어 링크가 깨진다(실측).
+          apply: (view: EditorView, _c: unknown, from: number, to: number) => {
+            const after = view.state.sliceDoc(to, to + 2);
+            const insert = after === "]]" ? tt : `${tt}]]`;
+            const anchor = from + tt.length + 2; // 항상 `]]` 뒤로 커서를 보낸다
+            view.dispatch({
+              changes: { from, to, insert },
+              selection: { anchor: Math.min(anchor, view.state.doc.length + insert.length) },
+            });
+          },
+        }));
       if (!options.length) return null;
       return { from: before.from + 2, options };
     };
@@ -549,6 +565,13 @@ export function LiveEditor({
           { key: "Mod-s", run: () => { cbs.current.onSave?.(); return true; } },
           ...closeBracketsKeymap,
           ...completionKeymap,
+          // 목록·인용에서 Enter 를 누르면 다음 항목이 이어진다(`- `, `1. `, `> `).
+          // 이게 없으면 글머리를 매번 손으로 쳐야 해서 목록 쓰기가 고통스럽다.
+          ...markdownKeymap,
+          // Tab 은 들여쓰기. 이게 없으면 Tab 이 편집기 밖으로 포커스를 옮겨
+          // 숨은 파일 입력까지 갔고, 거기서 Enter 를 누르면 파일 선택창이 떴다.
+          // (표 안에서는 tableTools 의 Prec.high 키맵이 먼저 집는다.)
+          { key: "Tab", run: indentMore, shift: indentLess },
           ...defaultKeymap,
           ...historyKeymap,
         ]),
@@ -688,6 +711,10 @@ export function LiveEditor({
         type="file"
         multiple
         className="sr-only"
+        // 화면에 없는 입력이 탭 순서에 남아 있으면, 편집기에서 Tab 을 눌렀을 때
+        // 여기로 포커스가 가고 Enter 가 파일 선택창을 연다(실측으로 잡았다).
+        tabIndex={-1}
+        aria-hidden="true"
         onChange={(e) => {
           attach(e.target.files);
           e.target.value = ""; // 같은 파일을 다시 골라도 change가 오도록
