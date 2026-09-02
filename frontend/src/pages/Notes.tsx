@@ -99,13 +99,15 @@ export function Notes() {
   // 대기 중인 자동저장·열기 순번의 규칙은 lib/pendingSave 가 갖는다.
   // 화면 안에 두면 React 상태에 얽혀 한 줄도 검사할 수 없는데, 여기서 틀리면
   // 글이 사라지거나 지운 문서가 되살아난다(test/pendingSave.test.mjs).
-  const pending = useRef(new PendingSave()).current;
+  const pendingRef = useRef<PendingSave>();
+  const pending = (pendingRef.current ??= new PendingSave());
   const [reading, setReading] = useState(false); // 편집(라이브 프리뷰) ↔ 읽기 뷰
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<NoteSearchHit[] | null>(null);
   const searchTimer = useRef<number | null>(null);
   // 문서 열기 요청의 순번 — 늦게 도착한 옛 응답을 버리는 데 쓴다
-  const openSeq = useRef(new LatestWins()).current;
+  const openSeqRef = useRef<LatestWins>();
+  const openSeq = (openSeqRef.current ??= new LatestWins());
   // 편집기로는 열 수 없다고 서버가 알려 준 문서(예: UTF-8이 아닌 텍스트).
   // 목록에는 editable=true 로 보이지만 실제로는 뷰어·내려받기로 가야 한다.
   const [viewerOnly, setViewerOnly] = useState<Set<string>>(new Set());

@@ -14,7 +14,10 @@ from .storage import walk_all, walk_files
 
 logger = logging.getLogger("server.graph")
 
-_WIKILINK = re.compile(r"\[\[([^\[\]]+?)\]\]")
+#: `[[제목]]` 링크. `![[사진.png]]` 은 **링크가 아니라 임베드**다 — 화면은 그것을
+#: 그림으로 그리지 눌러서 갈 수 있는 링크로 만들지 않는다. 여기서 세면 그래프와
+#: 백링크에만 있는 유령 링크가 생긴다.
+_WIKILINK = re.compile(r"(?<!!)\[\[([^\[\]]+?)\]\]")
 
 # (resolved_base, mode) -> (fingerprint, result). 파일시스템 지문으로 자가 무효화.
 #
@@ -64,8 +67,13 @@ def _tree_fingerprint(base: Path) -> tuple:
 
 #: 코드 울타리(``` 또는 ~~~). 인용·목록 앞머리를 떼고 본다.
 _FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
-#: 인라인 코드 — 백틱 개수가 맞는 구간
-_INLINE_CODE = re.compile(r"(`+)(?:.*?)\1", re.S)
+#: 울타리 없는 옛 표기의 코드블록(4칸 이상 들여쓰기 또는 탭)
+_INDENTED_CODE = re.compile(r"^(?: {4}|\t)")
+#: 인라인 코드 — 백틱 개수가 맞는 구간.
+#: 줄바꿈은 넘되 **빈 줄은 넘지 못한다**(마크다운의 코드 구간은 한 문단 안이다).
+#: 빈 줄까지 넘게 두면, 문서 앞뒤에 흩어진 백틱 두 개가 그 사이 전부를 코드로
+#: 만들어 멀쩡한 [[링크]]가 그래프에서 통째로 사라진다.
+_INLINE_CODE = re.compile(r"(`+)(?:[^\n]|\n(?![ \t]*\n))*?\1")
 
 
 def _without_code(text: str) -> str:
@@ -81,10 +89,17 @@ def _without_code(text: str) -> str:
         m = _FENCE.match(stripped)
         if fence is None and m:
             fence = m.group(1)[0] * 3
+            out.append("")  # 빈 줄로 남긴다 — 아래 인라인 코드가 여기를 넘지 않게
             continue
         if fence is not None:
             if m and m.group(1)[0] * 3 == fence:
                 fence = None
+            out.append("")
+            continue
+        # 4칸 이상 들여쓴 줄도 코드블록이다(울타리 없는 옛 표기).
+        # 프런트(wikiTransform)가 그렇게 보므로 여기도 같아야 한다.
+        if _INDENTED_CODE.match(line):
+            out.append("")
             continue
         out.append(line)
     return _INLINE_CODE.sub(" ", "\n".join(out))

@@ -544,6 +544,23 @@ def test_graph_ignores_wikilinks_inside_code():
     )
     assert parse_wikilinks(text) == ["진짜", "또진짜"], parse_wikilinks(text)
 
+    # 코드 구간은 **한 문단 안**이다. 빈 줄까지 넘게 두면 문서 앞뒤에 흩어진
+    # 백틱 두 개가 그 사이 전부를 코드로 만들어 멀쩡한 링크가 통째로 사라진다.
+    bt = chr(96)
+    same = f"앞 {bt} 열고\n[[한문단속]]\n뒤 {bt} 닫음"
+    apart = f"{bt} 첫 문단\n\n[[다른문단]]\n\n{bt} 마지막 문단"
+    assert parse_wikilinks(same) == [], parse_wikilinks(same)
+    assert parse_wikilinks(apart) == ["다른문단"], parse_wikilinks(apart)
+
+    # 울타리 없는 옛 표기(4칸 들여쓰기)도 코드다 — 프런트가 그렇게 본다
+    indented = "본문\n\n    [[들여쓴것]]\n\n[[바깥]]"
+    assert parse_wikilinks(indented) == ["바깥"], parse_wikilinks(indented)
+
+    # `![[사진.png]]` 은 링크가 아니라 임베드다(화면은 그림으로 그린다).
+    # 여기서 세면 그래프·백링크에만 있는 유령 링크가 생긴다.
+    embed = "![[사진.png]] 와 [[문서]]"
+    assert parse_wikilinks(embed) == ["문서"], parse_wikilinks(embed)
+
 
 def test_graph_notices_a_rename():
     """이름을 바꾸면 그래프도 바로 따라와야 한다.
@@ -2191,6 +2208,39 @@ def test_uncategorized_filter_does_not_return_everything():
         client.delete(f"/api/todo/categories/{cat['id']}")
 
 
+def test_emptying_the_trash_does_not_leave_ghosts_when_the_index_write_fails():
+    """실물을 먼저 지우면, 인덱스 쓰기가 실패했을 때 유령만 남는다.
+
+    목록에는 보이는데 복원은 전부 410 이고, 사용자는 지운 것을 되찾을 수 없다.
+    """
+    from backend import trash as trash_mod
+
+    _login()
+    client.put("/api/notes/save", json={"path": "유령시험.md", "content": "되찾아야 함"})
+    assert client.delete("/api/notes/delete?path=유령시험.md").status_code == 200
+    entry = next(e for e in client.get("/api/trash/list").json() if e["name"] == "유령시험.md")
+
+    quiet = TestClient(app, raise_server_exceptions=False)
+    quiet.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    real = trash_mod.write_atomic
+    trash_mod.write_atomic = lambda *a, **k: (_ for _ in ()).throw(OSError(28, "no space"))
+    try:
+        r = quiet.delete("/api/trash/empty")
+        assert r.status_code == 500, r.text
+    finally:
+        trash_mod.write_atomic = real
+
+    # 인덱스에 남았으면 **실물도 남아 있어야** 한다 — 복원되는지로 확인한다
+    listed = client.get("/api/trash/list").json()
+    if any(e["id"] == entry["id"] for e in listed):
+        r = client.post(f"/api/trash/restore?id={entry['id']}")
+        assert r.status_code == 200, f"목록엔 있는데 복원이 안 된다(유령): {r.text}"
+        got = client.get("/api/notes/get", params={"path": "유령시험.md"})
+        assert got.status_code == 200 and got.json()["content"] == "되찾아야 함", got.text
+        client.delete("/api/notes/delete?path=유령시험.md")
+    client.delete("/api/trash/empty")
+
+
 def test_restore_reports_a_conflict_instead_of_crashing():
     """복원할 자리의 상위 폴더 자리에 지금 '파일'이 있으면 500 이 아니라 409."""
     _login()
@@ -2309,6 +2359,41 @@ def test_calendar_lifecycle():
     after = client.get("/api/calendar/events").json()
     assert any(e["id"] == eid and e["title"] == "수정된 회의" for e in after)
     assert client.delete(f"/api/calendar/events/{eid}").status_code == 200
+
+
+def test_ai_call_failure_does_not_leak_internals():
+    """상류(Gemini SDK)의 예외 문자열에는 경로·키·요청 본문이 섞일 수 있다.
+
+    라우터는 예외를 DEBUG 일 때만 흘리는데, 이 경로는 예외가 아니라 **값**으로
+    와서 그 마스킹을 통째로 우회했다.
+    """
+    from backend.ai import orchestrator
+    from backend.ai.orchestrator import LLMResult
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    secret = "API key AIzaSyLEAKED at C:\\srv\\keys\\gemini.json"
+
+    class Broken:
+        def chat(self, contents, catalog, system):
+            return LLMResult(text="", error=secret)
+
+    was = s.debug
+    try:
+        s.debug = False
+        msgs = [e.get("message", "") for e in orchestrator.run(u, s, "안녕", "2026-09-02", llm=Broken())]
+        joined = " ".join(msgs)
+        assert "AIzaSyLEAKED" not in joined and "C:\\srv" not in joined, joined
+        assert any("AI 호출 실패" in m for m in msgs), msgs
+
+        # DEBUG 로 켜 두면 개발자는 원문을 봐야 한다
+        s.debug = True
+        msgs = [e.get("message", "") for e in orchestrator.run(u, s, "안녕", "2026-09-02", llm=Broken())]
+        assert any("AIzaSyLEAKED" in m for m in msgs), msgs
+    finally:
+        s.debug = was
 
 
 def test_ai_react_chains_skills():

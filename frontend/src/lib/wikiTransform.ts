@@ -15,6 +15,21 @@ function mapOutsideCode(text: string, fn: (chunk: string) => string): string {
   const lines = text.split("\n");
   let fence: string | null = null; // 열려 있는 울타리 표시(``` 또는 ~~~)
 
+  // 인라인 코드는 **한 문단 안에서** 줄을 넘을 수 있다(마크다운 규칙).
+  //   앞 `열고
+  //   [[제목]]
+  //   뒤 ` 닫음
+  // 을 줄마다 따로 보면 가운데 [[제목]]이 링크로 바뀌는데, 실제 렌더러는 그
+  // 구간을 코드로 그린다 — 화면에 보이는 코드가 사용자가 쓴 것과 달라진다.
+  // 그래서 이어지는 보통 줄을 모았다가 한꺼번에 훑는다. 빈 줄에서 끊는다
+  // (문단이 바뀌면 코드 구간도 거기서 끝난다 — 백엔드 notes_graph 와 같은 규칙).
+  let para: string[] = [];
+  const flush = () => {
+    if (!para.length) return;
+    out.push(mapOutsideInlineCode(para.join("\n"), fn));
+    para = [];
+  };
+
   for (const line of lines) {
     // 인용문·목록 안에도 코드블록이 있다(`> ```` `, `- ```` `). 앞의 인용 기호와
     // 들여쓰기를 걷어낸 뒤에 울타리를 본다 — 예전에는 줄 맨 앞 공백 3칸까지만
@@ -28,32 +43,42 @@ function mapOutsideCode(text: string, fn: (chunk: string) => string): string {
       continue;
     }
     if (open) {
+      flush();
       fence = open[1];
       out.push(line);
       continue;
     }
     // 4칸 이상 들여쓴 줄도 코드블록이다(울타리 없는 옛 표기).
     if (/^(?: {4}|\t)/.test(line)) {
+      flush();
       out.push(line);
       continue;
     }
-    // 한 줄 안에서 인라인 코드를 건너뛴다
-    out.push(mapOutsideInlineCode(line, fn));
+    if (!line.trim()) {
+      // 빈 줄 = 문단 끝. 여기서 끊어야 짝 안 맞는 백틱이 문서 뒤쪽까지 번지지 않는다.
+      flush();
+      out.push(line);
+      continue;
+    }
+    para.push(line);
   }
+  flush();
   return out.join("\n");
 }
 
-function mapOutsideInlineCode(line: string, fn: (chunk: string) => string): string {
-  // 백틱 묶음은 같은 개수로 닫힌다(``a`b`` 같은 형태도 지킨다)
+/** 한 문단 안에서 인라인 코드 구간을 건너뛰고 나머지만 fn 에 넘긴다. */
+function mapOutsideInlineCode(para: string, fn: (chunk: string) => string): string {
+  // 백틱 묶음은 같은 개수로 닫힌다(``a`b`` 같은 형태도 지킨다).
+  // 줄바꿈은 넘되 빈 줄은 못 넘는다 — 부르는 쪽이 이미 문단으로 끊어 준다.
   const re = /(`+)([\s\S]*?)\1/g;
   let out = "";
   let last = 0;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(line)) !== null) {
-    out += fn(line.slice(last, m.index)) + m[0];
+  while ((m = re.exec(para)) !== null) {
+    out += fn(para.slice(last, m.index)) + m[0];
     last = m.index + m[0].length;
   }
-  return out + fn(line.slice(last));
+  return out + fn(para.slice(last));
 }
 
 /**
