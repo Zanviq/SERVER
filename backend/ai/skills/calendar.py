@@ -476,7 +476,16 @@ class CreateCalendarEvent(SkillBase):
     def run(self, args, ctx):
         cal = _cal_prefs(ctx)
         default_color = str(cal.get("default_color", "2"))
-        color = resolve_color(args.get("color"), default=default_color)
+        # 색을 **줬는데 못 알아들은** 경우를 기본색으로 바꿔치기하면 안 된다.
+        # 조회·수정 쪽은 같은 값을 invalid 로 거절하므로, 방금 만든 일정을 그 색으로
+        # 다시 찾을 수 없다("민트색으로 만들어줘" → 만들어 놓고 "민트색 일정 없음").
+        if args.get("color") is None:
+            color = default_color
+        else:
+            try:
+                color = _strict_color(args["color"])
+            except _BadColor as e:
+                return SkillResult(ok=False, message=str(e), error_code="invalid")
         # 알림: 명시하지 않으면 사용자 기본값(default_remind, 0=없음)
         remind = args.get("remind_minutes")
         remind = int(remind) if remind is not None else int(cal.get("default_remind", 0))
@@ -558,6 +567,26 @@ class UpdateCalendarEvent(SkillBase):
             payload["allDay"] = bool(args["all_day"])
         if args.get("remind_minutes") is not None:
             payload["remind_minutes"] = int(args["remind_minutes"])
+
+        # 시각이 있는 일정에 **날짜만** 준 경우. 그대로 두면 _norm_times 가 날짜만
+        # 남겨서 그 일정이 조용히 그날 0시로 옮겨 가고, 저장값은 allDay=false 인데
+        # 날짜만 있는 깨진 상태가 된다. 무엇을 원하는지 되묻는 편이 낫다.
+        if args.get("all_day") is None:
+            vague = [k for k in ("start", "end")
+                     if payload.get(k) and not dt_has_time(str(payload[k]))]
+            if vague:
+                existing = calendar_service.find_event(
+                    ctx.user, ctx.settings, str(args["event_id"]))
+                if existing and not existing.get("allDay"):
+                    return SkillResult(
+                        ok=False,
+                        error_code="invalid",
+                        message=(
+                            f"시각이 있는 일정입니다(현재 {existing.get('start', '')}). "
+                            f"{'·'.join(vague)}에 날짜만 주면 0시로 옮겨집니다. "
+                            "시각까지 함께 주거나, 종일 일정으로 바꾸려면 all_day=true 를 주세요."
+                        ),
+                    )
         try:
             _norm_times(payload)
         except BadDateTime as e:

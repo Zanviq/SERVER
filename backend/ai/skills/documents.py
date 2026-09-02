@@ -18,7 +18,7 @@ from ...file_kinds import is_editable, kind_of
 from ...json_store import lock_for, write_text_atomic
 from ...notes_graph import backlinks_for
 from ...security_paths import safe_join, to_rel
-from ...storage import user_data_root, walk_dirs, walk_files
+from ...storage import user_data_root, walk_all, walk_dirs, walk_files
 from ...trash import move_to_trash
 from ..skill_base import SkillBase, SkillResult
 from ._common import _MAX_READ, _is_sensitive
@@ -191,8 +191,11 @@ class ListDocuments(SkillBase):
         # 넘겨 파일당 추가 스탯도 없앤다.
         prefix = to_rel(root, base)
         prefix = "" if prefix in ("", ".") else f"{prefix}/"
-        files = walk_files(base)
-        known = {f"{prefix}{f.rel}" for f in files}
+        files, dirs = walk_all(base)
+        # 폴더도 함께 넣는다. 폴더 `보고서` 와 문서 `보고서.md` 가 같이 있으면
+        # 문서를 `보고서` 로 내보내게 되어 폴더 식별자와 겹치고, 그 값으로 부른
+        # 삭제·이동이 폴더 대신 문서를 건드린다(폴더는 영영 못 지운다).
+        known = {f"{prefix}{f.rel}" for f in files} | {f"{prefix}{d}" for d in dirs}
         items = []
         for f in files:
             rel = f"{prefix}{f.rel}"
@@ -309,8 +312,14 @@ class WriteDocument(SkillBase):
             target = _target_for_write(root, args["path"])
         except _Ambiguous as e:
             return _ambiguous_result(e)
-        if target.exists() and not is_editable(target.name):
-            return SkillResult(ok=False, message="텍스트 문서만 편집할 수 있습니다.", error_code="unsupported")
+        if not is_editable(target.name):
+            # 있는 파일만 보던 검사였다. 그러면 `보고서.xyz` 처럼 모르는 확장자로
+            # **새로** 만드는 것은 통과해서, 다시 읽지도 덧붙이지도 못하는 문서를
+            # 만들어 놓고 "저장됨"이라고 답하게 된다.
+            what = "텍스트 문서만 편집할 수 있습니다."
+            if not target.exists():
+                what += f" '{target.name}' 대신 .md 나 .txt 로 이름을 지어 주세요."
+            return SkillResult(ok=False, message=what, error_code="unsupported")
         target.parent.mkdir(parents=True, exist_ok=True)
 
         # 덮어쓰기는 이 시스템에서 가장 되돌리기 어려운 동작이었다 — 삭제는 휴지통을
@@ -356,8 +365,14 @@ class AppendDocument(SkillBase):
             target = _target_for_write(root, args["path"])
         except _Ambiguous as e:
             return _ambiguous_result(e)
-        if target.exists() and not is_editable(target.name):
-            return SkillResult(ok=False, message="텍스트 문서만 편집할 수 있습니다.", error_code="unsupported")
+        if not is_editable(target.name):
+            # 있는 파일만 보던 검사였다. 그러면 `보고서.xyz` 처럼 모르는 확장자로
+            # **새로** 만드는 것은 통과해서, 다시 읽지도 덧붙이지도 못하는 문서를
+            # 만들어 놓고 "저장됨"이라고 답하게 된다.
+            what = "텍스트 문서만 편집할 수 있습니다."
+            if not target.exists():
+                what += f" '{target.name}' 대신 .md 나 .txt 로 이름을 지어 주세요."
+            return SkillResult(ok=False, message=what, error_code="unsupported")
         target.parent.mkdir(parents=True, exist_ok=True)
         title = args["path"].rsplit("/", 1)[-1]
         # 읽고-고쳐-쓰기라 락이 없으면 동시에 들어온 덧붙이기가 서로를 덮어쓴다
@@ -508,8 +523,8 @@ class SearchDocuments(SkillBase):
         ql = args["query"].lower()
         # 순회 한 번에 stat 까지 받아 둔다. 상한(_LIMIT)에서 끊더라도 순회 자체는
         # 싸다(scandir) — 대신 본문 읽기는 필요한 것만 한다.
-        files = walk_files(root)
-        known = {f.rel for f in files}
+        files, dirs = walk_all(root)
+        known = {f.rel for f in files} | set(dirs)
         hits = []
         scanned = 0
         for f in files:
