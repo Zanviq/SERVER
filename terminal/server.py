@@ -223,7 +223,28 @@ async def handler(ws):
                 return
             view = view[n:]
 
+    async def watch_session():
+        """입력이 없어도 세션을 계속 확인한다.
+
+        수신 메시지가 있을 때만 확인하면, 화면만 띄워 둔 세션은 만료·강등돼도
+        영원히 재확인되지 않는다 — 호스트 루트 셸이 주인 없이 남는다.
+        """
+        while not closed.is_set():
+            try:
+                await asyncio.wait_for(closed.wait(), timeout=RECHECK_SECONDS)
+                return
+            except asyncio.TimeoutError:
+                pass
+            if _verify(_cookie_token(cookie_header)) != user:
+                closed.set()
+                try:
+                    await ws.close(code=4403, reason="session expired")
+                except Exception:
+                    pass
+                return
+
     out_task = asyncio.create_task(pump_out())
+    watch_task = asyncio.create_task(watch_session())
     checked_at = time.time()
     try:
         async for msg in ws:
@@ -263,7 +284,9 @@ async def handler(ws):
             loop.remove_reader(fd)
         except Exception:
             pass
+        closed.set()
         out_task.cancel()
+        watch_task.cancel()
         try:
             os.close(fd)
         except OSError:
