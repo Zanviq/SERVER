@@ -16,7 +16,11 @@ function mapOutsideCode(text: string, fn: (chunk: string) => string): string {
   let fence: string | null = null; // 열려 있는 울타리 표시(``` 또는 ~~~)
 
   for (const line of lines) {
-    const open = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+    // 인용문·목록 안에도 코드블록이 있다(`> ```` `, `- ```` `). 앞의 인용 기호와
+    // 들여쓰기를 걷어낸 뒤에 울타리를 본다 — 예전에는 줄 맨 앞 공백 3칸까지만
+    // 인정해서 그런 코드블록 안의 `[[제목]]` 이 링크로 바뀌었다.
+    const body = line.replace(/^[\s>]*(?:[-*+]\s+|\d+[.)]\s+)?/, "");
+    const open = body.match(/^(`{3,}|~{3,})/);
     if (fence) {
       out.push(line);
       // 같은 종류의 울타리가 같은 길이 이상이면 닫힌다
@@ -25,6 +29,11 @@ function mapOutsideCode(text: string, fn: (chunk: string) => string): string {
     }
     if (open) {
       fence = open[1];
+      out.push(line);
+      continue;
+    }
+    // 4칸 이상 들여쓴 줄도 코드블록이다(울타리 없는 옛 표기).
+    if (/^(?: {4}|\t)/.test(line)) {
       out.push(line);
       continue;
     }

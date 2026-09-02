@@ -68,6 +68,18 @@ check("울타리 밖은 바뀐다",
 check("코드 옆의 링크는 바뀐다",
   transformWiki("`[[안]]` 과 [[밖]]", resolve),
   "`[[안]]` 과 [밖](#wiki/%EB%B0%96)");
+check("인용문 안 코드블록",
+  transformWiki("> ```\n> [[제목]]\n> ```", resolve),
+  "> ```\n> [[제목]]\n> ```");
+check("목록 안 코드블록",
+  transformWiki("- ```\n  [[제목]]\n  ```", resolve),
+  "- ```\n  [[제목]]\n  ```");
+check("4칸 들여쓴 코드블록",
+  transformWiki("본문\n\n    [[제목]]\n", resolve),
+  "본문\n\n    [[제목]]\n");
+check("들여쓰기 없는 곳은 그대로 바뀐다",
+  transformWiki("본문 [[제목]]", resolve),
+  "본문 [제목](#wiki/%EC%A0%9C%EB%AA%A9)");
 
 console.log(fails === 0 ? "\n모두 통과" : `\n실패 ${fails}건`);
 process.exit(fails === 0 ? 0 : 1);

@@ -122,7 +122,10 @@ class ImageWidget extends WidgetType {
 
     let startX = 0;
     let startW = 0;
+    let dragged = false;
     const onMove = (e: PointerEvent) => {
+      // 손가락·마우스가 몇 픽셀은 흔들린다. 그 정도는 '끌었다'로 보지 않는다.
+      if (Math.abs(e.clientX - startX) > 3) dragged = true;
       const w = Math.max(60, Math.round(startW + (e.clientX - startX)));
       img.style.width = `${w}px`;
     };
@@ -130,6 +133,9 @@ class ImageWidget extends WidgetType {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       grip.classList.remove("is-dragging");
+      // **끌지 않고 한 번 누르기만 했으면 문서를 건드리지 않는다.** 예전에는
+      // 손잡이를 살짝 누른 것만으로 `|폭` 이 박히고 그대로 자동저장됐다.
+      if (!dragged) return;
       writeWidth(Math.round(img.getBoundingClientRect().width));
     };
     grip.addEventListener("pointerdown", (e) => {
@@ -137,6 +143,7 @@ class ImageWidget extends WidgetType {
       e.stopPropagation();
       startX = e.clientX;
       startW = img.getBoundingClientRect().width;
+      dragged = false;
       grip.classList.add("is-dragging");
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
@@ -275,6 +282,20 @@ function buildDeco(view: EditorView): DecorationSet {
  * 인라인 장식과 달리 StateField로 분리한다. 뷰포트가 아니라 문서 전체를 훑지만
  * 줄마다 문자열 검사 한 번이라 비용은 무시할 만하다.
  */
+/** 그 자리가 코드(울타리·인라인) 안인가. 표 도구와 같은 판정을 쓴다. */
+function inCodeAt(state: EditorState, pos: number): boolean {
+  let node = syntaxTree(state).resolveInner(pos, 1);
+  while (node) {
+    const n = node.name;
+    if (n === "FencedCode" || n === "CodeBlock" || n === "CodeText" || n === "InlineCode") {
+      return true;
+    }
+    if (!node.parent) break;
+    node = node.parent;
+  }
+  return false;
+}
+
 function buildEmbeds(state: EditorState): DecorationSet {
   const resolve = state.field(embedResolver);
   if (!resolve) return Decoration.none;
@@ -282,7 +303,9 @@ function buildEmbeds(state: EditorState): DecorationSet {
   let pos = 0;
   for (const text of state.doc.iterLines()) {
     const end = pos + text.length;
-    if (text.includes("![[")) {
+    // 코드 안에 적어 둔 `![[사진.png]]` 은 **설명하려고 적은 글자**다. 그림으로
+    // 그리면 화면의 코드가 사용자가 쓴 것과 달라지고, 손잡이를 끌면 코드까지 고쳐진다.
+    if (text.includes("![[") && !inCodeAt(state, pos)) {
       eachWikiEmbed(text, ({ embed }) => {
         if (!isImagePath(embed.target)) return;
         const hit = resolve(embed.target);
@@ -501,6 +524,8 @@ export function LiveEditor({
   // 트리에서 편집기로 끌어올 공간 자체가 없다(둘을 번갈아 보여주므로).
   const needsAttachButton = useMediaQuery("(pointer: coarse), (max-width: 639px)");
   const applyingExternal = useRef(false);
+  // 업로드가 끝난 뒤 삽입할 자리들. 편집이 일어나면 함께 옮긴다.
+  const pendingSpots = useRef<{ pos: number }[]>([]);
 
   // 마운트 시점 값은 아래 embedResolver.init이 심는다. 여기서는 그 뒤의 변화만
   // 알린다 — 문서 목록이 늦게 도착해도 도착한 그때 이미지가 붙도록.
@@ -533,14 +558,23 @@ export function LiveEditor({
     const insert = cbs.current.onDropFiles;
     if (!insert || !files.length) return;
     const startedIn = cbs.current.docKey;
+    // 자리를 **숫자로** 붙잡으면 안 된다. 업로드가 끝나기까지 몇 초가 걸리고,
+    // 그 사이 앞쪽에 글을 치면 그만큼 밀려서 엉뚱한 글자 사이에 박힌다.
+    // 편집이 일어날 때마다 이 자리를 함께 옮긴다(아래 updateListener).
+    const spot = { pos: at };
+    pendingSpots.current.push(spot);
+    const done = () => {
+      pendingSpots.current = pendingSpots.current.filter((s) => s !== spot);
+    };
     insert(files).then((snippets) => {
+      done();
       if (!snippets.length) return;
       if (viewRef.current !== view || cbs.current.docKey !== startedIn) {
         toast.error("다른 문서로 이동해 링크를 넣지 못했습니다. 올린 파일은 목록에 있습니다.");
         return;
       }
-      insertBlock(view, at, snippets.join("\n"));
-    });
+      insertBlock(view, Math.min(spot.pos, view.state.doc.length), snippets.join("\n"));
+    }, done);
   };
 
   useEffect(() => {
@@ -690,7 +724,13 @@ export function LiveEditor({
           defaultKeymap: true,
         }),
         EditorView.updateListener.of((u) => {
-          if (u.docChanged && !applyingExternal.current) {
+          if (!u.docChanged) return;
+          // 업로드가 끝나면 넣을 자리들을 편집에 맞춰 옮긴다. 안 옮기면 업로드가
+          // 도는 동안 앞쪽에 친 글자 수만큼 밀려 엉뚱한 데 박힌다.
+          for (const spot of pendingSpots.current) {
+            spot.pos = u.changes.mapPos(spot.pos, 1);
+          }
+          if (!applyingExternal.current) {
             cbs.current.onChange(u.state.doc.toString());
           }
         }),
