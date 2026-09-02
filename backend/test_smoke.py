@@ -92,6 +92,95 @@ def test_login_guard_counts_per_account_and_forgets():
     login_guard.reset()
 
 
+def test_login_is_case_insensitive_about_username():
+    """가입은 아이디를 소문자로 낮춰 저장한다 — 조회가 대소문자를 가리면 본인이 못 들어온다."""
+    login_guard.reset()
+    anon = TestClient(app)
+    r = anon.post("/api/auth/signup",
+                  json={"username": "CaseUser", "password": "pw-long-enough"})
+    assert r.status_code == 201, r.text
+    assert r.json()["username"] == "caseuser"
+    try:
+        client.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+        client.post("/api/admin/users/caseuser/approve")
+
+        for typed in ("CaseUser", "caseuser", "CASEUSER"):
+            login_guard.reset()
+            c = TestClient(app)
+            got = c.post("/api/auth/login", json={"username": typed, "password": "pw-long-enough"})
+            assert got.status_code == 200, f"{typed}: {got.status_code} {got.text}"
+
+        # 대소문자만 다른 아이디로 또 만들 수 없어야 한다(조회가 같은 것으로 보므로)
+        dup = TestClient(app).post(
+            "/api/auth/signup", json={"username": "CASEuser", "password": "pw-long-enough"})
+        assert dup.status_code == 409, dup.text
+    finally:
+        accounts.delete("caseuser", get_settings())
+        login_guard.reset()
+
+
+def test_login_guard_does_not_hold_huge_usernames():
+    """로그인 아이디에는 길이 제한이 없다 — 그대로 열쇠로 쓰면 메모리가 눌러앉는다."""
+    login_guard.reset()
+    c = TestClient(app)
+    huge = "가" * 20_000
+    c.post("/api/auth/login", json={"username": huge, "password": "x"})
+    held = sum(len(k) for k in login_guard._states)
+    assert held <= login_guard.MAX_KEY_CHARS, held
+    login_guard.reset()
+
+
+def test_login_guard_keeps_locked_entries_when_full():
+    """아이디를 바꿔 가며 채우는 것만으로 잠금이 풀리면 제한이 무의미하다."""
+    login_guard.reset()
+    t0 = 1_000_000.0
+    for _ in range(login_guard.FREE_TRIES + 1):
+        login_guard.record_failure("피해자", t0)
+    assert login_guard.retry_after("피해자", t0) > 0
+    for i in range(login_guard.MAX_KEYS + 50):
+        login_guard.record_failure(f"잡음{i}", t0)
+    assert login_guard.retry_after("피해자", t0) > 0, "잠긴 항목이 축출됐다"
+    login_guard.reset()
+
+
+def test_login_guard_counts_concurrent_attempts():
+    """확인과 기록이 따로 놀면 동시에 보낸 요청이 전부 비밀번호를 시험한다."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    login_guard.reset()
+    c = TestClient(app)
+    with ThreadPoolExecutor(max_workers=16) as ex:
+        codes = list(ex.map(
+            lambda i: c.post("/api/auth/login",
+                             json={"username": "tester", "password": f"틀림{i}"}).status_code,
+            range(16)))
+    assert codes.count(401) <= login_guard.FREE_TRIES + 1, codes
+    assert 429 in codes, codes
+    login_guard.reset()
+
+
+def test_signup_does_not_erase_bootstrap_owner():
+    """빈 저장소에 가입이 먼저 들어와도 .env 주인 계정은 만들어져야 한다."""
+    import tempfile as _tf
+
+    from backend.config import Settings
+
+    prev = os.environ.get("STORAGE_ROOT")
+    os.environ["STORAGE_ROOT"] = _tf.mkdtemp(prefix="seedtest_")
+    try:
+        s = Settings()
+        s.ensure_storage()
+        accounts.signup("firstcomer", "pw-long-enough", "", s)
+        names = {r["username"] for r in accounts.list_all(s)}
+        assert "tester" in names, names  # AUTH_USERS 주인
+        assert "firstcomer" in names, names
+    finally:
+        if prev is None:
+            del os.environ["STORAGE_ROOT"]
+        else:
+            os.environ["STORAGE_ROOT"] = prev
+
+
 def test_session_cookie_secure_follows_request_protocol():
     """HTTPS로 들어오면 Secure, 집 안 평문 접속이면 빼야 한다(빼지 않으면 로그인 불가)."""
     login_guard.reset()

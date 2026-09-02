@@ -66,15 +66,20 @@ def login(
     """비밀번호 검증 후 세션 쿠키 발급. 승인 전 계정은 로그인할 수 없다."""
     # 무차별 대입 차단: 잠겨 있으면 비밀번호를 확인조차 하지 않는다.
     # (확인해 주면 맞았는지 틀렸는지가 새어 나가 제한이 무의미해진다)
-    wait = login_guard.retry_after(req.username)
+    # 확인과 동시에 '진행 중'으로 잡는다 — 따로 하면 동시에 들어온 요청이 전부
+    # 통과해 한 번에 수십 개를 시험해 볼 수 있다.
+    wait = login_guard.begin_attempt(req.username)
     if wait:
         raise HTTPException(
             status_code=429,
             detail=f"로그인 시도가 너무 많습니다. {wait}초 후 다시 시도해 주세요.",
             headers={"Retry-After": str(wait)},
         )
+    try:
+        acc = accounts.authenticate(req.username, req.password, settings)
+    finally:
+        login_guard.end_attempt(req.username)
 
-    acc = accounts.authenticate(req.username, req.password, settings)
     if acc is None:
         delay = login_guard.record_failure(req.username)
         # 아이디 존재 여부를 흘리지 않도록 한 가지 메시지로 통일

@@ -29,11 +29,17 @@ FIRST_DELAY = 30
 MAX_DELAY = 10 * 60
 # 아이디를 바꿔 가며 두드리면 기록이 사전만큼 쌓인다 — 상한을 둔다.
 MAX_KEYS = 4096
+# 열쇠로 삼을 아이디 길이의 상한. 로그인 요청의 아이디에는 길이 제한이 없어서
+# (계정 규칙 3~32자는 가입에만 걸린다) 수 MB 짜리 문자열을 보낼 수 있고, 그게
+# 그대로 열쇠가 되면 창(15분) 동안 메모리에 눌러앉는다. 잘라서 담는다 —
+# 어차피 실제 계정 아이디는 32자를 넘지 않으므로 정상 사용자에겐 영향이 없다.
+MAX_KEY_CHARS = 64
 
 
 @dataclass
 class _State:
     fails: int = 0
+    inflight: int = 0   # 결과를 아직 모르는 진행 중 시도
     seen: float = 0.0   # 마지막으로 움직인 시각(정리 기준)
     until: float = 0.0  # 이 시각까지는 시도 자체를 받지 않는다
 
@@ -43,17 +49,29 @@ _lock = threading.Lock()
 
 
 def _prune(now: float) -> None:
-    """창을 넘긴 기록을 버린다. 그래도 넘치면 오래된 것부터 버린다."""
+    """창을 넘긴 기록을 버린다. 그래도 넘치면 오래된 것부터 버린다.
+
+    **잠겨 있는 항목은 버리지 않는다.** 버리면 잠금과 실패 횟수가 함께 사라져,
+    아이디를 바꿔 가며 4096개를 채우는 것만으로 잠금을 풀 수 있다.
+    """
     stale = [k for k, s in _states.items() if now - s.seen > WINDOW and now >= s.until]
     for k in stale:
         del _states[k]
     if len(_states) > MAX_KEYS:
-        for k, _ in sorted(_states.items(), key=lambda kv: kv[1].seen)[: len(_states) - MAX_KEYS]:
+        # 한 번에 여유분까지 비운다. 상한에 딱 맞춰 버리면 그 뒤로 기록이 하나
+        # 들어올 때마다 4096개를 정렬하게 되어, 방어하려던 대상에게 오히려
+        # CPU 를 내주는 꼴이 된다.
+        target = max(1, MAX_KEYS * 3 // 4)
+        droppable = sorted(
+            ((k, s) for k, s in _states.items() if now >= s.until),
+            key=lambda kv: kv[1].seen,
+        )
+        for k, _ in droppable[: max(0, len(_states) - target)]:
             del _states[k]
 
 
 def _key(username: str) -> str:
-    return (username or "").strip().lower()
+    return (username or "").strip().lower()[:MAX_KEY_CHARS]
 
 
 def retry_after(username: str, now: float | None = None) -> int:
@@ -64,6 +82,45 @@ def retry_after(username: str, now: float | None = None) -> int:
         if s is None or now >= s.until:
             return 0
         return max(1, int(s.until - now + 0.999))
+
+
+def begin_attempt(username: str, now: float | None = None) -> int:
+    """시도 하나를 '진행 중'으로 잡는다. 막혀 있으면 남은 초.
+
+    잠금 확인과 실패 기록이 따로 놀면, 동시에 들어온 요청이 전부 확인을 통과한 뒤
+    각자 비밀번호를 검증한다 — 5회 제한이 사실상 '동시 요청 수만큼' 늘어난다.
+    그래서 확인과 동시에 진행 중 수를 세고, 그 수까지 실패로 쳐서 판단한다.
+    """
+    now = time.time() if now is None else now
+    with _lock:
+        _prune(now)
+        s = _states.get(_key(username))
+        if s is None or now - s.seen > WINDOW:
+            s = _State()
+            _states[_key(username)] = s
+        if now < s.until:
+            return max(1, int(s.until - now + 0.999))
+        # 아직 결과를 모르는 시도까지 합쳐서 이미 한도를 넘었으면 받지 않는다
+        if s.fails + s.inflight > FREE_TRIES:
+            delay = _delay_for(s.fails + s.inflight)
+            s.until = max(s.until, now + delay)
+            return delay
+        s.inflight += 1
+        s.seen = now
+        return 0
+
+
+def end_attempt(username: str) -> None:
+    """진행 중 표시를 거둔다(성공·실패 어느 쪽이든 반드시 부른다)."""
+    with _lock:
+        s = _states.get(_key(username))
+        if s is not None and s.inflight > 0:
+            s.inflight -= 1
+
+
+def _delay_for(fails: int) -> int:
+    """6번째 실패 = 30초, 그다음부터 두 배씩. 상한에서 멈춘다."""
+    return min(FIRST_DELAY * 2 ** (fails - FREE_TRIES - 1), MAX_DELAY)
 
 
 def record_failure(username: str, now: float | None = None) -> int:
@@ -79,8 +136,7 @@ def record_failure(username: str, now: float | None = None) -> int:
         s.seen = now
         if s.fails <= FREE_TRIES:
             return 0
-        # 6번째 실패 = 30초, 그다음부터 두 배씩. 상한에서 멈춘다.
-        delay = min(FIRST_DELAY * 2 ** (s.fails - FREE_TRIES - 1), MAX_DELAY)
+        delay = _delay_for(s.fails)
         s.until = now + delay
         return delay
 

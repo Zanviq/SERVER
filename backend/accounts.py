@@ -175,11 +175,32 @@ def _backfill_origin(rows: list[dict], p: Path, settings: Settings) -> None:
         write_atomic(p, rows)
 
 
-def find(username: str, settings: Settings) -> Account | None:
-    for row in _load(settings):
-        if row["username"] == username:
-            return _to_account(row)
+def _match(rows: list[dict], username: str) -> dict | None:
+    """아이디로 계정 행을 찾는다. **대소문자를 가리지 않는다.**
+
+    가입은 아이디를 소문자로 낮춰 저장하는데(signup) 조회는 정확히 일치해야 했다.
+    그래서 가입할 때 `Jaemin` 이라고 친 사람은 저장된 계정이 `jaemin` 인 줄 모른 채
+    같은 문자열로 로그인해 계속 401을 받았고, 시도 제한(소문자 기준으로 센다)까지
+    걸려 **올바른 비밀번호로도 자기 계정에 못 들어갔다**. 휴대폰 자판의 자동
+    대문자화까지 겹치면 더 잘 일어난다.
+
+    정확히 일치하는 것을 먼저 본다 — .env(AUTH_USERS)로 만든 주인 계정은 대문자를
+    쓸 수 있고, 그런 계정이 둘 있을 때 엉뚱한 쪽을 고르면 안 된다.
+    """
+    key = (username or "").strip()
+    for row in rows:
+        if row.get("username") == key:
+            return row
+    low = key.lower()
+    for row in rows:
+        if str(row.get("username", "")).lower() == low:
+            return row
     return None
+
+
+def find(username: str, settings: Settings) -> Account | None:
+    row = _match(_load(settings), username)
+    return _to_account(row) if row else None
 
 
 def authenticate(username: str, password: str, settings: Settings) -> Account | None:
@@ -187,7 +208,7 @@ def authenticate(username: str, password: str, settings: Settings) -> Account | 
 
     상태 판정은 호출자가 한다 — 승인 대기와 비밀번호 오류를 다르게 안내하기 위해.
     """
-    row = next((r for r in _load(settings) if r["username"] == username), None)
+    row = _match(_load(settings), username)
     if row is None:
         # 타이밍 차이로 아이디 존재 여부가 새지 않도록 더미 해시를 한 번 계산
         verify_password(password, f"{_ALGO}${_ITERATIONS}$AAAA$AAAA")
@@ -217,9 +238,16 @@ def signup(username: str, password: str, display_name: str, settings: Settings) 
         raise HTTPException(status_code=400, detail=f"비밀번호는 {MIN_PASSWORD}자 이상이어야 합니다.")
 
     p = _path(settings)
+    # 저장소가 비어 있을 때 가입이 먼저 들어오면, 아래에서 계정 파일을 **새 사용자
+    # 한 명만 담아** 만들어 버린다. 그 뒤로는 파일이 있으니 ensure_seed 가 아무 일도
+    # 하지 않아 .env(AUTH_USERS)의 주인 계정이 영영 생기지 않는다 — 아무도 서버를
+    # 관리할 수 없게 된다. 그래서 먼저 시드를 보장한다(멱등).
+    # 락 **밖에서** 부른다 — ensure_seed 가 같은 락을 잡으므로 안에서 부르면 교착이다.
+    ensure_seed(settings)
     with lock_for(p):
         rows = read_json(p, [])
-        if any(r["username"] == username for r in rows):
+        # 대소문자만 다른 아이디는 같은 것으로 본다 — 조회가 그렇게 찾기 때문이다.
+        if _match(rows, username) is not None:
             raise HTTPException(status_code=409, detail="이미 사용 중인 아이디입니다.")
         # 가입은 로그인 없이 누구나 부를 수 있다. 상한이 없으면 승인 대기 줄만
         # 무한히 쌓여서, 계정 파일이 커지고 그걸 매 요청마다 읽는 인증이 같이
@@ -283,7 +311,7 @@ def set_status(username: str, status: str, actor: str, settings: Settings) -> di
     p = _path(settings)
     with lock_for(p):
         rows = read_json(p, [])
-        row = next((r for r in rows if r["username"] == username), None)
+        row = _match(rows, username)
         if row is None:
             raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
         # 마지막 관리자를 비활성화하면 아무도 승인할 수 없게 된다
@@ -310,7 +338,7 @@ def set_role(username: str, role: str, settings: Settings) -> dict:
     p = _path(settings)
     with lock_for(p):
         rows = read_json(p, [])
-        row = next((r for r in rows if r["username"] == username), None)
+        row = _match(rows, username)
         if row is None:
             raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
         if row.get("role") == "admin" and role != "admin" and _admin_count(rows) <= 1:
@@ -327,7 +355,7 @@ def delete(username: str, settings: Settings) -> None:
     p = _path(settings)
     with lock_for(p):
         rows = read_json(p, [])
-        row = next((r for r in rows if r["username"] == username), None)
+        row = _match(rows, username)
         if row is None:
             raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
         if row.get("role") == "admin" and row.get("status") == STATUS_ACTIVE and _admin_count(rows) <= 1:
