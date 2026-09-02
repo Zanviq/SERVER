@@ -80,7 +80,13 @@ function blocked(label, md, { tag, attr, value } = {}) {
   const hits = [];
   if (tag && tags.includes(tag)) hits.push(`태그 ${tag} 남음`);
   if (attr && attrs.some((a) => a.toLowerCase() === attr.toLowerCase())) hits.push(`속성 ${attr} 남음`);
-  if (value && values.some((v) => v.toLowerCase().includes(value.toLowerCase()))) {
+  // 브라우저는 URL 안의 탭·개행을 **버리고** 해석한다. 그러니 검사도 버리고 봐야
+  // 한다 — 안 그러면 `java\nscript:` 같은 값이 그대로 남아도 통과 도장을 찍는다.
+  const bare = (v) => [...v].filter((c) => c.charCodeAt(0) > 32).join("");
+  if (value && values.some((v) => {
+    const want = value.toLowerCase();
+    return v.toLowerCase().includes(want) || bare(v).toLowerCase().includes(bare(value).toLowerCase());
+  })) {
     hits.push(`값 ${value} 남음`);
   }
   // 무엇을 지정했든, 이벤트 핸들러와 script/style 은 언제나 없어야 한다
@@ -89,7 +95,9 @@ function blocked(label, md, { tag, attr, value } = {}) {
   for (const t of ["script", "style", "iframe", "object", "embed", "form", "base", "meta", "link"]) {
     if (tags.includes(t)) hits.push(`위험 태그 ${t}`);
   }
-  if (values.some((v) => /javascript\s*:/i.test(v))) hits.push("javascript: URL");
+  // `\s*:` 만 보면 안 된다 — 위험한 건 콜론 앞 공백이 아니라 **낱말 속**에 낀
+  // 탭·개행(`java\nscript:`)이다. 브라우저가 버리고 읽는 대로 검사한다.
+  if (values.some((v) => /javascript:/i.test(bare(v)))) hits.push("javascript: URL");
   check(label, hits.length === 0, hits.join(", "));
 }
 

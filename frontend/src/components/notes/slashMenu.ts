@@ -14,8 +14,13 @@ import type { EditorView } from "@codemirror/view";
 export interface SlashActions {
   /** 파일 선택 창을 열어 업로드 → 커서 위치에 삽입 */
   attachImage?: () => void;
-  /** 새 문서를 만들고 그 제목을 돌려준다(취소하면 null) */
-  createDoc?: () => Promise<string | null>;
+  /** 새 문서를 만들고 `[[링크]]` 까지 넣는다.
+   *
+   *  넣는 일을 여기서 하지 않는 이유: 제목을 묻는 동안 사용자가 다른 문서로
+   *  옮겨 갈 수 있다. 그러면 편집기가 새로 만들어져 이 view 는 죽은 것이고,
+   *  링크는 아무 안내 없이 사라진다. 업로드 삽입과 같은 대조가 필요하므로
+   *  그 대조를 아는 편집기가 맡는다. */
+  createDocLink?: (view: EditorView, at: number) => void;
 }
 
 /**
@@ -186,23 +191,15 @@ export function makeSlashSource(actions: () => SlashActions) {
         },
       });
     }
-    if (act.createDoc && extra("새 문서 만들어 링크", "문서를 만들고 [[링크]] 삽입", "new page doc 새문서 링크")) {
+    if (act.createDocLink && extra("새 문서 만들어 링크", "문서를 만들고 [[링크]] 삽입", "new page doc 새문서 링크")) {
       options.push({
         label: "새 문서 만들어 링크",
         detail: "문서를 만들고 [[링크]] 삽입",
         type: "keyword",
         apply: (view: EditorView, _c: Completion, f: number, to: number) => {
+          // 먼저 `/새 문서...` 글자를 지운다 — 안 지우면 링크와 함께 남는다.
           view.dispatch({ changes: { from: f, to, insert: "" }, selection: { anchor: f } });
-          act.createDoc?.().then((title) => {
-            if (!title) return;
-            const at = Math.min(view.state.selection.main.head, view.state.doc.length);
-            const insert = `[[${title}]]`;
-            view.dispatch({
-              changes: { from: at, insert },
-              selection: { anchor: at + insert.length },
-            });
-            view.focus();
-          });
+          act.createDocLink?.(view, f);
         },
       });
     }

@@ -378,6 +378,9 @@ def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict)
                 single["id"] = uuid.uuid4().hex
                 single["recurrence"] = "none"
                 single["exdates"] = []
+                # 어느 시리즈에서 떨어져 나왔는지 남긴다. 안 남기면 시리즈를
+                # 통째로 지워도 옮겨 둔 회차만 캘린더에 유령처럼 남는다.
+                single["split_from"] = e["id"]
                 events.append(single)
                 _save(events, user, settings)
                 return single
@@ -445,8 +448,20 @@ def delete_many(user: SessionUser, settings: Settings,
             else:
                 drop.add(base)
             ok.append(eid)
-        _save([e for e in events if e["id"] not in drop], user, settings)
+        _save(_without_series(events, drop), user, settings)
     return ok, fail
+
+
+def _without_series(events: list[dict], drop: set[str]) -> list[dict]:
+    """시리즈를 지울 때 **그 시리즈에서 떼어낸 회차도 함께** 지운다.
+
+    안 그러면 "이 반복 일정 전부 지워줘" 뒤에도 옮겨 둔 회차 하나가 유령처럼
+    남는다 — 사용자는 그게 어디서 왔는지 알 길이 없다.
+    """
+    if not drop:
+        return events
+    return [e for e in events
+            if e["id"] not in drop and str(e.get("split_from", "")) not in drop]
 
 
 def find_event(user: SessionUser, settings: Settings, eid: str) -> dict | None:
@@ -469,10 +484,9 @@ def delete_event(user: SessionUser, settings: Settings, eid: str) -> None:
                     _save(events, user, settings)
                     return
             raise HTTPException(status_code=404, detail="이벤트를 찾을 수 없습니다.")
-        new = [e for e in events if e["id"] != eid]
-        if len(new) == len(events):
+        if not any(e["id"] == eid for e in events):
             raise HTTPException(status_code=404, detail="이벤트를 찾을 수 없습니다.")
-        _save(new, user, settings)
+        _save(_without_series(events, {eid}), user, settings)
 
 
 def due_reminders(

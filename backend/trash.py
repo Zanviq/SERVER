@@ -304,7 +304,16 @@ def restore(entry_id: str, user: SessionUser, settings: Settings) -> dict:
         # (개편 전 엔트리도 files/·notes/ 아래 같은 상대경로로 병합됐으므로 호환된다.)
         root = user_data_root(user, settings)
         target = _unique_target(root, entry["orig_rel"])
-        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except FileExistsError as e:
+            # 원래 상위 폴더 자리에 지금은 **파일**이 있다(지운 뒤 같은 이름으로
+            # 문서를 만든 경우). exist_ok 는 이걸 봐주지 않아 500 이 됐다.
+            raise HTTPException(
+                status_code=409,
+                detail=f"원래 자리에 같은 이름의 문서가 있어 복원할 수 없습니다: "
+                       f"{Path(entry['orig_rel']).parent.as_posix()}",
+            ) from e
         shutil.move(str(data_item), str(target))
         shutil.rmtree(data_item.parent, ignore_errors=True)
 
@@ -319,19 +328,23 @@ def purge(entry_id: str, user: SessionUser, settings: Settings) -> dict:
         entries = read_json(idx_path, [])
         if not any(e.get("id") == entry_id for e in entries):
             raise HTTPException(status_code=404, detail="휴지통 항목을 찾을 수 없습니다.")
+        # **인덱스를 먼저 고치고 실물을 지운다.** 반대로 하면 인덱스 쓰기가
+        # 실패했을 때 목록에는 남았는데 복원은 410 인 유령이 생긴다. 이 순서면
+        # 최악이라도 아무도 못 보는 데이터가 디스크에 남을 뿐이고, 그건 다음
+        # 비우기가 치운다.
+        entries = [e for e in entries if e.get("id") != entry_id]
+        write_atomic(idx_path, entries)
         shutil.rmtree(
             _trash_root(user, settings) / "data" / entry_id, ignore_errors=True
         )
-        entries = [e for e in entries if e.get("id") != entry_id]
-        write_atomic(idx_path, entries)
     return {"ok": True}
 
 
 def empty(user: SessionUser, settings: Settings) -> dict:
     idx_path = _index_path(user, settings)
     with lock_for(idx_path):
+        write_atomic(idx_path, [])  # 인덱스 먼저 — 유령 항목을 만들지 않는다
         data_root = _trash_root(user, settings) / "data"
         shutil.rmtree(data_root, ignore_errors=True)
         data_root.mkdir(parents=True, exist_ok=True)
-        write_atomic(idx_path, [])
     return {"ok": True}

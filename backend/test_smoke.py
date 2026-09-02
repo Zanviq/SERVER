@@ -845,6 +845,37 @@ def test_splitting_an_occurrence_keeps_its_length():
         client.delete(f"/api/calendar/events/{e['id']}")
 
 
+def test_deleting_a_series_also_removes_occurrences_split_out_of_it():
+    """시리즈를 통째로 지우면 옮겨 둔 회차도 함께 사라져야 한다.
+
+    떼어낸 회차가 시리즈와의 연결을 남기지 않으면, "이 반복 일정 전부 지워줘"
+    뒤에도 그 하나가 유령처럼 남고 사용자는 어디서 왔는지 알 길이 없다.
+    """
+    _login()
+    made = client.post("/api/calendar/events", json={
+        "title": "연결시험", "start": "2027-11-01T09:00:00", "end": "2027-11-01T10:00:00",
+        "recurrence": "weekly", "recur_until": "2027-12-06"})
+    assert made.status_code == 200, made.text
+    series_id = made.json()["id"]
+
+    def occ():
+        got = client.get("/api/calendar/events", params={"from": "2027-11-01", "to": "2027-12-31"})
+        return [e for e in got.json() if e["title"] == "연결시험"]
+
+    before = occ()
+    assert len(before) >= 3, before
+    target = before[1]
+    day = target["start"][:10]
+    moved = client.put(f"/api/calendar/events/{target['id']}", json={
+        "title": "연결시험", "start": f"{day}T15:00:00"})
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["id"] != series_id
+    assert len(occ()) == len(before), occ()
+
+    assert client.delete(f"/api/calendar/events/{series_id}").status_code == 200
+    assert occ() == [], occ()
+
+
 def test_legacy_timezoned_series_is_not_split_by_a_plain_edit():
     """타임존이 붙은 채 저장된 옛 반복 일정도 제목 수정으로 쪼개지면 안 된다."""
     from backend import calendar_store
@@ -1173,6 +1204,10 @@ def test_every_skill_has_a_korean_label_in_the_chat_panel():
 
     src = (_P(__file__).resolve().parent.parent
            / "frontend" / "src" / "components" / "ai" / "ChatPanel.tsx")
+    if not src.exists():
+        # 백엔드만 떼어 낸 사본(돌연변이 검사 등)에서는 볼 파일이 없다
+        import pytest
+        pytest.skip("프런트 소스가 없는 사본이다")
     text = src.read_text(encoding="utf-8")
     body = text.split("const SKILL_LABEL", 1)[1].split("};", 1)[0]
     labeled = set(_re.findall(r"^\s{2}(\w+):", body, _re.M))
@@ -1240,7 +1275,7 @@ def test_bad_settings_are_cleaned_before_they_are_stored():
     try:
         r = client.patch("/api/settings", json={"changes": {
             "ai": {"tone": "해적", "max_steps": 9999},
-            "calendar": {"default_color": "99", "ai_rules": "가" * 5000},
+            "calendar": {"default_color": "99", "ai_rules": "규칙"},
             "notes": {"autosave_ms": 1},
             "몰라요": {"x": 1},
         }})
@@ -1249,9 +1284,38 @@ def test_bad_settings_are_cleaned_before_they_are_stored():
         assert stored["ai"]["tone"] == "assistant", stored["ai"]
         assert stored["ai"]["max_steps"] == 16, stored["ai"]
         assert stored["calendar"]["default_color"] == "2", stored["calendar"]
-        assert len(stored["calendar"]["ai_rules"]) == 2000
         assert stored["notes"]["autosave_ms"] == 300, stored["notes"]
         assert "몰라요" not in stored, stored.keys()
+
+        # 너무 긴 글은 **조용히 자르지 않는다**. 잘라 두면 '설정 저장됨' 토스트를
+        # 보고 나가는데 뒷부분이 사라져 있고, 사용자는 그 사실조차 모른다.
+        quiet = TestClient(app, raise_server_exceptions=False)
+        quiet.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+        r = quiet.patch("/api/settings", json={"changes": {"calendar": {"ai_rules": "가" * 5000}}})
+        assert r.status_code == 400, r.text
+        assert json.loads(path.read_text(encoding="utf-8"))["calendar"]["ai_rules"] == "규칙"
+
+        # 무한대는 ValueError 가 아니라 OverflowError 다. 파이썬 json 은 표준이
+        # 아닌 `Infinity` 토큰을 그대로 읽어 주므로 실제로 들어올 수 있다.
+        r = quiet.patch("/api/settings", headers={"content-type": "application/json"},
+                        content='{"changes": {"ai": {"max_steps": Infinity}}}')
+        assert r.status_code in (200, 422), r.text  # 500 만 아니면 된다
+        # 받아들였다면 기본값으로 떨어져 있어야 한다(범위 밖 값이 박히면 안 된다)
+        assert json.loads(path.read_text(encoding="utf-8"))["ai"]["max_steps"] in (8, 16)
+
+        # 반대로 **읽기**는 막히면 안 된다. 예전에 길게 저장된 값 하나 때문에
+        # 그 계정이 설정을 못 읽으면 로그인부터 되지 않는다.
+        bad = json.loads(path.read_text(encoding="utf-8"))
+        bad["calendar"]["ai_rules"] = "나" * 5000
+        path.write_text(json.dumps(bad, ensure_ascii=False), encoding="utf-8")
+        got = client.get("/api/settings")
+        assert got.status_code == 200, got.text
+        assert len(got.json()["settings"]["calendar"]["ai_rules"]) == 2000
+
+        # 무한대·NaN 을 직접 넣어도 기본값으로 떨어져야 한다("못 맞추면 기본값")
+        from backend import user_settings as us
+        assert us._coerce("ai", "max_steps", float("inf"), 8) == 8
+        assert us._coerce("ai", "max_steps", float("nan"), 8) == 8
     finally:
         if backup is None:
             path.unlink(missing_ok=True)
@@ -2094,13 +2158,115 @@ def test_google_recurrence_and_reminders_round_trip():
     assert "UNTIL=20300101" in ar and "T" not in ar.split("UNTIL=")[1], ar
 
 
-def test_terminal_status_gate():
+def test_uncategorized_filter_does_not_return_everything():
+    """'미분류'는 카테고리가 아니라 **카테고리 없음**이다.
+
+    자손 카테고리를 포함하도록 고치면서 부모 맵의 빈 열쇠("")가 최상위 카테고리
+    전부를 가리키게 됐다. 그 바람에 미분류 지정 조회가 모든 할 일을 돌려준다.
+    """
+    from backend import todo_store
+    from backend.auth import SessionUser
+
     _login()
-    st = client.get("/api/terminal/status").json()
-    # 응답 형태 검증(값은 서버 .env에 의존하므로 형태만 확인)
-    assert isinstance(st["enabled"], bool)
-    assert isinstance(st["is_admin"], bool)
-    assert isinstance(st["available"], bool)
+    cat = client.post("/api/todo/categories", json={"name": "분류있음"}).json()
+    client.post("/api/todo/create", json={"title": "분류된것", "category_id": cat["id"]})
+    client.post("/api/todo/create", json={"title": "분류없는것"})
+    try:
+        me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+        s = get_settings()
+        board = todo_store.board(me, s)
+        todos, cats = board["todos"], board["categories"]
+
+        loose = todo_store.filter_todos(todos, category_id="", categories=cats)
+        names = sorted(t["title"] for t in loose)
+        assert "분류된것" not in names, names
+        assert "분류없는것" in names, names
+
+        # 지정한 카테고리 조회는 그대로 동작해야 한다
+        picked = todo_store.filter_todos(todos, category_id=cat["id"], categories=cats)
+        assert [t["title"] for t in picked] == ["분류된것"], picked
+    finally:
+        for t in client.get("/api/todo/board").json()["todos"]:
+            client.delete(f"/api/todo/{t['id']}")
+        client.delete(f"/api/todo/categories/{cat['id']}")
+
+
+def test_restore_reports_a_conflict_instead_of_crashing():
+    """복원할 자리의 상위 폴더 자리에 지금 '파일'이 있으면 500 이 아니라 409."""
+    _login()
+    client.post("/api/notes/folder", json={"path": "복원충돌"})
+    client.put("/api/notes/save", json={"path": "복원충돌/안쪽.md", "content": "x"})
+    assert client.delete("/api/notes/delete?path=복원충돌/안쪽.md").status_code == 200
+    # 폴더를 지우고 **같은 이름의 문서**를 만든다
+    assert client.delete("/api/notes/folder?path=복원충돌").status_code == 200
+    r = client.put("/api/notes/save", json={"path": "복원충돌", "content": "이제는 문서다"})
+    assert r.status_code == 200, r.text
+
+    entry = next(e for e in client.get("/api/trash/list").json() if e["name"] == "안쪽.md")
+    quiet = TestClient(app, raise_server_exceptions=False)
+    quiet.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    r = quiet.post(f"/api/trash/restore?id={entry['id']}")
+    assert r.status_code == 409, r.text
+    # 실패했으면 휴지통에 그대로 남아 있어야 한다(복원할 기회를 뺏으면 안 된다)
+    assert any(e["id"] == entry["id"] for e in client.get("/api/trash/list").json())
+    client.request("DELETE", "/api/notes/delete", json={"path": "복원충돌"})
+
+
+def test_empty_color_is_not_sent_to_google():
+    """색을 정하지 않은 일정에 `colorId: ""` 를 실어 보내면 구글이 거절한다.
+
+    colorId 없는 구글 일정을 '' 로 읽도록 바꾼 뒤로, 편집창이 그 '' 를 그대로
+    되돌려 보내게 됐다(어제까지는 '2' 였다).
+    """
+    from backend.calendar_google import _to_google, _to_google_partial
+
+    when = {"start": "2027-02-03T10:00:00", "end": "2027-02-03T11:00:00"}
+    assert "colorId" not in _to_google({"title": "무색", "color": "", **when})
+    assert "colorId" not in _to_google({"title": "무색", **when})
+    assert _to_google({"title": "색있음", "color": "5", **when})["colorId"] == "5"
+
+    assert "colorId" not in _to_google_partial({"title": "제목만", "color": ""})
+    assert _to_google_partial({"title": "x", "color": "9"})["colorId"] == "9"
+
+
+def test_terminal_status_gate():
+    """웹터미널 권한 규칙: **주인이면서 화이트리스트에도 있어야** 한다.
+
+    예전에는 값의 '타입'만 봤다. 테스트 환경에서는 TERMINAL_ADMINS 가 비어 있어
+    is_admin 이 언제나 False 였고, 실제 규칙은 한 갈래도 실행되지 않았다.
+    """
+    login_guard.reset()
+    s = get_settings()
+    TestClient(app).post("/api/auth/signup",
+                         json={"username": "termguest", "password": "pw-long-enough"})
+    _login()
+    client.post("/api/admin/users/termguest/approve")
+    member = TestClient(app)
+    member.post("/api/auth/login", json={"username": "termguest", "password": "pw-long-enough"})
+
+    was_admins, was_enabled = s.terminal_admins, s.terminal_enabled
+    try:
+        # 주인 + 화이트리스트 + 켜짐 → 쓸 수 있다
+        s.terminal_admins, s.terminal_enabled = ["tester", "termguest"], True
+        st = client.get("/api/terminal/status").json()
+        assert st == {"enabled": True, "is_admin": True, "available": True}, st
+
+        # 꺼져 있으면 권한이 있어도 못 쓴다
+        s.terminal_enabled = False
+        assert client.get("/api/terminal/status").json()["available"] is False
+
+        # 주인이지만 화이트리스트에 없으면 관리자가 아니다
+        s.terminal_admins, s.terminal_enabled = ["다른사람"], True
+        st = client.get("/api/terminal/status").json()
+        assert st["is_admin"] is False and st["available"] is False, st
+
+        # **화이트리스트에 있어도 주인이 아니면 안 된다**(권한 축소 방향)
+        s.terminal_admins = ["tester", "termguest"]
+        st = member.get("/api/terminal/status").json()
+        assert st["is_admin"] is False and st["available"] is False, st
+    finally:
+        s.terminal_admins, s.terminal_enabled = was_admins, was_enabled
+        client.delete("/api/admin/users/termguest")
 
 
 def test_settings_get_patch():

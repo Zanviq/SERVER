@@ -126,7 +126,12 @@ def run(
     for step in range(max_steps):
         result = llm.chat(contents, catalog, system)
         if result.error:
-            yield {"type": "error", "message": f"AI 호출 실패: {result.error}"}
+            # 상류(Gemini SDK)의 예외 문자열에는 경로·키·요청 본문이 섞일 수 있다.
+            # 라우터는 예외를 DEBUG 일 때만 흘리는데, 이 경로는 예외가 아니라
+            # 값으로 오기 때문에 그 마스킹을 통째로 우회했다.
+            logger.warning("AI 호출 실패: %s", result.error)
+            detail = result.error if settings.debug else "잠시 후 다시 시도해 주세요."
+            yield {"type": "error", "message": f"AI 호출 실패: {detail}"}
             yield {"type": "done"}
             return
 

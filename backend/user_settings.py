@@ -5,6 +5,8 @@ import copy
 from pathlib import Path
 from typing import Any
 
+from fastapi import HTTPException
+
 from . import json_store
 from .auth import SessionUser
 from .config import Settings
@@ -73,7 +75,7 @@ def _prune(merged: dict) -> dict:
     return {k: v for k, v in merged.items() if k in DEFAULTS}
 
 
-def _coerce(section: str, key: str, value: Any, fallback: Any) -> Any:
+def _coerce(section: str, key: str, value: Any, fallback: Any, strict: bool = False) -> Any:
     """저장해도 되는 값으로 맞춘다. 못 맞추면 기본값.
 
     예전에는 아무 값이나 그대로 저장했다. `{"ai": 1}` 처럼 섹션을 스칼라로 넣으면
@@ -85,7 +87,10 @@ def _coerce(section: str, key: str, value: Any, fallback: Any) -> Any:
     if isinstance(fallback, int):
         try:
             n = int(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError 도 잡는다 — `1e999`(무한대)·NaN 은 ValueError 가
+            # 아니라 OverflowError 라, "못 맞추면 기본값"이라는 이 함수의 계약이
+            # 깨지고 설정 저장이 통째로 500 이 됐다.
             return fallback
         rng = _RANGES.get((section, key))
         return min(max(n, rng[0]), rng[1]) if rng else n
@@ -96,7 +101,20 @@ def _coerce(section: str, key: str, value: Any, fallback: Any) -> Any:
         allowed = _CHOICES.get((section, key))
         if allowed and text not in allowed:
             return fallback
-        return text[:_MAX_TEXT]
+        if len(text) > _MAX_TEXT:
+            # 저장할 때는 조용히 자르지 않는다. '설정 저장됨' 토스트를 보고
+            # 나가는데 뒷부분이 사라져 있고 사용자는 그 사실조차 모른다.
+            #
+            # 읽을 때는 반대다. 예전 값이 길다고 400 을 내면 그 계정은 설정을
+            # 읽는 모든 요청(로그인 포함)이 막힌다 — 그때는 잘라서 보여 준다.
+            if strict:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"너무 깁니다 — {_MAX_TEXT}자까지 저장할 수 있습니다"
+                           f"(지금 {len(text)}자).",
+                )
+            return text[:_MAX_TEXT]
+        return text
     return fallback
 
 
@@ -118,14 +136,20 @@ _CHOICES: dict[tuple[str, str], set[str]] = {
 _MAX_TEXT = 2000
 
 
-def sanitize(changes: dict) -> dict:
-    """들어온 변경분을 DEFAULTS 의 모양·타입에 맞춰 걸러 낸다."""
+def sanitize(changes: dict, strict: bool = False) -> dict:
+    """들어온 변경분을 DEFAULTS 의 모양·타입에 맞춰 걸러 낸다.
+
+    strict=True 는 **저장 경로**용이다. 사용자가 방금 보낸 값이 규칙을 넘으면
+    조용히 고치는 대신 400 으로 알린다. 읽기 경로는 strict=False 로 두어야
+    한다 — 예전 값 하나 때문에 그 계정이 설정을 영영 못 읽으면 안 된다.
+    """
     out: dict[str, Any] = {}
     for section, values in (changes or {}).items():
         base = DEFAULTS.get(section)
         if not isinstance(base, dict) or not isinstance(values, dict):
             continue  # 모르는 섹션이거나 섹션이 dict 가 아니다 — 통째로 버린다
-        clean = {k: _coerce(section, k, v, base[k]) for k, v in values.items() if k in base}
+        clean = {k: _coerce(section, k, v, base[k], strict)
+                 for k, v in values.items() if k in base}
         if clean:
             out[section] = clean
     return out
@@ -134,7 +158,7 @@ def sanitize(changes: dict) -> dict:
 def patch(user: SessionUser, settings: Settings, changes: dict) -> dict:
     p = _path(user, settings)
     with json_store.lock_for(p):
-        merged = _prune(_deep_merge(load(user, settings), sanitize(changes)))
+        merged = _prune(_deep_merge(load(user, settings), sanitize(changes, strict=True)))
         json_store.write_atomic(p, merged)
     return merged
 

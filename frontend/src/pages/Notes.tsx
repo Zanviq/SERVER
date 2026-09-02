@@ -14,6 +14,7 @@ import { NOTE_PATH_MIME } from "../components/notes/dragTypes";
 import { Modal } from "../components/ui/Modal";
 import { api, ApiError, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
 import { looksLikeExtension } from "../lib/names";
+import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { embedMarkdownFor, makeResolver } from "../lib/embeds";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
@@ -95,13 +96,16 @@ export function Notes() {
   const [moveTarget, setMoveTarget] = useState("");
   const [delNotePath, setDelNotePath] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
-  const saveTimer = useRef<number | null>(null);
+  // 대기 중인 자동저장·열기 순번의 규칙은 lib/pendingSave 가 갖는다.
+  // 화면 안에 두면 React 상태에 얽혀 한 줄도 검사할 수 없는데, 여기서 틀리면
+  // 글이 사라지거나 지운 문서가 되살아난다(test/pendingSave.test.mjs).
+  const pending = useRef(new PendingSave()).current;
   const [reading, setReading] = useState(false); // 편집(라이브 프리뷰) ↔ 읽기 뷰
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<NoteSearchHit[] | null>(null);
   const searchTimer = useRef<number | null>(null);
   // 문서 열기 요청의 순번 — 늦게 도착한 옛 응답을 버리는 데 쓴다
-  const openSeq = useRef(0);
+  const openSeq = useRef(new LatestWins()).current;
   // 편집기로는 열 수 없다고 서버가 알려 준 문서(예: UTF-8이 아닌 텍스트).
   // 목록에는 editable=true 로 보이지만 실제로는 뷰어·내려받기로 가야 한다.
   const [viewerOnly, setViewerOnly] = useState<Set<string>>(new Set());
@@ -162,30 +166,26 @@ export function Notes() {
    *  타이머(기본 900ms)가 뜨기 전에 다른 문서로 옮기면 마지막 입력이 사라진다 —
    *  타이머가 뜰 때 current 는 이미 새 문서라 저장이 취소되기 때문이다. */
   const flushPendingSave = useCallback(async () => {
-    if (!saveTimer.current) return;
-    window.clearTimeout(saveTimer.current);
-    saveTimer.current = null;
-    if (current && dirty) await save(current, content, true);
-  }, [current, dirty, content, save]);
+    await pending.flush();
+  }, [pending]);
 
   /** 대기 중인 자동저장을 **버린다**.
    *
    *  타이머는 걸릴 때의 경로를 붙잡고 있다. 그 문서를 지운 뒤에 타이머가 뜨면
    *  방금 휴지통으로 보낸 문서를 디스크에 그대로 되살린다(유령 문서). */
   const cancelPendingSave = useCallback(() => {
-    if (saveTimer.current) window.clearTimeout(saveTimer.current);
-    saveTimer.current = null;
+    pending.cancel();
     setDirty(false);
-  }, []);
+  }, [pending]);
 
   const openNote = useCallback(
     async (path: string) => {
       // 순번은 **누른 순서대로** 매겨야 한다. 아래 flushPendingSave 를 기다린 뒤에
       // 매기면, 저장할 게 없어 곧바로 돌아온 나중 클릭이 더 낮은 번호를 받아
       // 순서 뒤집힘 방어가 거꾸로 동작한다(먼저 누른 문서가 이긴다).
-      const seq = ++openSeq.current;
+      const seq = openSeq.begin();
       await flushPendingSave();
-      if (seq !== openSeq.current) return; // 기다리는 사이 다른 문서를 눌렀다
+      if (!openSeq.isCurrent(seq)) return; // 기다리는 사이 다른 문서를 눌렀다
 
       // 이미지·PDF·미디어는 내용을 읽지 않는다. /api/notes/get 은 텍스트 전용이라
       // 415를 돌려주고, 그러면 current 가 안 잡혀서 전용 뷰어(DocViewer) 분기가
@@ -202,7 +202,7 @@ export function Notes() {
       }
       try {
         const d = await api.noteGet(path);
-        if (seq !== openSeq.current) return; // 더 최근에 연 문서가 있다
+        if (!openSeq.isCurrent(seq)) return; // 더 최근에 연 문서가 있다
         // 편집기로 열렸다 = 더는 뷰어 전용이 아니다(고쳤거나 같은 이름의 새 문서다)
         setViewerOnly((prev) => {
           if (!prev.has(path) && !prev.has(d.path)) return prev;
@@ -219,7 +219,7 @@ export function Notes() {
         const slash = d.path.lastIndexOf("/");
         setCurFolder(slash >= 0 ? d.path.slice(0, slash) : "");
       } catch (e) {
-        if (seq !== openSeq.current) return;
+        if (!openSeq.isCurrent(seq)) return;
         // 415 = 편집기로 열 수 없는 문서. 오류만 띄우면 사용자는 아무 데도 갈 수
         // 없다(목록에서 눌러도 토스트만 반복). 뷰어·내려받기 화면으로 보낸다.
         if (e instanceof ApiError && e.status === 415) {
@@ -244,15 +244,16 @@ export function Notes() {
     setContent(text);
     setDirty(true);
     if (!current) return;
-    if (saveTimer.current) window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => save(current, text, true), autosaveMs);
+    // 예약은 경로·본문을 **그때 값으로 붙잡는다**. 이래야 흘려보내기가
+    // 지금 화면 상태가 아니라 '예약한 그 저장'을 그대로 실행한다.
+    pending.schedule(autosaveMs, () => save(current, text, true));
   };
 
   /** 모바일에서 목록으로 돌아가기. 대기 중인 자동저장을 먼저 흘려보낸다 —
    *  타이머(기본 900ms)가 뜨기 전에 나가면 마지막 입력이 사라진다. */
   const closeNote = useCallback(() => {
     void flushPendingSave();
-    openSeq.current++; // 진행 중인 열기 응답이 닫은 문서를 되살리지 않게
+    openSeq.abandonAll(); // 진행 중인 열기 응답이 닫은 문서를 되살리지 않게
     setCurrent(null);
     setDetail(null);
     setContent("");

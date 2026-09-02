@@ -328,6 +328,10 @@ def filter_todos(
 
 def _descendant_ids(categories: list[dict], root_id: str) -> set[str]:
     """root_id 아래 모든 하위 카테고리 id. 고리가 있어도 멈춘다."""
+    if not root_id:
+        # 빈 값은 카테고리가 아니라 **미분류**다. 여기서 막지 않으면 아래 kids[""]
+        # 가 최상위 카테고리 전부라서, 미분류 조회가 모든 할 일을 돌려준다.
+        return set()
     kids: dict[str, list[str]] = {}
     for c in categories:
         kids.setdefault(str(c.get("parent_id") or ""), []).append(str(c.get("id")))

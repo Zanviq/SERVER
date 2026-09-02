@@ -145,8 +145,12 @@ def _to_google(p: dict) -> dict:
     body: dict = {
         "summary": p.get("title", ""),
         "description": p.get("description", ""),
-        "colorId": str(p.get("color", "2")),
     }
+    # 빈 값은 '색을 정하지 않음'이다(위 _from_google 이 그렇게 읽는다).
+    # 구글 팔레트에 없는 `colorId: ""` 를 그대로 실어 보내면 요청이 거절된다 —
+    # 키를 빼면 캘린더 기본색을 따른다.
+    if str(p.get("color") or ""):
+        body["colorId"] = str(p["color"])
     body.update(_time_fields(p))
     # 반복은 있을 때만 넣는다 — 반복 인스턴스를 patch할 때 recurrence 키가 있으면
     # Google이 거부하므로, 'none'이면 아예 건드리지 않는다.
@@ -185,8 +189,10 @@ def _to_google_partial(p: dict) -> dict:
         body["summary"] = str(p.get("title", ""))
     if "description" in p:
         body["description"] = str(p.get("description", ""))
-    if "color" in p:
-        body["colorId"] = str(p.get("color", "2"))
+    if str(p.get("color") or ""):
+        # `"color" in p` 로만 보면 안 된다 — 편집창은 바꾸지 않은 색도 함께 보내는데,
+        # colorId 없는 구글 일정을 '' 로 읽게 된 뒤로는 그 '' 가 그대로 되돌아간다.
+        body["colorId"] = str(p["color"])
     if "remind_minutes" in p:
         remind = int(p.get("remind_minutes", 0) or 0)
         body["reminders"] = (

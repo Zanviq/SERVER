@@ -586,6 +586,39 @@ export function LiveEditor({
     }, done);
   };
 
+  /**
+   * `/새 문서 만들어 링크` — 문서를 만들고 `[[링크]]` 를 넣는다.
+   *
+   * 업로드와 **같은 대조**가 필요하다. 제목을 묻는 동안 다른 문서로 옮겨 가면
+   * 이 view 는 죽은 편집기이고, 그대로 dispatch 하면 링크가 아무 안내 없이
+   * 사라진다(예전에는 슬래시 메뉴가 직접 넣어서 그렇게 됐다).
+   */
+  const createDocLink = (view: EditorView, at: number) => {
+    const make = cbs.current.onCreateDoc;
+    if (!make) return;
+    const startedIn = cbs.current.docKey;
+    const spot = { pos: at };
+    pendingSpots.current.push(spot);
+    const done = () => {
+      pendingSpots.current = pendingSpots.current.filter((s) => s !== spot);
+    };
+    make().then((title) => {
+      done();
+      if (!title) return;
+      if (viewRef.current !== view || cbs.current.docKey !== startedIn) {
+        toast.error("다른 문서로 이동해 링크를 넣지 못했습니다. 문서는 만들어졌습니다.");
+        return;
+      }
+      const pos = Math.min(spot.pos, view.state.doc.length);
+      const insert = `[[${title}]]`;
+      view.dispatch({
+        changes: { from: pos, insert },
+        selection: { anchor: pos + insert.length },
+      });
+      view.focus();
+    }, done);
+  };
+
   useEffect(() => {
     if (!hostRef.current) return;
 
@@ -617,7 +650,7 @@ export function LiveEditor({
 
     const slashActions = (): SlashActions => ({
       attachImage: cbs.current.onDropFiles ? () => fileRef.current?.click() : undefined,
-      createDoc: cbs.current.onCreateDoc,
+      createDocLink: cbs.current.onCreateDoc ? createDocLink : undefined,
     });
     const slashSource = makeSlashSource(slashActions);
 
