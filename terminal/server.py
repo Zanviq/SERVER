@@ -34,6 +34,11 @@ ADMINS = {a.strip() for a in os.getenv("TERMINAL_ADMINS", "admin").split(",") if
 # CSWSH 방지: 허용 Origin 목록. 비어 있으면 요청 Host와 동일 출처만 허용.
 ALLOWED_ORIGINS = {o.strip() for o in os.getenv("TERMINAL_ORIGINS", "").split(",") if o.strip()}
 COOKIE_NAME = "server_session"
+# 출력 큐에 쌓아 둘 덩어리 수. 클라이언트가 느릴 때 컨테이너 메모리가 출력량만큼
+# 무한히 늘어나던 것을 막는다(한 덩어리는 최대 64KB).
+OUT_QUEUE_MAX = 256
+# 열린 셸의 세션을 다시 확인하는 주기(초).
+RECHECK_SECONDS = 60
 PORT = int(os.getenv("TERMINAL_PORT", "7681"))
 
 # 호스트 네임스페이스로 진입해 실제 라즈베리파이 셸 실행
@@ -141,12 +146,31 @@ async def handler(ws):
         except Exception:
             os._exit(127)
 
+    # 마스터 fd 를 논블로킹으로 둔다. 블로킹인 채로 이벤트 루프 스레드에서 쓰면,
+    # 자식이 stdin 을 안 읽는 순간(예: 화면 갱신 중) os.write 가 거기서 멈춰
+    # **서버 전체**가 선다 — 다른 연결의 입출력까지 함께 멈추고, 출력을 읽어 주는
+    # 쪽도 같은 루프라 버퍼가 비지 않아 영영 풀리지 않는다.
+    os.set_blocking(fd, False)
+
     loop = asyncio.get_event_loop()
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=OUT_QUEUE_MAX)
+    closed = asyncio.Event()
+
+    paused: set = set()
 
     def on_master_readable():
+        # 큐가 찼는지 **읽기 전에** 본다. 읽고 나서 판단하면 이미 꺼낸 출력을
+        # 버리게 되어, 화면에 글자가 빠진 채로 남는다.
+        if queue.full():
+            # 클라이언트가 느리면 큐가 무한정 자란다. 넘치면 읽기를 잠시 멈춰
+            # PTY 쪽에 배압을 준다 — 버리는 것보다 늦는 편이 낫다.
+            loop.remove_reader(fd)
+            paused.add(True)
+            return
         try:
             data = os.read(fd, 65536)
+        except BlockingIOError:
+            return
         except OSError:
             data = b""
         if data:
@@ -155,43 +179,83 @@ async def handler(ws):
             loop.remove_reader(fd)
             queue.put_nowait(None)  # EOF
 
+    def resume_reader():
+        if paused:
+            paused.clear()
+            try:
+                loop.add_reader(fd, on_master_readable)
+            except (OSError, ValueError):
+                pass
+
     loop.add_reader(fd, on_master_readable)
 
     async def pump_out():
         while True:
             data = await queue.get()
+            resume_reader()
             if data is None:
+                # 셸이 끝났다. 화면에 '연결됨'으로 남겨 두면 다음 입력이
+                # EIO 를 내며 핸들러를 죽인다 — 여기서 정직하게 닫는다.
+                closed.set()
+                try:
+                    await ws.close(code=1000, reason="shell exited")
+                except Exception:
+                    pass
                 break
             try:
                 await ws.send(data)
             except Exception:
+                closed.set()
                 break
 
-    def write_all(data: bytes) -> None:
-        """PTY에 전부 쓴다. os.write는 한 번에 다 못 쓸 수 있다(긴 붙여넣기)."""
+    async def write_all(data: bytes) -> None:
+        """PTY에 전부 쓴다. 한 번에 다 못 쓰거나(긴 붙여넣기) 지금은 못 쓸 수 있다."""
         view = memoryview(data)
         while view:
-            view = view[os.write(fd, view):]
+            try:
+                n = os.write(fd, view)
+            except BlockingIOError:
+                # 버퍼가 찼다. 이벤트 루프를 막지 않고 잠깐 양보한다.
+                await asyncio.sleep(0.005)
+                continue
+            except OSError:
+                closed.set()
+                return
+            view = view[n:]
 
     out_task = asyncio.create_task(pump_out())
+    checked_at = time.time()
     try:
         async for msg in ws:
+            if closed.is_set():
+                break
+            # 세션은 접속할 때 한 번만 봤다. 그러면 만료되거나 계정이 비활성·강등돼도
+            # 이미 열린 **호스트 루트 셸**이 무제한으로 남는다. 주기적으로 다시 본다.
+            now = time.time()
+            if now - checked_at >= RECHECK_SECONDS:
+                checked_at = now
+                if _verify(_cookie_token(cookie_header)) != user:
+                    await ws.close(code=4403, reason="session expired")
+                    break
             if isinstance(msg, bytes):
-                write_all(msg)
+                await write_all(msg)
             else:
                 try:
                     obj = json.loads(msg)
                 except Exception:
-                    write_all(msg.encode())
+                    await write_all(msg.encode())
                     continue
-                if "resize" in obj:
+                if isinstance(obj, dict) and "resize" in obj:
                     # 형식이 어긋난 메시지 하나로 셸이 끊기면 안 된다.
                     try:
                         cols, rows = obj["resize"]
                         size = struct.pack("HHHH", int(rows), int(cols), 0, 0)
-                    except (TypeError, ValueError, struct.error):
+                    except (TypeError, ValueError, struct.error, OverflowError):
                         continue
-                    fcntl.ioctl(fd, termios.TIOCSWINSZ, size)
+                    try:
+                        fcntl.ioctl(fd, termios.TIOCSWINSZ, size)
+                    except OSError:
+                        continue
     except websockets.ConnectionClosed:
         pass
     finally:
