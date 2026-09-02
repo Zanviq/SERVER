@@ -133,6 +133,15 @@ export function MarkdownView({
               );
             }
             const { node: _n, className: _c, ...rest } = props as Record<string, unknown>;
+            // 같은 문서 안 앵커(각주 등)는 새 탭으로 열면 안 된다 — 빈 탭만 뜨고
+            // 정작 각주로 이동하지 않는다.
+            if (href?.startsWith("#")) {
+              return (
+                <a {...rest} href={href} className="text-info underline">
+                  {children}
+                </a>
+              );
+            }
             return (
               <a {...rest} href={href} target="_blank" rel="noreferrer" className="text-info underline">
                 {children}

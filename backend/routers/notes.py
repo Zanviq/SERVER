@@ -156,7 +156,7 @@ _SERVER_FAULT_ERRNOS = {
 
 
 @contextmanager
-def _fs_errors_are_bad_requests(what: str):
+def _fs_errors_are_bad_requests(what: str):  # noqa: D401
     """파일시스템이 이름을 거부하면 500이 아니라 400으로 돌려준다.
 
     무엇이 유효한 이름인지는 OS마다 다르다 — 리눅스는 `...`·`CON`을 그냥
@@ -169,6 +169,13 @@ def _fs_errors_are_bad_requests(what: str):
     """
     try:
         yield
+    except UnicodeEncodeError as e:
+        # 짝 없는 서로게이트(\ud800 등)가 든 본문. 사용자 입력 오류인데 OSError 가
+        # 아니라 그대로 새어 500 + 스택트레이스가 됐다.
+        logger.info("%s 실패(인코딩): %s", what, e)
+        raise HTTPException(
+            status_code=400, detail=f"저장할 수 없는 문자가 들어 있습니다: {what}"
+        ) from e
     except OSError as e:
         if e.errno in _SERVER_FAULT_ERRNOS:
             logger.exception("%s 실패(서버 문제)", what)
@@ -268,7 +275,15 @@ def get_note(
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
     if not is_editable(target.name):
         raise HTTPException(status_code=415, detail="텍스트 문서가 아닙니다. 미리보기를 사용하세요.")
-    content = target.read_text(encoding="utf-8", errors="replace")
+    try:
+        content = target.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as e:
+        # errors="replace" 로 읽어 주면 편집기에 U+FFFD 가 든 글이 뜨고, 한 글자만
+        # 고쳐 저장해도 원본 바이트가 영구히 그 물음표로 바뀐다. 열지 않는 편이 낫다.
+        raise HTTPException(
+            status_code=415,
+            detail="UTF-8 로 읽을 수 없는 파일입니다(편집하면 원본이 깨집니다). 내려받아 확인하세요.",
+        ) from e
     return NoteDetail(
         path=to_rel(root, target),
         title=target.stem,

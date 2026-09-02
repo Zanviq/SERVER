@@ -37,6 +37,12 @@ export const mdSanitizeSchema = {
   // mark = 형광펜(==강조==), details/summary = 토글.
   // 기본 스키마에 없어 그냥 두면 살균 단계에서 조용히 사라진다.
   tagNames: [...(defaultSchema.tagNames ?? []), "mark", "details", "summary", ...SVG_TAGS],
+  // 각주 id 접두사를 여기서 한 번 더 붙이지 않는다.
+  //
+  // remark-gfm 이 이미 `user-content-fn-1` 처럼 이름을 붙여 두는데, 살균이 id 에만
+  // 접두사를 또 붙이고 href 는 그대로 두어 `#user-content-fn-1` 이 아무 데도 닿지
+  // 않았다(각주를 눌러도 안 움직인다). 접두사는 remark-gfm 것 하나로 충분하다.
+  clobberPrefix: "",
   protocols: {
     ...defaultSchema.protocols,
     href: SAFE_PROTOCOLS,
@@ -46,6 +52,11 @@ export const mdSanitizeSchema = {
   },
   attributes: {
     ...defaultSchema.attributes,
-    "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", ...SVG_ATTRS],
+    // className 을 모든 태그에 허용하면 안 된다. 이 앱은 Tailwind 유틸리티 클래스가
+    // 전역에 깔려 있어서, `<div class="fixed inset-0 z-50 bg-white">` 한 줄이면
+    // style 속성 없이도 화면 전체를 덮는 가짜 화면을 만들 수 있다(막았다고 확인한
+    // style="position:fixed" 와 결과가 같다). 코드블록의 `language-*` 는 기본
+    // 스키마가 code 태그에 한정해 허용하므로 문법 강조는 그대로 동작한다.
+    "*": [...(defaultSchema.attributes?.["*"] ?? []), ...SVG_ATTRS],
   },
 };

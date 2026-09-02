@@ -129,6 +129,37 @@ blocked("표 안 스크립트", "| 값 |\n| --- |\n| <script>alert(1)</script> |
 blocked("코드펜스 안은 텍스트", "```\n<script>alert(1)</script>\n```", { tag: "script" });
 blocked("링크 title 이벤트", '<a href="https://x.example" onclick="alert(1)">링크</a>');
 
+console.log("\n덮개 만들기 — class 로도 style 과 같은 일을 할 수 있다");
+{
+  // 이 앱은 Tailwind 유틸리티가 전역에 깔려 있어 class 하나로 화면을 덮을 수 있다
+  const { attrs, values } = collect(render('<div class="fixed inset-0 z-50 bg-white">가짜 화면</div>'));
+  check("div 에 class 가 남지 않는다",
+    !attrs.some((a) => a.toLowerCase() === "classname"), values.join(" | "));
+}
+{
+  const { values } = collect(render("```python\nprint(1)\n```"));
+  check("코드블록 문법 강조 class 는 남는다",
+    values.some((v) => v.includes("language-python")), values.join(" | "));
+}
+
+console.log("\n각주 — id 와 href 가 맞아야 눌러서 이동한다");
+{
+  const tree = render("본문[^1]\n\n[^1]: 각주 내용");
+  const ids = [];
+  const hrefs = [];
+  (function walk(n) {
+    if (n.type === "element") {
+      const p = n.properties ?? {};
+      if (p.id) ids.push(String(p.id));
+      if (p.href) hrefs.push(String(p.href));
+    }
+    (n.children ?? []).forEach(walk);
+  })(tree);
+  check("각주 링크가 실제 id 를 가리킨다",
+    hrefs.filter((h) => h.startsWith("#")).every((h) => ids.includes(h.slice(1))),
+    true, `id=${ids.join(",")} href=${hrefs.join(",")}`);
+}
+
 console.log("\n살균 — 통과해야 하는 것(기능이 죽으면 안 된다)");
 function survives(label, md, tag) {
   const { tags } = collect(render(md));

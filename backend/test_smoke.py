@@ -2446,66 +2446,6 @@ def test_user_isolation():
     assert "secret.txt" not in [n["path"] for n in b.get("/api/notes/tree").json()["notes"]]
     # 경로를 알아도 읽을 수 없다(각자의 루트로만 해석되므로)
     assert b.get("/api/notes/raw?path=secret.txt").status_code == 404
-
-
-if __name__ == "__main__":
-    test_unauthenticated_blocked()
-    test_login_and_session()
-    test_wrong_password()
-    test_logout()
-    test_health()
-    test_system()
-    test_file_lifecycle()
-    test_path_traversal_blocked()
-    test_upload_illegal_filename_sanitized()
-    test_notes_wikilinks_and_graph()
-    test_notes_rename_and_move()
-    test_notes_graph_cache()
-    test_save_keeps_extension_verbatim()
-    test_notes_folders_and_tree()
-    test_trash_restore_flow()
-    test_unified_document_space()
-    test_google_allday_end_conversion()
-    test_calendar_colors_names_and_prefs()
-    test_calendar_list_default_window()
-    test_calendar_list_date_only_end_is_inclusive()
-    test_ai_notes_in_folders_are_usable()
-    test_ai_deletes_go_to_trash()
-    test_ai_find_free_slots_robustness()
-    test_calendar_update_start_preserves_duration()
-    test_google_partial_update_preserves_fields()
-    test_google_recurrence_and_reminders_round_trip()
-    test_terminal_status_gate()
-    test_settings_get_patch()
-    test_session_ttl_setting()
-    test_calendar_recurrence_and_reminders()
-    test_calendar_lifecycle()
-    test_ai_react_chains_skills()
-    test_ai_react_runs_all_parallel_calls()
-    test_ai_can_undo_its_own_deletions()
-    test_ai_model_selectable_in_settings()
-    test_bulk_update_uses_one_batched_call()
-    test_calendar_bulk_create_delete_and_trash_restore()
-    test_calendar_color_filter_guardrails()
-    test_bulk_update_calendar_events()
-    test_ai_skill_catalog_and_ops()
-    test_ai_blocks_sensitive_files()
-    test_google_oauth_state_and_isolation()
-    test_password_hashing()
-    test_signup_requires_admin_approval()
-    test_last_admin_cannot_lock_out()
-    test_raw_serve_blocks_stored_xss()
-    test_origin_backfill()
-    test_owner_cannot_lock_themselves_out()
-    test_system_stats_not_leaked_via_ai_skill()
-    test_archive_survives_bad_files()
-    test_owner_only_surfaces()
-    test_settings_prunes_dead_keys()
-    test_folder_archive_download()
-    test_user_isolation()
-    print("ALL SMOKE TESTS PASSED")
-
-
 def test_ai_result_contract():
     """스킬 결과가 모델에게 '판단할 수 있는 형태'로 전달되는지.
 
@@ -3612,3 +3552,31 @@ def test_prompt_tells_the_model_which_syntax_renders():
     sp = build_system(u, "assistant", "2026-09-01", {})
     for kw in ["[!NOTE]", "==강조==", "<details>", "![[사진.png|400]]", "[[문서 제목]]"]:
         assert kw in sp, kw
+
+
+if __name__ == "__main__":
+    # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
+    # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"
+    # 를 찍어 다 통과한 것처럼 보였다. 이제 모듈 안의 test_* 를 전부 찾아 돌리고,
+    # 못 돌린 것(pytest 픽스처가 필요한 것)은 숨기지 않고 센다.
+    import inspect
+    import sys as _sys
+
+    _mod = _sys.modules[__name__]
+    _ran = _failed = _skipped = 0
+    for _name, _fn in list(vars(_mod).items()):
+        if not _name.startswith("test_") or not callable(_fn):
+            continue
+        if inspect.signature(_fn).parameters:
+            _skipped += 1  # monkeypatch 등 픽스처가 필요하다
+            continue
+        try:
+            _fn()
+            _ran += 1
+        except Exception as _e:  # noqa: BLE001 - 무엇이 깨졌는지 그대로 보여준다
+            _failed += 1
+            print(f"FAIL {_name}: {type(_e).__name__}: {_e}")
+    print(f"{_ran}개 통과, {_failed}개 실패, {_skipped}개 건너뜀")
+    if _skipped:
+        print("전부 돌리려면: python -m pytest backend/test_smoke.py")
+    raise SystemExit(1 if _failed else 0)
