@@ -275,10 +275,12 @@ def list_todos(
     frm/to 를 주면 **기한이 있는 것만** 그 범위로 거른다(캘린더 표시용).
     include_undated=False 면 기한 없는 것을 아예 뺀다.
     """
+    data = _load(user, settings)
     return filter_todos(
-        _load(user, settings)["todos"],
+        data["todos"],
         category_id=category_id, include_done=include_done,
         frm=frm, to=to, include_undated=include_undated,
+        categories=data["categories"],
     )
 
 
@@ -290,14 +292,22 @@ def filter_todos(
     frm: str = "",
     to: str = "",
     include_undated: bool = True,
+    categories: list[dict] | None = None,
 ) -> list[dict]:
     """이미 읽어 둔 목록을 거른다(파일을 다시 읽지 않는다).
 
     board() 로 한 번에 읽은 쪽이 이걸 쓴다.
     """
+    # 카테고리를 지정하면 **그 아래 하위 카테고리까지** 포함한다. 화면의 개수는
+    # 자손까지 세는데 여기만 정확히 일치를 봐서, AI 의 카테고리 지정 조회·일괄완료·
+    # 일괄삭제가 자식 카테고리의 할 일을 통째로 빠뜨렸다.
+    wanted: set[str] | None = None
+    if category_id is not None:
+        wanted = {category_id} | _descendant_ids(categories or [], category_id)
+
     out = []
     for t in todos:
-        if category_id is not None and str(t.get("category_id", "")) != category_id:
+        if wanted is not None and str(t.get("category_id", "")) not in wanted:
             continue
         if not include_done and t.get("done"):
             continue
@@ -313,6 +323,22 @@ def filter_todos(
                 continue
         out.append(t)
     return _sorted(out)
+
+
+def _descendant_ids(categories: list[dict], root_id: str) -> set[str]:
+    """root_id 아래 모든 하위 카테고리 id. 고리가 있어도 멈춘다."""
+    kids: dict[str, list[str]] = {}
+    for c in categories:
+        kids.setdefault(str(c.get("parent_id") or ""), []).append(str(c.get("id")))
+    out: set[str] = set()
+    stack = list(kids.get(root_id, []))
+    while stack:
+        cid = stack.pop()
+        if cid in out:
+            continue
+        out.add(cid)
+        stack.extend(kids.get(cid, []))
+    return out
 
 
 def get_todo(user: SessionUser, settings: Settings, tid: str) -> dict | None:
@@ -335,7 +361,10 @@ def create_todo(user: SessionUser, settings: Settings, payload: dict) -> dict:
             raise HTTPException(status_code=400, detail=str(e)) from e
         todo["id"] = uuid.uuid4().hex
         todo["created_at"] = _now()
-        todo["order"] = int(payload.get("order") or len(todos))
+        # len(todos) 로 잡으면 하나라도 지운 뒤 추가할 때 기존 항목과 값이 겹치고,
+        # 같은 order 안에서는 제목순으로 밀려 맨 아래가 아닌 중간에 나타난다.
+        next_order = max((int(t.get("order", 0) or 0) for t in todos), default=-1) + 1
+        todo["order"] = int(payload.get("order") or next_order)
         todos.append(todo)
         _save(data, user, settings)
     return todo

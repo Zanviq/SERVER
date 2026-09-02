@@ -33,6 +33,16 @@ def safe_join(root: Path, rel: str) -> Path:
     if _BAD_CHARS.search(raw):
         raise HTTPException(status_code=400, detail="이름에 쓸 수 없는 문자가 있습니다.")
 
+    # 짝 없는 서로게이트(\ud800 등)는 UTF-8로 인코딩할 수 없다. 그대로 두면 아래
+    # 길이 검사나 파일시스템 호출에서 UnicodeEncodeError 가 그대로 올라가 500이 됐다
+    # (get·raw·folder 세 곳 모두, 실측). 사용자 입력 오류이므로 여기서 400으로 끊는다.
+    try:
+        raw.encode("utf-8")
+    except UnicodeEncodeError as e:
+        raise HTTPException(
+            status_code=400, detail="이름에 쓸 수 없는 문자가 있습니다."
+        ) from e
+
     # 항상 POSIX 구분자로 정규화하고 선행 슬래시 제거.
     rel_clean = PurePosixPath(raw.replace("\\", "/").lstrip("/"))
 

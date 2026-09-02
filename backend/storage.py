@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,8 @@ from pathlib import Path
 from .auth import SessionUser
 from .config import Settings
 from .security_paths import safe_join
+
+logger = logging.getLogger("server.storage")
 
 
 def user_data_root(user: SessionUser, settings: Settings) -> Path:
@@ -85,6 +88,16 @@ def _walk(root: Path, *, want_files: bool, want_dirs: bool):
         try:
             with os.scandir(cur) as it:
                 for e in it:
+                    # 이름이 UTF-8로 표현되지 않는 항목은 건너뛴다. 리눅스는 파일명을
+                    # 바이트로 다루므로 UTF-8이 아닌 이름이 서로게이트 이스케이프로
+                    # 들어오는데, 그게 응답 JSON에 실리는 순간 인코딩이 실패해서
+                    # **그 사용자의 문서 목록·트리·그래프가 통째로 500**이 됐다.
+                    # 어차피 그런 이름은 경로로 주고받을 수 없어 다룰 방법도 없다.
+                    try:
+                        e.name.encode("utf-8")
+                    except UnicodeEncodeError:
+                        logger.warning("이름을 다룰 수 없어 건너뜀: %r", e.path)
+                        continue
                     child = f"{rel}/{e.name}" if rel else e.name
                     try:
                         if e.is_dir(follow_symlinks=False):

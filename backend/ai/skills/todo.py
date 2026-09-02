@@ -184,6 +184,7 @@ class ListTodos(SkillBase):
 
             items = todo_store.filter_todos(
                 loaded["todos"],
+                categories=loaded.get("categories", []),
                 category_id=cid,
                 include_done=bool(args.get("include_done", True)),
                 frm=frm, to=to,

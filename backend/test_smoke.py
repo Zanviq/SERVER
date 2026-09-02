@@ -522,6 +522,102 @@ def test_notes_wikilinks_and_graph():
     assert all("snippet" in h for h in hits)
 
 
+def test_category_filter_includes_children():
+    """카테고리를 지정하면 하위 카테고리의 할 일도 포함해야 한다.
+
+    화면의 개수는 자손까지 세는데 조회만 정확히 일치를 봐서, AI 의 카테고리 지정
+    조회·일괄완료·일괄삭제가 자식 카테고리의 할 일을 통째로 빠뜨렸다.
+    """
+    from backend import todo_store
+
+    _login()
+    parent = client.post("/api/todo/categories", json={"name": "공부"}).json()
+    child = client.post("/api/todo/categories",
+                        json={"name": "수학", "parent_id": parent["id"]}).json()
+    client.post("/api/todo/create", json={"title": "부모직속", "category_id": parent["id"]})
+    client.post("/api/todo/create", json={"title": "자식것", "category_id": child["id"]})
+    try:
+        from backend.auth import SessionUser
+
+        me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+        board = todo_store.board(me, get_settings())
+        got = todo_store.filter_todos(board["todos"], category_id=parent["id"],
+                                      categories=board["categories"])
+        titles = {t["title"] for t in got}
+        assert titles == {"부모직속", "자식것"}, titles
+    finally:
+        for t in client.get("/api/todo/board").json()["todos"]:
+            client.delete(f"/api/todo/{t['id']}")
+        for cid in (child["id"], parent["id"]):
+            client.delete(f"/api/todo/categories/{cid}")
+
+
+def test_new_todo_order_does_not_collide_after_delete():
+    """지운 뒤 추가하면 기존 항목과 order 가 겹쳐 목록 중간에 끼어들었다."""
+    _login()
+    for t in client.get("/api/todo/board").json()["todos"]:
+        client.delete(f"/api/todo/{t['id']}")
+    ids = [client.post("/api/todo/create", json={"title": f"순서{i}"}).json()["id"]
+           for i in range(3)]
+    client.delete(f"/api/todo/{ids[0]}")
+    client.post("/api/todo/create", json={"title": "나중에추가"})
+    todos = client.get("/api/todo/board").json()["todos"]
+    orders = [t["order"] for t in todos]
+    assert len(set(orders)) == len(orders), orders
+    assert todos[-1]["title"] == "나중에추가", [t["title"] for t in todos]
+    for t in todos:
+        client.delete(f"/api/todo/{t['id']}")
+
+
+def test_one_bad_filename_does_not_kill_the_listing():
+    """이름을 다룰 수 없는 파일 하나로 문서 목록 전체가 죽으면 안 된다.
+
+    리눅스는 파일명을 바이트로 다뤄서 UTF-8이 아닌 이름이 서로게이트 이스케이프로
+    들어온다. 그게 응답 JSON에 실리면 인코딩이 실패해 그 사용자의 목록·트리·그래프가
+    통째로 500이 됐다.
+    """
+    _login()
+    root = get_settings().storage_root / "users" / "tester" / "data"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "멀쩡한문서.md").write_text("보여야 한다", encoding="utf-8")
+    weird = None
+    try:
+        weird = root / "앞\udcff뒤.md"
+        weird.write_text("이상한 이름", encoding="utf-8")
+    except (OSError, UnicodeEncodeError, ValueError):
+        weird = None  # 이 파일시스템에선 만들 수 없다 — 목록만 확인한다
+    try:
+        for path, params in (("/api/notes/list", {}), ("/api/notes/tree", {}),
+                             ("/api/notes/graph", {}), ("/api/notes/search", {"q": "보여야"})):
+            r = client.get(path, params=params)
+            assert r.status_code == 200, f"{path}: {r.status_code}"
+        paths = {n["path"] for n in client.get("/api/notes/list").json()}
+        assert "멀쩡한문서.md" in paths
+    finally:
+        if weird is not None:
+            weird.unlink(missing_ok=True)
+        (root / "멀쩡한문서.md").unlink(missing_ok=True)
+
+
+def test_surrogate_path_is_rejected_not_crashed():
+    """짝 없는 서로게이트가 든 경로는 400이어야 한다(내부 호출로도 들어올 수 있다)."""
+    import tempfile as _tf
+    from pathlib import Path as _Path
+
+    from fastapi import HTTPException
+
+    from backend.security_paths import safe_join
+
+    root = _Path(_tf.mkdtemp(prefix="surr_")).resolve()
+    for bad in ("앞\ud800뒤.md", "폴더/\udcff.md"):
+        try:
+            safe_join(root, bad)
+        except HTTPException as e:
+            assert e.status_code == 400, e.status_code
+        else:
+            raise AssertionError(f"통과해 버렸다: {bad!r}")
+
+
 def test_deleted_account_data_is_not_inherited():
     """같은 아이디로 다시 가입한 사람이 지워진 사람의 데이터를 물려받으면 안 된다."""
     login_guard.reset()
