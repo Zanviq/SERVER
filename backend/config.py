@@ -35,12 +35,22 @@ def _parse_users(raw: str) -> list[UserAccount]:
     except json.JSONDecodeError:
         logger.error("AUTH_USERS JSON 파싱 실패 — 로그인 불가")
         return []
+    if not isinstance(data, list):
+        logger.error("AUTH_USERS 가 목록이 아니다(%s) — 로그인 불가", type(data).__name__)
+        return []
     users: list[UserAccount] = []
-    for item in data if isinstance(data, list) else []:
+    for item in data:
         if not isinstance(item, dict):
             continue
-        u = str(item.get("username", "")).strip()
-        p = str(item.get("password", ""))
+        # str() 로 감싸면 안 된다 — JSON 의 null/0/false 가 "None"·"0"·"False"
+        # 라는 멀쩡한 문자열이 되어, 불완전한 항목을 걸러 내려는 아래 가드를
+        # 그대로 통과했다(비밀번호가 "None" 인 관리자 계정이 만들어진다).
+        u = item.get("username")
+        p = item.get("password")
+        if not isinstance(u, str) or not isinstance(p, str):
+            logger.error("AUTH_USERS 항목의 username/password 가 문자열이 아니다 — 건너뛴다.")
+            continue
+        u = u.strip()
         if not u or not p:
             continue
         users.append(

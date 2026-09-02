@@ -13,13 +13,14 @@ export function DocViewer({
 }: {
   path: string;
   kind: DocKind;
-  size: number;
+  /** 목록에 아직 없는 문서(415 로 뷰어에 온 경우)는 크기를 모른다. */
+  size?: number;
 }) {
   const src = api.noteRawUrl(path);
 
   const toolbar = (
     <div className="flex items-center gap-2 border-b border-line px-3 py-2">
-      <span className="label">{formatBytes(size)}</span>
+      {size === undefined ? null : <span className="label">{formatBytes(size)}</span>}
       <div className="flex-1" />
       <a href={src} target="_blank" rel="noreferrer" className="btn btn-ghost h-8 px-2"
          title="새 탭에서 열기">

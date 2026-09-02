@@ -168,6 +168,16 @@ export function Notes() {
     if (current && dirty) await save(current, content, true);
   }, [current, dirty, content, save]);
 
+  /** 대기 중인 자동저장을 **버린다**.
+   *
+   *  타이머는 걸릴 때의 경로를 붙잡고 있다. 그 문서를 지운 뒤에 타이머가 뜨면
+   *  방금 휴지통으로 보낸 문서를 디스크에 그대로 되살린다(유령 문서). */
+  const cancelPendingSave = useCallback(() => {
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = null;
+    setDirty(false);
+  }, []);
+
   const openNote = useCallback(
     async (path: string) => {
       // 순번은 **누른 순서대로** 매겨야 한다. 아래 flushPendingSave 를 기다린 뒤에
@@ -295,6 +305,7 @@ export function Notes() {
   const delNote = async () => {
     if (!current) return;
     setDelOpen(false);
+    cancelPendingSave();  // 남은 타이머가 지운 문서를 되살리지 않게
     try {
       await api.noteDelete(current);
       setCurrent(null);
@@ -311,8 +322,13 @@ export function Notes() {
     if (!delFolder) return;
     const target = delFolder;
     setDelFolder(null);
+    // 지우는 폴더 안의 문서를 열어 두고 있었으면 그 문서도 함께 닫는다 —
+    // 안 그러면 남은 자동저장 타이머가 방금 지운 폴더를 파일째 되살린다.
+    const hadOpen = !!current && (current === target || current.startsWith(target + "/"));
+    if (hadOpen) cancelPendingSave();
     try {
       await api.noteFolderDelete(target);
+      if (hadOpen) { setCurrent(null); setContent(""); setDetail(null); }
       if (curFolder === target || curFolder.startsWith(target + "/")) setCurFolder("");
       reloadTree();
       toast.ok("폴더를 휴지통으로 이동했습니다");
@@ -331,8 +347,11 @@ export function Notes() {
     searchTimer.current = window.setTimeout(async () => {
       try {
         setHits(await api.noteSearch(v.trim()));
-      } catch {
-        setHits([]);
+      } catch (e) {
+        // 오류를 삼키고 빈 배열을 넣으면 서버 오류가 '검색 결과 없음' 이라는
+        // 거짓 안내가 된다. 결과 목록은 접고 무슨 일이 났는지 알린다.
+        setHits(null);
+        toast.error(e instanceof Error ? e.message : "검색 실패");
       }
     }, 300);
   };
@@ -388,6 +407,9 @@ export function Notes() {
   const doRenameNote = async () => {
     if (!renameFor || !renameName.trim()) return;
     try {
+      // 옮기기 전에 흘려보낸다. 안 그러면 타이머가 옛 경로로 저장을 보내
+      // 방금 이름을 바꾼 문서가 옛 이름으로 하나 더 생긴다(유령 중복).
+      if (current === renameFor.path) await flushPendingSave();
       const r = await api.noteRename(renameFor.path, renameName.trim());
       toast.ok("이름을 변경했습니다");
       const wasOpen = current === renameFor.path;
@@ -401,6 +423,7 @@ export function Notes() {
 
   const doMoveNote = async (path: string, folder: string) => {
     try {
+      if (current === path) await flushPendingSave();  // 옛 경로로 되살아나지 않게
       const r = await api.noteMove(path, folder);
       toast.ok("이동했습니다");
       const wasOpen = current === path;
@@ -416,6 +439,7 @@ export function Notes() {
     if (!delNotePath) return;
     const path = delNotePath;
     try {
+      if (current === path) cancelPendingSave();
       await api.noteDelete(path);
       if (current === path) { setCurrent(null); setDetail(null); setContent(""); }
       setDelNotePath(null);
@@ -772,7 +796,11 @@ export function Notes() {
           ) : !isEditable ? (
             // 이미지·PDF·미디어 — 편집 대상이 아니므로 전용 뷰어로
             <div className="flex-1 overflow-hidden">
-              <DocViewer path={current} kind={currentMeta!.kind} size={currentMeta!.size} />
+              {/* currentMeta 가 없을 수 있다 — 415 로 뷰어에 온 문서가 아직
+                  목록에 없거나, 열어 둔 사이 목록에서 사라진 경우다. `!` 를
+                  쓰면 그 순간 앱 전체가 오류 화면이 된다. */}
+              <DocViewer path={current} kind={currentMeta?.kind ?? "other"}
+                         size={currentMeta?.size} />
             </div>
           ) : reading ? (
             <div className="flex-1 overflow-auto p-4">

@@ -28,7 +28,9 @@ from .. import doc_cache
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..json_store import lock_for, write_text_atomic
-from ..file_kinds import inline_media_type, is_editable, kind_of, looks_like_extension
+from ..file_kinds import (
+    inline_media_type, is_editable, kind_of, looks_like_extension, split_ext,
+)
 from ..notes_graph import backlinks_for, build_graph, parse_wikilinks
 from ..security_paths import safe_join, to_rel
 from ..storage import resolve, user_data_root, walk_all, walk_files
@@ -119,7 +121,7 @@ def _existing(root: Path, rel: str) -> Path:
     exact = safe_join(root, rel)
     if exact.exists():
         return exact
-    if not Path(rel).suffix:
+    if not looks_like_extension(rel):
         alt = safe_join(root, f"{rel}.md")
         if alt.exists():
             return alt
@@ -173,8 +175,10 @@ def _fs_errors_are_bad_requests(what: str):  # noqa: D401
         # 짝 없는 서로게이트(\ud800 등)가 든 본문. 사용자 입력 오류인데 OSError 가
         # 아니라 그대로 새어 500 + 스택트레이스가 됐다.
         logger.info("%s 실패(인코딩): %s", what, e)
+        # what 은 '문서 저장' 같은 **동작** 이름이다. 이름 자리에 넣으면
+        # "이 이름은 쓸 수 없습니다: 문서 저장" 같은 말이 안 되는 토스트가 뜬다.
         raise HTTPException(
-            status_code=400, detail=f"저장할 수 없는 문자가 들어 있습니다: {what}"
+            status_code=400, detail=f"{what}에 실패했습니다 — 저장할 수 없는 문자가 들어 있습니다."
         ) from e
     except OSError as e:
         if e.errno in _SERVER_FAULT_ERRNOS:
@@ -182,7 +186,7 @@ def _fs_errors_are_bad_requests(what: str):  # noqa: D401
             raise HTTPException(status_code=500, detail=f"{what}에 실패했습니다.") from e
         logger.info("%s 실패(이름 문제로 보임): %s", what, e)
         raise HTTPException(
-            status_code=400, detail=f"이 이름은 쓸 수 없습니다: {what}"
+            status_code=400, detail=f"{what}에 실패했습니다 — 이 이름은 쓸 수 없습니다."
         ) from e
 
 
@@ -190,9 +194,11 @@ def _free_name(dest: Path) -> Path:
     """이미 있으면 `이름 (2).png` 처럼 비어 있는 이름을 찾는다."""
     if not dest.exists():
         return dest
-    stem, dot, ext = dest.name.partition(".")
+    # 첫 점이 아니라 split_ext 로 쪼갠다. partition(".") 은 `2026.08 회고.md` 를
+    # `2026` + `.08 회고.md` 로 갈라 `2026 (2).08 회고.md` 를 만들었다.
+    stem, ext = split_ext(dest.name)
     for n in range(2, 1000):
-        cand = dest.with_name(f"{stem} ({n}){dot}{ext}")
+        cand = dest.with_name(f"{stem} ({n}){ext}")
         if not cand.exists():
             return cand
     raise HTTPException(status_code=409, detail="같은 이름의 파일이 너무 많습니다.")
@@ -455,7 +461,7 @@ def save_note(
     # 되짚어 주는 읽기 전용 규칙인데, 쓰기에 쓰면 '새 노트'에 `회의` 라고 친 순간
     # 이미 있던 `회의.md` 의 내용이 통째로 덮인다.
     target = safe_join(root, req.path)
-    if not target.exists() and not Path(req.path).suffix:
+    if not target.exists() and not looks_like_extension(req.path):
         twin = safe_join(root, f"{req.path}.md")
         if twin.exists():
             raise HTTPException(
@@ -508,7 +514,9 @@ def rename_note(
     # 확장자를 안 적었으면 원래 것을 유지한다(.png를 .png.md로 만들지 않도록).
     # Path(...).suffix는 '2026.08'의 '.08'도 확장자로 보므로 쓰지 않는다.
     if not _looks_like_extension(new_name):
-        new_name = f"{new_name}{src.suffix}"
+        # 붙이는 쪽도 같은 규칙이어야 한다. src.suffix 를 쓰면 `2026.08 회고` 의
+        # 가짜 꼬리 `.08 회고` 가 새 이름에 통째로 따라붙었다.
+        new_name = f"{new_name}{split_ext(src.name)[1]}"
     rel_dir = src.parent.relative_to(root).as_posix()
     dst_rel = new_name if rel_dir in ("", ".") else f"{rel_dir}/{new_name}"
     dst = safe_join(root, dst_rel)

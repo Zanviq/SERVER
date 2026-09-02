@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 MARKDOWN = {".md", ".markdown"}
 
@@ -65,7 +64,9 @@ def split_ext(name: str) -> tuple[str, str]:
 
 def kind_of(name: str) -> str:
     """'md' | 'text' | 'image' | 'pdf' | 'video' | 'audio' | 'other'."""
-    ext = Path(name).suffix.lower()
+    # Path.suffix 가 아니라 split_ext 를 쓴다. `2026.08 회고` 를 suffix 로 보면
+    # `.08 회고` 가 확장자가 되어 'other'(=편집 불가)로 떨어졌다.
+    ext = split_ext(name)[1].lower()
     if ext in MARKDOWN:
         return "md"
     # .svg는 이미지이면서 텍스트지만, 보는 쪽이 자연스러우므로 이미지로 둔다.
@@ -89,4 +90,4 @@ def is_editable(name: str) -> bool:
 
 def inline_media_type(name: str) -> str | None:
     """브라우저에 인라인으로 보여줄 수 있으면 그 MIME, 아니면 None(다운로드)."""
-    return _MIME.get(Path(name).suffix.lower())
+    return _MIME.get(split_ext(name)[1].lower())

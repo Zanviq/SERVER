@@ -640,6 +640,12 @@ def test_deleted_account_data_is_not_inherited():
     r = client.delete("/api/admin/users/leaver")
     assert r.status_code == 200, r.text
     assert not s.user_root("leaver").exists(), "사용자 폴더가 그대로 남았다"
+    # users/ **밖**으로 치워야 한다. 안에 두면 그 이름(`_deleted-leaver-2026...`)이
+    # USERNAME_RE(`^[a-z0-9_-]{3,32}$`)를 통과하는 유효한 아이디라, 그 이름으로
+    # 가입해 승인받으면 지워진 사람의 벌트를 그대로 물려받는다.
+    leftovers = [p.name for p in (s.storage_root / "users").iterdir()
+                 if "leaver" in p.name]
+    assert leftovers == [], leftovers
 
     # 같은 아이디로 다시 가입 → 빈 벌트여야 한다
     TestClient(app).post("/api/auth/signup",
@@ -652,9 +658,9 @@ def test_deleted_account_data_is_not_inherited():
     assert "사적인메모.md" not in docs, docs
 
     # 실수 복구 여지: 데이터 자체는 남아 있다
-    archived = [p.name for p in (s.storage_root / "users").iterdir()
-                if p.name.startswith("_deleted-leaver-")]
-    assert archived, list((s.storage_root / "users").iterdir())
+    grave = s.storage_root / "deleted-users"
+    archived = [p.name for p in grave.iterdir()] if grave.exists() else []
+    assert any(n.startswith("leaver-") for n in archived), archived
 
     client.delete("/api/admin/users/leaver")
 
@@ -693,6 +699,94 @@ def test_moving_one_occurrence_splits_it_out():
 
     for e in after:
         client.delete(f"/api/calendar/events/{e['id']}")
+
+
+def test_editing_one_occurrence_without_moving_it_keeps_the_series():
+    """회차 id 로 제목만 바꿔도 이전 회차가 사라지면 안 된다.
+
+    편집창은 바뀌지 않은 start/end 도 함께 보낸다. 그 값을 시리즈에 그대로 쓰면
+    시리즈 시작일이 그 회차 날짜로 밀려 **앞선 회차가 전부 사라진다**.
+    """
+    _login()
+    r = client.post("/api/calendar/events", json={
+        "title": "제목만시험", "start": "2027-05-03T09:00:00", "end": "2027-05-03T10:00:00",
+        "recurrence": "weekly", "recur_until": "2027-06-14"})
+    assert r.status_code == 200, r.text
+
+    def occ():
+        got = client.get("/api/calendar/events", params={"from": "2027-05-01", "to": "2027-06-30"})
+        return [e for e in got.json() if e["title"].endswith("시험")]
+
+    before = occ()
+    assert len(before) >= 4, before
+    third = before[2]
+    up = client.put(f"/api/calendar/events/{third['id']}", json={
+        "title": "제목바꾼시험", "start": third["start"], "end": third["end"]})
+    assert up.status_code == 200, up.text
+
+    after = occ()
+    assert len(after) == len(before), f"회차 수가 바뀌었다: {len(before)} → {len(after)}"
+    assert after[0]["start"] == before[0]["start"], "시리즈 시작이 밀렸다"
+    assert all(e["title"] == "제목바꾼시험" for e in after), [e["title"] for e in after]
+    for e in after:
+        client.delete(f"/api/calendar/events/{e['id']}")
+
+
+def test_splitting_an_occurrence_keeps_its_length():
+    """자정을 넘기는 반복 일정도 한 회차를 옮기면 길이가 유지돼야 한다.
+
+    끝을 '회차 날짜 + 시리즈의 끝 시각'으로 만들면 22:00~다음날 02:00 짜리
+    일정이 22:00~같은날 02:00 이 되어 길이가 뒤집힌다.
+    """
+    _login()
+    r = client.post("/api/calendar/events", json={
+        "title": "밤샘시험", "start": "2027-07-05T22:00:00", "end": "2027-07-06T02:00:00",
+        "recurrence": "weekly", "recur_until": "2027-08-10"})
+    assert r.status_code == 200, r.text
+
+    def occ():
+        got = client.get("/api/calendar/events", params={"from": "2027-07-01", "to": "2027-08-31"})
+        return [e for e in got.json() if e["title"] == "밤샘시험"]
+
+    before = occ()
+    assert len(before) >= 3, before
+    # 회차의 끝은 시작 다음 날이어야 한다(조회부터 이미 그렇다)
+    assert before[1]["end"][:10] != before[1]["start"][:10], before[1]
+
+    target = before[1]
+    day = target["start"][:10]
+    moved = client.put(f"/api/calendar/events/{target['id']}", json={
+        "title": "밤샘시험", "start": f"{day}T23:00:00", "end": f"{day}T23:30:00"})
+    assert moved.status_code == 200, moved.text
+
+    after = occ()
+    assert len(after) == len(before), f"회차 수가 바뀌었다: {len(before)} → {len(after)}"
+    for e in after:
+        assert e["end"] > e["start"], e
+
+    # 같은(낡은) 회차 id 로 또 옮기면 중복을 만들지 않고 거절해야 한다
+    quiet = TestClient(app, raise_server_exceptions=False)
+    quiet.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    again = quiet.put(f"/api/calendar/events/{target['id']}", json={
+        "title": "밤샘시험", "start": f"{day}T20:00:00", "end": f"{day}T20:30:00"})
+    assert again.status_code == 409, again.text
+    assert len(occ()) == len(before), occ()
+
+    for e in occ():
+        client.delete(f"/api/calendar/events/{e['id']}")
+
+
+def test_legacy_timezoned_series_is_not_split_by_a_plain_edit():
+    """타임존이 붙은 채 저장된 옛 반복 일정도 제목 수정으로 쪼개지면 안 된다."""
+    from backend import calendar_store
+
+    series = {"id": "x", "title": "옛일정", "recurrence": "weekly",
+              "start": "2027-09-06T10:00:00+09:00", "end": "2027-09-06T11:00:00+09:00"}
+    eid = "x@2027-09-20"
+    payload = {"title": "새이름", "start": "2027-09-20T10:00:00", "end": "2027-09-20T11:00:00"}
+    assert calendar_store._moves_this_occurrence(eid, payload, series) is False
+    payload["start"] = "2027-09-20T14:00:00"
+    assert calendar_store._moves_this_occurrence(eid, payload, series) is True
 
 
 def test_session_identity_is_exact_not_case_folded():
@@ -803,6 +897,73 @@ def test_extension_rule_lives_in_one_place():
         assert split_ext(name)[1] == ext, (name, split_ext(name))
         assert looks_like_extension(name) is bool(ext), name
 
+    # 분류도 같은 규칙을 써야 한다. Path.suffix 로 보면 `2026.08 회고` 의 확장자가
+    # `.08 회고` 라 'other'(=편집 불가)가 되고, 만들자마자 열 수도 저장할 수도 없다.
+    from backend.file_kinds import is_editable, kind_of
+    assert kind_of("2026.08 회고") == "text", kind_of("2026.08 회고")
+    assert is_editable("2026.08 회고")
+    assert kind_of("사진 2026.08.jpeg") == "image"
+    assert kind_of("보고서 v1.2") == "text"
+
+
+def test_dotted_titles_survive_the_whole_document_lifecycle():
+    """제목에 점이 든 문서(`2026.08 회고`)를 끝까지 다뤄 본다.
+
+    확장자 판정이 file_kinds 한 곳으로 모였어도, 붙이는 쪽이 Path.suffix 면
+    `이름 변경` 이 원본의 가짜 꼬리(`.08 회고`)를 새 이름에 덧붙인다.
+    """
+    _login()
+    name = "2026.08 회고"
+    client.request("DELETE", "/api/notes/delete", json={"path": name})
+    r = client.put("/api/notes/save", json={"path": name, "content": "# 회고"})
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "text", r.json()
+    # 만들자마자 다시 열려야 한다
+    got = client.get("/api/notes/get", params={"path": name})
+    assert got.status_code == 200, got.text
+    assert got.json()["content"] == "# 회고" and got.json()["kind"] == "text", got.json()
+
+    # 확장자를 안 적은 새 이름 → 가짜 꼬리가 따라붙으면 안 된다
+    r = client.post("/api/notes/rename", json={"path": name, "new_name": "2027.01 계획"})
+    assert r.status_code == 200, r.text
+    assert r.json()["path"] == "2027.01 계획", r.json()
+    client.request("DELETE", "/api/notes/delete", json={"path": "2027.01 계획"})
+
+
+def test_deleting_an_account_keeps_it_when_the_data_cannot_be_moved():
+    """폴더를 못 치우면 계정도 지우면 안 된다.
+
+    계정을 먼저 지우면 200 OK 를 돌려주면서 users/<id>/ 가 그대로 남아,
+    다음 가입자가 그 벌트를 통째로 물려받는다.
+    """
+    import backend.routers.admin as admin_mod
+
+    login_guard.reset()
+    s = get_settings()
+    TestClient(app).post("/api/auth/signup",
+                         json={"username": "stuckuser", "password": "pw-long-enough"})
+    _login()
+    client.post("/api/admin/users/stuckuser/approve")
+    victim = TestClient(app)
+    victim.post("/api/auth/login", json={"username": "stuckuser", "password": "pw-long-enough"})
+    victim.put("/api/notes/save", json={"path": "비밀.md", "content": "x"})
+
+    quiet = TestClient(app, raise_server_exceptions=False)
+    quiet.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    real_move = admin_mod.shutil.move
+    admin_mod.shutil.move = lambda *a, **k: (_ for _ in ()).throw(OSError(13, "denied"))
+    try:
+        r = quiet.delete("/api/admin/users/stuckuser")
+        assert r.status_code == 500, r.text
+        # 계정이 살아 있어야 한다 — 아니면 폴더만 남아 다음 사람이 물려받는다
+        rows = client.get("/api/admin/users").json()["users"]
+        names = [u["username"] for u in rows]
+        assert "stuckuser" in names, names
+    finally:
+        admin_mod.shutil.move = real_move
+    assert client.delete("/api/admin/users/stuckuser").status_code == 200
+    assert not s.user_root("stuckuser").exists()
+
 
 def test_old_owner_account_keeps_admin_access():
     """origin 필드가 없던 시절의 주인 계정이 관리 화면에서 잠기면 안 된다.
@@ -862,6 +1023,38 @@ def test_old_settings_values_are_normalized_on_read():
         assert got["calendar"]["default_view"] in ("dayGridMonth", "timeGridWeek", "timeGridDay")
         assert got["notes"]["autosave_ms"] >= 300, got["notes"]
         assert "sync" not in got, got.keys()
+    finally:
+        if backup is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(backup, encoding="utf-8")
+
+
+def test_bad_settings_are_cleaned_before_they_are_stored():
+    """저장 시점에도 걸러야 한다 — 읽기만 정규화하면 파일에는 쓰레기가 남는다.
+
+    load() 가 다시 정규화하므로 API 응답만 봐서는 저장 검증이 빠져도 알 수 없다.
+    실제로 디스크에 뭐가 적혔는지를 본다.
+    """
+    _login()
+    s = get_settings()
+    path = s.user_root("tester") / "settings.json"
+    backup = path.read_text(encoding="utf-8") if path.exists() else None
+    try:
+        r = client.patch("/api/settings", json={"changes": {
+            "ai": {"tone": "해적", "max_steps": 9999},
+            "calendar": {"default_color": "99", "ai_rules": "가" * 5000},
+            "notes": {"autosave_ms": 1},
+            "몰라요": {"x": 1},
+        }})
+        assert r.status_code == 200, r.text
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        assert stored["ai"]["tone"] == "assistant", stored["ai"]
+        assert stored["ai"]["max_steps"] == 16, stored["ai"]
+        assert stored["calendar"]["default_color"] == "2", stored["calendar"]
+        assert len(stored["calendar"]["ai_rules"]) == 2000
+        assert stored["notes"]["autosave_ms"] == 300, stored["notes"]
+        assert "몰라요" not in stored, stored.keys()
     finally:
         if backup is None:
             path.unlink(missing_ok=True)

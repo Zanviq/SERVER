@@ -167,6 +167,15 @@ def ensure_seed(settings: Settings) -> None:
             }
             for u in settings.users
         ]
+        if not rows:
+            # 빈 파일을 쓰면 안 된다. 다음 부팅부터는 `existing is not None` 에
+            # 걸려 early-return 하므로, .env 를 고쳐 재시작해도 주인 계정이
+            # 영영 생기지 않는다(가입은 승인해 줄 사람이 없어 무의미).
+            logger.error(
+                "AUTH_USERS 에서 이관할 계정이 없다 — accounts.json 을 만들지 않는다."
+                " .env 의 AUTH_USERS 를 고치고 다시 시작하면 그때 이관된다."
+            )
+            return
         write_atomic(p, rows)
 
 

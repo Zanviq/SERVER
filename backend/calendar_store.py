@@ -303,6 +303,26 @@ def _base_id(eid: str) -> str:
     return base_id(eid)
 
 
+def _occurrence_times(series: dict, day: str) -> tuple[str, str]:
+    """반복 일정에서 `day` 회차의 (시작, 끝). **_occurrences 와 같은 규칙**이다.
+
+    끝은 '그 날짜에 시리즈의 끝 시각을 얹은 것'이 아니라 **시작 + 길이**다.
+    날짜만 갈아끼우면 자정을 넘기거나 여러 날에 걸친 반복 일정
+    (22:00~다음날 02:00)이 뒤집히거나 통째로 줄어든다.
+    """
+    all_day = bool(series.get("allDay"))
+    s = _parse_dt(series.get("start", ""))
+    e = _parse_dt(series.get("end") or series.get("start", ""))
+    if e < s:
+        e = s
+    try:
+        d = date.fromisoformat(str(day)[:10])
+    except ValueError:
+        return _fmt_dt(s, all_day), _fmt_dt(e, all_day)
+    cur = datetime.combine(d, s.time())
+    return _fmt_dt(cur, all_day), _fmt_dt(cur + (e - s), all_day)
+
+
 def _moves_this_occurrence(eid: str, payload: dict, series: dict) -> bool:
     """반복 일정의 **한 회차만** 시간이 바뀌는 수정인가."""
     from .calendar_ids import is_instance
@@ -310,19 +330,22 @@ def _moves_this_occurrence(eid: str, payload: dict, series: dict) -> bool:
     if not is_instance(eid) or str(series.get("recurrence", "none")) in ("", "none"):
         return False
     day = str(eid).split("@", 1)[1][:10]
-    for key in ("start", "end"):
+    was_start, was_end = _occurrence_times(series, day)
+    for key, was in (("start", was_start), ("end", was_end)):
         want = payload.get(key)
         if not want:
             continue
-        # 그 회차의 원래 값(같은 날짜에 시리즈의 시각을 얹은 것)과 다르면 이동이다
-        base = str(series.get(key) or series.get("start") or "")
-        cur = f"{day}{base[10:]}" if len(base) > 10 else day
-        if str(want) != cur:
+        # 문자열이 아니라 **파싱한 시각**으로 비교한다. 시각 정규화 이전에 저장된
+        # 값(`...T10:00:00+09:00`)은 글자로 보면 언제나 달라 보여서, 시각을 전혀
+        # 바꾸지 않는 수정도 '회차 이동'으로 오판해 시리즈를 쪼갰다.
+        if _parse_dt(str(want)) != _parse_dt(was):
             return True
     return False
 
 
 def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict) -> dict:
+    from .calendar_ids import is_instance
+
     bid = _base_id(eid)
     with json_store.lock_for(_events_path(user, settings)):
         events = _load(user, settings)
@@ -337,17 +360,20 @@ def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict)
                 # 그 날짜를 예외로 빼고 단발 일정을 새로 만든다.
                 day = str(eid).split("@", 1)[1][:10]
                 e.setdefault("exdates", [])
-                if day not in e["exdates"]:
-                    e["exdates"].append(day)
+                if day in e["exdates"]:
+                    # 이미 떼어냈거나 지운 회차다. 그냥 진행하면 단발 일정이 하나
+                    # 더 생기고(중복), 지웠던 회차가 되살아난다. 화면이 낡은 것이다.
+                    raise HTTPException(
+                        status_code=409,
+                        detail="이미 따로 떼어낸 회차입니다. 새로고침 후 다시 시도해 주세요.",
+                    )
+                e["exdates"].append(day)
                 base = dict(e)
                 base.pop("id", None)
                 base["recurrence"] = "none"
                 base.pop("recur_until", None)
                 base.pop("exdates", None)
-                start = str(e.get("start", ""))
-                base["start"] = f"{day}{start[10:]}" if len(start) > 10 else day
-                end = str(e.get("end") or start)
-                base["end"] = f"{day}{end[10:]}" if len(end) > 10 else day
+                base["start"], base["end"] = _occurrence_times(e, day)
                 single = _normalize(payload, base)
                 single["id"] = uuid.uuid4().hex
                 single["recurrence"] = "none"
@@ -355,6 +381,11 @@ def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict)
                 events.append(single)
                 _save(events, user, settings)
                 return single
+            if is_instance(eid) and str(e.get("recurrence", "none")) not in ("", "none"):
+                # 회차 id 로 왔는데 시각은 그대로다(제목·색만 바꾸는 수정).
+                # 그 회차의 start/end 를 시리즈에 그대로 쓰면 시리즈 시작일이
+                # 그 회차 날짜로 밀려 **이전 회차가 전부 사라진다**. 시각은 뺀다.
+                payload = {k: v for k, v in payload.items() if k not in ("start", "end")}
             events[i] = _normalize(payload, e)
             _save(events, user, settings)
             return events[i]
