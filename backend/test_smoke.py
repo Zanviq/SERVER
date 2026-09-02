@@ -522,6 +522,41 @@ def test_notes_wikilinks_and_graph():
     assert all("snippet" in h for h in hits)
 
 
+def test_deleted_account_data_is_not_inherited():
+    """같은 아이디로 다시 가입한 사람이 지워진 사람의 데이터를 물려받으면 안 된다."""
+    login_guard.reset()
+    s = get_settings()
+    anon = TestClient(app)
+    assert anon.post("/api/auth/signup",
+                     json={"username": "leaver", "password": "pw-long-enough"}).status_code == 201
+    _login()
+    client.post("/api/admin/users/leaver/approve")
+    gone = TestClient(app)
+    gone.post("/api/auth/login", json={"username": "leaver", "password": "pw-long-enough"})
+    gone.put("/api/notes/save", json={"path": "사적인메모.md", "content": "남에게 보이면 안 됨"})
+
+    r = client.delete("/api/admin/users/leaver")
+    assert r.status_code == 200, r.text
+    assert not s.user_root("leaver").exists(), "사용자 폴더가 그대로 남았다"
+
+    # 같은 아이디로 다시 가입 → 빈 벌트여야 한다
+    TestClient(app).post("/api/auth/signup",
+                         json={"username": "leaver", "password": "pw-another-one"})
+    client.post("/api/admin/users/leaver/approve")
+    again = TestClient(app)
+    login_guard.reset()
+    again.post("/api/auth/login", json={"username": "leaver", "password": "pw-another-one"})
+    docs = [n["path"] for n in again.get("/api/notes/list").json()]
+    assert "사적인메모.md" not in docs, docs
+
+    # 실수 복구 여지: 데이터 자체는 남아 있다
+    archived = [p.name for p in (s.storage_root / "users").iterdir()
+                if p.name.startswith("_deleted-leaver-")]
+    assert archived, list((s.storage_root / "users").iterdir())
+
+    client.delete("/api/admin/users/leaver")
+
+
 def test_moving_one_occurrence_splits_it_out():
     """한 회차만 시간을 옮기면 그 회차만 떨어져 나와야 한다.
 

@@ -53,7 +53,12 @@ def _deep_merge(base: dict, patch: dict) -> dict:
 
 def load(user: SessionUser, settings: Settings) -> dict:
     stored = json_store.read_json(_path(user, settings), {})
-    return _prune(_deep_merge(DEFAULTS, stored if isinstance(stored, dict) else {}))
+    if not isinstance(stored, dict):
+        stored = {}
+    # 예전 버전이 남긴 이상한 값(섹션이 dict 가 아님 등)도 여기서 흘려보낸다 —
+    # 읽기가 죽으면 그 계정은 로그인조차 못 한다.
+    stored = {k: v for k, v in stored.items() if isinstance(v, dict)}
+    return _prune(_deep_merge(DEFAULTS, stored))
 
 
 def _prune(merged: dict) -> dict:
@@ -65,10 +70,68 @@ def _prune(merged: dict) -> dict:
     return {k: v for k, v in merged.items() if k in DEFAULTS}
 
 
+def _coerce(section: str, key: str, value: Any, fallback: Any) -> Any:
+    """저장해도 되는 값으로 맞춘다. 못 맞추면 기본값.
+
+    예전에는 아무 값이나 그대로 저장했다. `{"ai": 1}` 처럼 섹션을 스칼라로 넣으면
+    다음 load 에서 _deep_merge 가 dict 를 기대하다 어긋나고, 그 계정은 설정을 읽는
+    모든 요청(로그인 포함)이 영구히 500 이 됐다 — 스스로 되돌릴 방법도 없다.
+    """
+    if isinstance(fallback, bool):
+        return bool(value)
+    if isinstance(fallback, int):
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            return fallback
+        rng = _RANGES.get((section, key))
+        return min(max(n, rng[0]), rng[1]) if rng else n
+    if isinstance(fallback, str):
+        if not isinstance(value, (str, int, float)):
+            return fallback
+        text = str(value)
+        allowed = _CHOICES.get((section, key))
+        if allowed and text not in allowed:
+            return fallback
+        return text[:_MAX_TEXT]
+    return fallback
+
+
+#: 숫자 설정의 허용 범위 — 화면에서 막아도 API 로는 아무 값이나 들어온다.
+_RANGES: dict[tuple[str, str], tuple[int, int]] = {
+    ("ai", "max_steps"): (1, 16),
+    ("calendar", "week_start"): (0, 6),
+    ("calendar", "default_remind"): (0, 40320),   # 최대 4주 전
+    ("notes", "autosave_ms"): (300, 60_000),
+    ("security", "session_ttl_minutes"): (5, 43_200),  # 5분 ~ 30일
+}
+#: 정해진 값만 받는 설정
+_CHOICES: dict[tuple[str, str], set[str]] = {
+    ("ai", "tone"): {"counselor", "assistant", "friend"},
+    ("calendar", "default_view"): {"dayGridMonth", "timeGridWeek", "timeGridDay"},
+    ("calendar", "default_color"): {str(i) for i in range(1, 12)},
+}
+#: 자유 입력 문자열의 길이 상한(AI 규칙 등)
+_MAX_TEXT = 2000
+
+
+def sanitize(changes: dict) -> dict:
+    """들어온 변경분을 DEFAULTS 의 모양·타입에 맞춰 걸러 낸다."""
+    out: dict[str, Any] = {}
+    for section, values in (changes or {}).items():
+        base = DEFAULTS.get(section)
+        if not isinstance(base, dict) or not isinstance(values, dict):
+            continue  # 모르는 섹션이거나 섹션이 dict 가 아니다 — 통째로 버린다
+        clean = {k: _coerce(section, k, v, base[k]) for k, v in values.items() if k in base}
+        if clean:
+            out[section] = clean
+    return out
+
+
 def patch(user: SessionUser, settings: Settings, changes: dict) -> dict:
     p = _path(user, settings)
     with json_store.lock_for(p):
-        merged = _prune(_deep_merge(load(user, settings), changes))
+        merged = _prune(_deep_merge(load(user, settings), sanitize(changes)))
         json_store.write_atomic(p, merged)
     return merged
 

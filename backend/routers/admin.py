@@ -5,12 +5,17 @@
 """
 from __future__ import annotations
 
+import logging
+import shutil
+import time
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from .. import accounts
 from ..auth import SessionUser, require_admin
 from ..config import Settings, get_settings
 
+logger = logging.getLogger("server.admin")
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
@@ -79,13 +84,37 @@ def change_role(
     return accounts.set_role(username, role, settings)
 
 
+def _archive_user_data(username: str, settings: Settings) -> str:
+    """사용자 폴더를 물려받을 수 없는 이름으로 옮긴다. 옮길 게 없으면 빈 문자열."""
+    src = settings.user_root(username)
+    if not src.exists():
+        return ""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    dest = src.with_name(f"_deleted-{src.name}-{stamp}")
+    try:
+        shutil.move(str(src), str(dest))
+    except OSError:
+        logger.exception("삭제한 계정의 데이터를 옮기지 못했다: %s", src)
+        return ""
+    return dest.name
+
+
 @router.delete("/users/{username}")
 def delete_user(
     username: str,
     admin: SessionUser = Depends(require_admin),
     settings: Settings = Depends(get_settings),
 ):
-    """계정만 삭제한다. 문서는 남겨 실수를 되돌릴 수 있게 한다."""
+    """계정을 삭제한다. 데이터는 남기되 **다른 사람이 물려받지 못하게** 치운다.
+
+    예전에는 users/<id>/ 를 그대로 뒀는데, 같은 아이디로 다시 가입할 수 있어서
+    새로 가입한 사람이 지워진 사람의 문서·할 일·설정·구글 토큰을 그대로 이어받았다.
+    실수 복구 여지는 남겨야 하므로 지우지 않고 `_deleted-<id>-<시각>` 으로 옮긴다.
+    """
     _not_self(username, admin)
+    acc = accounts.find_for_login(username, settings)
     accounts.delete(username, settings)
-    return {"ok": True}
+    moved = ""
+    if acc:
+        moved = _archive_user_data(acc.username, settings)
+    return {"ok": True, "data_moved_to": moved}
