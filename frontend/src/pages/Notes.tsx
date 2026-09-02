@@ -13,6 +13,7 @@ import { LiveEditor } from "../components/notes/LazyLiveEditor";
 import { NOTE_PATH_MIME } from "../components/notes/dragTypes";
 import { Modal } from "../components/ui/Modal";
 import { api, ApiError, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
+import { looksLikeExtension } from "../lib/names";
 import { embedMarkdownFor, makeResolver } from "../lib/embeds";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
@@ -349,7 +350,7 @@ export function Notes() {
       }
       // 확장자가 붙은 이름은 '이미 있는 파일'을 가리킨 것이다. 못 찾았다고 새로 만들면
       // 백엔드 save가 덮어쓰기라 todo.txt 같은 파일 내용이 '# todo.txt'로 날아간다.
-      if (/\.[A-Za-z0-9]{1,8}$/.test(title)) {
+      if (looksLikeExtension(title)) {
         toast.error(`문서를 찾을 수 없습니다: ${title}`);
         return;
       }
@@ -576,7 +577,7 @@ export function Notes() {
     const title = window.prompt("새 문서 제목")?.trim();
     if (!title) return null;
     // 위키링크는 확장자를 쓰지 않으므로 제목에 확장자가 있으면 링크가 어긋난다
-    if (/\.[A-Za-z0-9]{1,8}$/.test(title)) {
+    if (looksLikeExtension(title)) {
       toast.error("확장자 없이 제목만 적어 주세요.");
       return null;
     }
