@@ -142,7 +142,13 @@ export function findTable(lines: string[], lineNo: number, ch: number): TableInf
   const rows: string[][] = [];
   let cursorRow = -1;
   for (let n = start; n <= end; n++) {
-    if (n === start + 1) continue; // 구분선은 담지 않는다
+    if (n === start + 1) {
+      // 구분선은 rows 에 담지 않는다. 다만 **커서가 거기 있을 수는 있다** —
+      // 그때 row 를 -1 로 두면 툴바의 "행−"·"열−"이 splice(-1,1) 로 맨 끝
+      // 행·열을 지운다. 구분선은 머리글에 딸린 줄이므로 머리글로 본다.
+      if (n === i) cursorRow = 0;
+      continue;
+    }
     if (n === i) cursorRow = rows.length;
     rows.push(splitCells(lines[n]).map((c) => c.trim()));
   }
@@ -210,6 +216,7 @@ export function insertRow(t: TableInfo, at: number): TableInfo {
 }
 
 export function deleteRow(t: TableInfo, at: number): TableInfo | null {
+  if (at < 0) return null; // 음수는 splice 가 뒤에서부터 세어 엉뚱한 행을 지운다
   if (at <= 0) return null; // 머리글은 지우지 않는다
   if (t.rows.length <= 2) return null; // 머리글 + 최소 1행은 남긴다
   const rows = clone(t.rows);
@@ -230,6 +237,7 @@ export function insertCol(t: TableInfo, at: number): TableInfo {
 }
 
 export function deleteCol(t: TableInfo, at: number): TableInfo | null {
+  if (at < 0) return null; // 음수는 splice 가 뒤에서부터 세어 엉뚱한 열을 지운다
   if (t.aligns.length <= 1) return null; // 마지막 열은 남긴다
   const rows = t.rows.map((r) => {
     const c = r.slice();
@@ -242,6 +250,7 @@ export function deleteCol(t: TableInfo, at: number): TableInfo | null {
 }
 
 export function setAlign(t: TableInfo, at: number, a: Align): TableInfo {
+  if (at < 0 || at >= t.aligns.length) return t;
   const aligns = t.aligns.slice();
   aligns[at] = a;
   return { ...t, aligns };

@@ -5,31 +5,11 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
-import { EmbedResolver, parseWikiEmbed } from "../../lib/embeds";
+import type { EmbedResolver } from "../../lib/embeds";
+import { transformWiki } from "../../lib/wikiTransform";
 import { remarkHighlight } from "../../lib/markdownExtras";
 import { CALLOUTS, parseCallout } from "../../lib/callouts";
 import { mdSanitizeSchema } from "../../lib/sanitizeSchema";
-
-/**
- * `![[대상]]` 임베드와 `[[제목]]` 링크를 표준 마크다운으로 바꾼다.
- *
- * 임베드를 **먼저** 처리해야 한다 — `![[x]]`의 뒷부분이 `[[x]]`와 겹쳐서,
- * 링크를 먼저 바꾸면 임베드가 `![링크]`로 망가진다.
- */
-function transformWiki(text: string, resolve?: EmbedResolver): string {
-  const withEmbeds = text.replace(/!\[\[([^\[\]]+?)\]\]/g, (_m, inner: string) => {
-    const e = parseWikiEmbed(inner);
-    const hit = resolve?.(e.target);
-    if (!hit) return `\`![[${e.target}]] (파일 없음)\``;
-    const title = e.width ? `${e.target}|${e.width}` : e.target;
-    return `![${title}](${hit.url})`;
-  });
-  return withEmbeds.replace(/\[\[([^\[\]]+?)\]\]/g, (_m, inner: string) => {
-    const [target, alias] = inner.split("|");
-    const t = target.split("#")[0].trim();
-    return `[${(alias ?? target).trim()}](#wiki/${encodeURIComponent(t)})`;
-  });
-}
 
 // 코드블록: 뚜렷한 테두리 + 우측 상단 복사 버튼. 버튼은 <pre> 바깥이라 복사 텍스트에 안 섞임.
 function CodeBlock({ children }: { children?: ReactNode }) {
@@ -96,7 +76,8 @@ export function MarkdownView({
           blockquote: ({ children, ...props }) => {
             // `> [!NOTE] 제목` 형태면 콜아웃으로 그린다(GitHub·옵시디언과 같은 표기).
             const hit = parseCallout(children);
-            if (!hit) return <blockquote {...props}>{children}</blockquote>;
+            const { node: _n, ...rest } = props as Record<string, unknown>;
+            if (!hit) return <blockquote {...rest}>{children}</blockquote>;
             const spec = CALLOUTS[hit.kind];
             return (
               <div className={`callout callout-${hit.kind}`}>
@@ -125,14 +106,17 @@ export function MarkdownView({
               }
               url = hit.url;
             }
+            // node 는 react-markdown 이 넘기는 내부 객체다. 그대로 펼치면 DOM 속성으로
+            // 새어 콘솔 경고가 나고, 뒤에 펼치면 위에서 정한 className 까지 덮인다.
+            const { node: _n, className: _c, ...rest } = props as Record<string, unknown>;
             return (
               <img
+                {...rest}
                 src={url}
                 alt={label}
                 width={width}
                 loading="lazy"
                 className="my-2 max-w-full rounded-md border border-line"
-                {...props}
               />
             );
           },
@@ -148,8 +132,9 @@ export function MarkdownView({
                 </button>
               );
             }
+            const { node: _n, className: _c, ...rest } = props as Record<string, unknown>;
             return (
-              <a href={href} target="_blank" rel="noreferrer" className="text-info underline" {...props}>
+              <a {...rest} href={href} target="_blank" rel="noreferrer" className="text-info underline">
                 {children}
               </a>
             );

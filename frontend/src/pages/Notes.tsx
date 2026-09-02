@@ -99,6 +99,8 @@ export function Notes() {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<NoteSearchHit[] | null>(null);
   const searchTimer = useRef<number | null>(null);
+  // 문서 열기 요청의 순번 — 늦게 도착한 옛 응답을 버리는 데 쓴다
+  const openSeq = useRef(0);
   const [params, setParams] = useSearchParams();
 
   const autosaveMs = prefs?.autosave_ms ?? 900;
@@ -122,23 +124,6 @@ export function Notes() {
     setCurFolder("");
   }, [reloadTree]);
 
-  const openNote = useCallback(
-    async (path: string) => {
-      try {
-        const d = await api.noteGet(path);
-        setCurrent(d.path);
-        setContent(d.content);
-        setDetail(d);
-        setDirty(false);
-        // 열린 노트의 상위 폴더를 현재 폴더로
-        const slash = d.path.lastIndexOf("/");
-        setCurFolder(slash >= 0 ? d.path.slice(0, slash) : "");
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "노트 열기 실패");
-      }
-    },
-    [],
-  );
 
   /** 저장. quiet=true면 저장만 하고 재조회·트리 갱신을 건너뛴다.
    *
@@ -166,6 +151,55 @@ export function Notes() {
     [reloadTree],
   );
 
+  /** 대기 중인 자동저장을 지금 흘려보낸다.
+   *
+   *  타이머(기본 900ms)가 뜨기 전에 다른 문서로 옮기면 마지막 입력이 사라진다 —
+   *  타이머가 뜰 때 current 는 이미 새 문서라 저장이 취소되기 때문이다. */
+  const flushPendingSave = useCallback(async () => {
+    if (!saveTimer.current) return;
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = null;
+    if (current && dirty) await save(current, content, true);
+  }, [current, dirty, content, save]);
+
+  const openNote = useCallback(
+    async (path: string) => {
+      await flushPendingSave();
+      // 응답이 순서대로 오지 않는다. 큰 문서를 누른 뒤 작은 문서를 누르면 큰 쪽이
+      // 늦게 도착해 이미 열린 문서를 밀어내고, 그 뒤 입력이 엉뚱한 파일로 저장된다.
+      const seq = ++openSeq.current;
+
+      // 이미지·PDF·미디어는 내용을 읽지 않는다. /api/notes/get 은 텍스트 전용이라
+      // 415를 돌려주고, 그러면 current 가 안 잡혀서 전용 뷰어(DocViewer) 분기가
+      // 영영 열리지 않았다(오류 토스트만 떴다).
+      const meta = notes.find((n) => n.path === path);
+      if (meta && !meta.editable) {
+        setCurrent(meta.path);
+        setContent("");
+        setDetail(null);
+        setDirty(false);
+        const cut = meta.path.lastIndexOf("/");
+        setCurFolder(cut >= 0 ? meta.path.slice(0, cut) : "");
+        return;
+      }
+      try {
+        const d = await api.noteGet(path);
+        if (seq !== openSeq.current) return; // 더 최근에 연 문서가 있다
+        setCurrent(d.path);
+        setContent(d.content);
+        setDetail(d);
+        setDirty(false);
+        // 열린 노트의 상위 폴더를 현재 폴더로
+        const slash = d.path.lastIndexOf("/");
+        setCurFolder(slash >= 0 ? d.path.slice(0, slash) : "");
+      } catch (e) {
+        if (seq !== openSeq.current) return;
+        toast.error(e instanceof Error ? e.message : "노트 열기 실패");
+      }
+    },
+    [flushPendingSave, notes],
+  );
+
   // 라이브 에디터(CodeMirror)의 [[ 자동완성이 링크를 담당하므로 여기선 저장만.
   const onEdit = (text: string) => {
     setContent(text);
@@ -178,15 +212,12 @@ export function Notes() {
   /** 모바일에서 목록으로 돌아가기. 대기 중인 자동저장을 먼저 흘려보낸다 —
    *  타이머(기본 900ms)가 뜨기 전에 나가면 마지막 입력이 사라진다. */
   const closeNote = useCallback(() => {
-    if (saveTimer.current) {
-      window.clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-      if (current && dirty) save(current, content, true);
-    }
+    void flushPendingSave();
+    openSeq.current++; // 진행 중인 열기 응답이 닫은 문서를 되살리지 않게
     setCurrent(null);
     setDetail(null);
     setContent("");
-  }, [current, dirty, content, save]);
+  }, [flushPendingSave]);
 
   const joinPath = (folder: string, name: string) => (folder ? `${folder}/${name}` : name);
 
@@ -453,13 +484,21 @@ export function Notes() {
 
   const doUpload = async (files: FileList | null) => {
     if (!files || !files.length) return;
-    try {
-      for (const f of Array.from(files)) await api.noteUpload(curFolder, f);
-      toast.ok(`${files.length}개 업로드됨`);
-      await reloadTree();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "업로드 실패");
+    // 한 건이 실패해도 멈추지 않는다. 예전에는 첫 실패에서 루프가 끊겨
+    // 이미 서버에 올라간 앞쪽 파일들이 목록에도 안 뜨고 사라진 것처럼 보였다.
+    let done = 0;
+    const failed: string[] = [];
+    for (const f of Array.from(files)) {
+      try {
+        await api.noteUpload(curFolder, f);
+        done++;
+      } catch (e) {
+        failed.push(`${f.name}: ${e instanceof Error ? e.message : "실패"}`);
+      }
     }
+    if (done) toast.ok(`${done}개 업로드됨`);
+    if (failed.length) toast.error(`${failed.length}개 실패 — ${failed[0]}`);
+    await reloadTree();
   };
 
   /** `![[사진.png]]` 같은 임베드를 실제 파일로 이어 준다. 편집기와 읽기 뷰가
@@ -473,18 +512,19 @@ export function Notes() {
   const onDropFiles = useCallback(
     async (files: File[]): Promise<string[]> => {
       const out: string[] = [];
-      try {
-        for (const f of files) {
+      const failed: string[] = [];
+      for (const f of files) {
+        try {
           const saved = await api.noteUpload(curFolder, f);
           out.push(embedMarkdownFor(saved.path, notes)); // 서버가 정한 최종 경로 기준
+        } catch (e) {
+          // 한 장이 실패해도 나머지는 붙인다(끊으면 이미 올라간 것이 미아가 된다)
+          failed.push(`${f.name}: ${e instanceof Error ? e.message : "실패"}`);
         }
-        if (out.length) {
-          toast.ok(`${out.length}개 첨부됨`);
-          await reloadTree();
-        }
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "업로드 실패");
       }
+      if (out.length) toast.ok(`${out.length}개 첨부됨`);
+      if (failed.length) toast.error(`${failed.length}개 실패 — ${failed[0]}`);
+      if (out.length || failed.length) await reloadTree();
       return out;
     },
     [curFolder, reloadTree, notes],
@@ -695,6 +735,10 @@ export function Notes() {
             </div>
           ) : (
             <LiveEditor
+              // 문서마다 편집기를 새로 만든다. 같은 인스턴스를 재사용하면 **되돌리기
+              // 이력이 남아서**, 새 문서에서 Ctrl+Z 를 누르면 이전 문서의 본문이
+              // 통째로 들어오고 그대로 자동저장된다(다른 문서를 덮어쓴다).
+              key={current}
               value={content}
               onChange={onEdit}
               onSave={() => { if (current) save(current, content); }}

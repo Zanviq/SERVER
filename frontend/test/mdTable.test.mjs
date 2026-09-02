@@ -86,6 +86,18 @@ check("열 삭제", delCol.aligns, ["none", "right"]);
 check("마지막 열은 못 지운다", T.deleteCol({ ...t, aligns: ["left"], rows: [["a"], ["b"]] }, 0), null);
 check("정렬 바꾸기", T.setAlign(t, 0, "center").aligns[0], "center");
 
+console.log("\n[구분선 위 커서]");
+// 커서가 `| --- |` 줄에 있으면 예전에는 row·col 이 -1 이 됐고, 툴바의 "열−"이
+// splice(-1,1) 로 **맨 오른쪽 열**을 통째로 지웠다.
+const onSep = T.findTable(doc, 4, 8); // 4번째 줄 = 구분선
+check("구분선 위 커서 row", onSep.row, 0);
+check("구분선 위 커서 col 은 음수가 아니다", onSep.col >= 0, true);
+const cutCol = T.deleteCol(onSep, onSep.col);
+check("구분선에서 열 삭제해도 남은 열 수", cutCol.aligns.length, 2);
+check("음수 열 삭제는 거부", T.deleteCol({ ...t, col: -1 }, -1), null);
+check("음수 행 삭제는 거부", T.deleteRow({ ...t, row: -1 }, -1), null);
+check("음수 정렬은 그대로", T.setAlign(t, -1, "center").aligns, t.aligns);
+
 console.log("\n[칸 이동]");
 check("다음 칸", [T.nextCell(t, 1).row, T.nextCell(t, 1).col], [1, 1]);
 const atEnd = { ...t, row: 2, col: 2 };

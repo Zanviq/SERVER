@@ -264,8 +264,10 @@ export function Todo() {
   );
 
   // ── 조작 ──────────────────────────────────────────────────────────
-  const guard = async (fn: () => Promise<unknown>, okMsg?: string) => {
-    if (busy) return;
+  /** 다른 요청이 도는 중이면 아무 일도 하지 않고 false 를 돌려준다.
+   *  부르는 쪽이 그걸 알아야 한다 — 모르면 입력칸만 비우고 조용히 잃는다. */
+  const guard = async (fn: () => Promise<unknown>, okMsg?: string): Promise<boolean> => {
+    if (busy) return false;
     setBusy(true);
     try {
       await fn();
@@ -276,18 +278,22 @@ export function Todo() {
     } finally {
       setBusy(false);
     }
+    return true;
   };
 
-  const addTodo = () => {
+  const addTodo = async () => {
     const title = draft.trim();
     if (!title) return;
     setDraft("");
-    guard(() =>
+    const ran = await guard(() =>
       api.todoCreate({
         title,
         category_id: selectedCat ?? UNCATEGORIZED,
       }),
     );
+    // 다른 요청이 도는 중이라 아무 일도 안 했다면 적은 내용을 돌려준다.
+    // 예전에는 입력칸만 비워져서 방금 적은 할 일이 흔적 없이 사라졌다.
+    if (!ran) setDraft(title);
   };
 
   const addCategory = () => {
