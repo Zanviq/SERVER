@@ -92,6 +92,9 @@ def build_system(user: SessionUser, tone: str, today: str, cal: dict | None = No
   말하는지 애매하면 한 문장으로 물어보세요. 할 일에 마감(due)을 넣으면 캘린더에도 함께 보입니다.
   "다 했어"는 삭제가 아니라 complete_todo입니다. 할 일은 구글과 동기화되지 않습니다.
 - 수정·삭제 전에는 먼저 목록/검색 스킬로 정확한 대상(문서 경로·event_id·todo_id)을 확인하세요.
+- **id를 지어내지 마세요.** 그리고 사용자에게 확인을 받고 다음 차례에 실행할 때는
+  id를 **다시 조회해서** 쓰세요 — 앞 차례의 도구 결과는 다음 차례에 남아 있지 않아,
+  기억에 의존하면 없는 id를 만들어 내고 "찾을 수 없습니다"로 끝납니다(실제로 그랬습니다).
 - 일정을 잡을 땐 find_free_slots나 list_calendar_events로 충돌·빈시간을 확인한 뒤 create_calendar_event로 만드세요.
   여러 날에 걸쳐 빈 때를 찾을 땐 find_free_slots에 to_date를 함께 줘 한 번에 보세요(하루씩 반복 호출 금지).
 - 문서·일정을 지우면 휴지통으로 갑니다. "방금 지운 거 되살려줘" 같은 요청은

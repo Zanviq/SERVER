@@ -220,6 +220,12 @@ def _empty_hint(args, ctx, frm: str, to: str, window: list[dict] | None = None) 
     return hint
 
 
+#: 대상을 못 찾았을 때 — 모델이 다음 수를 알 수 있게 한다.
+#: "찾을 수 없습니다"로 끝나면 모델은 같은 id로 다시 시도하거나 포기한다.
+_RELOOKUP = (" list_calendar_events로 다시 조회해 정확한 event_id를 얻은 뒤 시도하세요"
+             " (앞 차례의 조회 결과는 다음 차례에 남아 있지 않습니다).")
+
+
 def _service_error(e: Exception) -> SkillResult:
     """캘린더 서비스 예외를 분류해 돌려준다.
 
@@ -230,7 +236,13 @@ def _service_error(e: Exception) -> SkillResult:
     status = int(getattr(e, "status_code", 0) or 0)
     code = {400: "invalid", 403: "forbidden", 404: "not_found",
             409: "conflict", 410: "gone", 415: "unsupported"}.get(status, "error")
-    return SkillResult(ok=False, message=str(getattr(e, "detail", e)), error_code=code)
+    message = str(getattr(e, "detail", e))
+    if code == "not_found":
+        # 여기서 끝내면 모델은 같은 id 로 또 시도하거나 포기한다. 무엇을 해야
+        # 하는지 붙여 준다 — 확인을 받고 다음 차례에 실행할 때 id 를 기억에서
+        # 지어내다 "찾을 수 없습니다"로 끝나는 일이 실제로 있었다.
+        message += _RELOOKUP
+    return SkillResult(ok=False, message=message, error_code=code)
 
 
 class _Stop(Exception):
