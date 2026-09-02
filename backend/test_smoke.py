@@ -296,7 +296,13 @@ def test_doc_cache_invalidated_even_when_stat_looks_identical():
     assert (same.st_mtime_ns, same.st_size) == (st.st_mtime_ns, st.st_size), "전제가 안 맞는다"
 
     assert doc_cache.text_of(p, same) == "바나나무", "옛 내용을 돌려줬다"
+
+    # 캐시가 실제로 담고 있는지도 본다 — 무효화만 확인하면 '아무것도 안 담는'
+    # 구현도 통과한다(그러면 캐시가 있으나 마나다).
+    held = doc_cache.stats()
+    assert held["files"] >= 1 and held["chars"] >= len("바나나무"), held
     doc_cache.clear()
+    assert doc_cache.stats() == {"files": 0, "chars": 0}
 
 
 def test_upload_writes_through_temp_file():
