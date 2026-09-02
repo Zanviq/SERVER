@@ -17,6 +17,12 @@ services:
       # 깨져(저장 중 파일이 사라져) 노트·일정 JSON이 유실될 수 있어 쓰지 않는다.
       # (하위에 users/<id>/ 생성)
       STORAGE_ROOT: /mnt/server
+      # **컨테이너 시계를 한국 시간으로.** 저장·표시되는 시각은 전부 타임존 없는
+      # 한국 시간인데, 컨테이너 기본값은 UTC 다. 그래서 서버가 아는 '지금'이
+      # 9시간 뒤처져, 자정~오전 9시 사이에는 AI 비서의 '오늘'이 하루 전이고
+      # 알림도 그만큼 어긋난다(실측: 실제 09-03 00:32 인데 서버는 09-02 15:32).
+      # 저장된 데이터는 클라이언트가 보낸 문자열이라 이 값에 영향받지 않는다.
+      TZ: ${TZ:-Asia/Seoul}
       # 터널 토큰은 cloudflared 서비스만 사용 → 백엔드엔 노출하지 않음(최소권한)
       CF_TUNNEL_TOKEN: ""
     volumes:
@@ -53,6 +59,7 @@ services:
       # 예) https://server.zanviq.dev,http://192.168.0.43
       TERMINAL_ORIGINS: ${TERMINAL_ORIGINS:-}
       ACCOUNTS_FILE: /srv/server/accounts.json
+      TZ: ${TZ:-Asia/Seoul}  # 셸 프롬프트·로그의 시각도 한국 시간으로
     volumes:
       # 계정 저장소를 읽기 전용으로 — 접속자가 '서버 주인'인지 확인하는 데만 쓴다.
       # 이름(TERMINAL_ADMINS) 대조만으로는 같은 아이디로 가입한 계정에 셸이 열린다.

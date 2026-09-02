@@ -101,19 +101,18 @@ def _coerce(section: str, key: str, value: Any, fallback: Any, strict: bool = Fa
         allowed = _CHOICES.get((section, key))
         if allowed and text not in allowed:
             return fallback
-        if len(text) > _MAX_TEXT:
-            # 저장할 때는 조용히 자르지 않는다. '설정 저장됨' 토스트를 보고
-            # 나가는데 뒷부분이 사라져 있고 사용자는 그 사실조차 모른다.
-            #
-            # 읽을 때는 반대다. 예전 값이 길다고 400 을 내면 그 계정은 설정을
-            # 읽는 모든 요청(로그인 포함)이 막힌다 — 그때는 잘라서 보여 준다.
-            if strict:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"너무 깁니다 — {_MAX_TEXT}자까지 저장할 수 있습니다"
-                           f"(지금 {len(text)}자).",
-                )
-            return text[:_MAX_TEXT]
+        if len(text) > _MAX_TEXT and strict:
+            # **새로 저장하는 값만** 막는다. 조용히 자르면 '설정 저장됨' 토스트를
+            # 보고 나가는데 뒷부분이 사라져 있고, 사용자는 그 사실조차 모른다.
+            raise HTTPException(
+                status_code=400,
+                detail=f"너무 깁니다 — {_MAX_TEXT}자까지 저장할 수 있습니다"
+                       f"(지금 {len(text)}자).",
+            )
+        # 읽을 때는 **자르지 않는다.** 상한이 생기기 전에 길게 써 둔 값을 자르면,
+        # 그 잘린 값이 관계없는 설정 하나만 바꿔도 디스크에 영구히 덮어써진다
+        # (patch 가 load() 결과를 그대로 병합한다). 상한을 새로 넣는 것만으로
+        # 이미 있던 글이 절반 사라지면 안 된다 — 실측 4000자 → 2000자.
         return text
     return fallback
 

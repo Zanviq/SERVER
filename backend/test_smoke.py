@@ -1512,14 +1512,20 @@ def test_bad_settings_are_cleaned_before_they_are_stored():
         # 받아들였다면 기본값으로 떨어져 있어야 한다(범위 밖 값이 박히면 안 된다)
         assert json.loads(path.read_text(encoding="utf-8"))["ai"]["max_steps"] in (8, 16)
 
-        # 반대로 **읽기**는 막히면 안 된다. 예전에 길게 저장된 값 하나 때문에
-        # 그 계정이 설정을 못 읽으면 로그인부터 되지 않는다.
+        # 반대로 **읽기**는 막히지도, 자르지도 않는다. 상한이 생기기 전에 길게
+        # 써 둔 값을 자르면 그 잘린 값이 관계없는 설정 하나만 바꿔도 디스크에
+        # 영구히 덮어써진다 — 상한을 새로 넣는 것만으로 글이 절반 사라진다.
         bad = json.loads(path.read_text(encoding="utf-8"))
         bad["calendar"]["ai_rules"] = "나" * 5000
         path.write_text(json.dumps(bad, ensure_ascii=False), encoding="utf-8")
         got = client.get("/api/settings")
         assert got.status_code == 200, got.text
-        assert len(got.json()["settings"]["calendar"]["ai_rules"]) == 2000
+        assert len(got.json()["settings"]["calendar"]["ai_rules"]) == 5000, "읽을 때 잘렸다"
+        # 관계없는 설정을 바꿔도 그 값은 그대로 남아야 한다
+        assert client.patch("/api/settings",
+                            json={"changes": {"notes": {"autosave_ms": 1200}}}).status_code == 200
+        kept = json.loads(path.read_text(encoding="utf-8"))["calendar"]["ai_rules"]
+        assert len(kept) == 5000, f"다른 설정을 바꿨더니 {5000 - len(kept)}자가 사라졌다"
 
         # 무한대·NaN 을 직접 넣어도 기본값으로 떨어져야 한다("못 맞추면 기본값")
         from backend import user_settings as us
