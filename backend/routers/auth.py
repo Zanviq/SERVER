@@ -81,14 +81,10 @@ def login(
         login_guard.end_attempt(req.username)
 
     if acc is None:
-        delay = login_guard.record_failure(req.username)
-        # 아이디 존재 여부를 흘리지 않도록 한 가지 메시지로 통일
-        if delay:
-            raise HTTPException(
-                status_code=429,
-                detail=f"로그인 시도가 너무 많습니다. {delay}초 후 다시 시도해 주세요.",
-                headers={"Retry-After": str(delay)},
-            )
+        login_guard.record_failure(req.username)
+        # 아이디 존재 여부를 흘리지 않도록 한 가지 메시지로 통일.
+        # 한도를 넘었다는 안내(429)는 다음 시도의 begin_attempt 가 준다 — 여기서도
+        # 판단하면 규칙이 두 곳으로 갈라진다.
         raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
     login_guard.record_success(req.username)
     if acc.status == accounts.STATUS_PENDING:

@@ -33,11 +33,23 @@ def write_atomic(path: Path, data) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # 이름이 PID만이면 같은 프로세스의 스레드끼리 같은 임시파일을 쓴다
     tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}.{uuid.uuid4().hex[:8]}")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    try:
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        # 문서 저장과 같은 재시도를 쓴다. 여기만 맨 os.replace 였는데, Windows 에서
+        # 같은 파일을 동시에 읽는 요청이 있으면 PermissionError(WinError 5)가 나서
+        # **할 일 삭제가 500으로 실패하고 휴지통에는 미아가 남았다**(24건 동시 삭제
+        # 12회 중 1회 재현). 할 일·일정·계정·설정·휴지통 인덱스가 전부 이 함수를 쓴다.
+        _replace_with_retry(tmp, path)
+    except BaseException:
+        # 실패했으면 임시파일을 남기지 않는다(다음 순회·목록에 쓰레기로 보인다)
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def write_text_atomic(path: Path, text: str) -> None:

@@ -3,6 +3,7 @@ import io
 import json
 import os
 import tempfile
+import time
 
 os.environ["STORAGE_ROOT"] = tempfile.mkdtemp(prefix="server_test_")
 os.environ["AUTH_USERS"] = json.dumps(
@@ -77,18 +78,38 @@ def test_login_throttled_after_repeated_failures():
 def test_login_guard_counts_per_account_and_forgets():
     login_guard.reset()
     t0 = 1_000_000.0
+
+    def attempt(who, at):
+        """한 번의 로그인 시도(실패)를 흉내낸다. 막혔으면 대기 초를 돌려준다."""
+        wait = login_guard.begin_attempt(who, at)
+        if wait:
+            return wait
+        login_guard.end_attempt(who)
+        login_guard.record_failure(who, at)
+        return 0
+
     for _ in range(login_guard.FREE_TRIES):
-        assert login_guard.record_failure("갑", t0) == 0
-    assert login_guard.record_failure("갑", t0) == login_guard.FIRST_DELAY
+        assert attempt("갑", t0) == 0
+    assert attempt("갑", t0) == login_guard.FIRST_DELAY  # 6번째부터 막힌다
     # 다른 아이디는 말려들지 않는다
     assert login_guard.retry_after("을", t0) == 0
+
+    # **잠금이 풀리면 다시 들어올 수 있어야 한다**(안 그러면 영구 잠금이다)
+    t1 = t0 + login_guard.FIRST_DELAY + 1
+    assert login_guard.retry_after("갑", t1) == 0
+    assert attempt("갑", t1) == 0
+    # 그다음 잠금은 더 길다 — 무차별 대입은 계속 느려진다
+    for _ in range(login_guard.FREE_TRIES - 1):
+        attempt("갑", t1)
+    assert attempt("갑", t1) == login_guard.FIRST_DELAY * 2
+
     # 성공하면 기록이 사라진다
     login_guard.record_success("갑")
-    assert login_guard.retry_after("갑", t0) == 0
+    assert login_guard.retry_after("갑", t1) == 0
     # 창이 지나면 처음부터 다시 센다
     for _ in range(login_guard.FREE_TRIES):
-        login_guard.record_failure("갑", t0)
-    assert login_guard.record_failure("갑", t0 + login_guard.WINDOW + 1) == 0
+        attempt("병", t0)
+    assert attempt("병", t0 + login_guard.WINDOW + 1) == 0
     login_guard.reset()
 
 
@@ -135,20 +156,46 @@ def test_login_guard_keeps_locked_entries_when_full():
     login_guard.reset()
     t0 = 1_000_000.0
     for _ in range(login_guard.FREE_TRIES + 1):
-        login_guard.record_failure("피해자", t0)
+        if login_guard.begin_attempt("피해자", t0) == 0:
+            login_guard.end_attempt("피해자")
+            login_guard.record_failure("피해자", t0)
     assert login_guard.retry_after("피해자", t0) > 0
+    # 실제 요청처럼 넣어야 정리(_prune)가 돈다 — record_failure 만으로는 안 돈다
     for i in range(login_guard.MAX_KEYS + 50):
+        login_guard.begin_attempt(f"잡음{i}", t0)
+        login_guard.end_attempt(f"잡음{i}")
         login_guard.record_failure(f"잡음{i}", t0)
+    assert len(login_guard._states) <= login_guard.MAX_KEYS, "상한이 안 지켜졌다"
     assert login_guard.retry_after("피해자", t0) > 0, "잠긴 항목이 축출됐다"
     login_guard.reset()
 
 
 def test_login_guard_counts_concurrent_attempts():
-    """확인과 기록이 따로 놀면 동시에 보낸 요청이 전부 비밀번호를 시험한다."""
-    from concurrent.futures import ThreadPoolExecutor
+    """확인과 기록이 따로 놀면 동시에 보낸 요청이 전부 비밀번호를 시험한다.
+
+    HTTP로만 확인하면 안 된다 — TestClient 는 요청을 사실상 줄 세워 보내서,
+    확인과 기록이 갈라져 있어도(retry_after 만 쓰던 옛 코드) 이 테스트가 통과했다
+    (돌연변이 검사로 드러났다). 그래서 아직 결과를 모르는 시도가 겹친 상태를
+    직접 만들어 본다.
+    """
+    login_guard.reset()
+    t0 = 1_000_000.0
+    # 결과를 아직 아무도 안 알려 준 채로 계속 들어오는 상황
+    allowed = 0
+    for _ in range(login_guard.FREE_TRIES + 5):
+        if login_guard.begin_attempt("겹침", t0) == 0:
+            allowed += 1
+    assert allowed <= login_guard.FREE_TRIES, f"{allowed}건이나 비밀번호 검증까지 갔다"
+    # 결과가 돌아오면 다시 받아 준다(정상 사용자가 갇히면 안 된다)
+    for _ in range(allowed):
+        login_guard.end_attempt("겹침")
+    login_guard.reset()
+    assert login_guard.begin_attempt("겹침", t0) == 0
 
     login_guard.reset()
     c = TestClient(app)
+    from concurrent.futures import ThreadPoolExecutor
+
     with ThreadPoolExecutor(max_workers=16) as ex:
         codes = list(ex.map(
             lambda i: c.post("/api/auth/login",
@@ -157,6 +204,129 @@ def test_login_guard_counts_concurrent_attempts():
     assert codes.count(401) <= login_guard.FREE_TRIES + 1, codes
     assert 429 in codes, codes
     login_guard.reset()
+
+
+def test_concurrent_deletes_all_land_in_trash():
+    """동시에 지울 때 한 건도 새면 안 된다 — 남아 있거나 미아가 되면 안 된다.
+
+    JSON 저장이 맨 os.replace 였을 때 Windows 에서 동시 접근이 PermissionError 를
+    내며 삭제가 500으로 실패했고, 휴지통에는 목록에 안 보이는 실물만 남았다
+    (24건 동시 삭제 12회 중 1회 재현).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    _login()
+    for t in client.get("/api/todo/board").json().get("todos", []):
+        client.delete(f"/api/todo/{t['id']}")
+    n = 16
+    for i in range(n):
+        client.post("/api/todo/create", json={"title": f"동시삭제{i}"})
+    ids = [t["id"] for t in client.get("/api/todo/board").json()["todos"]]
+    assert len(ids) == n, len(ids)
+    before = len(client.get("/api/trash/list").json())
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        codes = list(ex.map(lambda i: client.delete(f"/api/todo/{i}").status_code, ids))
+
+    assert set(codes) == {200}, sorted(set(codes))
+    assert client.get("/api/todo/board").json()["todos"] == []
+    assert len(client.get("/api/trash/list").json()) - before == n
+
+    # 인덱스와 실물이 어긋나지 않아야 한다(미아가 없어야 한다)
+    troot = get_settings().storage_root / "users" / "tester" / ".trash"
+    listed = {e["id"] for e in json.loads((troot / "index.json").read_text(encoding="utf-8"))}
+    on_disk = {p.name for p in (troot / "data").iterdir()} if (troot / "data").exists() else set()
+    assert not (on_disk - listed), f"목록에 없는 실물: {on_disk - listed}"
+
+
+def test_doc_cache_invalidated_even_when_stat_looks_identical():
+    """본문 캐시는 mtime·크기로도 무효화하지만, 둘 다 같을 수 있다.
+
+    파일시스템 시각 해상도가 거칠면 짧은 간격의 두 저장이 같은 mtime 을 받는다.
+    길이까지 같으면 옛 내용이 그대로 남는다 — 그래서 write_text_atomic 이 직접
+    버린다. 그 경로가 살아 있는지 여기서 못 박는다(시각을 강제로 되돌려 확인).
+    """
+    import tempfile as _tf
+    from pathlib import Path as _Path
+
+    from backend import doc_cache
+    from backend.json_store import write_text_atomic
+
+    doc_cache.clear()
+    d = _Path(_tf.mkdtemp(prefix="cacheinv_"))
+    p = d / "메모.md"
+    write_text_atomic(p, "사과나무")
+    st = p.stat()
+    assert doc_cache.text_of(p, st) == "사과나무"
+
+    write_text_atomic(p, "바나나무")  # 글자 수도 바이트 수도 같다
+    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))  # mtime 까지 같게 되돌린다
+    same = p.stat()
+    assert (same.st_mtime_ns, same.st_size) == (st.st_mtime_ns, st.st_size), "전제가 안 맞는다"
+
+    assert doc_cache.text_of(p, same) == "바나나무", "옛 내용을 돌려줬다"
+    doc_cache.clear()
+
+
+def test_upload_writes_through_temp_file():
+    """업로드는 대상 파일을 직접 열면 안 된다.
+
+    직접 열면 그 순간 기존 파일이 잘리고, 도중에 실패하면 원본이 사라진다.
+    끝 상태만 보는 테스트로는 이 차이가 안 드러나서(돌연변이 검사로 확인),
+    '임시 이름에 쓰고 갈아 끼운다'는 규약 자체를 확인한다.
+    """
+    import base64 as _b64
+
+    seen = []
+    real_replace = os.replace
+
+    def spy(src, dst, *a, **kw):
+        seen.append((str(src), str(dst)))
+        return real_replace(src, dst, *a, **kw)
+
+    _login()
+    png = _b64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+    import backend.routers.notes as notes_mod
+
+    notes_mod.os.replace = spy
+    try:
+        r = client.post("/api/notes/upload", params={"path": "임시확인"},
+                        files={"file": ("사진.png", png, "image/png")})
+        assert r.status_code == 200, r.text
+    finally:
+        notes_mod.os.replace = real_replace
+
+    moves = [(s, d) for s, d in seen if d.endswith("사진.png")]
+    assert moves, f"os.replace 로 갈아 끼우지 않았다: {seen}"
+    src, dst = moves[-1]
+    assert ".upload" in src and src != dst, (src, dst)
+    client.delete("/api/notes/folder?path=임시확인")
+
+
+def test_non_utf8_document_is_not_opened_for_editing():
+    """errors='replace' 로 열어 주면 한 글자만 고쳐 저장해도 원본이 영구히 깨진다."""
+    _login()
+    root = get_settings().storage_root / "users" / "tester" / "data"
+    root.mkdir(parents=True, exist_ok=True)
+    raw = "한글 메모입니다".encode("euc-kr")
+    (root / "옛날문서.txt").write_bytes(raw)
+    try:
+        r = client.get("/api/notes/get", params={"path": "옛날문서.txt"})
+        assert r.status_code == 415, f"{r.status_code} {r.text[:120]}"
+        assert (root / "옛날문서.txt").read_bytes() == raw, "열기만 했는데 원본이 바뀌었다"
+    finally:
+        (root / "옛날문서.txt").unlink(missing_ok=True)
+
+
+def test_surrogate_content_is_client_error_not_crash():
+    """짝 없는 서로게이트는 사용자 입력 오류다 — 500 + 스택트레이스가 아니라 400."""
+    _login()
+    body = json.dumps({"path": "서로게이트.md", "content": "앞 \ud800 뒤"})
+    r = client.request("PUT", "/api/notes/save",
+                       content=body.encode("utf-8", "surrogatepass"),
+                       headers={"Content-Type": "application/json"})
+    assert r.status_code == 400, f"{r.status_code} {r.text[:120]}"
 
 
 def test_signup_does_not_erase_bootstrap_owner():
@@ -1630,10 +1800,35 @@ def test_ai_model_selectable_in_settings():
     # 빈 값이면 서버 기본으로 되돌아간다
     assert GeminiLLM(s, "")._model == s.gemini_model
 
-    # 없는 모델은 저장 자체를 막는다(저장되면 그 뒤 AI가 통째로 실패한다)
-    bad = client.patch("/api/settings", json={"changes": {"ai": {"model": "gemini-없는모델"}}})
-    assert bad.status_code == 400, bad.text
-    assert client.get("/api/settings").json()["settings"]["ai"]["model"] == pick  # 그대로
+    # 없는 모델은 저장 자체를 막는다(저장되면 그 뒤 AI가 통째로 실패한다).
+    #
+    # 목록을 **실제로 받아온 상태**에서만 막는 규칙이다(models.is_allowed). 그러니
+    # 여기서 목록을 그렇게 고정해 둔다. 예전에는 이 단언이 개발 기기의 .env 에
+    # 유효한 API 키가 있는지에 따라 통과했다 갔다 했다 — 키가 없는 곳(CI·새로 받은
+    # 저장소·복사본)에서는 그냥 빨간불이었고, 그게 진짜 회귀를 가렸다.
+    saved_cache = ai_models._CACHE
+    ai_models._CACHE = {
+        "at": time.time(),
+        "items": [{"id": m, "label": m} for m in listed],
+        "live": True,
+    }
+    try:
+        bad = client.patch("/api/settings", json={"changes": {"ai": {"model": "gemini-없는모델"}}})
+        assert bad.status_code == 400, bad.text
+        assert client.get("/api/settings").json()["settings"]["ai"]["model"] == pick  # 그대로
+    finally:
+        ai_models._CACHE = saved_cache
+
+    # 반대로 목록을 못 받아온 상태에서는 막지 않는다 — 네트워크가 잠깐 끊긴 탓에
+    # "저장이 안 된다"가 되면 사용자는 원인을 알 수 없다(models.is_allowed 의 의도).
+    ai_models._CACHE = {"at": time.time(), "items": [{"id": pick, "label": pick}], "live": False}
+    try:
+        lenient = client.patch("/api/settings",
+                               json={"changes": {"ai": {"model": "gemini-3.0-flash"}}})
+        assert lenient.status_code == 200, lenient.text
+    finally:
+        ai_models._CACHE = saved_cache
+        client.patch("/api/settings", json={"changes": {"ai": {"model": pick}}})
 
     # 빈 값(서버 기본)은 허용
     assert client.patch("/api/settings", json={"changes": {"ai": {"model": ""}}}).status_code == 200

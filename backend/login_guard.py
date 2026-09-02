@@ -38,8 +38,9 @@ MAX_KEY_CHARS = 64
 
 @dataclass
 class _State:
-    fails: int = 0
+    fails: int = 0      # 이번 창에서 확인된 실패 수
     inflight: int = 0   # 결과를 아직 모르는 진행 중 시도
+    locks: int = 0      # 지금까지 몇 번 잠갔는지(해제된 뒤에도 남는다)
     seen: float = 0.0   # 마지막으로 움직인 시각(정리 기준)
     until: float = 0.0  # 이 시각까지는 시도 자체를 받지 않는다
 
@@ -74,8 +75,13 @@ def _key(username: str) -> str:
     return (username or "").strip().lower()[:MAX_KEY_CHARS]
 
 
+def _delay_for(locks: int) -> int:
+    """몇 번째 잠금인지에 따른 대기 시간. 30초에서 두 배씩, 상한에서 멈춘다."""
+    return int(min(FIRST_DELAY * 2 ** max(0, locks - 1), MAX_DELAY))
+
+
 def retry_after(username: str, now: float | None = None) -> int:
-    """지금 시도할 수 있으면 0, 막혀 있으면 남은 초(올림)."""
+    """지금 시도할 수 있으면 0, 막혀 있으면 남은 초(올림). 상태를 바꾸지 않는다."""
     now = time.time() if now is None else now
     with _lock:
         s = _states.get(_key(username))
@@ -87,24 +93,35 @@ def retry_after(username: str, now: float | None = None) -> int:
 def begin_attempt(username: str, now: float | None = None) -> int:
     """시도 하나를 '진행 중'으로 잡는다. 막혀 있으면 남은 초.
 
-    잠금 확인과 실패 기록이 따로 놀면, 동시에 들어온 요청이 전부 확인을 통과한 뒤
-    각자 비밀번호를 검증한다 — 5회 제한이 사실상 '동시 요청 수만큼' 늘어난다.
-    그래서 확인과 동시에 진행 중 수를 세고, 그 수까지 실패로 쳐서 판단한다.
+    **막을지 말지는 여기서만 정한다.** 확인과 기록이 갈라져 있으면, 동시에 들어온
+    요청이 전부 확인을 통과한 뒤 각자 비밀번호를 검증한다 — 5회 제한이 사실상
+    '동시 요청 수만큼' 늘어난다. 그래서 아직 결과를 모르는 시도(inflight)까지
+    합쳐서 세고, 한도에 닿으면 그 자리에서 잠근다.
     """
     now = time.time() if now is None else now
+    key = _key(username)
     with _lock:
         _prune(now)
-        s = _states.get(_key(username))
-        if s is None or now - s.seen > WINDOW:
+        s = _states.get(key)
+        if s is None or (now - s.seen > WINDOW and now >= s.until):
             s = _State()
-            _states[_key(username)] = s
+            _states[key] = s
+
         if now < s.until:
             return max(1, int(s.until - now + 0.999))
-        # 아직 결과를 모르는 시도까지 합쳐서 이미 한도를 넘었으면 받지 않는다
-        if s.fails + s.inflight > FREE_TRIES:
-            delay = _delay_for(s.fails + s.inflight)
-            s.until = max(s.until, now + delay)
-            return delay
+        if s.until:
+            # 잠금이 방금 풀렸다. 표시만 지운다 — 실패 수는 **잠글 때** 이미 비웠다.
+            # (여기서 한 번 더 비우는 코드가 있었는데 아무 일도 하지 않았다.
+            #  돌연변이 검사에서 '지워도 아무 테스트가 안 깨진다'로 드러났다.)
+            s.until = 0.0
+
+        if s.fails + s.inflight >= FREE_TRIES:
+            s.locks += 1
+            s.fails = 0
+            s.until = now + _delay_for(s.locks)
+            s.seen = now
+            return _delay_for(s.locks)
+
         s.inflight += 1
         s.seen = now
         return 0
@@ -118,27 +135,20 @@ def end_attempt(username: str) -> None:
             s.inflight -= 1
 
 
-def _delay_for(fails: int) -> int:
-    """6번째 실패 = 30초, 그다음부터 두 배씩. 상한에서 멈춘다."""
-    return min(FIRST_DELAY * 2 ** (fails - FREE_TRIES - 1), MAX_DELAY)
+def record_failure(username: str, now: float | None = None) -> None:
+    """실패를 센다. **여기서는 잠그지 않는다.**
 
-
-def record_failure(username: str, now: float | None = None) -> int:
-    """실패를 세고, 잠겼다면 잠금 시간(초)을 돌려준다."""
+    잠그는 판단은 begin_attempt 한 곳에서만 한다 — 두 곳에서 정하면 규칙이
+    갈라진다(실제로 5번째 실패가 401 대신 429가 되어 있었다).
+    """
     now = time.time() if now is None else now
     with _lock:
-        _prune(now)
         s = _states.get(_key(username))
-        if s is None or now - s.seen > WINDOW:
+        if s is None:
             s = _State()
             _states[_key(username)] = s
         s.fails += 1
         s.seen = now
-        if s.fails <= FREE_TRIES:
-            return 0
-        delay = _delay_for(s.fails)
-        s.until = now + delay
-        return delay
 
 
 def record_success(username: str) -> None:

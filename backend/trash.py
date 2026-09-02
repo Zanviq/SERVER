@@ -67,9 +67,16 @@ def _append_entry(entry: dict, user: SessionUser, settings: Settings,
             path, data = payload
             path.parent.mkdir(parents=True, exist_ok=True)
             write_atomic(path, data)
-        entries = read_json(idx_path, [])
-        entries.append(entry)
-        write_atomic(idx_path, entries)
+        try:
+            entries = read_json(idx_path, [])
+            entries.append(entry)
+            write_atomic(idx_path, entries)
+        except BaseException:
+            # 인덱스에 못 실었으면 실물도 남기지 않는다. 남기면 목록에 안 보이는
+            # 미아가 되어 '비우기'로도 안 지워지고 용량만 먹는다.
+            if payload is not None:
+                shutil.rmtree(payload[0].parent, ignore_errors=True)
+            raise
 
 
 def _entry(kind: str, name: str, **extra) -> dict:
