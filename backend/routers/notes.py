@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import errno
 import logging
+import os
 import re
+import uuid
 import tempfile
 import zipfile
 from contextlib import contextmanager
@@ -175,6 +177,18 @@ def _fs_errors_are_bad_requests(what: str):
         raise HTTPException(
             status_code=400, detail=f"이 이름은 쓸 수 없습니다: {what}"
         ) from e
+
+
+def _free_name(dest: Path) -> Path:
+    """이미 있으면 `이름 (2).png` 처럼 비어 있는 이름을 찾는다."""
+    if not dest.exists():
+        return dest
+    stem, dot, ext = dest.name.partition(".")
+    for n in range(2, 1000):
+        cand = dest.with_name(f"{stem} ({n}){dot}{ext}")
+        if not cand.exists():
+            return cand
+    raise HTTPException(status_code=409, detail="같은 이름의 파일이 너무 많습니다.")
 
 
 def _sanitize_filename(name: str) -> str:
@@ -378,22 +392,28 @@ async def upload(
     # 아니라 무엇이 문제인지 알 수 있다.
     if dest.is_dir():
         raise HTTPException(status_code=409, detail="같은 이름의 폴더가 이미 있습니다.")
+    # 같은 이름의 문서가 있으면 덮지 않고 옆에 만든다. 덮으면 휴지통에도 안 남아
+    # 되돌릴 수 없다(이름변경·이동·폴더생성은 모두 409로 막는데 업로드만 조용히
+    # 덮고 있었다). 사진을 다시 올리는 일은 흔하고, 그때 원본이 사라지면 안 된다.
+    dest = _free_name(dest)
 
+    # **먼저 임시 파일에 쓰고 마지막에 갈아 끼운다.** 대상 파일을 열자마자 자르면
+    # 도중에 실패했을 때(크기 초과·연결 끊김) 원래 있던 파일이 사라진다.
+    tmp = dest.with_name(f"{dest.name}.upload{os.getpid()}.{uuid.uuid4().hex[:8]}")
     written = 0
     try:
         with _fs_errors_are_bad_requests("업로드"):
-            with dest.open("wb") as out:
+            with tmp.open("wb") as out:
                 while chunk := await file.read(1024 * 1024):
                     written += len(chunk)
                     if written > settings.max_upload_bytes:
-                        out.close()
-                        dest.unlink(missing_ok=True)
                         raise HTTPException(status_code=413, detail="파일이 너무 큽니다.")
                     out.write(chunk)
-    except HTTPException:
-        # 중간까지 쓰다 만 파일을 남기지 않는다(크기 초과·이름 거부 모두)
+            os.replace(tmp, dest)
+    except BaseException:
+        # OSError 만 잡으면 다른 예외에서 임시파일이 영구히 남는다
         try:
-            dest.unlink(missing_ok=True)
+            tmp.unlink(missing_ok=True)
         except OSError:
             pass
         raise
@@ -418,8 +438,19 @@ def save_note(
     settings: Settings = Depends(get_settings),
 ):
     root = user_data_root(user, settings)
-    # 저장은 받은 경로 그대로. 확장자는 만든 사람이 정한다.
-    target = _existing(root, req.path)
+    # 저장은 **받은 경로 그대로**. 확장자는 만든 사람이 정한다.
+    #
+    # _existing() 을 쓰면 안 된다. 그건 위키링크를 위해 `회의` → `회의.md` 로
+    # 되짚어 주는 읽기 전용 규칙인데, 쓰기에 쓰면 '새 노트'에 `회의` 라고 친 순간
+    # 이미 있던 `회의.md` 의 내용이 통째로 덮인다.
+    target = safe_join(root, req.path)
+    if not target.exists() and not Path(req.path).suffix:
+        twin = safe_join(root, f"{req.path}.md")
+        if twin.exists():
+            raise HTTPException(
+                status_code=409,
+                detail=f"같은 이름의 문서가 이미 있습니다: {to_rel(root, twin)}",
+            )
     # 같은 이름의 폴더가 있으면 os.replace가 PermissionError를 내고 500이 됐다
     # (UI '새 문서'에서 폴더 이름을 그대로 치면 도달한다).
     if target.is_dir():

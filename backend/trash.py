@@ -53,10 +53,20 @@ def _index_path(user: SessionUser, settings: Settings) -> Path:
     return _trash_root(user, settings) / "index.json"
 
 
-def _append_entry(entry: dict, user: SessionUser, settings: Settings) -> None:
-    """인덱스에 엔트리 하나를 단다(락 안에서 읽고 원자적으로 쓴다)."""
+def _append_entry(entry: dict, user: SessionUser, settings: Settings,
+                  payload: tuple[Path, dict] | None = None) -> None:
+    """인덱스에 엔트리 하나를 단다(락 안에서 읽고 원자적으로 쓴다).
+
+    실물(payload)이 있으면 **같은 락 안에서** 쓴다. 밖에서 쓰면 그 사이에 들어온
+    '휴지통 비우기'가 인덱스에 없는 디렉터리라고 보고 지워 버려서, 방금 지운
+    일정·할 일이 되살릴 수 없는 상태로 사라진다.
+    """
     idx_path = _index_path(user, settings)
     with lock_for(idx_path):
+        if payload is not None:
+            path, data = payload
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_atomic(path, data)
         entries = read_json(idx_path, [])
         entries.append(entry)
         write_atomic(idx_path, entries)
@@ -117,9 +127,7 @@ def move_event_to_trash(event: dict, user: SessionUser, settings: Settings) -> s
         event_start=str(event.get("start", "")), event_color=str(event.get("color", "")),
     )
     dest_dir = _trash_root(user, settings) / "data" / entry["id"]
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    write_atomic(dest_dir / EVENT_FILE, event)
-    _append_entry(entry, user, settings)
+    _append_entry(entry, user, settings, payload=(dest_dir / EVENT_FILE, event))
     return entry["id"]
 
 
@@ -134,9 +142,7 @@ def move_todo_to_trash(todo: dict, user: SessionUser, settings: Settings) -> str
         todo_due=str(todo.get("due", "")), todo_done=bool(todo.get("done")),
     )
     dest_dir = _trash_root(user, settings) / "data" / entry["id"]
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    write_atomic(dest_dir / TODO_FILE, todo)
-    _append_entry(entry, user, settings)
+    _append_entry(entry, user, settings, payload=(dest_dir / TODO_FILE, todo))
     return entry["id"]
 
 
@@ -162,14 +168,16 @@ def counts_by_kind(user: SessionUser, settings: Settings) -> dict:
 
 
 def _unique_target(root: Path, rel: str) -> Path:
-    """복원 위치. 이미 존재하면 이름에 ' (restored)' 접미를 붙인다."""
+    """복원 위치. 이미 존재하면 이름에 ' (restored)' 접미를 붙인다.
+
+    Path.suffixes 를 쓰지 않는다 — `2026.08 회고.md` 의 확장자를 `.08 회고.md` 로
+    보고 이름을 망가뜨린다. 이 저장소는 그 규칙을 일부러 피해 왔다.
+    """
     target = root / rel
     if not target.exists():
         return target
-    stem = target.stem
-    suffix = "".join(target.suffixes)  # .md 등
     parent = target.parent
-    base = stem[: -len(suffix)] if suffix and stem.endswith(suffix) else stem
+    base, suffix = target.stem, target.suffix
     n = 1
     while True:
         cand = parent / f"{base} (restored{'' if n == 1 else ' ' + str(n)}){suffix}"

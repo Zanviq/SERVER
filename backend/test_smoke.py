@@ -321,6 +321,58 @@ def test_notes_wikilinks_and_graph():
     assert all("snippet" in h for h in hits)
 
 
+def test_restore_name_collision_keeps_dotted_names():
+    """`2026.08 회고.md` 의 확장자를 `.08 회고.md` 로 보면 이름이 망가진다."""
+    from backend.trash import _unique_target
+
+    _login()
+    root = get_settings().storage_root / "users" / "tester" / "data"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "2026.08 회고.md").write_text("있음", encoding="utf-8")
+    got = _unique_target(root, "2026.08 회고.md")
+    assert got.name == "2026.08 회고 (restored).md", got.name
+    (root / "2026.08 회고.md").unlink()
+
+
+def test_save_does_not_overwrite_md_twin():
+    """`회의` 로 새 노트를 만들 때 이미 있는 `회의.md` 를 덮으면 안 된다."""
+    _login()
+    client.put("/api/notes/save", json={"path": "쌍둥이.md", "content": "원래 내용"})
+    r = client.put("/api/notes/save", json={"path": "쌍둥이", "content": ""})
+    assert r.status_code == 409, r.text
+    assert client.get("/api/notes/get?path=쌍둥이.md").json()["content"] == "원래 내용"
+    client.delete("/api/notes/delete?path=쌍둥이.md")
+
+
+def test_upload_never_destroys_existing_file():
+    """업로드가 같은 이름의 문서를 조용히 덮으면 되돌릴 수 없다."""
+    import base64 as _b64
+
+    _login()
+    png = _b64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+    first = client.post("/api/notes/upload", params={"path": "올린것"},
+                        files={"file": ("사진.png", png, "image/png")})
+    assert first.status_code == 200, first.text
+    again = client.post("/api/notes/upload", params={"path": "올린것"},
+                        files={"file": ("사진.png", png, "image/png")})
+    assert again.status_code == 200, again.text
+    assert again.json()["path"] != first.json()["path"], "같은 자리에 덮어썼다"
+    paths = {n["path"] for n in client.get("/api/notes/list").json()}
+    assert first.json()["path"] in paths and again.json()["path"] in paths
+
+    # 크기 초과로 실패해도 이미 있던 파일은 그대로여야 한다
+    big = b"x" * (get_settings().max_upload_bytes + 1024)
+    over = client.post("/api/notes/upload", params={"path": "올린것"},
+                       files={"file": ("사진.png", big, "image/png")})
+    assert over.status_code == 413, over.status_code
+    still = {n["path"] for n in client.get("/api/notes/list").json()}
+    assert first.json()["path"] in still, "실패한 업로드가 기존 파일을 지웠다"
+    # 임시 파일이 남지 않아야 한다
+    assert not [p for p in still if ".upload" in p], still
+    client.delete("/api/notes/folder?path=올린것")
+
+
 def test_search_sees_edits_immediately():
     """검색은 본문을 캐시해 둔다 — 고친 뒤 옛 내용이 잡히면 안 된다."""
     _login()
