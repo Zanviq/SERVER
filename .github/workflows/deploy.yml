@@ -34,8 +34,15 @@ jobs:
           echo "▶ 최신 main으로 맞추기 (git fetch + reset; .env는 gitignore라 보존됨)"
           git fetch --prune origin
           git reset --hard origin/main
-          echo "▶ 컨테이너 재빌드 (profile: $COMPOSE_PROFILES)"
-          docker compose --profile "$COMPOSE_PROFILES" up -d --build
+          # 켜져 있는 프로필을 .env 에서 읽어 함께 재빌드한다.
+          # 예전에는 tunnel 하나만 넘겨서, 웹터미널을 켜 두고도 terminal 컨테이너가
+          # **영영 재빌드되지 않았다** — 그쪽 코드를 고쳐도 파이에는 반영되지 않는다.
+          PROFILE_ARGS="--profile $COMPOSE_PROFILES"
+          if grep -qiE '^ENABLE_TERMINAL=(true|1|yes)' .env 2>/dev/null; then
+            PROFILE_ARGS="$PROFILE_ARGS --profile terminal"
+          fi
+          echo "▶ 컨테이너 재빌드 ($PROFILE_ARGS)"
+          docker compose $PROFILE_ARGS up -d --build
           echo "▶ 미사용(dangling) 이미지 정리"
           docker image prune -f
           echo "✅ 배포 완료: $(git rev-parse --short HEAD)"

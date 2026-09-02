@@ -129,7 +129,11 @@ def _to_internal(g: dict) -> dict:
         "start": start_v,
         "end": end_v,
         "allDay": all_day,
-        "color": g.get("colorId", "2"),
+        # **색을 지정하지 않은 일정은 빈 값으로 둔다.** 대부분의 구글 일정은
+        # colorId 가 없는데(캘린더 기본색을 따른다), 그걸 '2'(연두)로 보고하면
+        # 색 조건의 일괄 작업이 엉뚱한 일정을 고르거나 아무것도 안 바꾸고 성공이라
+        # 답한다. 화면은 빈 값이면 기본색으로 그린다(GCAL_COLORS 폴백).
+        "color": str(g.get("colorId") or ""),
         # 반복·알림도 되읽어야 부분 수정이 이 값들을 지우지 않는다.
         **_from_rrule(g.get("recurrence")),
         "remind_minutes": int(overrides[0].get("minutes", 0)) if overrides else 0,

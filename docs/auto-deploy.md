@@ -55,6 +55,9 @@ GitHub 리포 → **Settings → Secrets and variables → Actions → Variables
 ## 사용
 
 - `main`에 push → **Actions** 탭에 "Deploy to home server" 실행이 뜨고 Pi에서 재빌드된다.
+- 재빌드 대상은 `tunnel` 프로필이고, `.env`에 `ENABLE_TERMINAL=true`이면 `terminal`
+  프로필도 함께 올린다. (예전에는 tunnel만 넘겨서 웹터미널 컨테이너가 영영
+  재빌드되지 않았다 — 그쪽 코드를 고쳐도 반영되지 않는다.)
 - 수동 실행: Actions 탭 → 워크플로 → **Run workflow**.
 - 프론트엔드는 이미지 빌드 단계에서 `npm run build`를 하므로 `dist`를 커밋할 필요 없다.
 
