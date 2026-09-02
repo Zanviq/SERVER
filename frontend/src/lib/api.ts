@@ -59,6 +59,25 @@ export class ApiError extends Error {
   }
 }
 
+/** 서버가 준 detail 을 사람이 읽을 한 줄로. 형태가 셋이라 한 곳에서 정리한다.
+ *
+ *  - 문자열: 우리 코드가 던지는 HTTPException(detail="...")
+ *  - 객체: 구조화된 오류({error, message, ...})
+ *  - **배열**: FastAPI 의 검증 실패(422). 이걸 처리하지 않아서 화면에 "422"만 떴다. */
+function errorMessage(status: number, detail: unknown): string {
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail)) {
+    const first = detail[0] as { loc?: unknown[]; msg?: string } | undefined;
+    if (first?.msg) {
+      const field = Array.isArray(first.loc) ? first.loc[first.loc.length - 1] : "";
+      return field ? `${field}: ${first.msg}` : first.msg;
+    }
+  }
+  const msg = (detail as { message?: string })?.message;
+  if (msg) return msg;
+  return status === 422 ? "입력한 값을 확인해 주세요." : `${status}`;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     credentials: "include",
@@ -72,11 +91,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* ignore */
     }
-    const msg =
-      typeof detail === "string"
-        ? detail
-        : (detail as { message?: string })?.message ?? `${res.status}`;
-    throw new ApiError(res.status, msg, detail);
+    throw new ApiError(res.status, errorMessage(res.status, detail), detail);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

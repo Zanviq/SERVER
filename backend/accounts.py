@@ -104,6 +104,14 @@ def _load(settings: Settings) -> list[dict]:
     """
     rows = read_json(_path(settings), None)
     if rows is None:
+        # **파일이 없는 것**과 **읽지 못하는 것**을 구분해야 한다. read_json 은 깨진
+        # JSON 에도 기본값을 주므로, 구분하지 않으면 파일이 한 번 잘렸을 때 로그인
+        # 한 번으로 .env 계정만 담은 파일을 덮어써 가입 계정이 전부 사라진다.
+        if _path(settings).exists():
+            raise HTTPException(
+                status_code=503,
+                detail="계정 파일을 읽을 수 없습니다. 손상됐을 수 있어 아무것도 덮어쓰지 않았습니다.",
+            )
         ensure_seed(settings)
         rows = read_json(_path(settings), [])
     return rows
@@ -134,6 +142,9 @@ def ensure_seed(settings: Settings) -> None:
         existing = read_json(p, None)
         if existing is not None:
             _backfill_origin(existing, p, settings)
+            return
+        if p.exists():
+            # 있는데 못 읽는다 = 손상. 여기서 새로 쓰면 계정이 전부 날아간다.
             return
         now = time.time()
         rows = [
@@ -199,6 +210,21 @@ def _match(rows: list[dict], username: str) -> dict | None:
 
 
 def find(username: str, settings: Settings) -> Account | None:
+    """저장된 이름과 **정확히** 같은 계정. 세션 검증이 쓰는 길이다.
+
+    대소문자를 봐주는 것은 '로그인 편의'이지 신원 규칙이 아니다. 여기까지
+    느슨하게 두면, 대소문자만 다른 계정이 둘 있다가 하나가 지워졌을 때 그
+    사람의 살아 있는 쿠키가 남은 계정(주인일 수 있다)으로 해석된다.
+    실제로 그렇게 주인 전용 화면까지 열렸다.
+    """
+    for row in _load(settings):
+        if row.get("username") == username:
+            return _to_account(row)
+    return None
+
+
+def find_for_login(username: str, settings: Settings) -> Account | None:
+    """로그인·관리 화면용 — 대소문자를 가리지 않고 찾는다."""
     row = _match(_load(settings), username)
     return _to_account(row) if row else None
 
@@ -362,4 +388,6 @@ def delete(username: str, settings: Settings) -> None:
             raise HTTPException(status_code=400, detail="마지막 관리자는 삭제할 수 없습니다.")
         if _is_last_owner(row, rows):
             raise HTTPException(status_code=400, detail="마지막 서버 관리자는 삭제할 수 없습니다.")
-        write_atomic(p, [r for r in rows if r["username"] != username])
+        # 입력 문자열이 아니라 **찾은 행**을 지운다. 대소문자가 다르면
+        # 200 OK 를 돌려주면서 계정이 그대로 남아 있었다.
+        write_atomic(p, [r for r in rows if r is not row])

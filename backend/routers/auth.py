@@ -94,8 +94,10 @@ def login(
     if not acc.can_login:
         raise HTTPException(status_code=403, detail="비활성화된 계정입니다.")
 
-    ttl = user_settings.get_session_ttl(req.username, settings)  # 사용자 설정 TTL(전역 폴백)
-    token = issue_token(req.username, settings, ttl=ttl)
+    # **저장된 이름**으로 발급한다. 사용자가 친 문자열을 그대로 쓰면 대소문자에 따라
+    # 설정이 따로 놀고(세션 시간이 무시된다) 세션 신원도 흔들린다.
+    ttl = user_settings.get_session_ttl(acc.username, settings)  # 사용자 설정 TTL(전역 폴백)
+    token = issue_token(acc.username, settings, ttl=ttl)
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,

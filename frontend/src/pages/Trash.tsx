@@ -24,6 +24,8 @@ export function Trash() {
   const [tab, setTab] = useState<string>("");
   const [busy, setBusy] = useState<string | null>(null);
   const [emptyOpen, setEmptyOpen] = useState(false);
+  // 개별 영구 삭제도 확인을 받는다 — 되돌릴 수 없는 동작이 한 번 눌러 끝나면 안 된다
+  const [purgeFor, setPurgeFor] = useState<TrashEntry | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -156,7 +158,7 @@ export function Trash() {
                     복원
                   </button>
                   <button
-                    onClick={() => purge(e.id)}
+                    onClick={() => setPurgeFor(e)}
                     disabled={busy === e.id}
                     className="btn btn-ghost h-8 px-2 hover:text-danger"
                     title="영구 삭제"
@@ -169,6 +171,28 @@ export function Trash() {
           </ul>
         )}
       </div>
+
+      <Modal open={!!purgeFor} onClose={() => setPurgeFor(null)} title="영구 삭제" width="max-w-sm">
+        <div className="space-y-4">
+          <p className="text-[13.5px] text-fg2">
+            <span className="font-semibold">{purgeFor?.name}</span> 을(를){" "}
+            <span className="font-semibold text-danger">영구적으로</span> 삭제합니다. 되돌릴 수 없습니다.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setPurgeFor(null)} className="btn btn-ghost">취소</button>
+            <button
+              onClick={() => {
+                const target = purgeFor;
+                setPurgeFor(null);
+                if (target) purge(target.id);
+              }}
+              className="btn btn-danger"
+            >
+              영구 삭제
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={emptyOpen} onClose={() => setEmptyOpen(false)} title="휴지통 비우기" width="max-w-sm">
         <div className="space-y-4">

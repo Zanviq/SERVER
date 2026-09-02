@@ -164,10 +164,12 @@ export function Notes() {
 
   const openNote = useCallback(
     async (path: string) => {
-      await flushPendingSave();
-      // 응답이 순서대로 오지 않는다. 큰 문서를 누른 뒤 작은 문서를 누르면 큰 쪽이
-      // 늦게 도착해 이미 열린 문서를 밀어내고, 그 뒤 입력이 엉뚱한 파일로 저장된다.
+      // 순번은 **누른 순서대로** 매겨야 한다. 아래 flushPendingSave 를 기다린 뒤에
+      // 매기면, 저장할 게 없어 곧바로 돌아온 나중 클릭이 더 낮은 번호를 받아
+      // 순서 뒤집힘 방어가 거꾸로 동작한다(먼저 누른 문서가 이긴다).
       const seq = ++openSeq.current;
+      await flushPendingSave();
+      if (seq !== openSeq.current) return; // 기다리는 사이 다른 문서를 눌렀다
 
       // 이미지·PDF·미디어는 내용을 읽지 않는다. /api/notes/get 은 텍스트 전용이라
       // 415를 돌려주고, 그러면 current 가 안 잡혀서 전용 뷰어(DocViewer) 분기가
@@ -227,6 +229,13 @@ export function Notes() {
     setNewNoteOpen(false);
     setNewName("");
     const path = joinPath(curFolder, name);
+    // 같은 이름이 이미 있으면 **덮지 않는다**. 덮어쓰기는 휴지통을 거치지 않아
+    // 되돌릴 수 없다 — 있던 문서를 그냥 열어 준다.
+    if (notes.some((n) => n.path === path)) {
+      toast.error(`'${name}' 문서가 이미 있습니다. 그 문서를 엽니다.`);
+      openNote(path);
+      return;
+    }
     // 적은 이름 그대로 만든다. 확장자는 사용자가 정한다 — 예전엔 무조건 .md를 붙여서
     // 'todo.txt'처럼 확장자를 적지 않으면 뭘 만들든 마크다운이 됐다.
     // 마크다운일 때만 제목 줄을 넣는다(.txt/.py에 '# 이름'이 들어가면 곤란하다).
@@ -543,15 +552,21 @@ export function Notes() {
       return null;
     }
     const dir = curFolder ? `${curFolder}/` : "";
+    const path = `${dir}${title}.md`;
+    // 같은 이름이 이미 있으면 덮지 않는다. 덮으면 원본이 휴지통에도 안 남는다.
+    if (notes.some((n) => n.path === path)) {
+      toast.error(`'${title}' 문서가 이미 있습니다.`);
+      return title; // 링크는 그대로 이어 준다(이미 있는 문서를 가리킨다)
+    }
     try {
-      await api.noteSave(`${dir}${title}.md`, `# ${title}\n\n`);
+      await api.noteSave(path, `# ${title}\n\n`);
       await reloadTree();
       return title;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "문서 생성 실패");
       return null;
     }
-  }, [curFolder, reloadTree]);
+  }, [curFolder, reloadTree, notes]);
 
   const actions = (
     <div className="flex items-center gap-2">

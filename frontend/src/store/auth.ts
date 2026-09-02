@@ -70,8 +70,12 @@ export const useAuth = create<AuthState>((set, get) => ({
     try {
       const s = await api.session();
       set({ session: s, remaining: s.remaining });
-    } catch {
-      set({ session: null, remaining: 0 });
+    } catch (e) {
+      // **로그인이 끊긴 것과 네트워크가 잠깐 끊긴 것은 다르다.** 이 함수는 60초마다
+      // 도는데, 예전에는 5xx·연결 실패에도 세션을 지워서 쿠키가 멀쩡한데도
+      // 로그인 화면으로 튕기고 쓰던 화면(편집 중인 글 포함)을 잃었다.
+      const status = e instanceof ApiError ? e.status : 0;
+      if (status === 401 || status === 403) set({ session: null, remaining: 0 });
     }
   },
 }));

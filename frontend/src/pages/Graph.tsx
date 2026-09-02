@@ -99,6 +99,10 @@ export function Graph() {
     (n: any) => {
       if (n.type === "folder") {
         setFolder(n.path); // 폴더로 진입(드릴다운)
+      } else if (n.path) {
+        // **경로로** 연다. 제목으로 열면(?open=) 그래프가 조금 낡았을 때 — 이름을
+        // 바꾼 직후 등 — 없는 문서를 찾다가 루트에 빈 노트를 새로 만들어 버린다.
+        navigate(`/notes?path=${encodeURIComponent(n.path)}`);
       } else {
         navigate(`/notes?open=${encodeURIComponent(n.title)}`);
       }

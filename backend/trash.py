@@ -17,6 +17,7 @@ kind 가 없는 예전 엔트리는 문서로 본다(기존 휴지통이 비지 
 """
 from __future__ import annotations
 
+import re
 import shutil
 import time
 import uuid
@@ -120,9 +121,21 @@ def move_to_trash(
             "is_dir": dest.is_dir(),
             "deleted_at": time.time(),
         }
-        entries = read_json(idx_path, [])
-        entries.append(entry)
-        write_atomic(idx_path, entries)
+        try:
+            entries = read_json(idx_path, [])
+            entries.append(entry)
+            write_atomic(idx_path, entries)
+        except BaseException:
+            # 실물은 이미 옮겼는데 목록에 못 실었다. 그대로 두면 문서 목록에도
+            # 휴지통에도 없는 유령이 되고, '비우기'가 영구히 지운다.
+            # 제자리로 되돌린 뒤 실패를 알린다 — 사라지는 것보다 낫다.
+            try:
+                source.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(dest), str(source))
+                shutil.rmtree(dest_dir, ignore_errors=True)
+            except OSError:
+                pass
+            raise
     return entry_id
 
 
@@ -174,6 +187,16 @@ def counts_by_kind(user: SessionUser, settings: Settings) -> dict:
     return out
 
 
+#: 확장자로 볼 꼬리 — notes 라우터와 같은 규칙(`2026.08`·`v1.2`는 확장자가 아니다)
+_EXT_RE = re.compile(r"\.(?=[A-Za-z0-9]{1,8}$)[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*$")
+
+
+def _split_ext(name: str) -> tuple[str, str]:
+    """이름을 (몸통, 확장자)로 나눈다. 확장자로 볼 수 없으면 확장자는 빈 문자열."""
+    m = _EXT_RE.search(name)
+    return (name[: m.start()], name[m.start():]) if m else (name, "")
+
+
 def _unique_target(root: Path, rel: str) -> Path:
     """복원 위치. 이미 존재하면 이름에 ' (restored)' 접미를 붙인다.
 
@@ -184,7 +207,9 @@ def _unique_target(root: Path, rel: str) -> Path:
     if not target.exists():
         return target
     parent = target.parent
-    base, suffix = target.stem, target.suffix
+    # Path.suffix 도 못 쓴다 — `2026.08 회고`(폴더)의 확장자를 `.08 회고` 로 본다.
+    # 이 저장소가 쓰는 규칙(글자가 하나는 있는 짧은 꼬리)만 확장자로 인정한다.
+    base, suffix = _split_ext(target.name)
     n = 1
     while True:
         cand = parent / f"{base} (restored{'' if n == 1 else ' ' + str(n)}){suffix}"

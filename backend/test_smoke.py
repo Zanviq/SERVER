@@ -522,6 +522,118 @@ def test_notes_wikilinks_and_graph():
     assert all("snippet" in h for h in hits)
 
 
+def test_moving_one_occurrence_splits_it_out():
+    """한 회차만 시간을 옮기면 그 회차만 떨어져 나와야 한다.
+
+    예전에는 시리즈 자체의 start 를 고쳐서 전 회차가 따라 옮겨졌고, 새 시작보다
+    앞선 회차는 통째로 사라졌다(8회차 → 7회차). 과거 사고와 같은 유형이다.
+    """
+    _login()
+    made = client.post("/api/calendar/events", json={
+        "title": "회차분리시험", "start": "2027-03-01T10:00:00", "end": "2027-03-01T11:00:00",
+        "recurrence": "weekly", "recur_until": "2027-04-12"})
+    assert made.status_code == 200, made.text
+
+    def occurrences():
+        r = client.get("/api/calendar/events", params={"from": "2027-03-01", "to": "2027-04-30"})
+        return [e for e in r.json() if e["title"] == "회차분리시험"]
+
+    before = occurrences()
+    assert len(before) >= 4, before
+    target = before[1]
+    day = target["start"][:10]
+
+    moved = client.put(f"/api/calendar/events/{target['id']}", json={
+        "title": "회차분리시험", "start": f"{day}T14:00:00", "end": f"{day}T15:00:00"})
+    assert moved.status_code == 200, moved.text
+
+    after = occurrences()
+    assert len(after) == len(before), f"회차 수가 바뀌었다: {len(before)} → {len(after)}"
+    assert after[0]["start"] == before[0]["start"], "시리즈 시작이 밀렸다"
+    at_two = [e for e in after if e["start"].endswith("14:00:00")]
+    assert len(at_two) == 1, [e["start"] for e in after]
+    assert at_two[0]["start"][:10] == day
+
+    for e in after:
+        client.delete(f"/api/calendar/events/{e['id']}")
+
+
+def test_session_identity_is_exact_not_case_folded():
+    """로그인은 대소문자를 봐주지만 **세션 신원은 저장된 이름 그대로**여야 한다.
+
+    여기까지 느슨하면, 대소문자만 다른 계정이 둘 있다가 하나가 지워졌을 때 그
+    사람의 살아 있는 쿠키가 남은 계정(주인일 수 있다)으로 해석된다 — 실제로
+    주인 전용 화면까지 열렸다.
+    """
+    from backend.auth import issue_token
+
+    login_guard.reset()
+    s = get_settings()
+    ghost = TestClient(app)
+    ghost.cookies.set("server_session", issue_token("TESTER", s))  # 대문자만 다른 이름
+    assert ghost.get("/api/auth/session").status_code == 401
+    assert ghost.get("/api/system").status_code == 401
+
+
+def test_corrupt_accounts_file_is_not_overwritten():
+    """계정 파일이 잘렸을 때 새로 써 버리면 가입 계정이 전부 사라진다."""
+    import tempfile as _tf
+
+    import pytest
+    from fastapi import HTTPException
+
+    from backend.config import Settings
+
+    prev = os.environ.get("STORAGE_ROOT")
+    os.environ["STORAGE_ROOT"] = _tf.mkdtemp(prefix="corrupt_")
+    try:
+        s = Settings()
+        s.ensure_storage()
+        accounts.signup("someone", "pw-long-enough", "", s)
+        p = s.storage_root / "accounts.json"
+        broken = '[{"username": "tester", "pass'
+        p.write_text(broken, encoding="utf-8")
+
+        with pytest.raises(HTTPException) as err:
+            accounts.list_all(s)
+        assert err.value.status_code == 503
+        assert p.read_text(encoding="utf-8") == broken, "손상된 파일을 덮어썼다"
+    finally:
+        if prev is None:
+            del os.environ["STORAGE_ROOT"]
+        else:
+            os.environ["STORAGE_ROOT"] = prev
+
+
+def test_trash_rollback_when_index_write_fails():
+    """실물만 옮기고 목록에 못 실으면 문서가 양쪽 어디에도 없는 유령이 된다."""
+    from backend import trash as trash_mod
+
+    _login()
+    client.put("/api/notes/save", json={"path": "되돌릴문서.md", "content": "소중함"})
+    real = trash_mod.write_atomic
+
+    def boom(path, data):
+        if str(path).endswith("index.json"):
+            raise OSError("일부러 실패")
+        return real(path, data)
+
+    # 500이 되는 것을 보려면 예외를 서버 응답으로 받아야 한다
+    quiet = TestClient(app, raise_server_exceptions=False)
+    quiet.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    trash_mod.write_atomic = boom
+    try:
+        failed = quiet.delete("/api/notes/delete?path=되돌릴문서.md")
+        assert failed.status_code >= 500, failed.status_code
+    finally:
+        trash_mod.write_atomic = real
+
+    got = client.get("/api/notes/get", params={"path": "되돌릴문서.md"})
+    assert got.status_code == 200, "휴지통 기록이 실패하자 문서가 사라졌다"
+    assert got.json()["content"] == "소중함"
+    client.delete("/api/notes/delete?path=되돌릴문서.md")
+
+
 def test_restore_name_collision_keeps_dotted_names():
     """`2026.08 회고.md` 의 확장자를 `.08 회고.md` 로 보면 이름이 망가진다."""
     from backend.trash import _unique_target

@@ -264,7 +264,7 @@ export function Todo() {
   );
 
   // ── 조작 ──────────────────────────────────────────────────────────
-  /** 다른 요청이 도는 중이면 아무 일도 하지 않고 false 를 돌려준다.
+  /** 실제로 해냈으면 true. 바빠서 아무 일도 안 했거나 **실패했으면 false**.
    *  부르는 쪽이 그걸 알아야 한다 — 모르면 입력칸만 비우고 조용히 잃는다. */
   const guard = async (fn: () => Promise<unknown>, okMsg?: string): Promise<boolean> => {
     if (busy) return false;
@@ -273,12 +273,13 @@ export function Todo() {
       await fn();
       if (okMsg) toast.ok(okMsg);
       await reload();
+      return true;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "실패");
+      return false;
     } finally {
       setBusy(false);
     }
-    return true;
   };
 
   const addTodo = async () => {
@@ -291,7 +292,7 @@ export function Todo() {
         category_id: selectedCat ?? UNCATEGORIZED,
       }),
     );
-    // 다른 요청이 도는 중이라 아무 일도 안 했다면 적은 내용을 돌려준다.
+    // 만들어지지 않았으면(바빴거나 서버가 거절했거나) 적은 내용을 돌려준다.
     // 예전에는 입력칸만 비워져서 방금 적은 할 일이 흔적 없이 사라졌다.
     if (!ran) setDraft(title);
   };

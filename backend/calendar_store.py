@@ -296,9 +296,28 @@ def create_many(
 
 def _base_id(eid: str) -> str:
     """규칙은 calendar_ids 한 곳에서만 정한다."""
-    from .calendar_ids import base_id
+    from .calendar_ids import is_instance, base_id
 
     return base_id(eid)
+
+
+def _moves_this_occurrence(eid: str, payload: dict, series: dict) -> bool:
+    """반복 일정의 **한 회차만** 시간이 바뀌는 수정인가."""
+    from .calendar_ids import is_instance
+
+    if not is_instance(eid) or str(series.get("recurrence", "none")) in ("", "none"):
+        return False
+    day = str(eid).split("@", 1)[1][:10]
+    for key in ("start", "end"):
+        want = payload.get(key)
+        if not want:
+            continue
+        # 그 회차의 원래 값(같은 날짜에 시리즈의 시각을 얹은 것)과 다르면 이동이다
+        base = str(series.get(key) or series.get("start") or "")
+        cur = f"{day}{base[10:]}" if len(base) > 10 else day
+        if str(want) != cur:
+            return True
+    return False
 
 
 def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict) -> dict:
@@ -306,10 +325,37 @@ def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict)
     with json_store.lock_for(_events_path(user, settings)):
         events = _load(user, settings)
         for i, e in enumerate(events):
-            if e["id"] == bid:
-                events[i] = _normalize(payload, e)
+            if e["id"] != bid:
+                continue
+            if _moves_this_occurrence(eid, payload, e):
+                # **그 회차만 떼어낸다.** 예전에는 시리즈 자체의 start 를 고쳐서,
+                # 한 회차를 옮기면 전 회차가 따라 옮겨지고 **시리즈 시작보다 앞선
+                # 회차는 통째로 사라졌다**(8회차 → 7회차, 실측). 구글은 인스턴스를
+                # 따로 수정할 수 있지만 내부 저장소는 규칙 하나로만 펼치므로,
+                # 그 날짜를 예외로 빼고 단발 일정을 새로 만든다.
+                day = str(eid).split("@", 1)[1][:10]
+                e.setdefault("exdates", [])
+                if day not in e["exdates"]:
+                    e["exdates"].append(day)
+                base = dict(e)
+                base.pop("id", None)
+                base["recurrence"] = "none"
+                base.pop("recur_until", None)
+                base.pop("exdates", None)
+                start = str(e.get("start", ""))
+                base["start"] = f"{day}{start[10:]}" if len(start) > 10 else day
+                end = str(e.get("end") or start)
+                base["end"] = f"{day}{end[10:]}" if len(end) > 10 else day
+                single = _normalize(payload, base)
+                single["id"] = uuid.uuid4().hex
+                single["recurrence"] = "none"
+                single["exdates"] = []
+                events.append(single)
                 _save(events, user, settings)
-                return events[i]
+                return single
+            events[i] = _normalize(payload, e)
+            _save(events, user, settings)
+            return events[i]
     raise HTTPException(status_code=404, detail="이벤트를 찾을 수 없습니다.")
 
 

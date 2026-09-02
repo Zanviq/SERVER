@@ -17,7 +17,15 @@ export const GCAL_COLOR_NAMES: Record<string, string> = {
 
 // datetime-local 값 변환
 const toLocal = (iso: string) => (iso ? iso.slice(0, 16) : "");
-const toIso = (local: string) => (local ? `${local}:00` : "");
+// 종일 일정에서 '하루 종일'을 끄면 값이 `2026-09-02`(날짜만)로 남아 있다. 거기에
+// `:00`을 그냥 붙이면 `2026-09-02:00` 이 되어 서버가 422로 거절했다.
+const toIso = (local: string) => {
+  if (!local) return "";
+  return local.includes("T") ? `${local}:00` : `${local}T09:00:00`;
+};
+/** 날짜만 있는 값에 기본 시각을 붙인다(하루 종일을 끌 때 입력칸이 비지 않도록). */
+const withTime = (local: string, hhmm: string) =>
+  local ? (local.includes("T") ? local : `${local.slice(0, 10)}T${hhmm}`) : "";
 
 export function EventDialog({
   open,
@@ -91,7 +99,19 @@ export function EventDialog({
           <textarea className="input h-auto py-2" rows={2} value={desc} onChange={(e) => setDesc(e.target.value)} />
         </div>
         <label className="flex items-center gap-2 text-[13px]">
-          <input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={allDay}
+            onChange={(e) => {
+              setAllDay(e.target.checked);
+              // 끄면 시각 입력이 필요하다. 날짜만 남아 있으면 datetime-local 이
+              // 빈칸으로 보이고 저장도 실패한다 — 기본 시각을 채워 준다.
+              if (!e.target.checked) {
+                setStart((v) => withTime(v, "09:00"));
+                setEnd((v) => withTime(v || start, "10:00"));
+              }
+            }}
+          />
           하루 종일
         </label>
         <div className="grid grid-cols-2 gap-2">
