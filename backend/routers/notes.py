@@ -28,7 +28,7 @@ from .. import doc_cache
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..json_store import lock_for, write_text_atomic
-from ..file_kinds import inline_media_type, is_editable, kind_of
+from ..file_kinds import inline_media_type, is_editable, kind_of, looks_like_extension
 from ..notes_graph import backlinks_for, build_graph, parse_wikilinks
 from ..security_paths import safe_join, to_rel
 from ..storage import resolve, user_data_root, walk_all, walk_files
@@ -438,12 +438,8 @@ async def upload(
     return _summary(root, dest)
 
 
-#: 확장자로 볼 꼬리 — 글자가 하나는 있어야 한다('2026.08'·'v1.2'는 확장자가 아니다)
-_EXT_RE = re.compile(r"\.(?=[A-Za-z0-9]{1,8}$)[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*$")
-
-
-def _looks_like_extension(name: str) -> bool:
-    return bool(_EXT_RE.search(name.rsplit("/", 1)[-1]))
+#: 확장자 판정은 file_kinds 한 곳에서만 한다(복사본이 갈라져 사고가 났다)
+_looks_like_extension = looks_like_extension
 
 
 @router.put("/save", response_model=NoteSummary)

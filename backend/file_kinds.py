@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 MARKDOWN = {".md", ".markdown"}
@@ -38,6 +39,28 @@ _MIME = {
     ".m4a": "audio/mp4", ".flac": "audio/flac", ".aac": "audio/aac",
     ".opus": "audio/opus",
 }
+
+
+#: 확장자로 볼 꼬리 — 글자가 하나는 있어야 한다.
+#: `2026.08`·`v1.2` 는 확장자가 아니다(날짜·버전을 확장자로 보면 이름이 망가진다).
+_EXT_RE = re.compile(r"\.(?=[A-Za-z0-9]{1,8}$)[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*$")
+
+
+def looks_like_extension(name: str) -> bool:
+    """이름의 꼬리가 확장자인가.
+
+    **이 판단은 여기 한 곳에만 둔다.** 예전에는 같은 정규식이 세 파일에 복사돼
+    있었고, 네 번째 자리(휴지통 복원)가 Path.suffixes 라는 다른 규칙을 쓰는 바람에
+    `2026.08 회고` 의 확장자를 `.08 회고` 로 보고 이름을 망가뜨렸다.
+    """
+    return bool(_EXT_RE.search(name.rsplit("/", 1)[-1]))
+
+
+def split_ext(name: str) -> tuple[str, str]:
+    """이름을 (몸통, 확장자)로 나눈다. 확장자로 볼 수 없으면 확장자는 빈 문자열."""
+    tail = name.rsplit("/", 1)[-1]
+    m = _EXT_RE.search(tail)
+    return (name[: len(name) - len(tail) + m.start()], tail[m.start():]) if m else (name, "")
 
 
 def kind_of(name: str) -> str:

@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ... import doc_cache
-from ...file_kinds import is_editable, kind_of
+from ...file_kinds import is_editable, kind_of, looks_like_extension
 from ...json_store import lock_for, write_text_atomic
 from ...notes_graph import backlinks_for
 from ...security_paths import safe_join, to_rel
@@ -143,17 +143,10 @@ def _backup_before_overwrite(root: Path, target: Path, ctx) -> None:
 #: 확장자로 볼 꼬리. **글자가 하나는 있어야 한다** — 숫자만이면 확장자가 아니라
 #: '2026.08'·'v1.2'·'예산 1.5' 같은 날짜·버전이다. 예전 규칙은 이것들을 확장자로
 #: 보고 .md를 안 붙여, kind가 'other'인 파일을 만든 뒤 다시 읽지 못했다.
-_EXT_RE = __import__("re").compile(r"\.(?=[A-Za-z0-9]{1,8}$)[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*$")
-
-
-def _has_extension(name: str) -> bool:
-    """진짜 확장자인가.
-
-    Path.suffix는 'v1.2 회의록'의 suffix를 '.2 회의록'으로 준다. 그걸 확장자로
-    믿으면 .md를 안 붙여 확장자 없는 파일이 만들어지고, kind_of가 'other'로
-    분류해 다시 열 수도 없는 문서가 된다.
-    """
-    return bool(_EXT_RE.search(name.rsplit("/", 1)[-1]))
+#: 확장자 판정은 file_kinds 한 곳에서만 한다.
+#: 같은 정규식이 세 파일에 복사돼 있었고, 네 번째 자리(휴지통 복원)가 다른 규칙을
+#: 쓰는 바람에 `2026.08 회고` 의 이름이 망가졌다.
+_has_extension = looks_like_extension
 
 
 def _target_for_write(root: Path, ident: str) -> Path:

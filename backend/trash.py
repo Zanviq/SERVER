@@ -27,6 +27,7 @@ from fastapi import HTTPException
 
 from .auth import SessionUser
 from .config import Settings
+from .file_kinds import split_ext
 from .json_store import lock_for, read_json, write_atomic
 from .storage import user_data_root
 
@@ -187,14 +188,8 @@ def counts_by_kind(user: SessionUser, settings: Settings) -> dict:
     return out
 
 
-#: 확장자로 볼 꼬리 — notes 라우터와 같은 규칙(`2026.08`·`v1.2`는 확장자가 아니다)
-_EXT_RE = re.compile(r"\.(?=[A-Za-z0-9]{1,8}$)[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*$")
-
-
-def _split_ext(name: str) -> tuple[str, str]:
-    """이름을 (몸통, 확장자)로 나눈다. 확장자로 볼 수 없으면 확장자는 빈 문자열."""
-    m = _EXT_RE.search(name)
-    return (name[: m.start()], name[m.start():]) if m else (name, "")
+#: 확장자 판정은 file_kinds 한 곳에서만 한다(복사본이 갈라져 사고가 났다)
+_split_ext = split_ext
 
 
 def _unique_target(root: Path, rel: str) -> Path:

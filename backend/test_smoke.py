@@ -706,6 +706,29 @@ def test_session_identity_is_exact_not_case_folded():
     assert ghost.get("/api/system").status_code == 401
 
 
+def test_extension_rule_lives_in_one_place():
+    """확장자 판정은 한 곳에서만 한다.
+
+    같은 정규식이 세 파일에 복사돼 있었고, 네 번째 자리(휴지통 복원)가
+    Path.suffixes 라는 다른 규칙을 쓰는 바람에 `2026.08 회고` 의 확장자를
+    `.08 회고` 로 보고 이름을 망가뜨렸다.
+    """
+    from backend.ai.skills import documents as doc_skill
+    from backend.file_kinds import looks_like_extension, split_ext
+    from backend.routers import notes as notes_router
+    from backend import trash as trash_mod
+
+    # 같은 함수를 가리켜야 한다(복사본이 다시 생기면 여기서 걸린다)
+    assert notes_router._looks_like_extension is looks_like_extension
+    assert doc_skill._has_extension is looks_like_extension
+    assert trash_mod._split_ext is split_ext
+
+    for name, ext in (("문서.md", ".md"), ("2026.08 회고", ""), ("v1.2", ""),
+                      ("사진.jpeg", ".jpeg"), ("폴더", ""), ("예산 1.5", "")):
+        assert split_ext(name)[1] == ext, (name, split_ext(name))
+        assert looks_like_extension(name) is bool(ext), name
+
+
 def test_old_owner_account_keeps_admin_access():
     """origin 필드가 없던 시절의 주인 계정이 관리 화면에서 잠기면 안 된다.
 
