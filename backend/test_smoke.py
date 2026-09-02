@@ -706,6 +706,71 @@ def test_session_identity_is_exact_not_case_folded():
     assert ghost.get("/api/system").status_code == 401
 
 
+def test_old_owner_account_keeps_admin_access():
+    """origin 필드가 없던 시절의 주인 계정이 관리 화면에서 잠기면 안 된다.
+
+    이미 돌고 있는 서버에 새 코드를 올리는 상황이다. `.env` 와 계정 파일의
+    대소문자가 다르면 주인을 못 알아보고 **본인이 403 을 받는다**(실측).
+    """
+    import tempfile as _tf
+
+    from backend.config import Settings
+
+    prev = os.environ.get("STORAGE_ROOT")
+    prev_users = os.environ.get("AUTH_USERS")
+    os.environ["STORAGE_ROOT"] = _tf.mkdtemp(prefix="oldowner_")
+    os.environ["AUTH_USERS"] = json.dumps([{"username": "Zanviq", "password": "pw-owner"}])
+    try:
+        s = Settings()
+        s.ensure_storage()
+        (s.storage_root / "accounts.json").write_text(json.dumps([{
+            "username": "zanviq",  # 계정 파일은 소문자, .env 는 대문자
+            "display_name": "주인",
+            "password_hash": accounts.hash_password("pw-owner"),
+            "role": "admin", "status": "active",
+            "created_at": 1, "approved_at": 1, "approved_by": "관리자",
+        }], ensure_ascii=False), encoding="utf-8")
+
+        acc = accounts.find("zanviq", s)
+        assert acc is not None
+        assert acc.is_owner, f"주인으로 안 읽힌다: origin={acc.origin}"
+    finally:
+        for k, v in (("STORAGE_ROOT", prev), ("AUTH_USERS", prev_users)):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_old_settings_values_are_normalized_on_read():
+    """예전 버전이 남긴 범위 밖 값이 그대로 내려가면 화면이 이상해진다."""
+    from backend import user_settings
+    from backend.auth import SessionUser
+
+    _login()
+    s = get_settings()
+    me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    path = s.user_root("tester") / "settings.json"
+    backup = path.read_text(encoding="utf-8") if path.exists() else None
+    path.write_text(json.dumps({
+        "ai": {"tone": "counselor", "max_steps": 99},
+        "calendar": {"default_view": "listWeek", "default_remind": 999999},
+        "notes": {"autosave_ms": 100},
+        "sync": {"enabled": True},  # 사라진 기능
+    }, ensure_ascii=False), encoding="utf-8")
+    try:
+        got = user_settings.load(me, s)
+        assert got["ai"]["max_steps"] <= 16, got["ai"]
+        assert got["calendar"]["default_view"] in ("dayGridMonth", "timeGridWeek", "timeGridDay")
+        assert got["notes"]["autosave_ms"] >= 300, got["notes"]
+        assert "sync" not in got, got.keys()
+    finally:
+        if backup is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(backup, encoding="utf-8")
+
+
 def test_corrupt_store_files_are_not_overwritten():
     """저장 파일이 잘렸을 때 '비어 있음'으로 보면 다음 저장이 원본을 덮는다."""
     _login()

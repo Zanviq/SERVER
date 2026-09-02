@@ -58,7 +58,10 @@ def load(user: SessionUser, settings: Settings) -> dict:
     # 예전 버전이 남긴 이상한 값(섹션이 dict 가 아님 등)도 여기서 흘려보낸다 —
     # 읽기가 죽으면 그 계정은 로그인조차 못 한다.
     stored = {k: v for k, v in stored.items() if isinstance(v, dict)}
-    return _prune(_deep_merge(DEFAULTS, stored))
+    # 저장된 값도 지금 규칙으로 맞춰서 준다. 예전 버전이 남긴 범위 밖 값
+    # (max_steps=99, 지금은 없는 default_view 등)이 그대로 내려가면 화면이
+    # 이상해지고, 사용자는 자기가 고른 적 없는 값을 보게 된다.
+    return _prune(_deep_merge(DEFAULTS, sanitize(stored)))
 
 
 def _prune(merged: dict) -> dict:

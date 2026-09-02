@@ -103,6 +103,12 @@ def _load(settings: Settings) -> list[dict]:
     (시드는 멱등이며 파일이 없을 때만 동작한다).
     """
     rows = read_json(_path(settings), None)
+    if rows is not None:
+        # origin 이 없던 시절의 행을 여기서도 채운다. 예전에는 기동(lifespan)에서만
+        # 했는데, 그 한 번을 놓치면(테스트·다른 진입점) 주인이 signup 으로 읽혀
+        # 관리 화면이 잠긴다. 이 함수는 멱등이고 채울 게 없으면 쓰지 않는다.
+        _backfill_origin(rows, _path(settings), settings)
+        return rows
     if rows is None:
         # **파일이 없는 것**과 **읽지 못하는 것**을 구분해야 한다. read_json 은 깨진
         # JSON 에도 기본값을 주므로, 구분하지 않으면 파일이 한 번 잘렸을 때 로그인
@@ -171,14 +177,16 @@ def _backfill_origin(rows: list[dict], p: Path, settings: Settings) -> None:
     켜는 순간 본인이 잠긴다(ensure_seed가 파일이 있으면 early-return하므로).
     판정 근거는 .env 이관 흔적과 현재 AUTH_USERS 목록 둘 다 본다.
     """
-    seeded = {u.username for u in settings.users}
+    # 대소문자를 가리지 않는다 — .env 에 `Zanviq`, 계정 파일에 `zanviq` 처럼
+    # 다르게 적혀 있으면 주인을 못 알아보고 **본인이 관리 화면에서 잠긴다**.
+    seeded = {str(u.username).lower() for u in settings.users}
     changed = False
     for row in rows:
         if row.get("origin"):
             continue
         looks_bootstrap = (
             str(row.get("approved_by", "")).startswith("system(")
-            or row.get("username") in seeded
+            or str(row.get("username", "")).lower() in seeded
         )
         row["origin"] = ORIGIN_BOOTSTRAP if looks_bootstrap else ORIGIN_SIGNUP
         changed = True
