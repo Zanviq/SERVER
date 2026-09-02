@@ -135,7 +135,7 @@ export function Notes() {
    *  매번 무효화된다). 타이핑 중에 그걸 반복할 이유가 없다 — 문서 집합이 바뀌는
    *  동작(생성·삭제·이름변경)에서만 갱신한다. */
   const save = useCallback(
-    async (path: string, text: string, quiet = false) => {
+    async (path: string, text: string, quiet = false): Promise<boolean> => {
       setSaving(true);
       try {
         await api.noteSave(path, text);
@@ -145,8 +145,10 @@ export function Notes() {
           setDetail(d);
           reloadTree();
         }
+        return true;
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "저장 실패");
+        return false;
       } finally {
         setSaving(false);
       }
@@ -190,6 +192,14 @@ export function Notes() {
       try {
         const d = await api.noteGet(path);
         if (seq !== openSeq.current) return; // 더 최근에 연 문서가 있다
+        // 편집기로 열렸다 = 더는 뷰어 전용이 아니다(고쳤거나 같은 이름의 새 문서다)
+        setViewerOnly((prev) => {
+          if (!prev.has(path) && !prev.has(d.path)) return prev;
+          const next = new Set(prev);
+          next.delete(path);
+          next.delete(d.path);
+          return next;
+        });
         setCurrent(d.path);
         setContent(d.content);
         setDetail(d);
@@ -256,7 +266,9 @@ export function Notes() {
     // 'todo.txt'처럼 확장자를 적지 않으면 뭘 만들든 마크다운이 됐다.
     // 마크다운일 때만 제목 줄을 넣는다(.txt/.py에 '# 이름'이 들어가면 곤란하다).
     const isMd = /\.(md|markdown)$/i.test(name);
-    await save(path, isMd ? `# ${name.replace(/\.[^.]+$/, "")}\n\n` : "");
+    // 서버가 거절하면(같은 이름 등) 열지 않는다 — 없는 문서를 열어 404 를 또 띄운다
+    const made = await save(path, isMd ? `# ${name.replace(/\.[^.]+$/, "")}\n\n` : "");
+    if (!made) return;
     await reloadTree();
     if (curFolder) setExpanded((s) => new Set(s).add(curFolder));
     openNote(path);
