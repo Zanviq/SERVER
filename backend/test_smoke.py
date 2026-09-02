@@ -206,6 +206,37 @@ def test_login_guard_counts_concurrent_attempts():
     login_guard.reset()
 
 
+def test_save_preserves_bytes_exactly():
+    """저장은 사용자가 쓴 바이트를 그대로 남겨야 한다.
+
+    파이썬 텍스트 모드는 줄바꿈을 os.linesep 으로 바꿔 쓴다. Windows 에서
+    `\\n` 은 `\\r\\n` 이 되고 이미 `\\r\\n` 인 글은 `\\r\\r\\n` 이 되어 **저장할 때마다
+    불어났다**(무작위 왕복 검사 300건 중 202건에서 어긋났다).
+    """
+    _login()
+    cases = {
+        "줄바꿈LF.md": "첫 줄\n둘째 줄\n",
+        "줄바꿈CRLF.md": "첫 줄\r\n둘째 줄\r\n",
+        "줄바꿈CR.md": "첫 줄\r둘째 줄\r",
+        "줄바꿈섞임.md": "LF\n CRLF\r\n CR\r 끝",
+        "특수문자.md": "탭\t제로폭​이모지😀중문中文\n",
+    }
+    try:
+        for path, body in cases.items():
+            assert client.put("/api/notes/save",
+                              json={"path": path, "content": body}).status_code == 200
+            got = client.get("/api/notes/get", params={"path": path})
+            assert got.status_code == 200, got.text
+            assert got.json()["content"] == body, (path, repr(got.json()["content"]))
+            # 두 번 저장해도 늘어나지 않는다(예전에는 저장할 때마다 커졌다)
+            client.put("/api/notes/save", json={"path": path, "content": body})
+            again = client.get("/api/notes/get", params={"path": path}).json()["content"]
+            assert again == body, (path, repr(again))
+    finally:
+        for path in cases:
+            client.delete(f"/api/notes/delete?path={path}")
+
+
 def test_concurrent_deletes_all_land_in_trash():
     """동시에 지울 때 한 건도 새면 안 된다 — 남아 있거나 미아가 되면 안 된다.
 

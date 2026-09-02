@@ -58,7 +58,9 @@ def text_of(path: Path, st) -> str | None:
             return hit[2]
 
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        # read_text 는 `\r\n` 을 `\n` 으로 바꿔 읽는다(범용 줄바꿈). 검색에는
+        # 큰 차이가 없지만, 같은 캐시를 다른 곳에서 쓰게 되면 원문과 어긋난다.
+        text = path.read_bytes().decode("utf-8", errors="replace")
     except OSError:
         with _lock:
             _drop(key)

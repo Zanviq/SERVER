@@ -273,7 +273,9 @@ class ReadDocument(SkillBase):
                 message=f"'{kind_of(target.name)}' 파일이라 내용을 읽을 수 없습니다.",
                 error_code="unsupported",
             )
-        full = target.read_text(encoding="utf-8", errors="replace")
+        # 범용 줄바꿈 변환을 피한다 — 읽어서 그대로 되쓰는 흐름(read → write)에서
+        # `\r\n` 이 조용히 `\n` 으로 바뀌어 저장된다.
+        full = target.read_bytes().decode("utf-8", errors="replace")
         content = full[:_MAX_READ]
         truncated = len(full) > _MAX_READ
         # 잘렸다는 사실을 반드시 알린다. 예전에는 조용히 잘라 줘서, 모델이 그걸

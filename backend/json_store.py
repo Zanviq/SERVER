@@ -34,7 +34,8 @@ def write_atomic(path: Path, data) -> None:
     # 이름이 PID만이면 같은 프로세스의 스레드끼리 같은 임시파일을 쓴다
     tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}.{uuid.uuid4().hex[:8]}")
     try:
-        with tmp.open("w", encoding="utf-8") as f:
+        # 위와 같은 이유(들여쓰기 줄바꿈이 플랫폼마다 달라진다)
+        with tmp.open("w", encoding="utf-8", newline="") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
             f.flush()
             os.fsync(f.fileno())
@@ -61,7 +62,11 @@ def write_text_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".tmp{os.getpid()}.{uuid.uuid4().hex[:8]}")
     try:
-        with tmp.open("w", encoding="utf-8") as f:
+        # newline="" 이 없으면 파이썬이 줄바꿈을 os.linesep 으로 바꿔 쓴다.
+        # Windows 에서 `\n` 은 `\r\n` 이 되고, 이미 `\r\n` 인 글은 `\r\r\n` 이 되어
+        # **저장할 때마다 불어난다**(무작위 왕복 검사에서 300건 중 202건).
+        # 사용자가 쓴 바이트를 그대로 남기는 것이 문서 저장의 기본이다.
+        with tmp.open("w", encoding="utf-8", newline="") as f:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
