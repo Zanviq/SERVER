@@ -53,6 +53,27 @@ def resolve_color(value, default: str = "2") -> str:
     return default
 
 
+class BadColor(Exception):
+    """색 이름을 못 알아들었다."""
+
+
+def strict_color(value) -> str:
+    """색 이름 → colorId. 못 알아들으면 **예외**를 던진다.
+
+    resolve_color 는 모르는 값에 기본값을 돌려준다. 그걸 그대로 쓰면 "민트색으로
+    만들어줘"가 조용히 연두가 되고, 사용자는 자기가 말한 색과 다른 것을 보게 된다.
+    조회 조건에 쓰면 색 조건이 통째로 사라져 일괄 작업이 엉뚱한 대상을 고른다.
+
+    **일정·할 일 양쪽이 이 함수를 쓴다.** 예전에는 캘린더 스킬 안에만 있어서
+    할 일 쪽은 관대한 규칙을 계속 썼다.
+    """
+    cid = resolve_color(value, "")
+    if not cid:
+        names = ", ".join(sorted(set(COLOR_NAMES.values())))
+        raise BadColor(f"'{value}'가 어떤 색인지 모르겠습니다. 쓸 수 있는 색: {names}")
+    return cid
+
+
 def color_table_text() -> str:
     """시스템 프롬프트용 색상표 텍스트."""
     return "\n".join(f"  {cid} = {name}" for cid, name in COLOR_NAMES.items())

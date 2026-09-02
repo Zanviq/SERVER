@@ -706,6 +706,49 @@ def test_session_identity_is_exact_not_case_folded():
     assert ghost.get("/api/system").status_code == 401
 
 
+def test_color_rule_is_the_same_everywhere():
+    """색 판정도 한 곳에서만 한다 — 일정은 거절하고 할 일은 받아 주면 안 된다.
+
+    관대한 해석(resolve_color)은 모르는 색을 기본색으로 바꿔치기한다. 그러면
+    "민트색으로 만들어줘"가 조용히 연두가 되고, 사용자는 자기가 말한 색과 다른
+    것을 보게 된다. 일정 쪽만 고쳐 두었더니 할 일·카테고리가 계속 관대했다.
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.ai.skills import calendar as cal_skill
+    from backend.auth import SessionUser
+    from backend.calendar_colors import strict_color
+
+    assert cal_skill._strict_color is strict_color
+
+    reg = default_registry()
+    ctx = SkillContext(
+        user=SessionUser(username="tester", display_name="T", expires_at=0, remaining=0),
+        settings=get_settings(), today="2026-09-02")
+    calls = {
+        "일정": ("create_calendar_event", {"title": "색", "start": "2027-05-02T10:00",
+                                          "end": "2027-05-02T11:00", "color": "민트"}),
+        "할 일": ("create_todo", {"title": "색", "color": "민트"}),
+        "카테고리": ("create_todo_category", {"name": "색카테고리", "color": "민트"}),
+    }
+    for label, (name, args) in calls.items():
+        res = reg.dispatch(name, args, ctx)
+        assert not res.ok, f"{label}: 못 알아듣는 색을 받아들였다"
+        assert res.error_code == "invalid", (label, res.error_code)
+        assert "민트" in res.message, (label, res.message)
+
+    # 알아듣는 색은 그대로 들어간다
+    made = reg.dispatch("create_todo", {"title": "보라할일", "color": "보라"}, ctx)
+    assert made.ok, made.message
+    _login()  # 위 dispatch 는 HTTP 를 안 거친다 — 여기서 세션을 확실히 해 둔다
+    board = client.get("/api/todo/board").json()
+    todos = board["todos"] if isinstance(board, dict) else board
+    hit = [t for t in todos if t["title"] == "보라할일"]
+    assert hit and hit[0]["color"] == "9", hit
+    for t in todos:
+        client.delete(f"/api/todo/{t['id']}")
+
+
 def test_extension_rule_lives_in_one_place():
     """확장자 판정은 한 곳에서만 한다.
 

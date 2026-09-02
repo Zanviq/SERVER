@@ -14,11 +14,16 @@ from __future__ import annotations
 from fastapi import HTTPException
 
 from ... import todo_store
-from ...calendar_colors import resolve_color
+from ...calendar_colors import BadColor, strict_color
 from ...datetimes import BadDateTime
 from ...datetimes import has_time as dt_has_time
 from ...datetimes import to_iso as dt_to_iso
 from ..skill_base import SkillBase, SkillResult
+
+
+def _color_or_raise(value) -> str:
+    """색을 준 경우에만 엄격 해석. 안 주면 빈 값(카테고리 색을 따른다)."""
+    return strict_color(value) if value else ""
 
 #: 한 번에 모델에게 보여줄 개수 상한(컨텍스트를 다 먹지 않도록)
 _MAX_ROWS = 200
@@ -264,7 +269,12 @@ class CreateTodoCategory(SkillBase):
                 parent = _need_category(cats, args["parent"])
             payload = {"name": args["name"], "parent_id": parent}
             if args.get("color"):
-                payload["color"] = resolve_color(args["color"], "2")
+                # 못 알아들은 색을 기본색으로 바꿔치기하면, 사용자는 자기가 말한
+                # 색과 다른 것을 보게 된다(일정 쪽과 같은 규칙으로 맞춘다).
+                try:
+                    payload["color"] = strict_color(args["color"])
+                except BadColor as e:
+                    return SkillResult(ok=False, message=str(e), error_code="invalid")
             try:
                 cat = todo_store.create_category(ctx.user, ctx.settings, payload)
             except HTTPException as e:
@@ -308,13 +318,19 @@ class CreateTodo(SkillBase):
                 cid = _need_category(cats, args["category"])
             due = str(args.get("due") or "")
             all_day = bool(args.get("all_day")) or (bool(due) and not dt_has_time(due))
+            try:
+                color = _color_or_raise(args.get("color"))
+            except BadColor as e:
+                # invalid 로 알려야 모델이 색을 고쳐 다시 부른다.
+                # 그냥 새어 나가면 'internal'(재시도 말라)로 분류된다.
+                return SkillResult(ok=False, message=str(e), error_code="invalid")
             payload = {
                 "title": args["title"],
                 "description": args.get("description", ""),
                 "category_id": cid,
                 "due": due,
                 "all_day": all_day,
-                "color": resolve_color(args["color"], "2") if args.get("color") else "",
+                "color": color,
             }
             try:
                 todo = todo_store.create_todo(ctx.user, ctx.settings, payload)
@@ -359,7 +375,12 @@ class UpdateTodo(SkillBase):
             if args.get("category") is not None:
                 payload["category_id"] = _need_category(cats, args["category"])
             if args.get("color"):
-                payload["color"] = resolve_color(args["color"], "2")
+                # 못 알아들은 색을 기본색으로 바꿔치기하면, 사용자는 자기가 말한
+                # 색과 다른 것을 보게 된다(일정 쪽과 같은 규칙으로 맞춘다).
+                try:
+                    payload["color"] = strict_color(args["color"])
+                except BadColor as e:
+                    return SkillResult(ok=False, message=str(e), error_code="invalid")
             if args.get("all_day") is not None:
                 payload["all_day"] = bool(args["all_day"])
             if "due" in args and args["due"] is not None:

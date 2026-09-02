@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from ... import calendar_service, user_settings
-from ...calendar_colors import COLOR_NAMES, resolve_color
+from ...calendar_colors import COLOR_NAMES, BadColor, resolve_color, strict_color
 from ...calendar_ids import base_id as calendar_base_id
 from ...calendar_ids import is_instance
 from ...datetimes import BadDateTime
@@ -78,8 +78,8 @@ def _matches(ev: dict, color_id: str | None, needle: str | None) -> bool:
     return True
 
 
-class _BadColor(Exception):
-    """색 이름을 못 알아들었다."""
+#: 색 판정은 calendar_colors 한 곳에서만 한다(할 일 쪽이 다른 규칙을 쓰고 있었다)
+_BadColor = BadColor
 
 
 def _norm_times(payload: dict) -> None:
@@ -127,18 +127,7 @@ def _end_of(value: str) -> datetime:
     return d if dt_has_time(value) else d.replace(hour=23, minute=59, second=59)
 
 
-def _strict_color(value) -> str:
-    """색 이름 → colorId. 못 알아들으면 **예외**를 던진다.
-
-    resolve_color는 모르는 값에 기본값을 돌려주는데, 필터에 그대로 쓰면
-    빈 문자열이 되어 색 조건이 조용히 사라진다. 그러면 "민트색 일정 이름 바꿔줘"가
-    기간 내 **전체 일정**을 대상으로 삼는다 — 일괄 수정에서는 사고다.
-    """
-    cid = resolve_color(value, "")
-    if not cid:
-        names = ", ".join(sorted({n for n in COLOR_NAMES.values()}))
-        raise _BadColor(f"'{value}'가 어떤 색인지 모르겠습니다. 쓸 수 있는 색: {names}")
-    return cid
+_strict_color = strict_color
 
 
 def _wide_window(ctx) -> tuple[str, str]:
