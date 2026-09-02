@@ -12,7 +12,7 @@ import { RowMenu } from "../components/notes/RowMenu";
 import { LiveEditor } from "../components/notes/LazyLiveEditor";
 import { NOTE_PATH_MIME } from "../components/notes/dragTypes";
 import { Modal } from "../components/ui/Modal";
-import { api, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
+import { api, ApiError, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
 import { embedMarkdownFor, makeResolver } from "../lib/embeds";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
@@ -101,6 +101,9 @@ export function Notes() {
   const searchTimer = useRef<number | null>(null);
   // 문서 열기 요청의 순번 — 늦게 도착한 옛 응답을 버리는 데 쓴다
   const openSeq = useRef(0);
+  // 편집기로는 열 수 없다고 서버가 알려 준 문서(예: UTF-8이 아닌 텍스트).
+  // 목록에는 editable=true 로 보이지만 실제로는 뷰어·내려받기로 가야 한다.
+  const [viewerOnly, setViewerOnly] = useState<Set<string>>(new Set());
   const [params, setParams] = useSearchParams();
 
   const autosaveMs = prefs?.autosave_ms ?? 900;
@@ -196,6 +199,19 @@ export function Notes() {
         setCurFolder(slash >= 0 ? d.path.slice(0, slash) : "");
       } catch (e) {
         if (seq !== openSeq.current) return;
+        // 415 = 편집기로 열 수 없는 문서. 오류만 띄우면 사용자는 아무 데도 갈 수
+        // 없다(목록에서 눌러도 토스트만 반복). 뷰어·내려받기 화면으로 보낸다.
+        if (e instanceof ApiError && e.status === 415) {
+          setViewerOnly((prev) => new Set(prev).add(path));
+          setCurrent(path);
+          setContent("");
+          setDetail(null);
+          setDirty(false);
+          const cut = path.lastIndexOf("/");
+          setCurFolder(cut >= 0 ? path.slice(0, cut) : "");
+          toast.error(e.message);
+          return;
+        }
         toast.error(e instanceof Error ? e.message : "노트 열기 실패");
       }
     },
@@ -489,7 +505,8 @@ export function Notes() {
 
   // 현재 열린 문서의 메타(종류에 따라 편집기/뷰어를 고른다)
   const currentMeta = current ? notes.find((n) => n.path === current) : undefined;
-  const isEditable = !currentMeta || currentMeta.editable;
+  const isEditable =
+    (!currentMeta || currentMeta.editable) && !(current && viewerOnly.has(current));
 
   const doUpload = async (files: FileList | null) => {
     if (!files || !files.length) return;

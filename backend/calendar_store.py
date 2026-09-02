@@ -39,7 +39,9 @@ def _events_path(user: SessionUser, settings: Settings) -> Path:
 
 
 def _load(user: SessionUser, settings: Settings) -> list[dict]:
-    data = json_store.read_json(_events_path(user, settings), [])
+    # strict: 파일이 깨졌으면 빈 목록으로 보지 않는다. 그렇게 보면 하나만 추가해도
+    # 그 위에 덮어써서 일정이 통째로 사라진다.
+    data = json_store.read_json_strict(_events_path(user, settings), [])
     return data if isinstance(data, list) else []
 
 

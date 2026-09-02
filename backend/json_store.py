@@ -12,6 +12,8 @@ import time
 import uuid
 from pathlib import Path
 
+from fastapi import HTTPException
+
 from . import doc_cache
 
 _locks: dict[str, threading.Lock] = {}
@@ -104,3 +106,25 @@ def read_json(path: Path, default):
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return default
+
+
+def read_json_strict(path: Path, default):
+    """읽되, **있는데 못 읽으면 예외**를 낸다.
+
+    read_json 은 깨진 파일에도 기본값을 준다. 그러면 조회는 빈 목록을 200으로
+    돌려주고, 그다음에 하나만 추가해도 그 빈 목록 위에 써서 원본이 통째로
+    사라진다. 사용자 데이터를 담은 파일은 이 쪽을 써야 한다.
+    """
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"저장 파일을 읽을 수 없습니다({path.name}). 손상됐을 수 있어 아무것도 덮어쓰지 않았습니다.",
+        ) from e
+    except OSError as e:
+        raise HTTPException(
+            status_code=503, detail=f"저장 파일을 열 수 없습니다({path.name})."
+        ) from e

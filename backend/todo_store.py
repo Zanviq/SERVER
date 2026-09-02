@@ -50,7 +50,8 @@ def _blank() -> dict:
 
 
 def _load(user: SessionUser, settings: Settings) -> dict:
-    data = json_store.read_json(_path(user, settings), None)
+    # strict: 위 calendar_store 와 같은 이유(깨진 파일을 빈 목록으로 보면 덮어쓴다)
+    data = json_store.read_json_strict(_path(user, settings), None)
     if not isinstance(data, dict):
         return _blank()
     cats = data.get("categories")

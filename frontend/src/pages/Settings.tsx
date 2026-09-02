@@ -34,6 +34,45 @@ function Row({ label, desc, children }: { label: string; desc?: string; children
   );
 }
 
+/** 숫자 설정 입력.
+ *
+ *  글자를 칠 때마다 범위로 다듬으면 원하는 값을 넣을 수 없다 — `900` 을 치려고
+ *  `9` 를 누른 순간 최소값(300)으로 바뀌어 그 뒤로 `9003` 같은 값이 된다.
+ *  치는 동안은 그대로 두고, 손을 뗄 때(또는 Enter) 한 번만 다듬어 저장한다.
+ */
+function NumberField({
+  value, min, max, step, onCommit,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onCommit: (v: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = () => {
+    const n = Number(draft);
+    const next = Number.isFinite(n) ? Math.max(min, Math.min(max, Math.round(n))) : value;
+    setDraft(String(next));
+    if (next !== value) onCommit(next);
+  };
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      step={step}
+      className="input w-24"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+    />
+  );
+}
+
+
 export function Settings() {
   const { session, logout } = useAuth();
   const { settings: s, loaded, error, load, patch } = useSettings();
@@ -169,8 +208,8 @@ export function Settings() {
                 </select>
               </Row>
               <Row label="최대 추론 단계" desc="ReAct 1턴당 스킬 실행 한도 (1~16)">
-                <input type="number" min={1} max={16} className="input w-24" value={s.ai.max_steps}
-                  onChange={(e) => update({ ai: { max_steps: Math.max(1, Math.min(16, +e.target.value)) } })} />
+                <NumberField value={s.ai.max_steps} min={1} max={16}
+                  onCommit={(v) => update({ ai: { max_steps: v } })} />
               </Row>
             </div>
           )}
@@ -235,8 +274,8 @@ export function Settings() {
           {tab === "notes" && (
             <div>
               <Row label="자동 저장 지연" desc="입력 후 저장까지 (ms)">
-                <input type="number" min={300} max={5000} step={100} className="input w-24" value={s.notes.autosave_ms}
-                  onChange={(e) => update({ notes: { autosave_ms: Math.max(300, Math.min(5000, +e.target.value)) } })} />
+                <NumberField value={s.notes.autosave_ms} min={300} max={5000} step={100}
+                  onCommit={(v) => update({ notes: { autosave_ms: v } })} />
               </Row>
             </div>
           )}

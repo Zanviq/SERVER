@@ -706,6 +706,41 @@ def test_session_identity_is_exact_not_case_folded():
     assert ghost.get("/api/system").status_code == 401
 
 
+def test_corrupt_store_files_are_not_overwritten():
+    """저장 파일이 잘렸을 때 '비어 있음'으로 보면 다음 저장이 원본을 덮는다."""
+    _login()
+    s = get_settings()
+    made_ev = client.post("/api/calendar/events", json={
+        "title": "손상시험", "start": "2027-01-05T10:00:00", "end": "2027-01-05T11:00:00"}).json()
+    made_todo = client.post("/api/todo/create", json={"title": "손상시험"}).json()
+    quiet = TestClient(app, raise_server_exceptions=False)
+    quiet.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+
+    for path, read_url, make in (
+        (s.storage_root / "users" / "tester" / "calendar" / "events.json",
+         "/api/calendar/events",
+         lambda: quiet.post("/api/calendar/events", json={
+             "title": "새것", "start": "2027-01-06T10:00:00", "end": "2027-01-06T11:00:00"})),
+        (s.storage_root / "users" / "tester" / "todo" / "todo.json",
+         "/api/todo/board",
+         lambda: quiet.post("/api/todo/create", json={"title": "새것"})),
+    ):
+        original = path.read_text(encoding="utf-8")
+        broken = original[: len(original) // 2]
+        path.write_text(broken, encoding="utf-8")
+        try:
+            assert quiet.get(read_url).status_code == 503, path.name
+            make()
+            assert path.read_text(encoding="utf-8") == broken, f"{path.name} 을 덮어썼다"
+        finally:
+            path.write_text(original, encoding="utf-8")
+        assert quiet.get(read_url).status_code == 200
+
+    # 다른 테스트가 빈 저장소를 전제한다 — 만든 것은 치운다
+    client.delete(f"/api/calendar/events/{made_ev['id']}")
+    client.delete(f"/api/todo/{made_todo['id']}")
+
+
 def test_corrupt_accounts_file_is_not_overwritten():
     """계정 파일이 잘렸을 때 새로 써 버리면 가입 계정이 전부 사라진다."""
     import tempfile as _tf
@@ -3898,14 +3933,18 @@ def test_todo_http_validates_like_the_calendar():
     # 느슨한 표기는 정규화해서 받는다
     loose = client.post("/api/todo/create", json={"title": "느슨", "due": "2026-9-5T9:00"})
     assert loose.status_code == 200 and loose.json()["due"] == "2026-09-05T09:00:00", loose.text
-    # 거절된 것은 저장되지 않았으므로 2건이다
+    # 거절된 것은 저장되지 않았다. **다른 테스트가 남긴 것과 섞이지 않게** 이
+    # 테스트가 만든 제목만 본다(전체 개수를 세면 실행 순서에 따라 깨진다).
+    mine = {"정상", "느슨", "x"}
     lst = client.get("/api/todo/list")
-    assert lst.status_code == 200 and len(lst.json()) == 2, lst.text
+    assert lst.status_code == 200
+    assert {t["title"] for t in lst.json()} & mine == {"정상", "느슨"}, lst.text
     # 캘린더 표시용 기간 조회 — 기한 없는 것은 뺀다
     ranged = client.get("/api/todo/list?from=2026-09-01&to=2026-09-30&include_undated=false")
-    assert ranged.status_code == 200 and len(ranged.json()) == 2, ranged.json()
+    assert ranged.status_code == 200
+    assert {t["title"] for t in ranged.json()} & mine == {"정상", "느슨"}, ranged.json()
     narrow = client.get("/api/todo/list?from=2026-09-10&to=2026-09-30&include_undated=false")
-    assert [t["title"] for t in narrow.json()] == ["정상"], narrow.json()
+    assert {t["title"] for t in narrow.json()} & mine == {"정상"}, narrow.json()
 
 
 def test_todo_due_time_is_not_silently_truncated():

@@ -34,7 +34,13 @@ export function Dashboard() {
       .catch(() => {});
     const now = new Date();
     const to = new Date(now.getTime() + 30 * 86400000);
-    const iso = (d: Date) => d.toISOString().slice(0, 19);
+    // toISOString 은 **UTC** 로 바꾼다. 저장된 일정 시각은 현지 시각이라, 한국에서
+    // 오후에 열면 9시간 앞선 값으로 조회되어 오늘 이미 끝난 일정이 '다가오는 일정'
+    // 으로 떴다. 현지 시각 그대로 만든다.
+    const p = (n: number) => String(n).padStart(2, "0");
+    const iso = (d: Date) =>
+      `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` +
+      `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
     api.calEvents(iso(now), iso(to))
       .then((evs) =>
         setEvents([...evs].sort((a, b) => a.start.localeCompare(b.start)).slice(0, 5)),
