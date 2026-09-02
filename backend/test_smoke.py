@@ -706,6 +706,32 @@ def test_session_identity_is_exact_not_case_folded():
     assert ghost.get("/api/system").status_code == 401
 
 
+def test_date_only_due_is_all_day():
+    """날짜만 준 마감은 종일이어야 한다 — 아니면 캘린더에 0시 일정으로 뜬다.
+
+    생성 모델의 all_day 기본값이 False 라 payload 에 늘 실렸고, 저장소가 마감
+    표기로 판단하는 길이 막혀 있었다(수정 쪽은 None 이라 제대로 동작했다).
+    """
+    _login()
+    made = client.post("/api/todo/create", json={"title": "종일확인", "due": "2027-02-03"})
+    assert made.status_code == 200, made.text
+    assert made.json()["all_day"] is True, made.json()
+    assert made.json()["due"] == "2027-02-03", made.json()
+
+    timed = client.post("/api/todo/create",
+                        json={"title": "시각확인", "due": "2027-02-03T14:00"})
+    assert timed.json()["all_day"] is False, timed.json()
+    assert timed.json()["due"] == "2027-02-03T14:00:00", timed.json()
+
+    # 명시하면 그 값을 따른다
+    forced = client.post("/api/todo/create",
+                         json={"title": "강제종일", "due": "2027-02-03T14:00", "all_day": True})
+    assert forced.json()["all_day"] is True, forced.json()
+
+    for t in client.get("/api/todo/board").json()["todos"]:
+        client.delete(f"/api/todo/{t['id']}")
+
+
 def test_color_rule_is_the_same_everywhere():
     """색 판정도 한 곳에서만 한다 — 일정은 거절하고 할 일은 받아 주면 안 된다.
 

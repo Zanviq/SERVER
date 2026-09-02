@@ -46,7 +46,11 @@ class TodoInput(BaseModel):
     description: str = ""
     category_id: str = ""
     due: str = ""
-    all_day: bool = False
+    # **기본값을 False 로 두면 안 된다.** 그러면 payload 에 always all_day 가 실려서
+    # 저장소가 마감 표기로 종일 여부를 판단하는 길이 막힌다 — `2026-09-05` 처럼
+    # 날짜만 준 마감이 종일이 아닌 것으로 저장돼 캘린더에 0시 일정으로 뜬다.
+    # 수정(TodoUpdate)은 이미 None 이 기본이다. 생성도 같게 맞춘다.
+    all_day: bool | None = None
     color: str = ""
     done: bool = False
     order: int | None = None
