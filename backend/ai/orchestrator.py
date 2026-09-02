@@ -191,19 +191,33 @@ def run(
         # 여기까지 왔다는 건 스킬을 계속 부르다 한도에 닿았다는 뜻이다.
         # 이미 적용된 변경이 있는데 "최대 단계에 도달했습니다."만 내보내면
         # 사용자는 무엇이 바뀌었는지 알 수 없다.
+        #
+        # 중단됐다는 사실은 **언제나** 붙인다. 모델이 도중에 한 말(final_text)로
+        # 갈음하면, "네, 정리하겠습니다" 같은 중간 발화를 최종 답으로 받고
+        # 작업이 끝난 줄 안다 — 실제로는 일부만 반영된 상태다.
         did = [f"{n}({'성공' if ok else '실패'})" for n, ok in executed]
-        final_text = final_text or (
+        stopped = (
             "최대 단계에 도달해 중단했습니다. 지금까지 실행한 작업: " + ", ".join(did)
-            if did else "최대 단계에 도달했습니다."
+            if did else "최대 단계에 도달해 중단했습니다."
         )
+        said = (final_text or "").strip()
+        final_text = f"{said}\n\n{stopped}" if said else stopped
 
     if not (final_text or "").strip():
         # 모델이 텍스트 없이 끝내면 빈 말풍선만 남는다. 무슨 일이 있었는지는 알려준다.
-        did = [n for n, ok in executed if ok]
-        final_text = (
-            "작업을 마쳤습니다: " + ", ".join(did) if did
-            else "응답을 생성하지 못했습니다. 다시 말씀해 주세요."
-        )
+        # **실패한 것도 적는다.** 성공한 것만 나열하고 "마쳤습니다"라고 하면,
+        # 절반이 실패했는데도 다 된 줄 알고 넘어간다(위 최대단계 안내와 같은 규칙).
+        okd = [n for n, ok in executed if ok]
+        bad = [n for n, ok in executed if not ok]
+        if okd or bad:
+            parts = []
+            if okd:
+                parts.append("완료: " + ", ".join(okd))
+            if bad:
+                parts.append("실패: " + ", ".join(bad))
+            final_text = " / ".join(parts)
+        else:
+            final_text = "응답을 생성하지 못했습니다. 다시 말씀해 주세요."
     yield {"type": "text", "text": final_text}
     yield {"type": "done"}
 

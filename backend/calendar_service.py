@@ -95,7 +95,28 @@ def delete_many(
     gc = get_google_calendar(settings, user.username)
     if gc:
         return gc.delete_many(eids)
+    _trash_split_offs(user, settings, eids)
     return calendar_store.delete_many(user, settings, eids)
+
+
+def _trash_split_offs(user: SessionUser, settings: Settings, eids: list[str]) -> None:
+    """시리즈를 지우면 거기서 떼어낸 회차도 함께 사라진다 — 그것도 담아 둔다.
+
+    저장소 안에서 조용히 일어나는 삭제라, 담지 않으면 사용자가 따로 시간·제목을
+    고쳐 둔 그 회차를 되돌릴 방법이 아예 없다(휴지통에는 시리즈만 남는다).
+    """
+    from . import trash
+
+    try:
+        extras = calendar_store.split_offs_for(user, settings, eids)
+    except Exception:  # noqa: BLE001 - 보관 실패가 삭제를 막지는 않는다
+        return
+    for ev in extras:
+        try:
+            trash.move_event_to_trash(
+                {k: v for k, v in ev.items() if not k.startswith("_")}, user, settings)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def find_event(user: SessionUser, settings: Settings, eid: str) -> dict | None:
@@ -125,20 +146,10 @@ def _occurrence_snapshot(snapshot: dict, eid: str) -> dict:
     one.pop("recur_until", None)
     day = str(eid).split("@", 1)[1][:10] if "@" in str(eid) else ""
     if day:
-        # 시리즈 시작 시각의 '시:분'을 그날로 옮긴다(길이는 유지)
-        start = str(snapshot.get("start", ""))
-        end = str(snapshot.get("end", "") or start)
-        one["start"] = f"{day}T{start[11:]}" if "T" in start else day
-        if "T" in end and "T" in start:
-            from datetime import datetime
-
-            try:
-                dur = datetime.fromisoformat(end) - datetime.fromisoformat(start)
-                one["end"] = (datetime.fromisoformat(one["start"]) + dur).strftime("%Y-%m-%dT%H:%M:%S")
-            except ValueError:
-                one["end"] = one["start"]
-        else:
-            one["end"] = day
+        # 회차의 시작·끝은 **한 곳**에서 낸다(calendar_store._occurrence_times).
+        # 여기에 복사본을 두었더니 여러 날에 걸친 '종일' 반복 일정의 끝이
+        # 시작일로 뭉개져, 3일짜리를 지웠다 복원하면 하루짜리로 돌아왔다.
+        one["start"], one["end"] = calendar_store._occurrence_times(snapshot, day)
     return one
 
 
@@ -156,6 +167,7 @@ def delete_event(user: SessionUser, settings: Settings, eid: str) -> None:
     if gc:
         gc.delete(eid)
     else:
+        _trash_split_offs(user, settings, [eid])
         calendar_store.delete_event(user, settings, eid)
     if snapshot:
         try:

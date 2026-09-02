@@ -65,8 +65,12 @@ def _tree_fingerprint(base: Path) -> tuple:
     return (md, len(dirs), mx, total, h.hexdigest())
 
 
-#: 코드 울타리(``` 또는 ~~~). 인용·목록 앞머리를 떼고 본다.
-_FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
+#: 인용 기호·목록 앞머리. 그 안에도 코드블록이 있다(`> ```` `, `- ```` `).
+_LEAD = re.compile(r"^[\s>]*(?:[-*+]\s+|\d+[.)]\s+)?")
+#: 코드 울타리(``` 또는 ~~~). 앞머리를 떼고 본다.
+_FENCE = re.compile(r"^(`{3,}|~{3,})")
+#: 목록 항목의 시작(들여쓴 하위 항목도 포함)
+_LIST_ITEM = re.compile(r"^\s*(?:[-*+]\s|\d+[.)]\s)")
 #: 울타리 없는 옛 표기의 코드블록(4칸 이상 들여쓰기 또는 탭)
 _INDENTED_CODE = re.compile(r"^(?: {4}|\t)")
 #: 인라인 코드 — 백틱 개수가 맞는 구간.
@@ -84,24 +88,42 @@ def _without_code(text: str) -> str:
     """
     out: list[str] = []
     fence: str | None = None
+    prev_blank = True   # 들여쓴 코드블록은 문단을 끊고 들어올 수 없다
+    in_code = False     # 들여쓴 코드블록이 이어지는 중인가
+    in_list = False     # 목록 안인가(그 안의 들여쓰기는 코드가 아니라 하위 항목)
     for line in text.split("\n"):
-        stripped = line.lstrip("> \t")
-        m = _FENCE.match(stripped)
+        body = _LEAD.sub("", line, count=1)
+        m = _FENCE.match(body)
         if fence is None and m:
-            fence = m.group(1)[0] * 3
+            fence = m.group(1)
             out.append("")  # 빈 줄로 남긴다 — 아래 인라인 코드가 여기를 넘지 않게
+            prev_blank, in_code = False, False
             continue
         if fence is not None:
-            if m and m.group(1)[0] * 3 == fence:
+            # 길이를 3으로 뭉개면 안 된다. ````` 로 연 울타리 안의 ``` 줄이
+            # 울타리를 닫아 버려서, 코드 예시 속 [[링크]]가 진짜 간선이 된다.
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
                 fence = None
             out.append("")
             continue
-        # 4칸 이상 들여쓴 줄도 코드블록이다(울타리 없는 옛 표기).
-        # 프런트(wikiTransform)가 그렇게 보므로 여기도 같아야 한다.
-        if _INDENTED_CODE.match(line):
+        if not line.strip():
+            out.append(line)
+            prev_blank, in_code = True, False
+            continue
+        if _LIST_ITEM.match(line):
+            in_list = True
+        elif not line[:1].isspace():
+            in_list = False  # 들여쓰기 없는 보통 줄이 나오면 목록이 끝난다
+        # 4칸 이상 들여쓴 줄도 코드블록이다(울타리 없는 옛 표기). 단,
+        #  - 문단 도중에는 코드가 될 수 없고(빈 줄 뒤에서만 시작한다),
+        #  - **목록 안에서는 하위 항목**이다. 이걸 안 보면 `- 상위 / 4칸 - 하위`
+        #    같은 흔한 중첩 목록의 [[링크]]가 통째로 사라진다.
+        if _INDENTED_CODE.match(line) and not in_list and (prev_blank or in_code):
             out.append("")
+            in_code = True
             continue
         out.append(line)
+        prev_blank, in_code = False, False
     return _INLINE_CODE.sub(" ", "\n".join(out))
 
 

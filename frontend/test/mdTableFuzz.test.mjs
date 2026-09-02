@@ -10,19 +10,9 @@
  *
  * 무작위지만 씨앗을 고정해서, 깨지면 같은 입력으로 다시 볼 수 있게 한다.
  */
-import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { bundle } from "./bundle.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const dir = mkdtempSync(join(tmpdir(), "mdtf-"));
-const outFile = join(dir, "mdTable.mjs");
-const src = join(here, "..", "src", "lib", "mdTable.ts");
-execFileSync("npx", ["esbuild", src, "--bundle", "--format=esm", `--outfile=${outFile}`],
-  { stdio: "pipe", shell: true });
-const T = await import("file://" + outFile.replace(/\\/g, "/"));
+const T = await bundle("src/lib/mdTable.ts");
 
 // 씨앗 고정 난수(xorshift) — 깨진 입력을 그대로 재현할 수 있어야 한다
 function rng(seed) {

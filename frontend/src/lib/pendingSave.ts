@@ -17,7 +17,7 @@ type Timers = {
   clear: (id: number) => void;
 };
 
-/** 저장 한 건. 돌려주는 값은 쓰지 않는다(성공 여부는 부른 쪽이 이미 다룬다). */
+/** 저장 한 건. `false` 를 돌려주거나 던지면 **실패**로 보고 다시 시도한다. */
 type SaveJob = () => unknown;
 
 const REAL: Timers = {
@@ -32,9 +32,9 @@ export class PendingSave {
 
   constructor(private timers: Timers = REAL) {}
 
-  /** 대기 중인 저장이 있는가. */
+  /** 아직 해내지 못한 저장이 있는가(예약 중이거나, 실패해서 다시 해야 하거나). */
   get scheduled(): boolean {
-    return this.id !== null;
+    return this.job !== null;
   }
 
   /** ms 뒤에 저장한다. 앞선 예약은 **덮어쓴다** — 마지막 것만 유효하다. */
@@ -43,30 +43,47 @@ export class PendingSave {
     this.job = job;
     this.id = this.timers.set(() => {
       this.id = null;
-      const run = this.job;
-      this.job = null;
-      void run?.();
+      void this.run();
     }, ms);
   }
 
-  /** 기다리지 않고 **지금** 저장한다. 문서를 옮기기 전에 부른다. */
+  /**
+   * 예약된 저장을 실행한다. `false` 를 돌려주거나 던지면 실패로 본다.
+   *
+   * **실패한 저장은 버리지 않는다.** 버리면 그 글이 어디에도 남지 않는다 —
+   * 타이머는 이미 소진됐고 다음 자동저장은 새 입력이 있어야 걸리므로, 잠깐
+   * 끊겼다 돌아온 사이에 친 마지막 문단이 통째로 사라진다.
+   */
+  private async run(): Promise<boolean> {
+    const job = this.job;
+    if (!job) return true;
+    let ok = false;
+    try {
+      ok = (await job()) !== false;
+    } catch {
+      ok = false;
+    }
+    if (ok) this.job = null;
+    return ok;
+  }
+
+  /** 기다리지 않고 **지금** 저장한다. 문서를 옮기기 전에 부른다.
+   *  돌려주는 값은 "이제 안 남았는가" — false 면 저장에 실패한 것이다. */
   async flush(): Promise<boolean> {
-    if (this.id === null) return false;
-    this.timers.clear(this.id);
-    this.id = null;
-    const run = this.job;
-    this.job = null;
-    await run?.();
-    return true;
+    if (this.id !== null) {
+      this.timers.clear(this.id);
+      this.id = null;
+    }
+    return this.run();
   }
 
   /** 대기 중인 저장을 **버린다**. 문서를 지운 뒤에 부른다. */
   cancel(): boolean {
-    if (this.id === null) return false;
-    this.timers.clear(this.id);
+    const had = this.job !== null || this.id !== null;
+    if (this.id !== null) this.timers.clear(this.id);
     this.id = null;
     this.job = null;
-    return true;
+    return had;
   }
 }
 

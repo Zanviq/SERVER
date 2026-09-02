@@ -561,6 +561,21 @@ def test_graph_ignores_wikilinks_inside_code():
     embed = "![[사진.png]] 와 [[문서]]"
     assert parse_wikilinks(embed) == ["문서"], parse_wikilinks(embed)
 
+    # **중첩 목록의 들여쓰기는 코드가 아니다.** 4칸을 무조건 코드로 보면
+    # 흔한 2~3단 목록 안의 링크가 통째로 사라진다.
+    for nested in ("- 상위\n    - [[하위링크]]\n",
+                   "- 하나\n  - 둘\n    - [[하위링크]]\n",
+                   "1. 하나\n    1. [[하위링크]]\n"):
+        assert parse_wikilinks(nested) == ["하위링크"], (nested, parse_wikilinks(nested))
+
+    # 울타리 길이를 3으로 뭉개면 안 된다 — 4중 울타리 속 3중 줄이 닫아 버린다
+    four = f"{bt * 4}\n{bt * 3}\n[[예시속]]\n{bt * 3}\n{bt * 4}\n\n[[바깥]]"
+    assert parse_wikilinks(four) == ["바깥"], parse_wikilinks(four)
+
+    # 목록 항목으로 연 울타리도 울타리다(앞머리를 떼고 봐야 한다)
+    inlist = f"- {bt * 3}sh\n  [[코드속]]\n- {bt * 3}\n\n[[바깥2]]"
+    assert parse_wikilinks(inlist) == ["바깥2"], parse_wikilinks(inlist)
+
 
 def test_graph_notices_a_rename():
     """이름을 바꾸면 그래프도 바로 따라와야 한다.
@@ -893,6 +908,76 @@ def test_deleting_a_series_also_removes_occurrences_split_out_of_it():
     assert occ() == [], occ()
 
 
+def test_deleting_a_series_puts_the_split_occurrence_in_the_trash_too():
+    """시리즈를 지우면 떼어낸 회차도 함께 사라진다 — 그것도 되돌릴 수 있어야 한다.
+
+    저장소 안에서 조용히 일어나는 삭제라, 담지 않으면 사용자가 따로 시간을
+    고쳐 둔 그 회차를 되찾을 방법이 아예 없다.
+    """
+    _login()
+    client.delete("/api/trash/empty")
+    made = client.post("/api/calendar/events", json={
+        "title": "회차보관시험", "start": "2028-04-03T09:00:00", "end": "2028-04-03T10:00:00",
+        "recurrence": "weekly", "recur_until": "2028-05-08"})
+    sid = made.json()["id"]
+
+    def occ():
+        got = client.get("/api/calendar/events", params={"from": "2028-04-01", "to": "2028-05-31"})
+        return [e for e in got.json() if e["title"] == "회차보관시험"]
+
+    target = occ()[1]
+    day = target["start"][:10]
+    moved = client.put(f"/api/calendar/events/{target['id']}", json={"start": f"{day}T16:00:00"})
+    assert moved.status_code == 200, moved.text
+    split_id = moved.json()["id"]
+
+    assert client.delete(f"/api/calendar/events/{sid}").status_code == 200
+    assert occ() == [], occ()
+
+    # 떼어낸 회차도 휴지통에 있어야 한다
+    items = [e for e in client.get("/api/trash/list").json() if e["kind"] == "event"]
+    names = [e["name"] for e in items]
+    assert names.count("회차보관시험") >= 2, names
+    starts = [str(e.get("event_start", "")) for e in items]
+    assert any(s.startswith(day) and "16:00" in s for s in starts), starts
+    assert split_id, split_id
+    client.delete("/api/trash/empty")
+
+
+def test_restoring_a_series_keeps_the_occurrences_you_deleted():
+    """휴지통에서 반복 일정을 복원할 때 낱개로 지운 회차가 되살아나면 안 된다."""
+    _login()
+    made = client.post("/api/calendar/events", json={
+        "title": "예외복원시험", "start": "2028-02-07T09:00:00", "end": "2028-02-07T10:00:00",
+        "recurrence": "weekly", "recur_until": "2028-03-13"})
+    assert made.status_code == 200, made.text
+    sid = made.json()["id"]
+
+    def occ():
+        got = client.get("/api/calendar/events", params={"from": "2028-02-01", "to": "2028-03-31"})
+        return [e for e in got.json() if e["title"] == "예외복원시험"]
+
+    before = occ()
+    assert len(before) >= 4, before
+    # 회차 하나만 지운다
+    gone = before[1]
+    assert client.delete(f"/api/calendar/events/{gone['id']}").status_code == 200
+    assert len(occ()) == len(before) - 1, occ()
+
+    # 시리즈를 통째로 지웠다가 휴지통에서 되살린다
+    assert client.delete(f"/api/calendar/events/{sid}").status_code == 200
+    entry = next(e for e in client.get("/api/trash/list").json()
+                 if e["name"] == "예외복원시험" and e["kind"] == "event")
+    assert client.post(f"/api/trash/restore?id={entry['id']}").status_code == 200
+
+    after = occ()
+    assert len(after) == len(before) - 1, [e["start"] for e in after]
+    assert gone["start"] not in [e["start"] for e in after], "지웠던 회차가 되살아났다"
+    for e in after:
+        client.delete(f"/api/calendar/events/{e['id']}")
+    client.delete("/api/trash/empty")
+
+
 def test_legacy_timezoned_series_is_not_split_by_a_plain_edit():
     """타임존이 붙은 채 저장된 옛 반복 일정도 제목 수정으로 쪼개지면 안 된다."""
     from backend import calendar_store
@@ -995,6 +1080,56 @@ def test_color_rule_is_the_same_everywhere():
     assert hit and hit[0]["color"] == "9", hit
     for t in todos:
         client.delete(f"/api/todo/{t['id']}")
+
+
+def test_folder_identifier_is_not_read_as_a_document():
+    """조회 스킬이 준 **폴더** 식별자를 문서 스킬이 문서로 읽으면 안 된다.
+
+    list_folders 가 준 `회의록` 을 delete_document 에 넘기면, 예전에는 `회의록.md`
+    를 찾아 **지목하지 않은 문서**를 휴지통으로 보내고 폴더는 그대로 남긴 채
+    "지웠습니다"라고 답했다. 이 저장소에서 반복해서 난 결함 유형이다.
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+
+    s = get_settings()
+    _login()
+    user = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    ctx = SkillContext(user=user, settings=s, today="2026-09-02")
+    reg = default_registry()
+
+    reg.dispatch("create_folder", {"path": "겹침시험"}, ctx)
+    reg.dispatch("write_document", {"path": "겹침시험.md", "content": "지우면 안 됨"}, ctx)
+    try:
+        assert "겹침시험" in reg.dispatch("list_folders", {}, ctx).data["folders"]
+        # 폴더와 문서가 같은 이름이면 **되묻는다**(말없이 하나를 고르지 않는다)
+        for skill in ("delete_document", "read_document", "rename_document"):
+            args = {"path": "겹침시험"}
+            if skill == "rename_document":
+                args["new_name"] = "새이름"
+            r = reg.dispatch(skill, args, ctx)
+            assert not r.ok, (skill, r.message)
+            assert r.error_code == "ambiguous", (skill, r.error_code, r.message)
+            assert "겹침시험.md" in r.message, (skill, r.message)
+
+        # 문서가 없으면 폴더 삭제는 그대로 된다(이 스킬의 원래 기능)
+        client.delete("/api/notes/delete?path=겹침시험.md")
+        r = reg.dispatch("delete_document", {"path": "겹침시험"}, ctx)
+        assert r.ok, r.message
+        assert "폴더" in r.message, r.message
+        client.put("/api/notes/save", json={"path": "겹침시험.md", "content": "지우면 안 됨"})
+        # 폴더만 있을 때 읽기·이름변경은 여전히 거절한다
+        client.post("/api/notes/folder", json={"path": "겹침시험폴더"})
+        r = reg.dispatch("read_document", {"path": "겹침시험폴더"}, ctx)
+        assert not r.ok and r.error_code == "is_folder", (r.error_code, r.message)
+        client.delete("/api/notes/folder?path=겹침시험폴더")
+        # 문서는 그대로 있어야 한다
+        got = client.get("/api/notes/get", params={"path": "겹침시험.md"})
+        assert got.status_code == 200 and got.json()["content"] == "지우면 안 됨", got.text
+    finally:
+        client.delete("/api/notes/delete?path=겹침시험.md")
+        client.delete("/api/notes/folder?path=겹침시험")
 
 
 def test_extension_rule_lives_in_one_place():
@@ -1105,6 +1240,63 @@ def test_broken_auth_users_does_not_lock_the_owner_out_forever():
         else:
             os.environ["AUTH_USERS"] = prev_users
         _sh.rmtree(root, ignore_errors=True)
+
+
+def test_refused_deletion_puts_the_vault_back():
+    """계정 삭제가 거절되면 벌트를 제자리로 돌려놔야 한다.
+
+    데이터를 먼저 치우도록 고쳤더니, accounts.delete 가 400 으로 막는 경우
+    (마지막 관리자·마지막 주인)에 계정은 멀쩡히 살아 있는데 그 사람의
+    문서·일정·할 일·설정·구글 토큰만 통째로 사라지게 됐다.
+    """
+    s = get_settings()
+    _login()
+    client.put("/api/notes/save", json={"path": "지키자.md", "content": "이건 남아야 한다"})
+
+    quiet = TestClient(app, raise_server_exceptions=False)
+    quiet.post("/api/auth/login", json={"username": "tester2", "password": "pw456"})
+    # tester 는 .env 출신 주인이다. 주인이 둘이라 삭제가 되면 안 되게 막아 둔다.
+    import backend.accounts as acc_mod
+    from fastapi import HTTPException
+
+    real = acc_mod.delete
+
+    def refuse(username, settings):
+        raise HTTPException(status_code=400, detail="마지막 서버 관리자는 삭제할 수 없습니다.")
+
+    acc_mod.delete = refuse
+    try:
+        r = quiet.delete("/api/admin/users/tester")
+        assert r.status_code == 400, r.text
+    finally:
+        acc_mod.delete = real
+
+    # 계정도 벌트도 그대로여야 한다
+    assert s.user_root("tester").exists(), "벌트가 사라졌다"
+    got = client.get("/api/notes/get", params={"path": "지키자.md"})
+    assert got.status_code == 200 and got.json()["content"] == "이건 남아야 한다", got.text
+    grave = s.storage_root / "deleted-users"
+    left = [p.name for p in grave.iterdir()] if grave.exists() else []
+    assert not any(n.startswith("tester-") for n in left), left
+    client.delete("/api/notes/delete?path=지키자.md")
+
+
+def test_self_lockout_guard_ignores_letter_case():
+    """자기 계정 조작 금지는 계정 조회와 **같은 기준**(대소문자 무관)이어야 한다.
+
+    여기만 정확히 비교하면 URL 대소문자만 바꿔서 가드를 지나가고, 그다음
+    조작들은 _match 로 같은 계정을 찾아 실제로 자기 자신을 잠근다.
+    """
+    _login()  # 전역 client 도 여기서 직접 로그인한다(앞선 테스트에 기대지 않는다)
+    quiet = TestClient(app, raise_server_exceptions=False)
+    quiet.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    for path in ("/api/admin/users/TESTER/disable", "/api/admin/users/Tester/disable"):
+        r = quiet.post(path)
+        assert r.status_code == 400, (path, r.status_code, r.text)
+    r = quiet.delete("/api/admin/users/TeStEr")
+    assert r.status_code == 400, r.text
+    # 여전히 관리 화면을 쓸 수 있다(자기 자신을 못 잠갔다)
+    assert client.get("/api/admin/users").status_code == 200
 
 
 def test_deleting_an_account_keeps_it_when_the_data_cannot_be_moved():
@@ -1571,8 +1763,31 @@ def test_calendar_recurrence_and_reminders():
     got2 = client.get("/api/calendar/events?from=2026-08-03T00:00:00&to=2026-08-09T23:59:59").json()
     daily2 = [e for e in got2 if e["title"] == "데일리 스탠드업"]
     assert len(daily2) == 6
-    # 알림 due 엔드포인트 동작
+    # 알림 due 엔드포인트 — **리스트인지만 보면 안 된다.** 알림 계산이 통째로
+    # 죽어 아무 알림도 안 나가게 되어도 그 검사는 초록불이다.
+    from backend import calendar_service
+    from backend.auth import SessionUser
+    from backend.config import get_settings as _gs
+
+    me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    # 8/6 08:00 기준으로 보면 그날 09:00 회차가 30분 전 알림 대상이다
+    due = calendar_service.due_reminders(me, _gs(), "2026-08-06T08:00:00", 120)
+    mine = [d for d in due if d["title"] == "데일리 스탠드업"]
+    assert len(mine) == 1, [d.get("start") for d in due]
+    assert mine[0]["start"].startswith("2026-08-06T09:00"), mine[0]
+    assert mine[0]["remind_at"].startswith("2026-08-06T08:30"), mine[0]
+    # 지운 회차(8/5)는 알림도 나가면 안 된다
+    gone = calendar_service.due_reminders(me, _gs(), "2026-08-05T08:00:00", 120)
+    assert not [d for d in gone if d["title"] == "데일리 스탠드업"], gone
+
     assert isinstance(client.get("/api/calendar/reminders?within=100000").json(), list)
+
+    # 뒷정리 — 이 일정이 남으면 다른 테스트의 조회 결과에 섞인다
+    for e in client.get(
+            "/api/calendar/events?from=2026-08-03T00:00:00&to=2026-08-09T23:59:59").json():
+        if e["title"] == "데일리 스탠드업":
+            client.delete(f"/api/calendar/events/{e['id'].split('@')[0]}")
+            break
 
 
 def test_notes_folders_and_tree():
@@ -2889,12 +3104,25 @@ def test_ai_model_selectable_in_settings():
     s = get_settings()
     _login()
 
-    # 목록은 대화용만 — 이미지/TTS/전사/로봇 모델이 섞이면 고르는 순간 비서가 망가진다
+    # 목록은 대화용만 — 이미지/TTS/전사/로봇 모델이 섞이면 고르는 순간 비서가 망가진다.
+    #
+    # **거르는 규칙을 직접 먹여 본다.** list_models 의 결과만 보면, API 키가 없는
+    # 곳에서는 하드코딩된 _FALLBACK 3개만 돌아와 필터가 한 번도 실행되지 않는다
+    # (그래도 초록불이라, 필터가 통째로 사라져도 알 수 없었다).
+    should_pass = ["gemini-2.5-pro", "gemini-3.0-flash", "gemini-2.5-flash-lite"]
+    should_fail = [
+        "gemini-2.5-flash-image", "gemini-2.5-flash-tts", "gemini-2.5-transcribe",
+        "gemini-robotics-er", "gemini-2.5-computer-use", "gemini-omni",
+        "text-embedding-004", "imagen-3.0",  # gemini 로 시작하지도 않는다
+    ]
+    for name in should_pass:
+        assert ai_models._is_chat_model(name), name
+    for name in should_fail:
+        assert not ai_models._is_chat_model(name), name
+
     listed = [m["id"] for m in ai_models.list_models(s)]
     assert listed, "목록이 비면 드롭다운이 빈칸이 된다"
-    banned = ("-image", "-tts", "transcribe", "robotics", "computer-use", "omni")
-    assert not [m for m in listed if any(b in m for b in banned)], listed
-    assert all(m.startswith("gemini") for m in listed), listed
+    assert all(ai_models._is_chat_model(m) for m in listed), listed
     # 현재 서버 기본값은 항상 고를 수 있어야 한다
     assert s.gemini_model in listed, (s.gemini_model, listed)
 
@@ -3364,9 +3592,14 @@ def test_password_hashing():
     # 같은 비밀번호라도 salt가 달라 해시가 다르다
     assert accounts.hash_password("same") != accounts.hash_password("same")
 
-    # 저장소 파일에 평문이 없다
+    # 저장소 파일에 평문이 없다.
+    # 계정 파일은 **여기서 직접 만들어 둔다** — 앞선 테스트가 먼저 로그인해 준
+    # 덕에만 통과하면, 이 테스트 하나만 돌렸을 때는 아무것도 검사하지 못한다.
     s = get_settings()
-    raw = (s.storage_root / "accounts.json").read_text(encoding="utf-8")
+    accounts.ensure_seed(s)
+    p = s.storage_root / "accounts.json"
+    assert p.exists(), "계정 파일이 없다 — 아무것도 검사하지 못한다"
+    raw = p.read_text(encoding="utf-8")
     assert "pw123" not in raw and "pw456" not in raw
 
 
@@ -4238,8 +4471,30 @@ def test_google_batch_create_fallback_keeps_same_title_events():
     made, fail = gc.create_many(payloads)
     assert len(made) + len(fail) == 5, (len(made), len(fail))
     assert len(made) == 5, len(made)
-    # 실패는 제목이 아니라 요청 인덱스로 온다
-    assert all(isinstance(k, int) for k, _ in fail), fail
+    assert fail == [], fail
+
+    # **실패가 하나도 없으면 실패의 모양을 검사할 수 없다.** 폴백까지 막아서
+    # 진짜 실패를 만든 뒤, 실패가 제목이 아니라 요청 인덱스로 오는지 본다
+    # (제목으로 오면 같은 제목 5건이 1건으로 뭉개진다 — 이 테스트의 원래 사고).
+    class _BrokenIns(_Ins):
+        def execute(self):
+            raise RuntimeError("폴백도 실패")
+
+    class _BrokenEvents:
+        def insert(self, calendarId, body):
+            return _BrokenIns(body)
+
+    class _BrokenSvc(_Svc):
+        def events(self):
+            return _BrokenEvents()
+
+    gc2 = GoogleCalendar.__new__(GoogleCalendar)
+    gc2._svc = _BrokenSvc()
+    gc2._cid = "primary"
+    made2, fail2 = gc2.create_many(payloads)
+    assert len(fail2) == 4, (len(made2), fail2)  # 배치 첫 건은 성공했다
+    assert all(isinstance(k, int) for k, _ in fail2), fail2
+    assert sorted(k for k, _ in fail2) == [1, 2, 3, 4], fail2
 
 
 def test_bulk_create_reports_every_failure():

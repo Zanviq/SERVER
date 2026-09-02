@@ -71,6 +71,44 @@ class _Ambiguous(Exception):
         self.candidates = [_ident(root, p) for p in hits]
 
 
+class _IsFolder(Exception):
+    """식별자가 문서가 아니라 폴더를 가리킨다.
+
+    list_folders 가 준 값을 그대로 문서 스킬에 넘기는 일이 실제로 일어난다.
+    조용히 `<이름>.md` 로 바꿔 읽으면 **지목하지 않은 문서**가 사라진다
+    (폴더는 그대로 남은 채 "지웠습니다"라고 답했다 — 실측).
+
+    `twin` 은 같은 이름의 문서가 함께 있을 때 그 상대경로다. 그때는 무엇을
+    말한 것인지 알 수 없으므로 되물어야 한다.
+    """
+
+    def __init__(self, ident: str, twin: str | None = None):
+        self.ident = ident
+        self.twin = twin
+
+
+def _folder_result(exc: _IsFolder) -> SkillResult:
+    if exc.twin:
+        return SkillResult(
+            ok=False,
+            message=(
+                f"'{exc.ident}' 이름의 폴더와 문서가 둘 다 있습니다. "
+                f"문서를 말한 것이면 '{exc.twin}' 처럼 확장자까지 적으세요."
+            ),
+            error_code="ambiguous",
+            data={"folder": exc.ident, "document": exc.twin},
+        )
+    return SkillResult(
+        ok=False,
+        message=(
+            f"'{exc.ident}'은(는) 폴더입니다. 이 스킬은 문서만 다룹니다. "
+            f"폴더 안의 문서를 지정하려면 '{exc.ident}/문서이름' 처럼 적으세요."
+        ),
+        error_code="is_folder",
+        data={"folder": exc.ident},
+    )
+
+
 def _find_by_name(root: Path, ident: str, *, editable_only: bool = False) -> list:
     """폴더를 생략한 이름으로 전체에서 찾는다(모델이 흔히 이름만 준다).
 
@@ -97,6 +135,12 @@ def _resolve(root: Path, ident: str, *, editable_only: bool = False):
     쓰기 대상이 되어 엉뚱한 폴더의 문서를 통째로 덮어썼다(덮어쓰기는 휴지통을
     거치지 않아 복구 불가였다). 삭제·이동·이름변경도 같은 경로를 탄다.
     """
+    # **폴더 이름을 문서로 해석하지 않는다.** list_folders 가 준 식별자(`회의록`)를
+    # 그대로 넘기면 예전에는 `회의록.md` 를 찾아 **지목하지 않은 문서**를 휴지통에
+    # 보내고, 폴더는 그대로 남긴 채 "지웠습니다"라고 답했다(실측).
+    if safe_join(root, ident).is_dir():
+        twin = next((c for c in (ident, f"{ident}.md") if safe_join(root, c).is_file()), None)
+        raise _IsFolder(ident, twin)
     for cand in (ident, f"{ident}.md"):
         p = safe_join(root, cand)
         if p.is_file():
@@ -253,6 +297,8 @@ class ReadDocument(SkillBase):
             target = _resolve(root, args["path"])
         except _Ambiguous as e:
             return _ambiguous_result(e)
+        except _IsFolder as e:
+            return _folder_result(e)
         if target is None:
             return SkillResult(ok=False, message="문서를 찾을 수 없습니다.", error_code="not_found")
         # 해석된 **실제 경로**로 한 번 더. 요청 문자열만 보면 `비밀/일기`는 막히는데
@@ -307,6 +353,8 @@ class WriteDocument(SkillBase):
             target = _target_for_write(root, args["path"])
         except _Ambiguous as e:
             return _ambiguous_result(e)
+        except _IsFolder as e:
+            return _folder_result(e)
         if not is_editable(target.name):
             # 있는 파일만 보던 검사였다. 그러면 `보고서.xyz` 처럼 모르는 확장자로
             # **새로** 만드는 것은 통과해서, 다시 읽지도 덧붙이지도 못하는 문서를
@@ -360,6 +408,8 @@ class AppendDocument(SkillBase):
             target = _target_for_write(root, args["path"])
         except _Ambiguous as e:
             return _ambiguous_result(e)
+        except _IsFolder as e:
+            return _folder_result(e)
         if not is_editable(target.name):
             # 있는 파일만 보던 검사였다. 그러면 `보고서.xyz` 처럼 모르는 확장자로
             # **새로** 만드는 것은 통과해서, 다시 읽지도 덧붙이지도 못하는 문서를
@@ -396,13 +446,20 @@ class DeleteDocument(SkillBase):
             target = _resolve(root, args["path"])
         except _Ambiguous as e:
             return _ambiguous_result(e)
+        except _IsFolder as e:
+            # **이 스킬은 폴더도 지운다**(설명에 그렇게 적혀 있다). 다만 같은
+            # 이름의 문서가 함께 있으면 무엇을 말한 것인지 알 수 없으므로 되묻는다 —
+            # 예전에는 말없이 문서 쪽을 지우고 폴더는 그대로 뒀다.
+            if e.twin:
+                return _folder_result(e)
+            folder = safe_join(root, e.ident)
+            if folder == root:
+                return SkillResult(ok=False, message="루트는 지울 수 없습니다.", error_code="invalid")
+            rel = to_rel(root, folder)
+            move_to_trash(folder, rel, ctx.user, ctx.settings)
+            return SkillResult(ok=True, message=f"폴더 '{rel}'을(를) 휴지통으로 옮겼습니다.",
+                               data={"path": rel})
         if target is None:
-            # 폴더일 수도 있다
-            folder = safe_join(root, args["path"])
-            if folder.is_dir() and folder != root:
-                rel = to_rel(root, folder)
-                move_to_trash(folder, rel, ctx.user, ctx.settings)
-                return SkillResult(ok=True, message=f"폴더 '{rel}'을(를) 휴지통으로 옮겼습니다.", data={"path": rel})
             return SkillResult(ok=False, message="문서를 찾을 수 없습니다.", error_code="not_found")
         ident = _ident(root, target)
         move_to_trash(target, to_rel(root, target), ctx.user, ctx.settings)
@@ -428,6 +485,8 @@ class RenameDocument(SkillBase):
             src = _resolve(root, args["path"])
         except _Ambiguous as e:
             return _ambiguous_result(e)
+        except _IsFolder as e:
+            return _folder_result(e)
         if src is None:
             return SkillResult(ok=False, message="문서를 찾을 수 없습니다.", error_code="not_found")
         new = (args["new_name"] or "").strip()
@@ -466,6 +525,8 @@ class MoveDocument(SkillBase):
             src = _resolve(root, args["path"])
         except _Ambiguous as e:
             return _ambiguous_result(e)
+        except _IsFolder as e:
+            return _folder_result(e)
         if src is None:
             return SkillResult(ok=False, message="문서를 찾을 수 없습니다.", error_code="not_found")
         folder = (args.get("target_folder") or "").strip().strip("/")
@@ -569,6 +630,8 @@ class DocumentBacklinks(SkillBase):
             target = _resolve(root, args["path"])
         except _Ambiguous as e:
             return _ambiguous_result(e)
+        except _IsFolder as e:
+            return _folder_result(e)
         if target is None:
             return SkillResult(
                 ok=False,

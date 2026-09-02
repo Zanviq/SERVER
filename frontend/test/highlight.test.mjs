@@ -9,19 +9,9 @@
  * 읽기 뷰에서 `a` 와 `d` 사이 통째로 형광펜이 됐다(브라우저에서 실측). 개발 메모에
  * 비교 연산자를 쓰는 일은 흔하다.
  */
-import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { bundle } from "./bundle.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const dir = mkdtempSync(join(tmpdir(), "hl-"));
-const outFile = join(dir, "extras.mjs");
-const src = join(here, "..", "src", "lib", "markdownExtras.ts");
-execFileSync("npx", ["esbuild", src, "--bundle", "--format=esm", `--outfile=${outFile}`],
-  { stdio: "pipe", shell: true });
-const { cmHighlightExtension, remarkHighlight } = await import("file://" + outFile.replace(/\\/g, "/"));
+const { cmHighlightExtension, remarkHighlight } = await bundle("src/lib/markdownExtras.ts");
 
 const { parser: baseParser } = await import("@lezer/markdown");
 const { unified } = await import("unified");

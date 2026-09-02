@@ -30,6 +30,12 @@ function mapOutsideCode(text: string, fn: (chunk: string) => string): string {
     para = [];
   };
 
+  // 들여쓴 코드블록 판정에 필요한 문맥. 4칸 들여쓰기를 무조건 코드로 보면
+  // `- 상위 / (4칸)- 하위` 같은 흔한 중첩 목록의 [[링크]]가 글자로만 남는다.
+  let prevBlank = true; // 들여쓴 코드는 문단을 끊고 들어올 수 없다
+  let inCode = false;   // 들여쓴 코드블록이 이어지는 중
+  let inList = false;   // 목록 안의 들여쓰기는 코드가 아니라 하위 항목이다
+
   for (const line of lines) {
     // 인용문·목록 안에도 코드블록이 있다(`> ```` `, `- ```` `). 앞의 인용 기호와
     // 들여쓰기를 걷어낸 뒤에 울타리를 본다 — 예전에는 줄 맨 앞 공백 3칸까지만
@@ -46,21 +52,31 @@ function mapOutsideCode(text: string, fn: (chunk: string) => string): string {
       flush();
       fence = open[1];
       out.push(line);
-      continue;
-    }
-    // 4칸 이상 들여쓴 줄도 코드블록이다(울타리 없는 옛 표기).
-    if (/^(?: {4}|\t)/.test(line)) {
-      flush();
-      out.push(line);
+      prevBlank = false;
+      inCode = false;
       continue;
     }
     if (!line.trim()) {
       // 빈 줄 = 문단 끝. 여기서 끊어야 짝 안 맞는 백틱이 문서 뒤쪽까지 번지지 않는다.
       flush();
       out.push(line);
+      prevBlank = true;
+      inCode = false;
+      continue;
+    }
+    if (/^\s*(?:[-*+]\s|\d+[.)]\s)/.test(line)) inList = true;
+    else if (!/^\s/.test(line)) inList = false; // 들여쓰기 없는 줄이 나오면 목록이 끝난다
+    // 4칸 이상 들여쓴 줄도 코드블록이다(울타리 없는 옛 표기). 단 문단 도중에는
+    // 코드가 될 수 없고, 목록 안에서는 하위 항목이다.
+    if (/^(?: {4}|\t)/.test(line) && !inList && (prevBlank || inCode)) {
+      flush();
+      out.push(line);
+      inCode = true;
       continue;
     }
     para.push(line);
+    prevBlank = false;
+    inCode = false;
   }
   flush();
   return out.join("\n");

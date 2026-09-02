@@ -9,19 +9,9 @@
  * 여기서는 **백엔드와 같은 답이 나오는지**를 표로 못 박는다
  * (backend/file_kinds.py 의 looks_like_extension·split_ext 와 같은 규칙).
  */
-import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { bundle } from "./bundle.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const dir = mkdtempSync(join(tmpdir(), "names-"));
-const outFile = join(dir, "names.mjs");
-const src = join(here, "..", "src", "lib", "names.ts");
-execFileSync("npx", ["esbuild", src, "--bundle", "--format=esm", `--outfile=${outFile}`],
-  { stdio: "pipe", shell: true });
-const { looksLikeExtension, splitExt } = await import("file://" + outFile.replace(/\\/g, "/"));
+const { looksLikeExtension, splitExt } = await bundle("src/lib/names.ts");
 
 let fails = 0;
 function check(label, got, want) {

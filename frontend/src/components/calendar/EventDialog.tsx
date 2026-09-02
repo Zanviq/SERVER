@@ -61,7 +61,9 @@ export function EventDialog({
     setAllDay(initial.allDay ?? false);
     setStart(toLocal(initial.start ?? ""));
     setEnd(toLocal(initial.end ?? initial.start ?? ""));
-    setColor(initial.color ?? "2");
+    // `??` 는 빈 문자열을 못 거른다. colorId 없는 구글 일정은 색이 ""로 오는데,
+    // 그대로 두면 팔레트에서 아무 색도 선택돼 있지 않다(무엇이 저장될지 모른다).
+    setColor(initial.color || "2");
     setRecurrence(initial.recurrence ?? "none");
     setInterval(initial.interval ?? 1);
     setUntil(initial.recur_until ?? "");

@@ -5,19 +5,9 @@
  * 코드 안까지 바꿔 버리기 쉽다 — 문서에 위키링크 문법을 설명하려고 코드로 적어 둔
  * `[[제목]]` 이 진짜 링크가 되면, 화면의 코드가 사용자가 쓴 것과 달라진다.
  */
-import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { bundle } from "./bundle.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const dir = mkdtempSync(join(tmpdir(), "wiki-"));
-const outFile = join(dir, "wiki.mjs");
-const src = join(here, "..", "src", "lib", "wikiTransform.ts");
-execFileSync("npx", ["esbuild", src, "--bundle", "--format=esm", `--outfile=${outFile}`],
-  { stdio: "pipe", shell: true });
-const { transformWiki } = await import("file://" + outFile.replace(/\\/g, "/"));
+const { transformWiki } = await bundle("src/lib/wikiTransform.ts");
 
 // 있는 파일만 찾아 주는 해석기
 const resolve = (target) =>
@@ -80,6 +70,27 @@ check("4칸 들여쓴 코드블록",
 check("들여쓰기 없는 곳은 그대로 바뀐다",
   transformWiki("본문 [[제목]]", resolve),
   "본문 [제목](#wiki/%EC%A0%9C%EB%AA%A9)");
+
+console.log("\n코드가 아닌데 코드로 보면 안 되는 것");
+const LINK = "[제목](#wiki/%EC%A0%9C%EB%AA%A9)";
+// 4칸 들여쓰기를 무조건 코드로 보면, 흔한 중첩 목록의 링크가 글자로만 남는다.
+check("2단 중첩 목록", transformWiki("- 상위\n    - [[제목]]\n", resolve),
+  `- 상위\n    - ${LINK}\n`);
+check("3단 중첩 목록", transformWiki("- 하나\n  - 둘\n    - [[제목]]\n", resolve),
+  `- 하나\n  - 둘\n    - ${LINK}\n`);
+check("번호 목록 중첩", transformWiki("1. 하나\n    1. [[제목]]\n", resolve),
+  `1. 하나\n    1. ${LINK}\n`);
+// 코드 구간은 한 문단 안이다 — 빈 줄을 넘으면 문서 뒤쪽 링크가 통째로 죽는다
+check("문단 건너 백틱은 코드가 아니다",
+  transformWiki("` 첫 문단\n\n[[제목]]\n\n` 마지막", resolve),
+  `\` 첫 문단\n\n${LINK}\n\n\` 마지막`);
+// 반대로 한 문단 안에서는 줄을 넘는다(렌더러가 그렇게 그린다)
+check("한 문단 안의 줄 넘는 코드",
+  transformWiki("앞 ` 열고\n[[제목]]\n뒤 ` 닫음", resolve),
+  "앞 ` 열고\n[[제목]]\n뒤 ` 닫음");
+check("4중 울타리 속 3중 줄은 닫지 않는다",
+  transformWiki("````\n```\n[[제목]]\n```\n````", resolve),
+  "````\n```\n[[제목]]\n```\n````");
 
 console.log(fails === 0 ? "\n모두 통과" : `\n실패 ${fails}건`);
 process.exit(fails === 0 ? 0 : 1);

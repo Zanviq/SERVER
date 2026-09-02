@@ -167,8 +167,12 @@ export function Notes() {
    *
    *  타이머(기본 900ms)가 뜨기 전에 다른 문서로 옮기면 마지막 입력이 사라진다 —
    *  타이머가 뜰 때 current 는 이미 새 문서라 저장이 취소되기 때문이다. */
+  /** 흘려보내기가 성공했는가. **false 면 그 글이 아직 서버에 없다** —
+   *  이름 변경·이동처럼 경로를 바꾸는 동작은 그때 진행하면 안 된다. */
   const flushPendingSave = useCallback(async () => {
-    await pending.flush();
+    const ok = await pending.flush();
+    if (ok) setDirty(false);
+    return ok;
   }, [pending]);
 
   /** 대기 중인 자동저장을 **버린다**.
@@ -186,8 +190,14 @@ export function Notes() {
       // 매기면, 저장할 게 없어 곧바로 돌아온 나중 클릭이 더 낮은 번호를 받아
       // 순서 뒤집힘 방어가 거꾸로 동작한다(먼저 누른 문서가 이긴다).
       const seq = openSeq.begin();
-      await flushPendingSave();
+      const saved = await flushPendingSave();
       if (!openSeq.isCurrent(seq)) return; // 기다리는 사이 다른 문서를 눌렀다
+      if (!saved && current && current !== path) {
+        // 여기서 그냥 넘어가면, 다음에 한 글자만 쳐도 새 문서의 예약이 실패한
+        // 저장을 덮어써서 앞 문서의 마지막 문단이 어디에도 남지 않는다.
+        toast.error("마지막 편집을 저장하지 못했습니다. 연결을 확인하고 다시 시도해 주세요.");
+        return;
+      }
 
       // 이미지·PDF·미디어는 내용을 읽지 않는다. /api/notes/get 은 텍스트 전용이라
       // 415를 돌려주고, 그러면 current 가 안 잡혀서 전용 뷰어(DocViewer) 분기가
@@ -238,7 +248,7 @@ export function Notes() {
         toast.error(e instanceof Error ? e.message : "노트 열기 실패");
       }
     },
-    [flushPendingSave, notes],
+    [flushPendingSave, notes, current],
   );
 
   // 라이브 에디터(CodeMirror)의 [[ 자동완성이 링크를 담당하므로 여기선 저장만.
@@ -412,7 +422,12 @@ export function Notes() {
     try {
       // 옮기기 전에 흘려보낸다. 안 그러면 타이머가 옛 경로로 저장을 보내
       // 방금 이름을 바꾼 문서가 옛 이름으로 하나 더 생긴다(유령 중복).
-      if (current === renameFor.path) await flushPendingSave();
+      // 흘려보내기가 **실패하면 멈춘다** — 그대로 진행하면 아직 서버에 없는
+      // 마지막 문단이 옛 경로와 함께 사라진다.
+      if (current === renameFor.path && !(await flushPendingSave())) {
+        toast.error("마지막 편집을 저장하지 못해 이름을 바꾸지 않았습니다.");
+        return;
+      }
       const r = await api.noteRename(renameFor.path, renameName.trim());
       toast.ok("이름을 변경했습니다");
       const wasOpen = current === renameFor.path;
@@ -426,7 +441,11 @@ export function Notes() {
 
   const doMoveNote = async (path: string, folder: string) => {
     try {
-      if (current === path) await flushPendingSave();  // 옛 경로로 되살아나지 않게
+      // 옛 경로로 되살아나지 않게 먼저 흘려보낸다. 실패하면 옮기지 않는다.
+      if (current === path && !(await flushPendingSave())) {
+        toast.error("마지막 편집을 저장하지 못해 옮기지 않았습니다.");
+        return;
+      }
       const r = await api.noteMove(path, folder);
       toast.ok("이동했습니다");
       const wasOpen = current === path;

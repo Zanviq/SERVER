@@ -533,8 +533,10 @@ class UpdateCalendarEvent(SkillBase):
     name = "update_calendar_event"
     description = (
         "기존 일정을 수정한다. event_id는 list_calendar_events로 얻는다. "
-        "**반복 일정은 인스턴스 id를 줘도 시리즈 전체가 바뀐다** — 한 회차만 고치려면 "
-        "delete_calendar_event로 그 회차를 지우고 create_calendar_event로 새로 만드세요."
+        "반복 일정에 인스턴스 id를 주고 제목·색만 바꾸면 시리즈 전체가 바뀐다. "
+        "**한 회차의 시각만 바꾸려면 그 인스턴스 id에 새 start(필요하면 end)를 주면 된다** "
+        "— 서버가 그 회차만 떼어내 따로 만든다. 지우고 새로 만들지 마세요. "
+        "이미 떼어낸 회차를 옛 id로 다시 고치면 409가 나니, 그때는 다시 조회해 새 id를 쓰세요."
     )
     parameters = {
         "type": "object",

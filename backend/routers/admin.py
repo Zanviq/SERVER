@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import shutil
 import time
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -20,8 +21,13 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 def _not_self(target: str, admin: SessionUser) -> None:
-    """자기 자신을 잠그는 조작은 UI 클릭 두 번이면 되므로 서버에서 막는다."""
-    if target == admin.username:
+    """자기 자신을 잠그는 조작은 UI 클릭 두 번이면 되므로 서버에서 막는다.
+
+    **계정 조회와 같은 기준(대소문자 무관)으로 봐야 한다.** 여기만 정확히 비교하면
+    URL 의 대소문자만 바꿔서(`/users/Tester/disable`) 이 가드를 그냥 지나가고,
+    아래 조작들은 _match 로 같은 계정을 찾아 실제로 자기 자신을 잠근다.
+    """
+    if (target or "").strip().lower() == (admin.username or "").strip().lower():
         raise HTTPException(status_code=400, detail="자기 계정에는 할 수 없습니다.")
 
 
@@ -84,8 +90,11 @@ def change_role(
     return accounts.set_role(username, role, settings)
 
 
-def _archive_user_data(username: str, settings: Settings) -> str:
-    """사용자 폴더를 물려받을 수 없는 자리로 옮긴다. 옮길 게 없으면 빈 문자열.
+def _archive_user_data(username: str, settings: Settings) -> tuple[str, Path | None]:
+    """사용자 폴더를 물려받을 수 없는 자리로 옮긴다.
+
+    돌려주는 값은 (사용자에게 보일 이름, 실제로 옮긴 자리). 옮길 게 없으면
+    ("", None) — 되돌릴 것도 없다는 뜻이다.
 
     users/ **밖으로** 옮긴다. 예전에는 users/_deleted-<id>-<시각> 로 옮겼는데
     그 이름 자체가 USERNAME_RE(`^[a-z0-9_-]{3,32}$`)를 통과하는 유효한 아이디라,
@@ -95,7 +104,7 @@ def _archive_user_data(username: str, settings: Settings) -> str:
     """
     src = settings.user_root(username)
     if not src.exists():
-        return ""
+        return "", None
     stamp = time.strftime("%Y%m%d-%H%M%S")
     graveyard = settings.storage_root / "deleted-users"
     graveyard.mkdir(parents=True, exist_ok=True)
@@ -105,7 +114,7 @@ def _archive_user_data(username: str, settings: Settings) -> str:
         dest = graveyard / f"{src.name}-{stamp}-{n}"
         n += 1
     shutil.move(str(src), str(dest))
-    return f"deleted-users/{dest.name}"
+    return f"deleted-users/{dest.name}", dest
 
 
 @router.delete("/users/{username}")
@@ -123,18 +132,33 @@ def delete_user(
     **데이터를 먼저 치우고 계정을 지운다.** 반대로 하면 폴더 이동이 실패했을 때
     계정만 사라진 채 users/<id>/ 가 남아, 200 OK 를 받고도 다음 가입자가
     그 벌트를 통째로 물려받는다(이 함수가 막으려던 바로 그 상태).
+
+    **그리고 계정 삭제가 거절되면 벌트를 제자리로 되돌린다.** accounts.delete 는
+    "마지막 관리자" · "마지막 서버 관리자" 를 400 으로 막는데, 되돌리지 않으면
+    계정은 멀쩡히 살아 있는데 그 사람(대개 주인)의 문서·일정·할 일·설정·구글
+    토큰이 통째로 사라진 상태가 된다.
     """
     _not_self(username, admin)
     acc = accounts.find_for_login(username, settings)
-    moved = ""
+    moved, archived = "", None
     if acc:
         try:
-            moved = _archive_user_data(acc.username, settings)
+            moved, archived = _archive_user_data(acc.username, settings)
         except OSError as e:
             logger.exception("삭제한 계정의 데이터를 옮기지 못했다: %s", acc.username)
             raise HTTPException(
                 status_code=500,
                 detail="사용자 데이터를 치우지 못해 계정을 지우지 않았습니다.",
             ) from e
-    accounts.delete(username, settings)
+    try:
+        accounts.delete(username, settings)
+    except BaseException:
+        if archived is not None and acc is not None:
+            back = settings.user_root(acc.username)
+            try:
+                shutil.move(str(archived), str(back))
+            except OSError:
+                logger.exception("계정 삭제가 막혔는데 벌트를 되돌리지 못했다: %s → %s",
+                                 archived, back)
+        raise
     return {"ok": True, "data_moved_to": moved}

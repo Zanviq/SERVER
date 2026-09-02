@@ -5,21 +5,9 @@
  * 이 저장소에는 프런트 테스트 러너가 없어서, 의존성을 늘리지 않고 node 로
  * 그냥 도는 형태로 뒀다(esbuild 는 vite 에 이미 딸려 있다).
  */
-import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { bundle } from "./bundle.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const dir = mkdtempSync(join(tmpdir(), "mdt-"));
-const outFile = join(dir, "mdTable.mjs");
-// 어디서 실행하든 같은 파일을 본다(cwd 에 기대지 않는다)
-const src = join(here, "..", "src", "lib", "mdTable.ts");
-// 인자 배열로 넘긴다 — 셸을 거치지 않으므로 경로에 공백이 있어도 안전하다
-execFileSync("npx", ["esbuild", src, "--bundle", "--format=esm", `--outfile=${outFile}`],
-  { stdio: "pipe", shell: true });
-const T = await import("file://" + outFile.replace(/\\/g, "/"));
+const T = await bundle("src/lib/mdTable.ts");
 
 let fails = 0;
 function check(label, got, want) {
@@ -96,7 +84,11 @@ const cutCol = T.deleteCol(onSep, onSep.col);
 check("구분선에서 열 삭제해도 남은 열 수", cutCol.aligns.length, 2);
 check("음수 열 삭제는 거부", T.deleteCol({ ...t, col: -1 }, -1), null);
 check("음수 행 삭제는 거부", T.deleteRow({ ...t, row: -1 }, -1), null);
-check("음수 정렬은 그대로", T.setAlign(t, -1, "center").aligns, t.aligns);
+// 자기 자신과 비교하면 안 된다 — setAlign 은 범위 밖이면 t 를 그대로 돌려주므로
+// 반환값의 .aligns 가 곧 t.aligns 라, 가드를 지워도 통과한다. **기대값을 적는다.**
+check("음수 정렬은 그대로", T.setAlign(t, -1, "center").aligns, ["none", "center", "right"]);
+check("범위 넘는 정렬도 그대로", T.setAlign(t, 99, "center").aligns, ["none", "center", "right"]);
+check("정상 정렬은 바뀐다", T.setAlign(t, 0, "right").aligns, ["right", "center", "right"]);
 
 console.log("\n[칸 이동]");
 check("다음 칸", [T.nextCell(t, 1).row, T.nextCell(t, 1).col], [1, 1]);

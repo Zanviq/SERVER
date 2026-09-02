@@ -291,7 +291,23 @@ def signup(username: str, password: str, display_name: str, settings: Settings) 
     # 락 **밖에서** 부른다 — ensure_seed 가 같은 락을 잡으므로 안에서 부르면 교착이다.
     ensure_seed(settings)
     with lock_for(p):
-        rows = read_json(p, [])
+        # read_json 은 깨진 JSON 에도 기본값([])을 준다. 그대로 쓰면 손상된 계정
+        # 파일 위에 **새 신청자 한 명만 담아** 덮어쓰면서 201 "접수되었습니다"를
+        # 돌려준다 — 모든 계정이 사라진다. 로그인 경로(_load)는 같은 상황을
+        # 503 으로 막는데, 여기만 그 방어를 안 쓰고 있었다.
+        rows = read_json(p, None)
+        if rows is None:
+            if p.exists():
+                raise HTTPException(
+                    status_code=503,
+                    detail="계정 파일을 읽을 수 없습니다. 손상됐을 수 있어 아무것도 덮어쓰지 않았습니다.",
+                )
+            rows = []
+        elif not isinstance(rows, list):
+            raise HTTPException(
+                status_code=503,
+                detail="계정 파일을 읽을 수 없습니다. 손상됐을 수 있어 아무것도 덮어쓰지 않았습니다.",
+            )
         # 대소문자만 다른 아이디는 같은 것으로 본다 — 조회가 그렇게 찾기 때문이다.
         if _match(rows, username) is not None:
             raise HTTPException(status_code=409, detail="이미 사용 중인 아이디입니다.")

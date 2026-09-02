@@ -13,19 +13,9 @@
  * 앱과 같은 단계를 재현한다: 마크다운 파싱 → HTML 허용 → rehype-raw → 살균.
  * (react-markdown 이 내부에서 하는 것과 같은 순서)
  */
-import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { bundle } from "./bundle.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const dir = mkdtempSync(join(tmpdir(), "san-"));
-const outFile = join(dir, "schema.mjs");
-const src = join(here, "..", "src", "lib", "sanitizeSchema.ts");
-execFileSync("npx", ["esbuild", src, "--bundle", "--format=esm", `--outfile=${outFile}`],
-  { stdio: "pipe", shell: true });
-const { mdSanitizeSchema } = await import("file://" + outFile.replace(/\\/g, "/"));
+const { mdSanitizeSchema } = await bundle("src/lib/sanitizeSchema.ts");
 
 const { unified } = await import("unified");
 const remarkParse = (await import("remark-parse")).default;

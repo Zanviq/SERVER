@@ -87,6 +87,12 @@ def _normalize(payload: dict, existing: dict | None = None) -> dict:
         base["recur_until"] = str(payload["recur_until"])[:10]
     if payload.get("remind_minutes") is not None:
         base["remind_minutes"] = max(0, int(payload["remind_minutes"]))
+    # 낱개로 지운 회차(exdates)와 시리즈 연결(split_from)도 옮긴다. 안 옮기면
+    # 휴지통에서 반복 일정을 복원할 때(create_event → _normalize) 예전에 지운
+    # 회차가 전부 되살아나고, 떼어낸 회차는 시리즈와의 연결이 끊겨 유령이 된다.
+    for k in ("exdates", "split_from"):
+        if payload.get(k) is not None:
+            base[k] = payload[k]
     return base
 
 
@@ -443,13 +449,33 @@ def delete_many(user: SessionUser, settings: Settings,
                 continue
             if "@" in str(eid):
                 ex = set(target.get("exdates", []))
-                ex.add(str(eid).split("@", 1)[1][:10])
+                day = str(eid).split("@", 1)[1][:10]
+                if day in ex:
+                    # 이미 지운 회차 — 성공이라고 하면 부르는 쪽이 휴지통 엔트리를
+                    # 하나 더 쌓는다(단건 delete_event 와 같은 규칙).
+                    fail.append((eid, "이미 지운 회차입니다."))
+                    continue
+                ex.add(day)
                 target["exdates"] = sorted(ex)
             else:
                 drop.add(base)
             ok.append(eid)
         _save(_without_series(events, drop), user, settings)
     return ok, fail
+
+
+def split_offs_for(user: SessionUser, settings: Settings, eids: list[str]) -> list[dict]:
+    """이 id 들을 **시리즈째** 지우면 함께 사라질 '떼어낸 회차'들.
+
+    삭제 전에 휴지통에 담으라고 서비스 층이 부른다. 그러지 않으면 사용자가 따로
+    시간·제목을 고쳐 둔 그 회차가 되돌릴 방법 없이 사라진다 — 지운 것은 시리즈
+    하나인데 캘린더에서는 둘이 없어진다.
+    """
+    series = {e for e in (str(x) for x in eids) if "@" not in e}
+    if not series:
+        return []
+    return [e for e in _load(user, settings)
+            if e["id"] not in series and str(e.get("split_from", "")) in series]
 
 
 def _without_series(events: list[dict], drop: set[str]) -> list[dict]:
@@ -479,6 +505,11 @@ def delete_event(user: SessionUser, settings: Settings, eid: str) -> None:
             for e in events:
                 if e["id"] == bid:
                     ex = set(e.get("exdates", []))
+                    if day[:10] in ex:
+                        # 이미 지운 회차다. 200 을 돌려주면 부르는 쪽이 휴지통
+                        # 엔트리를 하나 더 쌓는다 — 두 창에서 같은 회차를 지우거나
+                        # 응답이 늦어 다시 누르면 똑같은 항목이 둘이 된다.
+                        raise HTTPException(status_code=404, detail="이미 지운 회차입니다.")
                     ex.add(day[:10])
                     e["exdates"] = sorted(ex)
                     _save(events, user, settings)
