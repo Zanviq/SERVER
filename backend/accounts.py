@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import os
 import re
 import time
@@ -24,6 +25,8 @@ from fastapi import HTTPException
 
 from .config import Settings
 from .json_store import lock_for, read_json, write_atomic
+
+logger = logging.getLogger("server.accounts")
 
 _ALGO = "pbkdf2_sha256"
 _ITERATIONS = 600_000

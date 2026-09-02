@@ -132,6 +132,11 @@ def run(
 
         calls = result.calls()
         if calls:
+            # 모델이 도구를 부르면서 함께 낸 본문은 버리지 않는다. 매 스텝 버리면
+            # 최대 단계에 닿았을 때 아래 else 가지의 `final_text or ...` 가 언제나
+            # 비어 있어, 모델이 실제로 한 마지막 말 대신 기계적인 안내만 남는다.
+            if (result.text or "").strip():
+                final_text = result.text
             # 모델이 요청한 호출을 모두 실행하고, 호출/응답을 짝지어 한 턴으로 기록한다.
             # Gemini는 function_call 개수와 function_response 개수가 맞기를 기대한다.
             call_parts, response_parts = [], []

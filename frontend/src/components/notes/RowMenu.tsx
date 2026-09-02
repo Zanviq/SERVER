@@ -68,7 +68,13 @@ export function RowMenu({ onRename, onMove, onTrash }: {
         title="더보기" aria-label="더보기" aria-expanded={open}
         // 터치 기기엔 hover가 없다. hover로만 띄우면 모바일에서 이름 변경·이동·휴지통이
         // 영영 안 눌린다(드래그 이동도 HTML5 DnD라 터치에선 안 된다). 좁은 화면은 항상 표시.
-        className={`rounded p-1.5 text-fg-muted hover:text-fg ${open ? "block" : "block sm:hidden sm:group-hover:block"}`}
+        //
+        // 넓은 화면에서도 `hidden` 은 쓰지 않는다. display:none 은 탭 순서에서
+        // 통째로 빠지는데, 이름 변경·이동·삭제는 다른 진입점이 없어서 키보드만
+        // 쓰는 사람은 그 기능에 영영 닿지 못한다. 투명하게만 두고 포커스로도 켠다.
+        className={`block rounded p-1.5 text-fg-muted transition-opacity hover:text-fg ${
+          open ? "" : "sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
+        }`}
       >
         <MoreHorizontal size={14} />
       </button>

@@ -127,11 +127,15 @@ function CatRow({
             {n.total - n.done}/{n.total}
           </span>
         </button>
-        <span className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100">
+        {/* 터치 기기엔 hover 가 없다. opacity-0 인 채로 두면 보이지도 않는데
+            탭은 먹혀서, 행 오른쪽을 누르면 아무 표시 없이 이름 변경 prompt 나
+            삭제 confirm 이 뜬다. 좁은 화면은 항상 보이게 두고, 넓은 화면에서는
+            hover·포커스로 켠다(포커스도 켜야 키보드로 닿는다). */}
+        <span className="flex shrink-0 items-center transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
           <button
             type="button"
             onClick={() => onRename(cat)}
-            title="이름 바꾸기"
+            title="이름 바꾸기" aria-label={`${cat.name} 이름 바꾸기`}
             className="grid h-6 w-6 place-items-center text-fg-subtle hover:text-fg"
           >
             <Pencil size={12} />
@@ -139,7 +143,7 @@ function CatRow({
           <button
             type="button"
             onClick={() => onRemove(cat)}
-            title="카테고리 삭제"
+            title="카테고리 삭제" aria-label={`${cat.name} 카테고리 삭제`}
             className="grid h-6 w-6 place-items-center text-fg-subtle hover:text-danger"
           >
             <X size={13} />
@@ -667,7 +671,9 @@ export function Todo() {
     >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
         {/* 좁은 화면에서는 카테고리를 접어 두지 않고 위에 얹는다 — 캘린더와 같은 방식 */}
-        <div className={isNarrow ? "max-h-[32vh]" : ""}>{leftPane}</div>
+        {/* max-h 만 주고 overflow 를 안 주면 카테고리가 6개만 넘어도 카드가
+            상자 밖으로 흘러넘쳐 아래 할 일 카드 위에 겹쳐 그려진다. */}
+        <div className={isNarrow ? "max-h-[32vh] overflow-y-auto" : ""}>{leftPane}</div>
         <div className="flex min-h-0 flex-1 flex-col h-[60vh] lg:h-auto">{rightPane}</div>
       </div>
     </Shell>

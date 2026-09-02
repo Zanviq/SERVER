@@ -132,6 +132,9 @@ class ImageWidget extends WidgetType {
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      // 터치가 시스템 제스처로 끊기면 pointerup 대신 pointercancel 만 온다.
+      // 안 받으면 손잡이가 계속 '끄는 중'으로 남는다.
+      window.removeEventListener("pointercancel", onUp);
       grip.classList.remove("is-dragging");
       // **끌지 않고 한 번 누르기만 했으면 문서를 건드리지 않는다.** 예전에는
       // 손잡이를 살짝 누른 것만으로 `|폭` 이 박히고 그대로 자동저장됐다.
@@ -147,6 +150,7 @@ class ImageWidget extends WidgetType {
       grip.classList.add("is-dragging");
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
     });
     grip.addEventListener("dblclick", (e) => {
       e.preventDefault();
@@ -480,6 +484,11 @@ const editorTheme = EditorView.theme({
     transition: "opacity 120ms",
   },
   ".cm-embed-img:hover .cm-embed-grip, .cm-embed-grip.is-dragging": { opacity: "1" },
+  // 터치 기기엔 hover 가 없다. 투명한 채로 두면 손잡이가 영영 안 보이는데도
+  // 이미지 우하단의 탭을 가로채, 그 자리를 눌러도 커서가 옮겨 가지 않는다.
+  "@media (hover: none)": {
+    ".cm-embed-grip": { opacity: "0.85" },
+  },
 });
 
 export interface LiveEditorProps {

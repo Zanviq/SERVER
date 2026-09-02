@@ -21,11 +21,21 @@ export function GoogleConnect() {
 
   useEffect(() => {
     load();
-    // 콜백에서 돌아오면 ?google=connected 가 붙는다
+    // 콜백에서 돌아오면 ?google=... 이 붙는다. 백엔드는 실패도 여기로 돌려보내므로
+    // (원시 JSON 페이지에 사용자를 남기지 않는다) 이유마다 안내가 있어야 한다.
     const p = new URLSearchParams(window.location.search);
     const g = p.get("google");
+    const FAIL: Record<string, string> = {
+      denied: "Google 연동이 취소되었습니다.",
+      session: "로그인이 풀려 연동을 마치지 못했습니다. 다시 시도해 주세요.",
+      bad_request: "Google 이 보낸 응답이 올바르지 않습니다. 다시 시도해 주세요.",
+      bad_state: "연동 요청이 만료되었습니다. 다시 시도해 주세요.",
+      other_account: "다른 계정에서 시작된 연동 요청입니다.",
+      exchange_failed: "Google 과 토큰을 주고받지 못했습니다. 잠시 후 다시 시도해 주세요.",
+    };
     if (g === "connected") toast.ok("Google 캘린더가 연동되었습니다.");
-    if (g === "denied") toast.error("Google 연동이 취소되었습니다.");
+    else if (g && FAIL[g]) toast.error(FAIL[g]);
+    else if (g) toast.error("Google 연동을 마치지 못했습니다.");
     if (g) {
       p.delete("google");
       const q = p.toString();

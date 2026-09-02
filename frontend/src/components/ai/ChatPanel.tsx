@@ -41,7 +41,18 @@ const SKILL_LABEL: Record<string, string> = {
   bulk_delete_calendar_events: "일정 일괄 삭제",
   delete_calendar_event: "일정 삭제",
   find_free_slots: "빈 시간 찾기",
-  // 휴지통
+  // 할 일
+  list_todos: "할 일 조회",
+  create_todo: "할 일 생성",
+  update_todo: "할 일 수정",
+  complete_todo: "할 일 완료",
+  delete_todo: "할 일 삭제",
+  bulk_complete_todos: "할 일 일괄 완료",
+  bulk_delete_todos: "할 일 일괄 삭제",
+  list_todo_categories: "카테고리 조회",
+  create_todo_category: "카테고리 생성",
+  // 폴더·휴지통
+  list_folders: "폴더 목록",
   list_trash: "휴지통 목록",
   restore_from_trash: "휴지통 복원",
   get_system_status: "시스템 상태",

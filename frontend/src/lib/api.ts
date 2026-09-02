@@ -392,6 +392,9 @@ export interface TrashEntry {
   /** kind === "event" 일 때만 */
   event_start?: string;
   event_color?: string;
+  /** kind === "todo" 일 때만 */
+  todo_due?: string;
+  todo_done?: boolean;
 }
 export interface NoteSearchHit {
   path: string;

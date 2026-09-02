@@ -204,10 +204,12 @@ export function Calendar() {
         title: (t.done ? "✓ " : "") + t.title,
         start: t.due,
         allDay: t.all_day || t.due.length <= 10,
-        // 완료한 것은 옅게 — 남은 것과 한눈에 구분되어야 한다
+        // 완료한 것은 옅게 — 남은 것과 한눈에 구분되어야 한다. 다만 가장 옅은
+        // 토큰(--fg-subtle)에 .fc-todo-done 의 opacity 까지 겹치면 대비가
+        // 1.6:1 이라 제목이 안 읽힌다. 한 단계 진한 토큰을 쓴다.
         backgroundColor: t.done ? "transparent" : hex,
         borderColor: hex,
-        textColor: t.done ? "rgb(var(--fg-subtle))" : undefined,
+        textColor: t.done ? "rgb(var(--fg-muted))" : undefined,
         classNames: t.done ? ["fc-todo-done"] : ["fc-todo"],
       };
     });

@@ -505,20 +505,22 @@ def test_save_keeps_extension_verbatim():
 
 
 def test_notes_wikilinks_and_graph():
-    # 노드 '개수'를 단언하므로 다른 테스트가 쓰는 tester 루트를 쓰면 안 된다.
-    # (ext/*.md 를 만드는 테스트가 먼저 돌면 노드가 5개가 되어 실행 순서에 의존했다.)
+    # 노드 '개수'를 단언하므로 **자기 폴더 안**만 본다. tester2 루트를 통째로 보면
+    # 같은 벌트에 .md 를 만드는 다른 테스트(휴지통·내보내기)가 먼저 도는 순간 깨진다.
     client = TestClient(app)
     assert client.post("/api/auth/login",
                        json={"username": "tester2", "password": "pw456"}).status_code == 200
-    client.put("/api/notes/save", json={"path": "A.md", "content": "see [[B]] and [[C|alias]]"})
-    client.put("/api/notes/save", json={"path": "B.md", "content": "back to [[A]]"})
-    client.put("/api/notes/save", json={"path": "C.md", "content": "leaf"})
+    box = "그래프시험"
+    client.post("/api/notes/folder", json={"path": box})
+    client.put("/api/notes/save", json={"path": f"{box}/A.md", "content": "see [[B]] and [[C|alias]]"})
+    client.put("/api/notes/save", json={"path": f"{box}/B.md", "content": "back to [[A]]"})
+    client.put("/api/notes/save", json={"path": f"{box}/C.md", "content": "leaf"})
     # A의 outgoing 링크 + backlinks
-    a = client.get("/api/notes/get?path=A").json()
+    a = client.get(f"/api/notes/get?path={box}/A").json()
     assert set(a["links"]) == {"B", "C"}
     assert a["backlinks"] == ["B"]  # B가 A를 가리킴
     # 그래프: 노드 3, 링크 A->B, A->C, B->A
-    g = client.get("/api/notes/graph").json()
+    g = client.get("/api/notes/graph", params={"folder": box}).json()
     assert len(g["nodes"]) == 3, g["nodes"]
     pairs = {(l["source"], l["target"]) for l in g["links"]}
     assert ("A", "B") in pairs and ("A", "C") in pairs and ("B", "A") in pairs
@@ -526,6 +528,65 @@ def test_notes_wikilinks_and_graph():
     hits = client.get("/api/notes/search?q=alias").json()
     assert any(h["title"] == "A" for h in hits)
     assert all("snippet" in h for h in hits)
+
+
+def test_graph_ignores_wikilinks_inside_code():
+    """코드 안의 `[[제목]]` 은 링크가 아니다 — 편집기·읽기 뷰와 같은 규칙."""
+    from backend.notes_graph import parse_wikilinks
+
+    text = (
+        "본문 [[진짜]]\n"
+        "```\n[[울타리안]]\n```\n"
+        "> ```\n> [[인용속울타리]]\n> ```\n"
+        "인라인 `[[백틱안]]` 끝\n"
+        "~~~md\n[[물결울타리]]\n~~~\n"
+        "마지막 [[또진짜]]\n"
+    )
+    assert parse_wikilinks(text) == ["진짜", "또진짜"], parse_wikilinks(text)
+
+
+def test_graph_notices_a_rename():
+    """이름을 바꾸면 그래프도 바로 따라와야 한다.
+
+    지문이 (개수·폴더수·최대mtime·총크기)뿐이면 이름 변경·이동은 그중 무엇도
+    바꾸지 않아, 다음 저장이 있을 때까지 그래프와 백링크가 낡은 채로 남는다.
+    """
+    c = TestClient(app)
+    c.post("/api/auth/login", json={"username": "tester2", "password": "pw456"})
+    box = "이름바꾸기시험"
+    c.post("/api/notes/folder", json={"path": box})
+    c.put("/api/notes/save", json={"path": f"{box}/원래이름.md", "content": "내용"})
+
+    def titles():
+        g = c.get("/api/notes/graph", params={"folder": box}).json()
+        return sorted(n["title"] for n in g["nodes"])
+
+    assert titles() == ["원래이름"], titles()
+    r = c.post("/api/notes/rename", json={"path": f"{box}/원래이름.md", "new_name": "바뀐이름.md"})
+    assert r.status_code == 200, r.text
+    assert titles() == ["바뀐이름"], titles()
+
+
+def test_graph_cache_does_not_grow_with_made_up_folders():
+    """없는 폴더 이름을 바꿔 가며 불러도 캐시가 무한히 쌓이거나 밀려나면 안 된다.
+
+    없는 폴더는 루트로 떨어지므로 결과가 같다. 그런데 열쇠에 요청 문자열을
+    쓰면 같은 그래프 사본이 이름마다 하나씩 쌓이고, 개수를 묶어 둔 뒤에도
+    쓸모 있는 항목(루트 그래프)이 쓰레기에 밀려 축출된다.
+    """
+    from backend import notes_graph
+
+    c = TestClient(app)
+    c.post("/api/auth/login", json={"username": "tester2", "password": "pw456"})
+    notes_graph.clear_cache()
+    assert c.get("/api/notes/graph").status_code == 200
+    assert len(notes_graph._CACHE) == 1, notes_graph._CACHE.keys()
+
+    for i in range(80):
+        assert c.get("/api/notes/graph", params={"folder": f"없는폴더{i}"}).status_code == 200
+    assert len(notes_graph._CACHE) <= notes_graph._CACHE_MAX, len(notes_graph._CACHE)
+    # 전부 같은(루트) 그래프이므로 항목은 하나뿐이어야 한다
+    assert len(notes_graph._CACHE) == 1, notes_graph._CACHE.keys()
 
 
 def test_category_filter_includes_children():
@@ -738,6 +799,8 @@ def test_splitting_an_occurrence_keeps_its_length():
     끝을 '회차 날짜 + 시리즈의 끝 시각'으로 만들면 22:00~다음날 02:00 짜리
     일정이 22:00~같은날 02:00 이 되어 길이가 뒤집힌다.
     """
+    from datetime import datetime, timedelta
+
     _login()
     r = client.post("/api/calendar/events", json={
         "title": "밤샘시험", "start": "2027-07-05T22:00:00", "end": "2027-07-06T02:00:00",
@@ -755,14 +818,20 @@ def test_splitting_an_occurrence_keeps_its_length():
 
     target = before[1]
     day = target["start"][:10]
+    # **시작만** 옮긴다. end 를 함께 주면 그 값이 그대로 쓰여서, 떼어낸 회차의
+    # 끝을 어떻게 계산했는지가 결과에 드러나지 않는다(길이 계산이 틀려도 통과).
     moved = client.put(f"/api/calendar/events/{target['id']}", json={
-        "title": "밤샘시험", "start": f"{day}T23:00:00", "end": f"{day}T23:30:00"})
+        "title": "밤샘시험", "start": f"{day}T23:00:00"})
     assert moved.status_code == 200, moved.text
+    assert moved.json()["end"] == f"{day[:8]}{int(day[8:]) + 1:02d}T03:00:00", moved.json()
 
     after = occ()
     assert len(after) == len(before), f"회차 수가 바뀌었다: {len(before)} → {len(after)}"
     for e in after:
         assert e["end"] > e["start"], e
+        # 4시간짜리 일정이다 — 길이가 줄거나 뒤집히면 안 된다
+        s = datetime.fromisoformat(e["start"])
+        assert datetime.fromisoformat(e["end"]) - s == timedelta(hours=4), e
 
     # 같은(낡은) 회차 id 로 또 옮기면 중복을 만들지 않고 거절해야 한다
     quiet = TestClient(app, raise_server_exceptions=False)
@@ -785,6 +854,11 @@ def test_legacy_timezoned_series_is_not_split_by_a_plain_edit():
     eid = "x@2027-09-20"
     payload = {"title": "새이름", "start": "2027-09-20T10:00:00", "end": "2027-09-20T11:00:00"}
     assert calendar_store._moves_this_occurrence(eid, payload, series) is False
+
+    # 초를 뺀 표기도 같은 시각이다. 글자로 비교하면 '옮겼다'고 오판해 쪼갠다.
+    loose = {"title": "새이름", "start": "2027-09-20T10:00", "end": "2027-09-20T11:00"}
+    assert calendar_store._moves_this_occurrence(eid, loose, series) is False
+
     payload["start"] = "2027-09-20T14:00:00"
     assert calendar_store._moves_this_occurrence(eid, payload, series) is True
 
@@ -929,6 +1003,61 @@ def test_dotted_titles_survive_the_whole_document_lifecycle():
     assert r.json()["path"] == "2027.01 계획", r.json()
     client.request("DELETE", "/api/notes/delete", json={"path": "2027.01 계획"})
 
+    # 업로드 중복 이름도 같은 규칙으로 쪼개야 한다
+    up = "2026.08 회고.md"
+    client.request("DELETE", "/api/notes/delete", json={"path": up})
+    for _ in range(2):
+        r = client.post("/api/notes/upload?path=",
+                        files={"file": (up, io.BytesIO("내용".encode()), "text/markdown")})
+        assert r.status_code == 200, r.text
+    paths = [n["path"] for n in client.get("/api/notes/list").json()]
+    assert "2026.08 회고 (2).md" in paths, [p for p in paths if "회고" in p]
+    for p in ("2026.08 회고.md", "2026.08 회고 (2).md"):
+        client.request("DELETE", "/api/notes/delete", json={"path": p})
+
+
+def test_broken_auth_users_does_not_lock_the_owner_out_forever():
+    """AUTH_USERS 가 깨졌을 때 accounts.json 을 빈 목록으로 만들면 안 된다.
+
+    한 번 `[]` 로 써 버리면 다음 부팅부터는 '이미 있는 파일'로 보고 건너뛰므로,
+    .env 를 고쳐 재시작해도 주인 계정이 영영 생기지 않는다(승인해 줄 사람도 없다).
+    """
+    import shutil as _sh
+    import tempfile as _tf
+    from pathlib import Path as _P
+
+    from backend import accounts as acc_mod
+    from backend.config import Settings
+
+    prev = os.environ.get("STORAGE_ROOT")
+    prev_users = os.environ.get("AUTH_USERS")
+    root = _P(_tf.mkdtemp(prefix="seedfail_"))
+    try:
+        os.environ["STORAGE_ROOT"] = str(root)
+        for broken in ('{"username": "o"}', "[[]", '[{"username": null, "password": null}]'):
+            os.environ["AUTH_USERS"] = broken
+            st = Settings()
+            acc_mod.ensure_seed(st)
+            p = root / "accounts.json"
+            assert not p.exists(), f"{broken!r} 에서 빈 계정 파일을 만들었다: {p.read_text()}"
+
+        # .env 를 고치고 재시작하면 그때 이관돼야 한다
+        os.environ["AUTH_USERS"] = '[{"username": "owner", "password": "pw-long-enough"}]'
+        st = Settings()
+        acc_mod.ensure_seed(st)
+        rows = json.loads((root / "accounts.json").read_text(encoding="utf-8"))
+        assert [r["username"] for r in rows] == ["owner"], rows
+    finally:
+        if prev is None:
+            os.environ.pop("STORAGE_ROOT", None)
+        else:
+            os.environ["STORAGE_ROOT"] = prev
+        if prev_users is None:
+            os.environ.pop("AUTH_USERS", None)
+        else:
+            os.environ["AUTH_USERS"] = prev_users
+        _sh.rmtree(root, ignore_errors=True)
+
 
 def test_deleting_an_account_keeps_it_when_the_data_cannot_be_moved():
     """폴더를 못 치우면 계정도 지우면 안 된다.
@@ -1028,6 +1157,74 @@ def test_old_settings_values_are_normalized_on_read():
             path.unlink(missing_ok=True)
         else:
             path.write_text(backup, encoding="utf-8")
+
+
+def test_every_skill_has_a_korean_label_in_the_chat_panel():
+    """스킬을 추가하면 화면 라벨도 같이 채워야 한다.
+
+    커밋 277374a 에서 고쳤던 결함이 할 일 스킬 9개 + list_folders 를 붙이면서
+    그대로 되살아났다(AI 단계에 raw 영문 이름이 뜬다). 사람이 기억하는 대신
+    여기서 막는다.
+    """
+    import re as _re
+    from pathlib import Path as _P
+
+    from backend.ai.skills import ALL_SKILLS
+
+    src = (_P(__file__).resolve().parent.parent
+           / "frontend" / "src" / "components" / "ai" / "ChatPanel.tsx")
+    text = src.read_text(encoding="utf-8")
+    body = text.split("const SKILL_LABEL", 1)[1].split("};", 1)[0]
+    labeled = set(_re.findall(r"^\s{2}(\w+):", body, _re.M))
+
+    missing = sorted({s.name for s in ALL_SKILLS} - labeled)
+    assert not missing, f"ChatPanel 의 SKILL_LABEL 에 빠진 스킬: {missing}"
+    stale = sorted(labeled - {s.name for s in ALL_SKILLS})
+    assert not stale, f"없어진 스킬의 라벨이 남아 있다: {stale}"
+
+
+def test_atomic_write_retries_when_the_file_is_briefly_locked():
+    """Windows 에서 파일을 잠깐 잡고 있으면 os.replace 가 PermissionError 를 낸다.
+
+    재시도가 없으면 그 한 건이 500 으로 실패한다(할 일 24건 동시 삭제 12회 중
+    1회 재현 — 삭제는 실패하는데 휴지통에는 미아가 남았다).
+    """
+    import shutil as _sh
+    import tempfile as _tf
+    from pathlib import Path as _P
+
+    from backend import json_store
+
+    d = _P(_tf.mkdtemp(prefix="replace_"))
+    real = json_store.os.replace
+    calls = {"n": 0}
+
+    def flaky(src, dst):
+        calls["n"] += 1
+        if calls["n"] <= 2:  # 처음 두 번은 잠겨 있다
+            raise PermissionError(5, "access denied")
+        return real(src, dst)
+
+    json_store.os.replace = flaky
+    try:
+        json_store.write_atomic(d / "a.json", [{"x": 1}])
+        assert json.loads((d / "a.json").read_text(encoding="utf-8")) == [{"x": 1}]
+        assert calls["n"] == 3, calls
+        # 실패한 시도가 임시파일을 흘리면 안 된다
+        assert [p.name for p in d.iterdir()] == ["a.json"], list(d.iterdir())
+
+        # 끝까지 안 풀리면 올려야 한다 — 조용히 성공한 척하면 안 된다
+        calls["n"] = -1000
+        try:
+            json_store.write_atomic(d / "b.json", [1])
+            raise AssertionError("계속 잠겨 있는데도 성공했다고 했다")
+        except PermissionError:
+            pass
+        assert not (d / "b.json").exists()
+        assert [p.name for p in d.iterdir()] == ["a.json"], list(d.iterdir())
+    finally:
+        json_store.os.replace = real
+        _sh.rmtree(d, ignore_errors=True)
 
 
 def test_bad_settings_are_cleaned_before_they_are_stored():
@@ -3025,10 +3222,29 @@ def test_google_oauth_state_and_isolation():
     except Exception as e:
         assert getattr(e, "status_code", None) == 400
 
-    # 다른 사용자의 state로 콜백하면 403 (남의 계정에 내 구글을 붙일 수 없다)
+    # 다른 사용자의 state로 콜백하면 거절 (남의 계정에 내 구글을 붙일 수 없다).
+    # 거절은 하되 **원시 JSON 페이지에 남기지 않는다** — 콜백은 브라우저 주소창이
+    # 오는 곳이라, 여기서 예외를 올리면 사용자가 앱으로 돌아갈 길이 없다.
     other = google_oauth.make_state("tester2", st)
     r = c.get(f"/api/google/callback?code=abc&state={other}", follow_redirects=False)
-    assert r.status_code == 403, r.text
+    assert r.status_code == 303, r.text
+    assert r.headers["location"] == "/settings?google=other_account", r.headers
+
+    # 모든 실패 경로가 화면으로 돌아간다(JSON 이 아니라)
+    for url, reason in (
+        ("/api/google/callback?error=access_denied", "denied"),
+        ("/api/google/callback", "bad_request"),
+        ("/api/google/callback?code=abc&state=위조", "bad_state"),
+    ):
+        r = c.get(url, follow_redirects=False)
+        assert r.status_code == 303, (url, r.text)
+        assert r.headers["location"] == f"/settings?google={reason}", (url, r.headers)
+
+    # 로그인하지 않은 채 돌아와도 마찬가지다(동의 화면에 있는 동안 세션이 만료된 경우)
+    anon = TestClient(app)
+    r = anon.get(f"/api/google/callback?code=abc&state={token}", follow_redirects=False)
+    assert r.status_code == 303, r.text
+    assert r.headers["location"] == "/settings?google=session", r.headers
 
     # 연동 상태: 미연동
     s0 = c.get("/api/google/status").json()

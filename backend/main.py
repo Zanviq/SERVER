@@ -89,6 +89,9 @@ app.include_router(trash.router, dependencies=_PROTECTED)
 app.include_router(terminal.router, dependencies=_PROTECTED)
 app.include_router(admin.router, dependencies=_OWNER_ONLY)
 app.include_router(google.router, dependencies=_PROTECTED)
+# 구글 콜백은 브라우저 주소창이 오는 곳이라 의존성이 올리는 401/403 JSON 페이지에
+# 사용자를 남기면 안 된다. 권한은 핸들러가 직접 보고, 실패해도 화면으로 돌려보낸다.
+app.include_router(google.callback_router)
 
 
 @app.get("/api/health", tags=["meta"])

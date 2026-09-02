@@ -76,7 +76,11 @@ function NumberField({
 export function Settings() {
   const { session, logout } = useAuth();
   const { settings: s, loaded, error, load, patch } = useSettings();
-  const [tab, setTab] = useState("account");
+  // 구글 콜백은 `/settings?google=...` 로 돌아온다. 그때는 곧장 캘린더 탭이어야
+  // 결과(연동됨/취소됨)를 보여 줄 자리가 생긴다.
+  const [tab, setTab] = useState(() =>
+    new URLSearchParams(window.location.search).has("google") ? "calendar" : "account",
+  );
   const [aiRules, setAiRules] = useState("");
   // 모델 목록은 서버가 Gemini API에서 받아온다(코드에 박아두면 새 모델이 나올 때마다 고쳐야 한다)
   const [models, setModels] = useState<{ id: string; label: string }[] | null>(null);

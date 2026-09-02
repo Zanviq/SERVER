@@ -48,16 +48,39 @@ export function ThreePane({
 
   const beginDrag = useCallback((onMove: (dx: number) => void) => (e: ReactPointerEvent) => {
     e.preventDefault();
+    // 포인터를 손잡이에 **붙잡아 둔다**. window 리스너만 쓰면 PDF 뷰어의
+    // <iframe> 위에서 마우스를 떼는 순간 pointerup 이 부모 창에 오지 않아,
+    // 분할선이 마우스를 계속 따라다니고 body 의 col-resize 커서와
+    // user-select:none 도 영영 되돌아오지 않는다.
+    const el = e.currentTarget as HTMLElement;
+    const id = e.pointerId;
     const startX = e.clientX;
-    const move = (ev: PointerEvent) => onMove(ev.clientX - startX);
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+    try {
+      el.setPointerCapture(id);
+    } catch {
+      /* 지원하지 않는 브라우저 — 아래 리스너만으로 동작한다 */
+    }
+    const move = (ev: PointerEvent) => {
+      if (ev.pointerId === id) onMove(ev.clientX - startX);
+    };
+    // pointercancel 도 받아야 한다(터치 중단·시스템 제스처). 안 받으면 그때도
+    // 정리 코드가 안 돌아 화면이 잠긴 것처럼 남는다.
+    const up = (ev: PointerEvent) => {
+      if (ev.pointerId !== id) return;
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+      try {
+        el.releasePointerCapture(id);
+      } catch {
+        /* 이미 풀렸다 */
+      }
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
   }, []);

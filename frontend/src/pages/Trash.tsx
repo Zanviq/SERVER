@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Trash2, RotateCcw, XCircle, Loader2, FolderOpen, FileText, NotebookPen, CalendarDays } from "lucide-react";
+import { Trash2, RotateCcw, XCircle, Loader2, FolderOpen, FileText, NotebookPen, CalendarDays, ListChecks } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { Modal } from "../components/ui/Modal";
 import { api, TrashEntry } from "../lib/api";
@@ -11,11 +11,14 @@ function fmt(ts: number): string {
   return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-/** 휴지통 갈래. 문서와 일정이 섞이면 찾기 어려워 탭으로 나눈다. */
+/** 휴지통 갈래. 문서·일정·할 일이 섞이면 찾기 어려워 탭으로 나눈다.
+ *  백엔드(trash.KIND_*)와 **같은 갈래를 다 알아야 한다** — 빠진 갈래는
+ *  '경로가 빈 문서'처럼 보이고 어느 탭으로도 걸러지지 않는다. */
 const TABS = [
   { key: "", label: "전체" },
   { key: "document", label: "문서" },
   { key: "event", label: "일정" },
+  { key: "todo", label: "할 일" },
 ] as const;
 
 export function Trash() {
@@ -115,7 +118,9 @@ export function Trash() {
         <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
           <span className="label">삭제된 항목 {items?.length ?? 0}</span>
           <span className="text-[12px] text-fg-muted">
-            {tab === "event" ? "복원하면 캘린더에 다시 만들어집니다" : "복원하면 원래 위치로 돌아갑니다"}
+            {tab === "event" ? "복원하면 캘린더에 다시 만들어집니다"
+              : tab === "todo" ? "복원하면 할 일 목록에 다시 생깁니다"
+              : "복원하면 원래 위치로 돌아갑니다"}
           </span>
         </div>
 
@@ -129,6 +134,7 @@ export function Trash() {
             <span className="text-[13px]">
               {tab === "event" ? "삭제된 일정이 없습니다"
                 : tab === "document" ? "삭제된 문서가 없습니다"
+                : tab === "todo" ? "삭제된 할 일이 없습니다"
                 : "휴지통이 비어 있습니다"}
             </span>
           </div>
@@ -136,7 +142,9 @@ export function Trash() {
           <ul className="divide-y divide-line">
             {items.map((e) => {
               const isEvent = e.kind === "event";
-              const Icon = isEvent ? CalendarDays : icon(e);
+              const isTodo = e.kind === "todo";
+              const Icon = isEvent ? CalendarDays : isTodo ? ListChecks : icon(e);
+              const due = (e.todo_due ?? "").slice(0, 16).replace("T", " ");
               return (
                 <li key={e.id} className="flex items-center gap-3 px-4 py-2.5">
                   <Icon size={16} className="shrink-0 text-fg-muted" />
@@ -145,6 +153,8 @@ export function Trash() {
                     <p className="truncate text-[11.5px] text-fg-muted">
                       {isEvent
                         ? `일정 · ${(e.event_start ?? "").slice(0, 16).replace("T", " ")} · 삭제 ${fmt(e.deleted_at)}`
+                        : isTodo
+                        ? `할 일${e.todo_done ? " · 완료" : ""}${due ? ` · ${due}` : ""} · 삭제 ${fmt(e.deleted_at)}`
                         : `${e.orig_rel} · ${fmt(e.deleted_at)}`}
                     </p>
                   </div>

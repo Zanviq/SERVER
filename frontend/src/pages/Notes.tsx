@@ -483,15 +483,17 @@ export function Notes() {
               <span className="truncate font-medium">{child.name}</span>
             </button>
             {/* 터치 기기엔 hover가 없어 group-hover로만 띄우면 모바일에서
-                폴더 다운로드·삭제를 영영 못 누른다. 좁은 화면은 항상 표시. */}
+                폴더 다운로드·삭제를 영영 못 누른다. 좁은 화면은 항상 표시.
+                넓은 화면에서도 hidden(=display:none)은 쓰지 않는다 — 탭 순서에서
+                빠져 키보드만 쓰는 사람은 폴더 삭제에 닿을 길이 없어진다. */}
             <a href={api.noteArchiveUrl(child.path)} download
               onClick={(e) => e.stopPropagation()}
-              className="block shrink-0 rounded p-1 text-fg-muted hover:text-accent sm:hidden sm:group-hover:block"
+              className="block shrink-0 rounded p-1 text-fg-muted transition-opacity hover:text-accent sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
               title="폴더를 zip으로 내려받기" aria-label="폴더 다운로드">
               <Download size={12} />
             </a>
             <button onClick={() => setDelFolder(child.path)}
-              className="block shrink-0 rounded p-1 text-fg-muted hover:text-danger sm:hidden sm:group-hover:block"
+              className="block shrink-0 rounded p-1 text-fg-muted transition-opacity hover:text-danger sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
               title="폴더 삭제" aria-label="폴더 삭제">
               <Trash2 size={12} />
             </button>
