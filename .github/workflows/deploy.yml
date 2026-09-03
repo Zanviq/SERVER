@@ -45,12 +45,19 @@ jobs:
           # 만들고, 그 아래 `docker image prune -f` 가 **그것을 즉시 지운다** —
           # 배포는 성공했는데 런타임이 이상하면 되돌릴 이미지가 하나도 없어서
           # 파이에서 처음부터 다시 빌드하는 수밖에 없었다(수십 분).
+          #
+          # 되돌리는 명령도 **여기서 함께 적어 둔다**. 이미지 이름은 compose 프로젝트
+          # 이름(=디렉터리 이름)에서 나오므로 배포 환경마다 다르다 — 워크플로에
+          # 손으로 박아 두면 정작 되돌려야 할 때 틀린 이름을 알려 주게 된다.
           echo "▶ 직전 이미지를 :prev 로 남긴다(롤백용)"
+          : > /tmp/twoems-rollback.txt
           for svc in backend frontend terminal; do
             img="$(docker compose $PROFILE_ARGS images -q "$svc" 2>/dev/null | head -n1)" || true
-            if [ -n "${img:-}" ]; then
-              docker tag "$img" "twoems-prev:$svc" && echo "   $svc → twoems-prev:$svc"
-            fi
+            [ -n "${img:-}" ] || continue
+            name="$(docker image inspect -f '{{index .RepoTags 0}}' "$img" 2>/dev/null || true)"
+            docker tag "$img" "twoems-prev:$svc" || continue
+            echo "   $svc → twoems-prev:$svc${name:+  (원래 이름 $name)}"
+            [ -n "${name:-}" ] && echo "  docker tag twoems-prev:$svc $name" >> /tmp/twoems-rollback.txt
           done
 
           echo "▶ 컨테이너 재빌드 ($PROFILE_ARGS)"
@@ -68,8 +75,7 @@ jobs:
           done
           if [ -z "$ok" ]; then
             echo "::error::배포 후 백엔드가 응답하지 않습니다. 되돌리려면 파이에서:"
-            echo "::error::  docker tag twoems-prev:backend twoems-server-backend:latest"
-            echo "::error::  docker tag twoems-prev:frontend twoems-server-frontend:latest"
+            while IFS= read -r line; do echo "::error::$line"; done < /tmp/twoems-rollback.txt
             echo "::error::  docker compose $PROFILE_ARGS up -d --no-build"
             docker compose $PROFILE_ARGS logs --tail 80 backend || true
             exit 1
