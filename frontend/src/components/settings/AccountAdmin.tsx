@@ -115,11 +115,24 @@ export function AccountAdmin({ me }: { me: string }) {
                   <Check size={14} />
                 </button>
               )}
+              {/* 문구는 **실제 동작**을 말해야 한다. 예전에는 "문서는 남습니다"였는데,
+                  지금은 그 사람의 벌트 전체가 앱 밖(deleted-users/)으로 옮겨진다 —
+                  앱에서는 사라지고, 되돌리는 버튼도 없다. */}
               <button disabled={busy === u.username} className="btn btn-ghost h-8 hover:text-danger"
-                title="계정 삭제 (문서는 남습니다)"
+                title="계정 삭제 (문서·일정·할 일이 앱에서 사라집니다)"
                 onClick={() => {
-                  if (!confirm(`'${u.username}' 계정을 삭제할까요? 문서는 남습니다.`)) return;
-                  act(u.username, () => api.adminDelete(u.username), `${u.username} 삭제됨`);
+                  if (!confirm(
+                    `'${u.username}' 계정을 삭제할까요?\n\n` +
+                    `이 사람의 문서·일정·할 일·설정이 앱에서 사라집니다.\n` +
+                    `서버에는 deleted-users/ 로 옮겨져 남지만, 앱에서 되돌릴 수는 없습니다.`,
+                  )) return;
+                  act(u.username, async () => {
+                    const r = await api.adminDelete(u.username);
+                    // 어디로 옮겼는지 알려 준다 — 되돌리려면 이 경로가 필요하다.
+                    const moved = (r as { data_moved_to?: string } | undefined)?.data_moved_to;
+                    if (moved) toast.ok(`데이터를 ${moved} 로 옮겼습니다`);
+                    return r;
+                  }, `${u.username} 삭제됨`);
                 }}>
                 <Trash2 size={14} />
               </button>

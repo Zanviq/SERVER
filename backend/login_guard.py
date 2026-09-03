@@ -5,14 +5,19 @@
 아무 저항이 없었다). pbkdf2 반복이 시간을 조금 벌어 주긴 하지만, 그건 서버
 CPU도 같이 태우는 것이라 방어라고 부를 수 없다.
 
-**아이디 기준으로만 센다.** IP 기준이 흔한 방식이지만 여기선 못 쓴다 —
-요청은 Cloudflare 터널 → nginx → 백엔드로 들어오므로 백엔드가 보는 주소는
-항상 nginx 하나다. X-Forwarded-For를 믿으면 헤더를 지어내서 우회할 수 있고,
-반대로 그 값 하나에 모두를 묶으면 공격자 한 명이 전원을 잠글 수 있다.
+**아이디 + 보낸 사람의 IP 로 센다.** 아이디만으로 세면 방어 수단이 그대로
+공격 수단이 된다 — 아이디만 아는 사람이 잠금이 풀릴 때마다 5번씩 틀리는 것을
+반복하면 대기시간이 상한에 눌러앉고, 잠긴 동안에는 올바른 비밀번호도 거절되므로
+**주인이 자기 서버에 영영 못 들어온다**(실측으로 재현했다). 아이디+IP 로 세면
+공격자는 자기 IP 만 잠그고, 주인은 다른 회선에서 그대로 들어온다.
 
-대신 아이디를 아는 사람이 그 계정을 잠깐 잠글 수 있다는 약점이 남는다.
-그래서 잠금은 30초에서 시작해 최대 10분까지만 늘린다 — 무차별 대입은 막되
-주인이 오래 갇히지는 않게.
+IP 는 nginx 가 `X-Client-IP` 로 넘겨준다. 그 값은 클라우드플레어가 터널에서
+덮어쓰는 `CF-Connecting-IP`(없으면 nginx 가 본 주소)이고, nginx 의
+`proxy_set_header` 가 들어온 헤더를 **덮어쓰므로** 바깥에서 지어낼 수 없다.
+헤더가 아예 없으면(직접 호출·테스트) 아이디만으로 센다.
+
+한 IP 가 아이디를 바꿔 가며 두드리는 것은 MAX_KEYS 상한이 받아 낸다.
+잠금은 30초에서 시작해 최대 10분까지만 늘린다.
 """
 from __future__ import annotations
 
@@ -43,6 +48,7 @@ class _State:
     locks: int = 0      # 지금까지 몇 번 잠갔는지(해제된 뒤에도 남는다)
     seen: float = 0.0   # 마지막으로 움직인 시각(정리 기준)
     until: float = 0.0  # 이 시각까지는 시도 자체를 받지 않는다
+    probed: bool = False  # 이번 잠금 동안 비밀번호를 한 번 확인해 줬는가
 
 
 _states: dict[str, _State] = {}
@@ -71,8 +77,11 @@ def _prune(now: float) -> None:
             del _states[k]
 
 
-def _key(username: str) -> str:
-    return (username or "").strip().lower()[:MAX_KEY_CHARS]
+def _key(username: str, client_ip: str = "") -> str:
+    """세는 단위. 아이디만으로 세면 아이디를 아는 사람이 주인을 잠글 수 있다."""
+    who = (username or "").strip().lower()[:MAX_KEY_CHARS]
+    ip = (client_ip or "").strip()[:MAX_KEY_CHARS]
+    return f"{who}|{ip}" if ip else who
 
 
 def _delay_for(locks: int) -> int:
@@ -80,17 +89,17 @@ def _delay_for(locks: int) -> int:
     return int(min(FIRST_DELAY * 2 ** max(0, locks - 1), MAX_DELAY))
 
 
-def retry_after(username: str, now: float | None = None) -> int:
+def retry_after(username: str, now: float | None = None, client_ip: str = "") -> int:
     """지금 시도할 수 있으면 0, 막혀 있으면 남은 초(올림). 상태를 바꾸지 않는다."""
     now = time.time() if now is None else now
     with _lock:
-        s = _states.get(_key(username))
+        s = _states.get(_key(username, client_ip))
         if s is None or now >= s.until:
             return 0
         return max(1, int(s.until - now + 0.999))
 
 
-def begin_attempt(username: str, now: float | None = None) -> int:
+def begin_attempt(username: str, now: float | None = None, client_ip: str = "") -> int:
     """시도 하나를 '진행 중'으로 잡는다. 막혀 있으면 남은 초.
 
     **막을지 말지는 여기서만 정한다.** 확인과 기록이 갈라져 있으면, 동시에 들어온
@@ -99,7 +108,7 @@ def begin_attempt(username: str, now: float | None = None) -> int:
     합쳐서 세고, 한도에 닿으면 그 자리에서 잠근다.
     """
     now = time.time() if now is None else now
-    key = _key(username)
+    key = _key(username, client_ip)
     with _lock:
         _prune(now)
         s = _states.get(key)
@@ -118,6 +127,7 @@ def begin_attempt(username: str, now: float | None = None) -> int:
         if s.fails + s.inflight >= FREE_TRIES:
             s.locks += 1
             s.fails = 0
+            s.probed = False  # 새 잠금 = 확인 기회도 새로 하나
             s.until = now + _delay_for(s.locks)
             s.seen = now
             return _delay_for(s.locks)
@@ -127,15 +137,37 @@ def begin_attempt(username: str, now: float | None = None) -> int:
         return 0
 
 
-def end_attempt(username: str) -> None:
+def allow_probe(username: str, now: float | None = None, client_ip: str = "") -> bool:
+    """잠겨 있어도 **이번 잠금에 한 번은** 비밀번호를 확인해 준다.
+
+    부르는 쪽은 잠긴 상태(begin_attempt 가 0이 아닌 값을 준 뒤)에서만 쓴다.
+    True 를 받으면 비밀번호를 검증해도 된다 — 맞으면 들여보내고(record_success
+    가 기록을 지운다), 틀리면 429 로 돌려보낸다.
+
+    기회를 쓰는 것과 세는 것을 한 락 안에서 한다 — 나누면 동시에 들어온 요청이
+    모두 True 를 받아 잠금이 그 수만큼 뚫린다.
+    """
+    now = time.time() if now is None else now
+    with _lock:
+        s = _states.get(_key(username, client_ip))
+        if s is None or now >= s.until:
+            return True  # 애초에 잠겨 있지 않다
+        if s.probed:
+            return False
+        s.probed = True
+        s.seen = now
+        return True
+
+
+def end_attempt(username: str, client_ip: str = "") -> None:
     """진행 중 표시를 거둔다(성공·실패 어느 쪽이든 반드시 부른다)."""
     with _lock:
-        s = _states.get(_key(username))
+        s = _states.get(_key(username, client_ip))
         if s is not None and s.inflight > 0:
             s.inflight -= 1
 
 
-def record_failure(username: str, now: float | None = None) -> None:
+def record_failure(username: str, now: float | None = None, client_ip: str = "") -> None:
     """실패를 센다. **여기서는 잠그지 않는다.**
 
     잠그는 판단은 begin_attempt 한 곳에서만 한다 — 두 곳에서 정하면 규칙이
@@ -143,18 +175,18 @@ def record_failure(username: str, now: float | None = None) -> None:
     """
     now = time.time() if now is None else now
     with _lock:
-        s = _states.get(_key(username))
+        s = _states.get(_key(username, client_ip))
         if s is None:
             s = _State()
-            _states[_key(username)] = s
+            _states[_key(username, client_ip)] = s
         s.fails += 1
         s.seen = now
 
 
-def record_success(username: str) -> None:
+def record_success(username: str, client_ip: str = "") -> None:
     """제대로 들어왔으면 기록을 지운다 — 다음 오타부터 다시 센다."""
     with _lock:
-        _states.pop(_key(username), None)
+        _states.pop(_key(username, client_ip), None)
 
 
 def reset() -> None:

@@ -41,8 +41,37 @@ jobs:
           if grep -qiE '^ENABLE_TERMINAL=(true|1|yes)' .env 2>/dev/null; then
             PROFILE_ARGS="$PROFILE_ARGS --profile terminal"
           fi
+          # 되돌릴 자리를 먼저 만든다. 이 다음 줄의 재빌드가 옛 이미지를 dangling 으로
+          # 만들고, 그 아래 `docker image prune -f` 가 **그것을 즉시 지운다** —
+          # 배포는 성공했는데 런타임이 이상하면 되돌릴 이미지가 하나도 없어서
+          # 파이에서 처음부터 다시 빌드하는 수밖에 없었다(수십 분).
+          echo "▶ 직전 이미지를 :prev 로 남긴다(롤백용)"
+          for svc in backend frontend terminal; do
+            img="$(docker compose $PROFILE_ARGS images -q "$svc" 2>/dev/null | head -n1)" || true
+            if [ -n "${img:-}" ]; then
+              docker tag "$img" "twoems-prev:$svc" && echo "   $svc → twoems-prev:$svc"
+            fi
+          done
+
           echo "▶ 컨테이너 재빌드 ($PROFILE_ARGS)"
           docker compose $PROFILE_ARGS up -d --build
+
+          # :prev 태그가 붙은 이미지는 dangling 이 아니므로 prune 이 건드리지 않는다.
           echo "▶ 미사용(dangling) 이미지 정리"
           docker image prune -f
+
+          echo "▶ 기동 확인"
+          ok=""
+          for i in $(seq 1 30); do
+            if curl -fsS -m 3 http://127.0.0.1:8000/api/health >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::배포 후 백엔드가 응답하지 않습니다. 되돌리려면 파이에서:"
+            echo "::error::  docker tag twoems-prev:backend twoems-server-backend:latest"
+            echo "::error::  docker tag twoems-prev:frontend twoems-server-frontend:latest"
+            echo "::error::  docker compose $PROFILE_ARGS up -d --no-build"
+            docker compose $PROFILE_ARGS logs --tail 80 backend || true
+            exit 1
+          fi
           echo "✅ 배포 완료: $(git rev-parse --short HEAD)"

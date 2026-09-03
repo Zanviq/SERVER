@@ -104,7 +104,9 @@ def read_json(path: Path, default):
         return default
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+        # UnicodeDecodeError 도 잡는다. 안 잡으면 CP949 로 저장된 파일 하나가
+        # 날 예외로 새어, 기동(lifespan)에서 부르는 자리에서는 서버가 아예 못 뜬다.
         return default
 
 

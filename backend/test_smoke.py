@@ -65,14 +65,67 @@ def test_login_throttled_after_repeated_failures():
     assert codes[:login_guard.FREE_TRIES] == [401] * login_guard.FREE_TRIES
     assert codes[-1] == 429
 
-    # 잠긴 동안에는 올바른 비밀번호도 확인해 주지 않는다.
-    # (확인해 주면 맞았는지 틀렸는지가 새어 나가 제한이 무의미해진다)
+    # 잠긴 동안에는 확인 기회가 하나뿐이다. 그 하나는 위 6번째 시도가 이미 썼다.
     r = c.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
     assert r.status_code == 429
     assert int(r.headers["Retry-After"]) > 0
 
     login_guard.reset()
     assert c.post("/api/auth/login", json={"username": "tester", "password": "pw123"}).status_code == 200
+
+
+def test_lockout_cannot_shut_the_owner_out_of_their_own_server():
+    """아이디만 아는 사람이 주인을 자기 서버에서 몰아낼 수 없어야 한다.
+
+    아이디만으로 세면 방어 수단이 그대로 공격 수단이 된다 — 잠금이 풀릴 때마다
+    5번씩 틀리는 것을 반복하면 대기시간이 상한(10분)에 눌러앉고, 잠긴 동안에는
+    올바른 비밀번호도 거절되므로 주인이 영영 못 들어온다(실측으로 재현했다).
+    아이디+IP 로 세면 공격자는 자기 IP 만 잠근다.
+    """
+    login_guard.reset()
+    c = TestClient(app)
+    attacker = {"X-Client-IP": "203.0.113.9"}
+    owner = {"X-Client-IP": "198.51.100.7"}
+
+    for _ in range(login_guard.FREE_TRIES + 1):
+        c.post("/api/auth/login", json={"username": "tester", "password": "nope"},
+               headers=attacker)
+    # 공격자는 자기 IP 에서 막혔다
+    assert c.post("/api/auth/login", json={"username": "tester", "password": "nope"},
+                  headers=attacker).status_code == 429
+    assert login_guard.retry_after("tester", client_ip="203.0.113.9") > 0
+    # 주인은 다른 회선에서 그대로 들어온다
+    assert login_guard.retry_after("tester", client_ip="198.51.100.7") == 0
+    r = c.post("/api/auth/login", json={"username": "tester", "password": "pw123"},
+               headers=owner)
+    assert r.status_code == 200, r.text
+    login_guard.reset()
+
+
+def test_a_locked_out_person_still_gets_one_check(monkeypatch):
+    """같은 회선에서 잠겼어도 **잠금당 한 번은** 올바른 비밀번호가 통해야 한다.
+
+    집에서 오타를 다섯 번 낸 사람이 30초를 꼬박 기다려야 할 이유는 없다.
+    확인은 잠금당 한 번뿐이라 공격자가 얻는 추측은 오히려 줄어든다.
+    """
+    login_guard.reset()
+    c = TestClient(app)
+    me = {"X-Client-IP": "198.51.100.7"}
+    for _ in range(login_guard.FREE_TRIES):
+        assert c.post("/api/auth/login", json={"username": "tester", "password": "nope"},
+                      headers=me).status_code == 401
+    # 여기서 잠긴다. 그래도 올바른 비밀번호는 이번 한 번 통한다.
+    r = c.post("/api/auth/login", json={"username": "tester", "password": "pw123"},
+               headers=me)
+    assert r.status_code == 200, r.text
+
+    # 반대로 잠긴 뒤 틀린 비밀번호를 넣으면 그 한 번을 써 버리고, 그다음은 막힌다
+    login_guard.reset()
+    for _ in range(login_guard.FREE_TRIES + 1):
+        c.post("/api/auth/login", json={"username": "tester", "password": "nope"}, headers=me)
+    assert c.post("/api/auth/login", json={"username": "tester", "password": "pw123"},
+                  headers=me).status_code == 429
+    login_guard.reset()
 
 
 def test_login_guard_counts_per_account_and_forgets():
@@ -1197,6 +1250,64 @@ def test_dotted_titles_survive_the_whole_document_lifecycle():
     assert "2026.08 회고 (2).md" in paths, [p for p in paths if "회고" in p]
     for p in ("2026.08 회고.md", "2026.08 회고 (2).md"):
         client.request("DELETE", "/api/notes/delete", json={"path": p})
+
+
+def test_server_still_starts_when_the_accounts_file_is_broken():
+    """계정 파일이 깨져도 **서버는 떠야 한다**.
+
+    기동에서 예외가 올라가면 `Application startup failed` 로 끝나고, compose 의
+    restart: unless-stopped 때문에 재시작만 반복한다 — 문서·캘린더·할 일·health
+    까지 전부 내려가고 무엇이 문제인지 볼 방법도 없다. 손상은 로그인 경로가
+    503 으로 이미 막고 있으므로(덮어쓰지 않는다) 기동은 계속한다.
+    """
+    import shutil as _sh
+    import tempfile as _tf
+    from pathlib import Path as _P
+
+    prev = os.environ.get("STORAGE_ROOT")
+    prev_users = os.environ.get("AUTH_USERS")
+    for label, raw in (
+        ("깨진 JSON", "{계정 목록이 아님".encode()),
+        ("CP949", '[{"username": "주인"}]'.encode("cp949")),
+        ("목록이 아님", b'{"username": "o"}'),
+        ("빈 파일", b""),
+    ):
+        root = _P(_tf.mkdtemp(prefix="startup_"))
+        (root / "accounts.json").write_bytes(raw)
+        os.environ["STORAGE_ROOT"] = str(root)
+        os.environ["AUTH_USERS"] = json.dumps([{"username": "o", "password": "pw-long-enough"}])
+        try:
+            from backend.config import Settings
+            from backend.main import lifespan
+
+            get_settings.cache_clear()
+            import asyncio
+
+            async def boot():
+                async with lifespan(app):
+                    return True
+
+            assert asyncio.run(boot()) is True, label  # 기동이 예외로 끝나지 않는다
+
+            s = Settings()
+            quiet = TestClient(app, raise_server_exceptions=False)
+            r = quiet.post("/api/auth/login",
+                           json={"username": "o", "password": "pw-long-enough"})
+            assert r.status_code == 503, (label, r.status_code, r.text)
+            # 손상된 파일을 덮어쓰지 않았다
+            assert (root / "accounts.json").read_bytes() == raw, label
+            assert s.storage_root == root
+        finally:
+            if prev is None:
+                os.environ.pop("STORAGE_ROOT", None)
+            else:
+                os.environ["STORAGE_ROOT"] = prev
+            if prev_users is None:
+                os.environ.pop("AUTH_USERS", None)
+            else:
+                os.environ["AUTH_USERS"] = prev_users
+            get_settings.cache_clear()
+            _sh.rmtree(root, ignore_errors=True)
 
 
 def test_broken_auth_users_does_not_lock_the_owner_out_forever():

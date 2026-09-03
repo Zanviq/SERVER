@@ -106,6 +106,16 @@ def _load(settings: Settings) -> list[dict]:
     (시드는 멱등이며 파일이 없을 때만 동작한다).
     """
     rows = read_json(_path(settings), None)
+    if rows is not None and not (
+        isinstance(rows, list) and all(isinstance(r, dict) for r in rows)
+    ):
+        # 읽히기는 하는데 계정 목록의 모양이 아니다(예: `{"username": ...}` 한 덩어리).
+        # 그대로 넘기면 아래 _backfill_origin 이 문자열에 .get 을 불러 500 으로
+        # 터진다 — 손상은 손상으로 다뤄야 사용자가 무엇이 문제인지 안다.
+        raise HTTPException(
+            status_code=503,
+            detail="계정 파일의 형식이 올바르지 않습니다. 손상됐을 수 있어 아무것도 덮어쓰지 않았습니다.",
+        )
     if rows is not None:
         # origin 이 없던 시절의 행을 여기서도 채운다. 예전에는 기동(lifespan)에서만
         # 했는데, 그 한 번을 놓치면(테스트·다른 진입점) 주인이 signup 으로 읽혀

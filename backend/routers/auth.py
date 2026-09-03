@@ -68,25 +68,40 @@ def login(
     # (확인해 주면 맞았는지 틀렸는지가 새어 나가 제한이 무의미해진다)
     # 확인과 동시에 '진행 중'으로 잡는다 — 따로 하면 동시에 들어온 요청이 전부
     # 통과해 한 번에 수십 개를 시험해 볼 수 있다.
-    wait = login_guard.begin_attempt(req.username)
-    if wait:
-        raise HTTPException(
-            status_code=429,
-            detail=f"로그인 시도가 너무 많습니다. {wait}초 후 다시 시도해 주세요.",
-            headers={"Retry-After": str(wait)},
-        )
+    # nginx 가 덮어써서 넘겨주는 값이라 바깥에서 지어낼 수 없다. 없으면(직접 호출)
+    # 빈 문자열이 되어 예전처럼 아이디만으로 센다.
+    ip = (request.headers.get("x-client-ip") or "").strip()
+    wait = login_guard.begin_attempt(req.username, client_ip=ip)
+    locked = bool(wait)
+    too_many = HTTPException(
+        status_code=429,
+        detail=f"로그인 시도가 너무 많습니다. {wait}초 후 다시 시도해 주세요.",
+        headers={"Retry-After": str(wait or 1)},
+    )
+    if locked and not login_guard.allow_probe(req.username, client_ip=ip):
+        # 이번 잠금의 확인 기회를 이미 썼다. 여기서는 비밀번호를 보지 않는다.
+        raise too_many
     try:
+        # 잠겨 있어도 **한 번은** 확인해 준다. 안 그러면 아이디만 아는 사람이
+        # 잠금이 풀릴 때마다 5번씩 틀리는 것만으로 주인을 자기 서버에서 영영
+        # 몰아낼 수 있다(대기시간이 상한 10분에 눌러앉는다).
         acc = accounts.authenticate(req.username, req.password, settings)
     finally:
-        login_guard.end_attempt(req.username)
+        if not locked:
+            # inflight 는 잠기지 않은 경로에서만 올라간다. 잠긴 채로 여기서
+            # 내리면 남의 진행 중 시도를 대신 지운다.
+            login_guard.end_attempt(req.username, client_ip=ip)
 
     if acc is None:
-        login_guard.record_failure(req.username)
+        if locked:
+            # 잠긴 중의 확인이 틀렸다 — 맞았는지 틀렸는지는 429 로 덮는다.
+            raise too_many
+        login_guard.record_failure(req.username, client_ip=ip)
         # 아이디 존재 여부를 흘리지 않도록 한 가지 메시지로 통일.
         # 한도를 넘었다는 안내(429)는 다음 시도의 begin_attempt 가 준다 — 여기서도
         # 판단하면 규칙이 두 곳으로 갈라진다.
         raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
-    login_guard.record_success(req.username)
+    login_guard.record_success(req.username, client_ip=ip)
     if acc.status == accounts.STATUS_PENDING:
         raise HTTPException(status_code=403, detail="가입 승인을 기다리는 중입니다. 관리자 승인 후 로그인할 수 있습니다.")
     if acc.status == accounts.STATUS_REJECTED:

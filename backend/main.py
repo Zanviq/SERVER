@@ -41,10 +41,24 @@ async def lifespan(app: FastAPI):
     # 계정 저장소 초기화 — 비어 있으면 .env의 AUTH_USERS를 해시로 1회 이관
     from . import accounts
 
-    accounts.ensure_seed(settings)
+    # **기동은 계정 파일 때문에 막히지 않는다.** 파일이 깨졌거나 UTF-8 이 아니면
+    # 여기서 예외가 올라가 `Application startup failed` 로 끝나고, compose 의
+    # `restart: unless-stopped` 때문에 컨테이너가 재시작만 반복한다 — 로그인뿐
+    # 아니라 문서·캘린더·할 일·/api/health 까지 전부 내려가고, 무엇이 문제인지
+    # 볼 방법도 없다. 손상은 로그인 경로가 503 으로 이미 막고 있으므로(덮어쓰지
+    # 않는다), 여기서는 크게 남기고 서버는 띄운다.
+    try:
+        accounts.ensure_seed(settings)
+        empty = not accounts.list_all(settings)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "계정 저장소를 읽지 못했습니다 — 로그인은 503 으로 막히지만 서버는 뜹니다. "
+            "accounts.json 이 올바른 JSON 목록인지 확인하세요."
+        )
+        empty = False
     if not settings.session_secret:
         logger.warning("SESSION_SECRET 미설정 — 로그인이 503으로 거부됩니다.")
-    if not accounts.list_all(settings):
+    if empty:
         logger.warning(
             "계정이 없습니다 — .env의 AUTH_USERS로 최초 관리자를 만들거나 가입 후 승인이 필요합니다."
         )
