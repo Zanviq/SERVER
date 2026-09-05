@@ -49,4 +49,5 @@ _devserver.ps1
 /_*.mjs
 /_*.ps1
 /_*.log
+/_*.sh
 /_*/
