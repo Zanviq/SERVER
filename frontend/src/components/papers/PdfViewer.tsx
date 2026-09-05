@@ -8,6 +8,25 @@ import { loadPdfJs, PdfJs } from "../../lib/pdfjs";
 
 export type PdfTool = "text" | "region";
 
+/** 배율 1 기준(=PDF 쪽 좌표)의 사각형. 배율이 바뀌어도 같은 자리를 가리킨다. */
+export interface PdfRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+/**
+ * AI 입력에 얹어 둔 선택의 자국. 칩 하나에 자국 하나(id 가 같다).
+ * 이게 없으면 "AI에 넣기"를 누른 순간 브라우저 선택이 사라져서 지금 어디를
+ * 골라 뒀는지 볼 수 없다.
+ */
+export interface PdfMark {
+  id: string;
+  page: number;
+  kind: "text" | "region";
+  rects: PdfRect[];
+}
+
 interface Props {
   paperId: string;
   fileUrl: string;
@@ -15,11 +34,13 @@ interface Props {
   initialPage?: number;
   onPageChange?: (page: number, total: number) => void;
   /** 드래그로 고른 글을 AI 입력에 얹는다 */
-  onAddText: (text: string, page: number) => void;
+  onAddText: (text: string, page: number, rects: PdfRect[]) => void;
   /** 고른 글을 얹고 바로 묻는다 */
-  onAskText: (text: string, page: number, prompt: string) => void;
+  onAskText: (text: string, page: number, prompt: string, rects: PdfRect[]) => void;
   /** 영역 도구로 오린 그림(PNG data URL) */
-  onAddRegion: (dataUrl: string, page: number) => void;
+  onAddRegion: (dataUrl: string, page: number, rect: PdfRect) => void;
+  /** 지금 얹혀 있는 선택의 자국(쪽 위에 그린다) */
+  marks?: PdfMark[];
   /** 지금 AI 입력에 얹힌 첨부·선택 수 — "선택 모두 지우기" 버튼 */
   contextCount: number;
   onClearContext: () => void;
@@ -28,8 +49,38 @@ interface Props {
 const GAP = 16;
 const ZOOMS = [0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 2.5, 3];
 const MAX_REGION_PX = 1600;
+/** 자국 하나가 담는 줄 수 상한(아주 긴 선택에서 div 가 수백 개 생기지 않게) */
+const MAX_MARK_RECTS = 60;
 
 type Size = { w: number; h: number };
+
+/**
+ * 선택 범위가 덮은 줄들을 그 쪽 기준 좌표(배율 1)로 바꾼다.
+ * 여러 쪽에 걸친 선택은 시작 쪽에 걸린 부분만 남는다 — 자국은 "여기를 골랐다"는
+ * 표시일 뿐이고, AI 로 가는 글은 선택 전체가 그대로 간다.
+ */
+function rectsIn(range: Range, pageEl: HTMLElement | null, scale: number): PdfRect[] {
+  if (!pageEl || scale <= 0) return [];
+  const base = pageEl.getBoundingClientRect();
+  const out: PdfRect[] = [];
+  for (const r of Array.from(range.getClientRects())) {
+    if (r.width < 1 || r.height < 1) continue;
+    const x = (r.left - base.left) / scale;
+    const y = (r.top - base.top) / scale;
+    const w = r.width / scale, h = r.height / scale;
+    // 다른 쪽에 그려질 줄은 버린다(시작 쪽 밖)
+    if (y + h < 0 || y > base.height / scale) continue;
+    const last = out[out.length - 1];
+    // pdf.js 텍스트 레이어는 한 줄을 여러 조각으로 준다 — 같은 줄은 이어 붙인다
+    if (last && Math.abs(last.y - y) < 2 && Math.abs(last.h - h) < 2 && x - (last.x + last.w) < 6) {
+      last.w = Math.max(last.w, x + w - last.x);
+      continue;
+    }
+    out.push({ x, y, w, h });
+    if (out.length >= MAX_MARK_RECTS) break;
+  }
+  return out;
+}
 
 /**
  * 연속 스크롤 PDF 뷰어(pdf.js). 보이는 쪽만 그린다.
@@ -37,7 +88,7 @@ type Size = { w: number; h: number };
  */
 export function PdfViewer({
   paperId, fileUrl, initialPage = 1, onPageChange, onAddText, onAskText, onAddRegion,
-  contextCount, onClearContext,
+  marks = [], contextCount, onClearContext,
 }: Props) {
   const [pdfjs, setPdfjs] = useState<PdfJs | null>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
@@ -49,7 +100,9 @@ export function PdfViewer({
   const [range, setRange] = useState<[number, number]>([0, 1]);
   const [current, setCurrent] = useState(1);
   const [pageInput, setPageInput] = useState("1");
-  const [pop, setPop] = useState<{ x: number; y: number; text: string; page: number } | null>(null);
+  const [pop, setPop] = useState<
+    { x: number; y: number; text: string; page: number; rects: PdfRect[] } | null
+  >(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrolledTo = useRef<string>("");
 
@@ -99,6 +152,10 @@ export function PdfViewer({
     if (!maxW || !containerW) return 1;
     return Math.max(0.3, (containerW - GAP * 2) / maxW);
   }, [zoom, maxW, containerW]);
+  // 선택 자국은 배율 1 좌표로 저장한다. 선택을 잡는 곳이 이벤트 리스너 안이라
+  // 그때의 배율을 ref 로 읽는다(리스너를 배율마다 다시 달지 않으려고).
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
 
   // 각 쪽의 위 좌표(스크롤 컨테이너 기준). 크기를 다 알아서 보이는 쪽을 계산으로 고른다.
   const tops = useMemo(() => {
@@ -193,9 +250,10 @@ export function PdfViewer({
         const text = sel.toString().replace(/\s+/g, " ").trim();
         if (!text) return;
         const start = range.startContainer.nodeType === 1 ? (range.startContainer as HTMLElement) : range.startContainer.parentElement;
-        const page = Number(start?.closest<HTMLElement>("[data-page]")?.dataset.page ?? current);
+        const pageEl = start?.closest<HTMLElement>("[data-page]") ?? null;
+        const page = Number(pageEl?.dataset.page ?? current);
         const r = range.getBoundingClientRect();
-        setPop({ x: r.left + r.width / 2, y: r.bottom + 8, text, page });
+        setPop({ x: r.left + r.width / 2, y: r.bottom + 8, text, page, rects: rectsIn(range, pageEl, scaleRef.current) });
       }, 0);
     };
     el.addEventListener("pointerdown", onDown);
@@ -212,9 +270,11 @@ export function PdfViewer({
     return () => document.removeEventListener("selectionchange", onChange);
   }, []);
 
-  const usePop = (fn: (text: string, page: number) => void) => {
+  // 말풍선을 쓰면 브라우저 선택은 사라진다(다른 곳을 누르는 순간 어차피 풀린다).
+  // 대신 그 자리를 자국으로 남겨 지금 무엇을 얹어 뒀는지 계속 보이게 한다.
+  const usePop = (fn: (text: string, page: number, rects: PdfRect[]) => void) => {
     if (!pop) return;
-    fn(pop.text, pop.page);
+    fn(pop.text, pop.page, pop.rects);
     setPop(null);
     window.getSelection()?.removeAllRanges();
   };
@@ -278,7 +338,7 @@ export function PdfViewer({
               return (
                 <PageView key={i} pdf={pdf} pdfjs={pdfjs} num={i + 1} scale={scale} size={s} visible={visible}
                   top={tops[i]} left={(Math.max(maxW * scale + GAP * 2, containerW) - s.w * scale) / 2}
-                  tool={tool} onRegion={onAddRegion} />
+                  tool={tool} onRegion={onAddRegion} marks={marks.filter((m) => m.page === i + 1)} />
               );
             })}
           </div>
@@ -293,10 +353,10 @@ export function PdfViewer({
           <button type="button" className="btn btn-ghost h-7 gap-1 px-2 text-[12px]" onClick={() => usePop(onAddText)} title="AI 입력에 얹어 두고 이어서 쓴다">
             <MessageSquarePlus size={13} /> AI에 넣기
           </button>
-          <button type="button" className="btn btn-ghost h-7 gap-1 px-2 text-[12px]" onClick={() => usePop((t, p) => onAskText(t, p, "이 부분을 쉽게 설명해줘. 핵심 주장과 이 논문에서의 역할을 짚어줘."))} title="바로 설명을 묻는다">
+          <button type="button" className="btn btn-ghost h-7 gap-1 px-2 text-[12px]" onClick={() => usePop((t, p, r) => onAskText(t, p, "이 부분을 쉽게 설명해줘. 핵심 주장과 이 논문에서의 역할을 짚어줘.", r))} title="바로 설명을 묻는다">
             <Sparkles size={13} /> 설명
           </button>
-          <button type="button" className="btn btn-ghost h-7 gap-1 px-2 text-[12px]" onClick={() => usePop((t, p) => onAskText(t, p, "이 문장을 해석하고 문장 구조를 설명해줘. 어려운 단어는 단어장 후보로 제안해줘."))} title="해석·문법 + 단어장 후보">
+          <button type="button" className="btn btn-ghost h-7 gap-1 px-2 text-[12px]" onClick={() => usePop((t, p, r) => onAskText(t, p, "이 문장을 해석하고 문장 구조를 설명해줘. 어려운 단어와 전문 용어는 단어장 후보로 제안해줘.", r))} title="해석·문법 + 단어장 후보">
             <BookMarked size={13} /> 영어
           </button>
         </div>
@@ -330,10 +390,12 @@ interface PageProps {
   top: number;
   left: number;
   tool: PdfTool;
-  onRegion: (dataUrl: string, page: number) => void;
+  onRegion: (dataUrl: string, page: number, rect: PdfRect) => void;
+  /** 이 쪽에 남길 선택 자국 */
+  marks: PdfMark[];
 }
 
-function PageView({ pdf, pdfjs, num, scale, size, visible, top, left, tool, onRegion }: PageProps) {
+function PageView({ pdf, pdfjs, num, scale, size, visible, top, left, tool, onRegion, marks }: PageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const [rendered, setRendered] = useState(false);
@@ -418,7 +480,7 @@ function PageView({ pdf, pdfjs, num, scale, size, visible, top, left, tool, onRe
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, out.width, out.height);
     ctx.drawImage(canvas, Math.round(x * sx), Math.round(y * sy), cw, ch, 0, 0, out.width, out.height);
-    onRegion(out.toDataURL("image/png"), num);
+    onRegion(out.toDataURL("image/png"), num, { x: x / scale, y: y / scale, w: rw / scale, h: rh / scale });
   };
 
   const rect = drag ? {
@@ -431,6 +493,15 @@ function PageView({ pdf, pdfjs, num, scale, size, visible, top, left, tool, onRe
       style={{ top, left, width: w, height: h, ["--scale-factor" as string]: String(scale) }}>
       <canvas ref={canvasRef} className="block h-full w-full" />
       <div ref={textRef} className="textLayer" />
+      {/* AI 입력에 얹어 둔 선택의 자국. 칩을 빼면 같이 사라진다. */}
+      {marks.map((m) =>
+        m.rects.map((r, i) => (
+          <div key={`${m.id}:${i}`} aria-hidden
+            className={`pointer-events-none absolute z-[5] rounded-[2px] ${
+              m.kind === "region" ? "border-2 border-accent bg-accent/10" : "bg-accent/25 mix-blend-multiply"}`}
+            style={{ left: r.x * scale, top: r.y * scale, width: r.w * scale, height: r.h * scale }} />
+        )),
+      )}
       {visible && !rendered && (
         <div className="absolute inset-0 grid place-items-center text-fg-subtle"><Loader2 size={18} className="animate-spin" /></div>
       )}

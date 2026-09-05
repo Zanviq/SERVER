@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from .. import vocab_store
+from .. import vocab_fill, vocab_store
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 
@@ -15,6 +15,7 @@ router = APIRouter(prefix="/api/vocab", tags=["vocab"])
 
 class WordInput(BaseModel):
     word: str
+    kind: str | None = None
     pos: str | None = None
     pronunciation: str | None = None
     meanings: list[str] | str | None = None
@@ -44,6 +45,25 @@ class TagRename(BaseModel):
     new: str = ""
 
 
+class FillItem(BaseModel):
+    """후보 목록에서 사용자가 고른 항목. 사전 내용은 서버가 채운다."""
+    word: str
+    meaning: str = ""
+    kind: str = ""
+
+
+class FillInput(BaseModel):
+    words: list[FillItem]
+    tags: list[str] = []
+    context: str = ""
+
+
+class CollectInput(BaseModel):
+    """단어·문장·문법을 뒤섞어 적은 글. AI 가 갈래로 나눠 넣는다."""
+    text: str
+    tags: list[str] = []
+
+
 class ReviewInput(BaseModel):
     ok: bool
 
@@ -62,11 +82,13 @@ def words(
     tag: str = Query("", description="이 태그가 붙은 단어만"),
     q: str = Query("", description="표제어·뜻·유사어·문맥 검색"),
     due: bool = Query(False, description="오늘 복습할 것만"),
+    kind: str = Query("", description="갈래(word/phrase/sentence/grammar/term)"),
     limit: int = Query(0, ge=0, le=5000),
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    return vocab_store.list_words(user, settings, tag=tag, query=q, due_only=due, limit=limit)
+    return vocab_store.list_words(user, settings, tag=tag, query=q, due_only=due,
+                                  kind=kind, limit=limit)
 
 
 @router.get("/tags")
@@ -124,6 +146,47 @@ def word_delete(
     settings: Settings = Depends(get_settings),
 ):
     return vocab_store.delete_word(user, settings, wid)
+
+
+@router.post("/fill")
+def fill(
+    req: FillInput,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """고른 항목을 **백그라운드에서** 사전 형식으로 채워 넣는다.
+
+    넣을 목록을 서버가 쥐고 모델 결과를 그 목록으로 걸러내므로, 고르지 않은
+    항목이 딸려 들어갈 수 없다. 대화를 막지 않도록 즉시 돌아온다.
+    """
+    if not req.words:
+        raise HTTPException(status_code=400, detail="넣을 항목이 없습니다.")
+    items = [w.model_dump() for w in req.words[:vocab_fill.MAX_ITEMS]]
+    tags = [t for t in (vocab_store.normalize_tag(t) for t in req.tags) if t]
+    return vocab_fill.start_fill(user, settings, items, tags, req.context[:2000])
+
+
+@router.post("/collect")
+def collect(
+    req: CollectInput,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """뒤섞어 적은 글을 AI 가 단어·문장·문법·용어로 나눠 넣는다(백그라운드)."""
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="정리할 내용이 없습니다.")
+    if len(text) > vocab_fill.MAX_COLLECT_CHARS:
+        raise HTTPException(status_code=413,
+                            detail=f"한 번에 {vocab_fill.MAX_COLLECT_CHARS}자까지 정리합니다.")
+    tags = [t for t in (vocab_store.normalize_tag(t) for t in req.tags) if t]
+    return vocab_fill.start_collect(user, settings, text, tags)
+
+
+@router.get("/jobs")
+def jobs(user: SessionUser = Depends(require_session)):
+    """백그라운드 정리 작업 상태(진행 표시용). 서버 재시작이면 비어 있다."""
+    return {"jobs": vocab_fill.jobs_for(user)}
 
 
 @router.post("/tags/rename")

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { Modal } from "../ui/Modal";
-import { api, VocabExample, VocabInput, VocabWord } from "../../lib/api";
+import { api, VocabExample, VocabInput, VocabKind, VocabWord } from "../../lib/api";
+import { KIND_LABEL } from "./kinds";
 import { toast } from "../../store/toast";
 
 interface Props {
@@ -20,6 +21,7 @@ const splitComma = (s: string) => s.split(/[,，]/).map((x) => x.trim()).filter(
 /** 단어를 손으로 넣거나 고친다. 보통은 AI가 채우지만, 뜻 하나 고치자고 채팅할 일은 아니다. */
 export function WordEditModal({ open, onClose, word, defaultTags = [], onSaved }: Props) {
   const [w, setW] = useState("");
+  const [kind, setKind] = useState<VocabKind>("");
   const [pos, setPos] = useState("");
   const [pron, setPron] = useState("");
   const [meanings, setMeanings] = useState("");
@@ -33,9 +35,13 @@ export function WordEditModal({ open, onClose, word, defaultTags = [], onSaved }
   const [context, setContext] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // 태그 기본값은 **내용**으로 비교한다 — 배열 정체성으로 두면 부모가 다시 그릴
+  // 때마다(백그라운드 정리가 끝났을 때 등) 입력 중인 폼이 초기화된다.
+  const tagSeed = defaultTags.join(", ");
   useEffect(() => {
     if (!open) return;
     setW(word?.word ?? "");
+    setKind(word?.kind ?? "");
     setPos(word?.pos ?? "");
     setPron(word?.pronunciation ?? "");
     setMeanings((word?.meanings ?? []).join("\n"));
@@ -45,14 +51,14 @@ export function WordEditModal({ open, onClose, word, defaultTags = [], onSaved }
     setExamples(word?.examples ?? []);
     setForms(word?.forms ?? "");
     setNotes(word?.notes ?? "");
-    setTags((word?.tags ?? defaultTags).join(", "));
+    setTags(word ? word.tags.join(", ") : tagSeed);
     setContext(word?.context ?? "");
-  }, [open, word, defaultTags]);
+  }, [open, word, tagSeed]);
 
   const save = async () => {
     if (!w.trim()) { toast.error("단어를 입력하세요"); return; }
     const body: VocabInput = {
-      word: w.trim(), pos: pos.trim(), pronunciation: pron.trim(),
+      word: w.trim(), kind, pos: pos.trim(), pronunciation: pron.trim(),
       meanings: splitLines(meanings), synonyms: splitComma(syn), antonyms: splitComma(ant),
       english_def: def.trim(), examples: examples.filter((e) => e.en.trim()),
       forms: forms.trim(), notes: notes.trim(), tags: splitComma(tags), context: context.trim(),
@@ -81,10 +87,19 @@ export function WordEditModal({ open, onClose, word, defaultTags = [], onSaved }
   return (
     <Modal open={open} onClose={onClose} title={word ? `${word.word} 수정` : "단어 추가"} width="max-w-xl">
       <div className="space-y-3">
-        <div className="grid grid-cols-[1fr_auto_auto] gap-2">
+        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2">
           <div>
-            <label className="label mb-1 block">단어</label>
+            <label className="label mb-1 block">단어·문장·용어</label>
             <input className="input" value={w} onChange={(e) => setW(e.target.value)} placeholder="adequate" autoFocus />
+          </div>
+          <div className="w-24">
+            <label className="label mb-1 block">갈래</label>
+            <select className="input" value={kind} onChange={(e) => setKind(e.target.value as VocabKind)} aria-label="갈래">
+              <option value="">자동</option>
+              {Object.entries(KIND_LABEL).map(([k, label]) => (
+                <option key={k} value={k}>{label}</option>
+              ))}
+            </select>
           </div>
           <div className="w-24">
             <label className="label mb-1 block">품사</label>

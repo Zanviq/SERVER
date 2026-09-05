@@ -6,8 +6,16 @@ add_vocab_words 를 부른다(뜻·유사어·영어 해설·예문·변화형·
 
 propose_vocab_words 는 **저장하지 않는다.** 논문을 읽다 사용자가 영어 질문을
 하면 모델이 "이 단어들 단어장에 넣을까요?" 하고 후보를 내미는 용도다. 프런트가
-이 호출을 보고 체크박스 목록을 띄우고, 사용자가 고른 것만 add 로 들어간다.
-후보를 모델이 바로 저장해 버리면 논문 한 편에 단어가 수십 개씩 쌓인다.
+이 호출을 보고 체크박스 목록을 띄운다. 후보를 모델이 바로 저장해 버리면 논문
+한 편에 단어가 수십 개씩 쌓인다.
+
+고른 뒤에는 **모델을 다시 거치지 않는다.** 프런트가 /api/vocab/fill 로 고른
+목록을 직접 보내고 vocab_fill 이 백그라운드에서 채운다 — 예전처럼 "넣어줘"를
+채팅으로 되돌려 보내면 모델이 직전 대화(후보 전체)를 보고 고르지 않은 것까지
+넣었다.
+
+단어장은 **영어 단어 전용이 아니다.** 논문 화면에서는 전문 용어(kind=term)가,
+영어 학습에서는 문장·문법 항목이 함께 들어온다.
 
 계약:
 - list_vocab 이 준 id 를 update/delete 에 그대로 넘긴다.
@@ -25,7 +33,14 @@ _MAX_ROWS = 200
 #: 사전 항목 스키마(add 와 update 가 공유). 모델이 채우는 내용이므로 어떤 말로
 #: 어떻게 쓰는지 설명에 적는다 — 예시 문서(영어학습예시)의 형식 그대로.
 _WORD_PROPS = {
-    "word": {"type": "string", "description": "표제어(원형). 과거형·복수형은 원형으로 바꿔 넣는다."},
+    "word": {"type": "string", "description": "표제어(원형). 과거형·복수형은 원형으로 바꿔 넣는다. "
+                                              "문장이면 문장 그대로, 문법 항목이면 그 이름."},
+    "kind": {
+        "type": "string", "enum": list(vocab_store.KINDS),
+        "description": "갈래. word=낱말, phrase=숙어·표현, sentence=문장 통째, "
+                       "grammar=문법 항목, term=전문 용어·고유명사(영어가 아니어도 된다). "
+                       "안 주면 표제어 모양으로 짐작한다.",
+    },
     "pos": {"type": "string", "description": "품사. 예: 동사, 형용사, 명사, 부사, 숙어"},
     "pronunciation": {"type": "string", "description": "발음(IPA)과 강세. 예: /ˈædɪkwət/ 첫 음절 강세"},
     "meanings": {
@@ -71,6 +86,7 @@ def _row(w: dict) -> dict:
     return {
         "id": w.get("id", ""),
         "word": w.get("word", ""),
+        "kind": w.get("kind", ""),
         "pos": w.get("pos", ""),
         "meanings": list(w.get("meanings") or [])[:4],
         "tags": list(w.get("tags") or []),
@@ -80,7 +96,7 @@ def _row(w: dict) -> dict:
 
 
 def _full(w: dict) -> dict:
-    keys = ("id", "word", "pos", "pronunciation", "meanings", "english_def", "synonyms",
+    keys = ("id", "word", "kind", "pos", "pronunciation", "meanings", "english_def", "synonyms",
             "antonyms", "examples", "forms", "notes", "tags", "context", "level",
             "next_review", "review_ok", "review_ng")
     return {k: w.get(k) for k in keys if k in w}
@@ -99,6 +115,8 @@ class ListVocab(SkillBase):
             "tag": {"type": "string", "description": "이 태그가 붙은 단어만."},
             "query": {"type": "string", "description": "검색어(표제어·뜻·유사어·문맥)."},
             "due_only": {"type": "boolean", "description": "오늘 복습할 것만."},
+            "kind": {"type": "string", "enum": list(vocab_store.KINDS),
+                     "description": "갈래로 거른다(word/phrase/sentence/grammar/term)."},
             "full": {"type": "boolean", "description": "true 면 사전 내용 전부(예문·해설). 기본은 요약."},
             "limit": {"type": "integer", "description": "최대 개수(기본 50)."},
         },
@@ -111,7 +129,7 @@ class ListVocab(SkillBase):
             words = vocab_store.list_words(
                 ctx.user, ctx.settings,
                 tag=str(args.get("tag") or ""), query=str(args.get("query") or ""),
-                due_only=bool(args.get("due_only")),
+                due_only=bool(args.get("due_only")), kind=str(args.get("kind") or ""),
             )
         except Exception as e:  # noqa: BLE001
             return _fail(e)
@@ -203,9 +221,10 @@ class ProposeVocabWords(SkillBase):
     expose_data = True  # 화면이 후보 체크 목록을 그린다
     name = "propose_vocab_words"
     description = (
-        "저장하지 않고 '이 단어들을 단어장에 넣을까요?' 하고 **후보를 내민다.** 사용자가 영어 단어·"
-        "문장의 뜻이나 문법을 물었을 때, 답을 다 한 뒤 이 스킬로 그 답에 나온 어려운 단어들을 "
-        "후보로 올린다. 화면에 체크 목록이 뜨고 사용자가 고른 것만 저장된다. "
+        "저장하지 않고 '이것들을 단어장에 넣을까요?' 하고 **후보를 내민다.** 사용자가 단어·문장·"
+        "문법·전문 용어를 물었을 때, 답을 다 한 뒤 이 스킬로 그 답에 나온 어려운 것들을 후보로 "
+        "올린다. 화면에 체크 목록이 뜨고 **사용자가 고른 것만** 저장된다(사전 내용은 서버가 "
+        "백그라운드에서 채우므로 너는 한 줄 뜻만 주면 된다). "
         "사용자가 이미 '넣어줘'라고 분명히 말했으면 이걸 쓰지 말고 add_vocab_words 로 바로 넣는다."
     )
     parameters = {
@@ -217,6 +236,8 @@ class ProposeVocabWords(SkillBase):
                     "type": "object",
                     "properties": {
                         "word": {"type": "string", "description": "표제어(원형)"},
+                        "kind": {"type": "string", "enum": list(vocab_store.KINDS),
+                                 "description": "갈래. 논문의 전문 용어는 term."},
                         "pos": {"type": "string"},
                         "meaning": {"type": "string", "description": "한 줄 뜻(체크 목록에 보일 것)"},
                     },
@@ -241,8 +262,10 @@ class ProposeVocabWords(SkillBase):
             if not hw or hw.lower() in seen:
                 continue
             seen.add(hw.lower())
+            kind = str(w.get("kind") or "").strip().lower()
             clean.append({
-                "word": hw[:200],
+                "word": hw[:vocab_store.MAX_WORD],
+                "kind": kind if kind in vocab_store.KINDS else vocab_store.guess_kind(hw),
                 "pos": str(w.get("pos") or "")[:60],
                 "meaning": str(w.get("meaning") or "")[:200],
             })
@@ -258,8 +281,8 @@ class ProposeVocabWords(SkillBase):
             c["exists"] = c["word"].lower() in existing
         return SkillResult(
             ok=True,
-            message=f"후보 {len(clean)}개를 화면에 띄웠습니다. 사용자가 고르면 저장됩니다 — "
-                    "너는 이 뒤에 짧게 '넣을 단어를 골라 주세요' 정도만 말하면 된다.",
+            message=f"후보 {len(clean)}개를 화면에 띄웠습니다. **고른 것만** 백그라운드에서 채워 "
+                    "저장되니 너는 더 넣지 말고, 이 뒤에 짧게 '넣을 것을 골라 주세요' 정도만 말하면 된다.",
             data={"proposal": clean, "context": str(args.get("context") or "")[:1000],
                   "tags": list(ctx.vocab_tags or [])},
         )

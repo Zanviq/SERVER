@@ -139,6 +139,8 @@ interface ChatPanelProps {
   mode?: "" | "english" | "paper" | "meeting";
   paperId?: string;
   meetingId?: string;
+  /** 단어 후보를 넣을 때 붙일 태그(논문 제목 등). 누르는 시점의 값이 쓰인다. */
+  vocabTags?: string[];
   /** 서버 대화 공간("english" | "paper:<id>" | "meeting:<id>"). 바뀌면 그 공간의 기록을 다시 받는다. */
   space?: string;
   attachments?: ChatAttachment[];
@@ -173,6 +175,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   mode = "",
   paperId = "",
   meetingId = "",
+  vocabTags,
   space,
   attachments = [],
   selections = [],
@@ -392,14 +395,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
                     <Loader2 size={14} className="animate-spin" /> 생각 중…
                   </div>
                 ) : null}
-                {/* 단어 후보: 사용자가 고른 것만 단어장에 들어간다 */}
+                {/* 단어 후보: 고른 것만 서버로 바로 가고 백그라운드에서 채워진다 */}
                 {m.steps.map((s, j) =>
                   s.name === "propose_vocab_words" && s.ok && s.data && Array.isArray(s.data.proposal) ? (
                     <VocabProposal
                       key={`p${j}`}
                       data={s.data as unknown as VocabProposalData}
-                      disabled={busy}
-                      onSubmit={(text) => send(text)}
+                      tags={vocabTags}
                     />
                   ) : null,
                 )}

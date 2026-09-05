@@ -13,6 +13,9 @@ from dataclasses import dataclass, field
 from ..auth import SessionUser
 from .prompt_builder import _TONE
 
+#: 영어 학습 화면에서 넣는 항목의 기본 출처 태그. 화면·프롬프트가 같은 값을 써야 한다.
+ENGLISH_TAG = "영어 학습"
+
 _COMMON_SKILLS = {"think"}
 _VOCAB_SKILLS = {
     "list_vocab", "list_vocab_tags", "add_vocab_words", "propose_vocab_words",
@@ -103,9 +106,13 @@ _VOCAB_FORMAT = """
 - 사용자가 "넣어줘/저장해줘/단어장에" 하고 분명히 말하면 **add_vocab_words** 로 바로 넣습니다.
   사전 내용(뜻·유사어·반대말·영어 해설·예문+문법·변화형·포인트)을 **전부 채워서** 넣습니다.
   사용자가 보낸 원문 문장이 있으면 context 에 넣고 첫 예문으로 씁니다.
-- 단어·문장을 설명한 뒤에는 **propose_vocab_words** 로 그 답에 나온 어려운 단어들을 후보로 올리세요
-  (사용자가 이미 넣어 달라고 한 경우는 제외). 화면에 체크 목록이 뜨고 고른 것만 저장됩니다.
-  후보를 올린 뒤에는 "넣을 단어를 골라 주세요" 정도로만 짧게 덧붙이세요.
+- 단어·문장을 설명한 뒤에는 **propose_vocab_words** 로 그 답에 나온 어려운 것들을 후보로 올리세요
+  (사용자가 이미 넣어 달라고 한 경우는 제외). 화면에 체크 목록이 뜨고 **고른 것만** 저장됩니다.
+  고른 뒤 사전 내용은 서버가 백그라운드에서 채웁니다 — **후보를 올린 다음 add_vocab_words 를**
+  **이어서 부르지 마세요.** 사용자가 고르지 않은 것까지 들어갑니다.
+  후보를 올린 뒤에는 "넣을 것을 골라 주세요" 정도로만 짧게 덧붙이세요.
+- 단어장은 영어 단어만 담는 곳이 아닙니다. 문장(kind=sentence)·문법 항목(kind=grammar)·
+  전문 용어(kind=term, 한국어여도 됩니다)도 같은 단어장에 들어갑니다. kind 를 알맞게 붙이세요.
 - 단어장 항목의 수정·삭제는 list_vocab 으로 id 를 얻어서 합니다."""
 
 
@@ -122,7 +129,8 @@ def english_system(user: SessionUser, tone: str, today: str, stats: dict | None 
 
 단어장 현황: 단어 {int(st.get('total') or 0)}개, 오늘 복습 {int(st.get('due') or 0)}개.
 태그(출처): {tag_line}
-- 새 단어의 태그는 사용자가 말한 출처(예: "TOEIC", "일상 대화", 논문 제목)로. 말하지 않으면 '영어 학습'.
+- 이 화면에서 넣는 항목에는 '{ENGLISH_TAG}' 태그가 자동으로 붙습니다. 사용자가 출처를 말하면
+  (예: "TOEIC", "일상 대화") tags 로 함께 주세요 — 태그는 쌓입니다.
 - "오늘 복습할 거 뭐야", "~ 태그 단어 퀴즈 내 줘" 같은 요청은 list_vocab(due_only/tag) 으로 가져와 진행합니다.
   퀴즈는 한 번에 한 문제씩, 답을 듣고 채점합니다.
 - 정리한 내용을 문서로 남겨 달라면 write_document 로 마크다운 문서를 만듭니다(폴더 'English/').
@@ -181,9 +189,12 @@ def paper_system(user: SessionUser, tone: str, today: str, paper: dict | None,
 - "다시 읽기", "다음 주까지 읽기" 같은 말은 create_todo(마감 포함)로, 발표·세미나 시각은 create_calendar_event 로.
 - 요약·설명은 한국어로, 용어는 원어를 괄호로 병기합니다. 수식은 LaTeX($…$)로 씁니다.
 {_VOCAB_FORMAT}
-- 이 화면에서 단어장에 넣는 단어에는 **논문 제목 태그가 자동으로 붙습니다**(tags 를 따로 줄 필요 없음).
+- 이 화면에서 단어장에 넣는 항목에는 **논문 제목 태그가 자동으로 붙습니다**(tags 를 따로 줄 필요 없음).
 - 사용자가 영어 단어·문장·문법을 물으면(예: "이 문장 무슨 뜻이야", "degrade 설명해줘") 위 형식으로 답한 뒤
-  propose_vocab_words 로 어려운 단어들을 후보로 올려 "단어장에 넣을까요?" 하세요.
+  propose_vocab_words 로 어려운 것들을 후보로 올려 "단어장에 넣을까요?" 하세요.
+- **이 화면의 단어장은 영어 학습용만이 아닙니다.** 논문의 전문 용어·개념·약어(예: self-attention,
+  ablation study, FLOPs)도 후보로 올리세요 — kind=term 으로, 뜻은 이 논문에서 쓰이는 의미로 씁니다.
+  영어가 아니어도(한국어 용어여도) 됩니다.
 {attachments_note}
 말투: {tone_line}"""
 

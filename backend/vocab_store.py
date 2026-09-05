@@ -5,11 +5,14 @@
 따로 저장하지 않고 단어에서 모은다 — 두 곳에 두면 서로 어긋난다.
 
 모델:
-  단어 {id, word, pos, pronunciation, meanings[], english_def, synonyms[],
+  단어 {id, word, kind, pos, pronunciation, meanings[], english_def, synonyms[],
         antonyms[], examples[{en, ko, grammar}], forms, notes, tags[],
         context, source,
         level, next_review, review_ok, review_ng, last_reviewed,
         created_at, updated_at}
+    - kind 는 갈래(word/phrase/sentence/grammar/term). **영어 단어만 담는 곳이 아니다** —
+      논문 화면에서는 전문 용어(term)가, 영어 학습에서는 문장·문법 항목이 함께 들어온다.
+      비어 있으면 표제어 모양으로 짐작한다(guess_kind).
     - word 는 표제어(원형). 같은 표제어를 다시 넣으면 새로 만들지 않고 **합친다**
       (태그·문맥은 더하고, 설명은 더 긴 쪽을 남긴다). 논문 두 편에서 같은 단어를
       만나면 태그가 둘 다 붙어 "어디서 봤는지"가 남는다.
@@ -38,8 +41,13 @@ MAX_TAGS_PER_WORD = 20
 #: 문자열 필드 길이 상한(모델이 장문을 쏟아 넣어도 파일이 폭주하지 않게)
 MAX_TEXT = 4000
 MAX_SHORT = 200
+#: 표제어. 문장·문법 항목도 표제어로 들어오므로 다른 짧은 필드보다 넉넉하다.
+MAX_WORD = 600
 MAX_LIST = 30
 MAX_EXAMPLES = 12
+
+#: 항목의 갈래. 단어장이 영어 단어 전용이 아니라서 갈래를 함께 적는다.
+KINDS = ("word", "phrase", "sentence", "grammar", "term")
 
 #: 복습 간격(일). level n 을 맞히면 level n+1 로 올라가고 그 간격 뒤에 다시 나온다.
 REVIEW_INTERVALS = [0, 1, 3, 7, 14, 30, 60, 120]
@@ -132,17 +140,39 @@ def _examples(value) -> list[dict]:
 
 def headword(word) -> str:
     """표제어 비교용 — 소문자, 앞뒤 공백 제거."""
-    return _s(word, MAX_SHORT).lower()
+    return _s(word, MAX_WORD).lower()
+
+
+def _kind(value) -> str:
+    k = str(value or "").strip().lower()
+    return k if k in KINDS else ""
+
+
+def guess_kind(word: str) -> str:
+    """갈래를 안 줬을 때 표제어 모양으로 짐작한다.
+
+    문장을 통째로 담는 일이 흔해서(영어 학습) 단어와 섞이면 목록이 읽기 어렵다.
+    틀려도 사용자가 수정 화면에서 바꿀 수 있으므로 대충이라도 나눠 둔다.
+    """
+    s = str(word or "").strip()
+    if not s:
+        return ""
+    n = len(s.split())
+    if n >= 5 or s.endswith((".", "?", "!")):
+        return "sentence"
+    return "phrase" if n >= 2 else "word"
 
 
 def _norm(payload: dict, existing: dict | None = None) -> dict:
     """입력을 저장 형태로 맞춘다. existing 이 있으면 그 위에 덮는다(부분 수정)."""
     base = dict(existing or {})
     if "word" in payload and payload["word"] is not None:
-        w = _s(payload["word"], MAX_SHORT)
+        w = _s(payload["word"], MAX_WORD)
         if not w:
             raise HTTPException(status_code=400, detail="단어가 비어 있습니다.")
         base["word"] = w
+    if "kind" in payload and payload["kind"] is not None:
+        base["kind"] = _kind(payload["kind"])
     for k in ("pos", "pronunciation"):
         if k in payload and payload[k] is not None:
             base[k] = _s(payload[k], MAX_SHORT)
@@ -158,6 +188,8 @@ def _norm(payload: dict, existing: dict | None = None) -> dict:
         base["tags"] = _tags(payload["tags"])
     if not base.get("word"):
         raise HTTPException(status_code=400, detail="단어가 필요합니다.")
+    if not base.get("kind"):
+        base["kind"] = guess_kind(base["word"])
     for k, dflt in (("pos", ""), ("pronunciation", ""), ("english_def", ""), ("forms", ""),
                     ("notes", ""), ("context", ""), ("source", ""), ("meanings", []),
                     ("synonyms", []), ("antonyms", []), ("examples", []), ("tags", []),
@@ -188,6 +220,9 @@ def _merge_into(existing: dict, incoming: dict) -> dict:
     for k in ("pos", "pronunciation", "english_def", "forms", "notes"):
         if len(str(incoming.get(k) or "")) > len(str(out.get(k) or "")):
             out[k] = incoming[k]
+    # 갈래는 이미 정해진 쪽을 존중한다(사용자가 고쳐 둔 것을 모델이 되돌리지 않게)
+    if not out.get("kind"):
+        out["kind"] = incoming.get("kind") or guess_kind(str(out.get("word") or ""))
     # 문맥은 출처마다 다르므로 쌓는다(줄바꿈으로)
     for k in ("context", "source"):
         new = str(incoming.get(k) or "").strip()
@@ -202,24 +237,27 @@ def _merge_into(existing: dict, incoming: dict) -> dict:
 
 def list_words(
     user: SessionUser, settings: Settings, *,
-    tag: str = "", query: str = "", due_only: bool = False, limit: int = 0,
+    tag: str = "", query: str = "", due_only: bool = False, kind: str = "", limit: int = 0,
 ) -> list[dict]:
     """단어 목록. tag 로 거르고 query 로 검색한다(표제어·뜻·유사어·문맥).
 
     최근 넣은 것이 위로 온다 — 방금 넣은 단어를 바로 보는 일이 가장 잦다.
     """
     words = _load(user, settings)["words"]
-    return filter_words(words, tag=tag, query=query, due_only=due_only, limit=limit)
+    return filter_words(words, tag=tag, query=query, due_only=due_only, kind=kind, limit=limit)
 
 
 def filter_words(words: list[dict], *, tag: str = "", query: str = "",
-                 due_only: bool = False, limit: int = 0) -> list[dict]:
+                 due_only: bool = False, kind: str = "", limit: int = 0) -> list[dict]:
     tag_l = normalize_tag(tag).lower()
     q = _s(query, MAX_SHORT).lower()
+    kind_l = _kind(kind)
     today = date.today().isoformat()
     out = []
     for w in words:
         if tag_l and tag_l not in {t.lower() for t in w.get("tags") or []}:
+            continue
+        if kind_l and (w.get("kind") or guess_kind(str(w.get("word") or ""))) != kind_l:
             continue
         if due_only and not _is_due(w, today):
             continue

@@ -5413,6 +5413,103 @@ def test_vocab_skills_add_and_propose_with_context_tags():
     assert not reg.dispatch("delete_vocab_word", {"id": wid}, ctx).ok
 
 
+def test_vocab_fill_only_saves_what_the_user_picked():
+    """후보에서 **고른 것만** 들어간다.
+
+    예전에는 고른 목록을 "단어장에 넣어줘: …" 채팅으로 되돌려 보냈다. 모델이
+    직전 대화에 남은 후보 전체를 보고 고르지 않은 단어까지 넣는 일이 있었다
+    (논문 화면에서 실제로 그랬다). 지금은 서버가 목록을 쥐고 모델 결과를 그
+    목록으로 거른다 — 모델이 무엇을 얹어 보내도 통과하지 못해야 한다.
+    """
+    from backend import vocab_fill, vocab_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="vocabfill", display_name="VF", expires_at=0, remaining=0)
+
+    def asker(settings, prompt, payload, model=""):
+        return {"words": [
+            {"word": "adequate", "kind": "word", "meanings": ["충분한"], "pos": "형용사"},
+            {"word": "hinder", "meanings": ["방해하다"]},   # 고르지 않았다
+            {"word": "persona", "meanings": ["페르소나"]},  # 고르지 않았다
+        ]}
+
+    job = vocab_fill._new_job(u, "fill", ["adequate"], ["논문 A"])
+    vocab_fill.run_fill(u, s, job["id"], [{"word": "adequate", "meaning": "충분한"}],
+                        ["논문 A"], "The food was adequate.", asker=asker)
+    saved = vocab_store.list_words(u, s)
+    assert [w["word"] for w in saved] == ["adequate"]
+    assert saved[0]["tags"] == ["논문 A"]
+    assert saved[0]["context"] == "The food was adequate."
+
+    # 반대로 모델이 빠뜨려도 고른 것은 반드시 들어간다(뜻만이라도)
+    job2 = vocab_fill._new_job(u, "fill", ["ablation"], [])
+    vocab_fill.run_fill(u, s, job2["id"],
+                        [{"word": "ablation", "meaning": "제거 실험", "kind": "term"}],
+                        [], "", asker=lambda *a, **k: {"words": []})
+    w = vocab_store.find_by_word(u, s, "ablation")
+    assert w is not None and w["meanings"] == ["제거 실험"] and w["kind"] == "term"
+
+    done = [j for j in vocab_fill.jobs_for(u) if j["id"] == job["id"]][0]
+    assert done["status"] == vocab_fill.STATUS_DONE and done["added"] == ["adequate"]
+
+
+def test_vocab_collect_splits_words_sentences_and_grammar():
+    """나열해서 넣기: 갈래가 저장되고 갈래로 거를 수 있다.
+
+    단어장은 영어 단어 전용이 아니다 — 문장·문법·전문 용어가 같은 곳에 쌓인다.
+    """
+    from backend import vocab_fill, vocab_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="vocabcollect", display_name="VC", expires_at=0, remaining=0)
+    sentence = "He has been working here since 2020."
+
+    def asker(settings, prompt, payload, model=""):
+        return {"words": [
+            {"word": "give up", "kind": "phrase", "meanings": ["포기하다"]},
+            {"word": sentence, "kind": "sentence", "meanings": ["그는 2020년부터 여기서 일해 왔다."]},
+            {"word": "현재완료진행", "kind": "grammar", "meanings": ["과거부터 지금까지 계속되는 동작"]},
+        ]}
+
+    job = vocab_fill._new_job(u, "collect", [], ["영어 학습"])
+    vocab_fill.run_collect(u, s, job["id"], "give up\n" + sentence, ["영어 학습"], asker=asker)
+    kinds = {w["word"]: w["kind"] for w in vocab_store.list_words(u, s)}
+    assert kinds["give up"] == "phrase"
+    assert kinds[sentence] == "sentence"
+    assert kinds["현재완료진행"] == "grammar"
+    assert [w["word"] for w in vocab_store.list_words(u, s, kind="sentence")] == [sentence]
+
+    # 문장은 표제어 상한(200자)에 걸려 잘리면 안 된다
+    long_one = ("The quick brown fox jumps over the lazy dog. " * 6).strip()
+    got, _ = vocab_store.add_word(u, s, {"word": long_one, "meanings": ["긴 문장"]})
+    assert got["word"] == long_one and got["kind"] == "sentence"
+
+
+def test_paper_title_change_follows_into_vocab_tags():
+    """논문 제목이 바뀌면 그 논문으로 넣은 단어의 태그도 따라가야 한다.
+
+    올린 직후 제목은 파일 이름이고 정보 추출이 끝나면 진짜 제목으로 바뀐다.
+    태그를 그대로 두면 그 사이에 넣은 단어가 논문 단어장 탭(제목으로 거른다)에서
+    사라진다 — 사용자에게는 "단어가 안 들어갔다"로 보인다.
+    """
+    from backend import paper_store, vocab_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="papertag", display_name="PT", expires_at=0, remaining=0)
+    meta = paper_store.register(u, s, "1706.03762v7.pdf", 10)
+    assert meta["title"] == "1706.03762v7"
+    vocab_store.add_words(u, s, [{"word": "transformer", "meanings": ["트랜스포머"]}],
+                          extra_tags=[meta["title"]])
+    paper_store.update_meta(u, s, meta["id"], {"title": "Attention Is All You Need"})
+    assert vocab_store.find_by_word(u, s, "transformer")["tags"] == ["Attention Is All You Need"]
+
+
 # ── 논문 ────────────────────────────────────────────────────────────
 
 def _tiny_pdf(text: str = "Hello paper") -> bytes:

@@ -13,6 +13,9 @@ const SUGGESTIONS = [
   "최근에 넣은 단어 5개로 짧은 글 써줘",
 ];
 
+/** 이 화면에서 넣는 것의 기본 출처 태그. 백엔드(modes.ENGLISH_TAG)와 같은 값이어야 한다. */
+const ENGLISH_TAG = ["영어 학습"];
+
 /**
  * 영어 학습: 왼쪽은 튜터와 대화, 오른쪽은 단어장.
  * 대화에서 "단어장에 넣어줘" 하면 AI가 사전 형식으로 채워 넣고, 단어장이 바로 갱신된다.
@@ -54,7 +57,7 @@ export function English() {
   return (
     <Shell title="영어 학습" actions={actions}>
       <ThreePane storageKey="english.panes.v1" side="right" showDetail={mobileView === "chat"}>
-        <VocabPanel refreshKey={vocabKey} className="h-view-11 lg:h-auto" />
+        <VocabPanel refreshKey={vocabKey} defaultTags={ENGLISH_TAG} className="h-view-11 lg:h-auto" />
         <div className="card flex h-view-11 flex-col overflow-hidden p-3 lg:h-auto">
           <ChatPanel
             ref={chat}
@@ -62,6 +65,7 @@ export function English() {
             mode="english"
             space="english"
             suggestions={SUGGESTIONS}
+            vocabTags={ENGLISH_TAG}
             emptyTitle="영어 튜터"
             emptySubtitle="단어·문장을 보내면 뜻·유의어·예문·문법을 풀어 주고, 원하면 단어장에 넣어 줍니다"
             placeholder="단어나 문장을 보내 보세요…"

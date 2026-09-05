@@ -18,6 +18,7 @@ meta:
 """
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import time
@@ -29,6 +30,8 @@ from fastapi import HTTPException
 from . import json_store
 from .auth import SessionUser
 from .config import Settings
+
+logger = logging.getLogger("server.papers")
 
 PDF_NAME = "paper.pdf"
 CHAT_NAME = "chat.json"
@@ -207,6 +210,7 @@ def update_meta(user: SessionUser, settings: Settings, pid: str, patch: dict) ->
         if i < 0:
             raise HTTPException(status_code=404, detail="논문을 찾을 수 없습니다.")
         p = dict(papers[i])
+        old_title = str(p.get("title") or "")
         for k in ("title", "year", "venue"):
             if k in patch and patch[k] is not None:
                 p[k] = _s(patch[k], MAX_SHORT)
@@ -239,7 +243,26 @@ def update_meta(user: SessionUser, settings: Settings, pid: str, patch: dict) ->
             p["updated_at"] = _now()
         papers[i] = p
         _save(papers, user, settings)
+    _follow_title_in_vocab(user, settings, old_title, str(p.get("title") or ""))
     return p
+
+
+def _follow_title_in_vocab(user: SessionUser, settings: Settings, old: str, new: str) -> None:
+    """제목이 바뀌면 단어장 태그도 따라간다.
+
+    이 화면에서 넣은 단어에는 논문 제목이 태그로 붙는데, 올린 직후에는 제목이
+    파일 이름이고 정보 추출이 끝나면 진짜 제목으로 바뀐다. 태그를 그대로 두면
+    그 사이에 넣은 단어가 논문 단어장 탭(제목으로 거른다)에서 사라진다.
+    단어장 락은 논문 목록 락 **밖에서** 잡는다(교착 방지).
+    """
+    if not old or not new or old == new:
+        return
+    from . import vocab_store
+
+    try:
+        vocab_store.rename_tag(user, settings, old, new)
+    except Exception:  # noqa: BLE001
+        logger.exception("논문 제목 변경을 단어장 태그에 반영하지 못했다: %s → %s", old, new)
 
 
 def delete_paper(user: SessionUser, settings: Settings, pid: str) -> dict:

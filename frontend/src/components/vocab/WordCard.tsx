@@ -1,13 +1,17 @@
 import { ReactNode } from "react";
 import { ChevronDown, ChevronRight, Pencil, Trash2, Tag, Quote } from "lucide-react";
 import { VocabWord } from "../../lib/api";
+import { KIND_LABEL, kindOf } from "./kinds";
 
-/** 복습 단계(0~5)를 점 다섯 개로. 오늘 복습할 차례면 주황 점을 앞에 단다. */
+/** 복습 단계의 최대치. 서버의 REVIEW_INTERVALS(1·3·7·14·30·60·120일)와 같아야 한다. */
+export const MAX_LEVEL = 7;
+
+/** 복습 단계를 점으로. 오늘 복습할 차례면 주황 점을 앞에 단다. */
 export function LevelDots({ level, due }: { level: number; due?: boolean }) {
   return (
-    <span className="inline-flex items-center gap-[3px]" title={`복습 단계 ${level}/5${due ? " · 오늘 복습" : ""}`}>
+    <span className="inline-flex items-center gap-[2px]" title={`복습 단계 ${level}/${MAX_LEVEL}${due ? " · 오늘 복습" : ""}`}>
       {due && <span className="mr-0.5 h-1.5 w-1.5 rounded-full bg-warning" />}
-      {[0, 1, 2, 3, 4].map((i) => (
+      {Array.from({ length: MAX_LEVEL }, (_, i) => (
         <span key={i} className={`h-1.5 w-1.5 rounded-full ${i < level ? "bg-accent" : "bg-line-strong"}`} />
       ))}
     </span>
@@ -35,6 +39,7 @@ interface Props {
  */
 export function WordCard({ word: w, open, onToggle, onEdit, onDelete, onTag, activeTag }: Props) {
   const due = isDue(w);
+  const kind = kindOf(w);
   return (
     <li className={`rounded-md border transition-colors ${open ? "border-line-strong bg-surface" : "border-transparent hover:bg-hovered"}`}>
       <button type="button" onClick={onToggle} aria-expanded={open}
@@ -44,7 +49,11 @@ export function WordCard({ word: w, open, onToggle, onEdit, onDelete, onTag, act
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-baseline gap-x-2">
-            <span className="text-[14px] font-semibold tracking-tight">{w.word}</span>
+            {/* 문장·문법 항목도 표제어로 들어오므로 줄바꿈을 허용한다 */}
+            <span className="break-words text-[14px] font-semibold tracking-tight">{w.word}</span>
+            {kind !== "word" && (
+              <span className="shrink-0 rounded-sm bg-subtle px-1 py-[1px] text-[10px] text-fg-muted">{KIND_LABEL[kind]}</span>
+            )}
             {w.pronunciation && <span className="text-[11.5px] text-fg-muted">{w.pronunciation}</span>}
             {w.pos && <span className="text-[11px] text-fg-subtle">{w.pos}</span>}
             <span className="ml-auto"><LevelDots level={w.level} due={due} /></span>

@@ -1,11 +1,11 @@
-import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { BookMarked, FileText, Info, List, MessageSquare, Trash2 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { ThreePane } from "../components/notes/ThreePane";
 import { ChatPanel, ChatPanelHandle, ChatAttachment, ChatSelection } from "../components/ai/ChatPanel";
 import { PaperList, paperTitle } from "../components/papers/PaperList";
-import { PdfViewer } from "../components/papers/PdfViewer";
+import { PdfViewer, PdfMark, PdfRect } from "../components/papers/PdfViewer";
 import { PaperInfo } from "../components/papers/PaperInfo";
 import { VocabPanel } from "../components/vocab/VocabPanel";
 import { api, Paper } from "../lib/api";
@@ -15,7 +15,7 @@ const SUGGESTIONS = [
   "이 논문을 3줄로 요약해줘",
   "핵심 기여와 기존 연구와의 차이를 설명해줘",
   "실험 설계와 결과를 정리해줘",
-  "초록에서 어려운 단어를 단어장 후보로 뽑아줘",
+  "이 논문의 핵심 용어·어려운 단어를 단어장 후보로 뽑아줘",
 ];
 
 type Tab = "chat" | "info" | "vocab";
@@ -33,6 +33,8 @@ export function Papers() {
   const [uploading, setUploading] = useState(0);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [selections, setSelections] = useState<ChatSelection[]>([]);
+  // PDF 위에 남기는 선택 자국. 칩과 id 를 공유해서 칩을 빼면 자국도 사라진다.
+  const [marks, setMarks] = useState<PdfMark[]>([]);
   const [tab, setTab] = useState<Tab>("chat");
   const [vocabKey, setVocabKey] = useState(0);
   const [pendingAsk, setPendingAsk] = useState<string | null>(null);
@@ -65,7 +67,7 @@ export function Papers() {
   }, [anyPending, load]);
 
   // 논문을 바꾸면 얹어 둔 선택은 그 논문 것이라 같이 비운다
-  useEffect(() => { setAttachments([]); setSelections([]); }, [selectedId]);
+  useEffect(() => { setAttachments([]); setSelections([]); setMarks([]); }, [selectedId]);
 
   const patch = (id: string, p: Partial<Paper>) =>
     setPapers((arr) => (arr ? arr.map((x) => (x.id === id ? { ...x, ...p } : x)) : arr));
@@ -131,19 +133,24 @@ export function Papers() {
   }, [selected]);
   useEffect(() => () => window.clearTimeout(readTimer.current), []);
 
-  const addText = useCallback((text: string, page: number) => {
-    setSelections((s) => [...s, { id: uid(), text, page }]);
+  const addText = useCallback((text: string, page: number, rects: PdfRect[] = []) => {
+    const id = uid();
+    setSelections((s) => [...s, { id, text, page }]);
+    if (rects.length) setMarks((m) => [...m, { id, page, kind: "text", rects }]);
     setTab("chat");
   }, []);
-  const askText = useCallback((text: string, page: number, prompt: string) => {
-    addText(text, page);
+  const askText = useCallback((text: string, page: number, prompt: string, rects: PdfRect[] = []) => {
+    addText(text, page, rects);
     setPendingAsk(prompt);
   }, [addText]);
-  const addRegion = useCallback((dataUrl: string, page: number) => {
-    setAttachments((a) => [...a, { id: uid(), mime: "image/png", data: dataUrl, label: `${page}쪽 영역` }]);
+  const addRegion = useCallback((dataUrl: string, page: number, rect: PdfRect) => {
+    const id = uid();
+    setAttachments((a) => [...a, { id, mime: "image/png", data: dataUrl, label: `${page}쪽 영역` }]);
+    setMarks((m) => [...m, { id, page, kind: "region", rects: [rect] }]);
     setTab("chat");
     toast.ok(`${page}쪽 영역을 AI 입력에 얹었습니다`);
   }, []);
+  const dropMark = useCallback((id: string) => setMarks((m) => m.filter((x) => x.id !== id)), []);
   // 선택이 상태에 반영된 다음 보내야 그 선택이 같이 간다
   useEffect(() => {
     if (pendingAsk === null) return;
@@ -151,7 +158,11 @@ export function Papers() {
     setPendingAsk(null);
   }, [pendingAsk, selections]);
 
-  const clearContext = useCallback(() => { setAttachments([]); setSelections([]); }, []);
+  // 이 논문에서 넣는 단어에 붙는 태그. 배열 정체성이 매번 바뀌면 아래 패널의
+  // 폼이 입력 중에 초기화되므로 제목이 바뀔 때만 새로 만든다.
+  const vocabTags = useMemo(() => (selected?.title ? [selected.title] : []), [selected?.title]);
+
+  const clearContext = useCallback(() => { setAttachments([]); setSelections([]); setMarks([]); }, []);
   const contextCount = attachments.length + selections.length;
 
   const ask = (text: string) => { setTab("chat"); chat.current?.send(text); };
@@ -192,7 +203,7 @@ export function Papers() {
           <div className="flex h-view-11 flex-col lg:h-auto [&>*]:min-h-0 [&>*]:flex-1">
             <PdfViewer key={selected.id} paperId={selected.id} fileUrl={api.paperFileUrl(selected.id)}
               initialPage={selected.read_page || 1} onPageChange={onPageChange}
-              onAddText={addText} onAskText={askText} onAddRegion={addRegion}
+              onAddText={addText} onAskText={askText} onAddRegion={addRegion} marks={marks}
               contextCount={contextCount} onClearContext={clearContext} />
           </div>
         ) : (
@@ -213,9 +224,10 @@ export function Papers() {
           <div className={`min-h-0 flex-1 flex-col p-3 ${tab === "chat" ? "flex" : "hidden"}`}>
             {selected ? (
               <ChatPanel ref={chat} className="flex-1" mode="paper" paperId={selected.id} space={`paper:${selected.id}`}
+                vocabTags={vocabTags}
                 suggestions={SUGGESTIONS} attachments={attachments} selections={selections}
-                onRemoveAttachment={(id) => setAttachments((a) => a.filter((x) => x.id !== id))}
-                onRemoveSelection={(id) => setSelections((s) => s.filter((x) => x.id !== id))}
+                onRemoveAttachment={(id) => { setAttachments((a) => a.filter((x) => x.id !== id)); dropMark(id); }}
+                onRemoveSelection={(id) => { setSelections((s) => s.filter((x) => x.id !== id)); dropMark(id); }}
                 onClearContext={clearContext}
                 emptyTitle={paperTitle(selected)}
                 emptySubtitle="논문 본문·정보·다른 논문에서 나눈 대화까지 보고 답합니다"
@@ -231,7 +243,9 @@ export function Papers() {
             ) : <div className="flex flex-1 items-center justify-center text-[12.5px] text-fg-muted">논문을 고르세요</div>
           )}
           {tab === "vocab" && (
-            <VocabPanel refreshKey={vocabKey} initialTag={selected?.title || ""} className="min-h-0 flex-1 rounded-none border-0" />
+            <VocabPanel refreshKey={vocabKey} initialTag={selected?.title || ""}
+              defaultTags={vocabTags}
+              className="min-h-0 flex-1 rounded-none border-0" />
           )}
         </div>
       </ThreePane>

@@ -3,6 +3,7 @@ import { Check, Loader2, RotateCcw, X } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { api, VocabWord } from "../../lib/api";
 import { toast } from "../../store/toast";
+import { MAX_LEVEL } from "./WordCard";
 
 interface Props {
   open: boolean;
@@ -86,11 +87,16 @@ export function ReviewModal({ open, onClose, tag = "", onDone }: Props) {
         <div className="space-y-4">
           <div className="flex items-center justify-between text-[12px] text-fg-muted">
             <span>{idx + 1} / {queue.length}</span>
-            <span>단계 {cur.level}/5</span>
+            <span>단계 {cur.level}/{MAX_LEVEL}</span>
           </div>
           <button type="button" onClick={() => setFlipped(true)}
             className={`w-full rounded-lg border px-5 py-6 text-left transition-colors ${flipped ? "border-line bg-subtle" : "border-line-strong bg-surface hover:border-accent"}`}>
-            <p className="text-center text-2xl font-semibold tracking-tight">{cur.word}</p>
+            {/* 문장·문법 항목도 복습에 나온다 — 길이에 따라 글자 크기를 줄인다 */}
+            <p className={`break-words text-center font-semibold tracking-tight ${
+              cur.word.length > 80 ? "text-[15px] leading-relaxed"
+                : cur.word.length > 28 ? "text-lg" : "text-2xl"}`}>
+              {cur.word}
+            </p>
             {cur.pronunciation && <p className="mt-1 text-center text-[12.5px] text-fg-muted">{cur.pronunciation}{cur.pos ? ` · ${cur.pos}` : ""}</p>}
             {!flipped ? (
               <p className="mt-5 text-center text-[12px] text-fg-subtle">눌러서 뜻 보기 (Space)</p>

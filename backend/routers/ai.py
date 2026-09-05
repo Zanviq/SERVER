@@ -215,6 +215,9 @@ def chat(
         except HTTPException:
             stats, tags = {}, []
         system = modes.english_system(user, prefs["tone"], today, stats, tags)
+        # 이 화면에서 넣는 것에는 출처 태그가 하나는 붙어야 한다 — 태그가 없으면
+        # 단어장에서 "어디서 온 것인지"로 묶어 볼 수 없다(모델이 tags 를 주면 함께 붙는다).
+        vocab_tags = [modes.ENGLISH_TAG]
     elif spec and spec.name == "paper":
         paper_id = (body.paper_id or "").strip()
         paper = paper_store.get_paper(user, settings, paper_id) if paper_id else None

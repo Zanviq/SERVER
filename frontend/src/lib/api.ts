@@ -276,6 +276,14 @@ export const api = {
   vocabDelete: (id: string) =>
     req<{ ok: boolean; id: string; word: string }>(
       `/api/vocab/words/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** 고른 항목만 백그라운드에서 채워 넣는다(모델을 다시 거치지 않는다). */
+  vocabFill: (words: VocabFillItem[], p: { tags?: string[]; context?: string } = {}) =>
+    req<VocabJob>("/api/vocab/fill",
+      jsonInit("POST", { words, tags: p.tags ?? [], context: p.context ?? "" })),
+  /** 단어·문장·문법을 뒤섞어 적은 글을 AI 가 갈래로 나눠 넣는다(백그라운드). */
+  vocabCollect: (text: string, tags: string[] = []) =>
+    req<VocabJob>("/api/vocab/collect", jsonInit("POST", { text, tags })),
+  vocabJobs: () => req<{ jobs: VocabJob[] }>("/api/vocab/jobs"),
   vocabRenameTag: (old: string, next: string) =>
     req<{ ok: boolean; changed: number }>("/api/vocab/tags/rename", jsonInit("POST", { old, new: next })),
   vocabReviewQueue: (tag = "", limit = 20) =>
@@ -618,10 +626,13 @@ export interface VocabExample {
   ko: string;
   grammar: string;
 }
+/** 항목의 갈래. 단어장은 영어 단어 전용이 아니다 — 문장·문법·전문 용어도 들어온다. */
+export type VocabKind = "" | "word" | "phrase" | "sentence" | "grammar" | "term";
 /** 단어장 항목. 영어학습예시 형식(뜻/비슷한 단어/영어 해설/예문/변화/포인트)을 그대로 담는다. */
 export interface VocabWord {
   id: string;
   word: string;
+  kind: VocabKind;
   pos: string;
   pronunciation: string;
   meanings: string[];
@@ -667,6 +678,26 @@ export interface VocabBoard {
   words: VocabWord[];
   tags: VocabTag[];
   stats: VocabStats;
+}
+/** 후보 목록에서 고른 항목. 사전 내용은 서버가 백그라운드에서 채운다. */
+export interface VocabFillItem {
+  word: string;
+  meaning?: string;
+  kind?: VocabKind;
+}
+/** 백그라운드 정리 작업. 화면은 진행 표시와 완료 알림에만 쓴다. */
+export interface VocabJob {
+  id: string;
+  kind: "fill" | "collect";
+  status: "pending" | "done" | "failed";
+  words: string[];
+  tags: string[];
+  added: string[];
+  merged: string[];
+  failed: { word: string; reason: string }[];
+  error: string;
+  created_at: number;
+  done_at: number;
 }
 
 // ── 논문 ──
