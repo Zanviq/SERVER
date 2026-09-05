@@ -20,6 +20,7 @@ kind 가 없는 예전 엔트리는 문서로 본다(기존 휴지통이 비지 
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import time
@@ -259,7 +260,34 @@ def counts_by_kind(user: SessionUser, settings: Settings) -> dict:
         k = entry_kind(e)
         out[k] = out.get(k, 0) + 1
     out["all"] = len(entries)
+    out["bytes"] = _stored_bytes(user, settings)
     return out
+
+
+def _stored_bytes(user: SessionUser, settings: Settings) -> int:
+    """휴지통이 실제로 차지하는 디스크 용량.
+
+    자동으로 비워지지 않는 설계라, 회의 녹음·논문 PDF 를 지워도 실물은 그대로
+    남는다. 얼마나 쌓였는지 보이지 않으면 사용자는 비워야 한다는 것도 모른다.
+    """
+    root = _trash_root(user, settings)
+    # 목록 파일은 휴지통의 '내용'이 아니다. 세면 비운 뒤에도 몇 바이트가 남아
+    # "0 이 아닌데 지울 것이 없다"가 된다.
+    index = str(_index_path(user, settings))
+    total = 0
+    try:
+        for dirpath, _dirs, files in os.walk(root):
+            for name in files:
+                path = os.path.join(dirpath, name)
+                if path == index:
+                    continue
+                try:
+                    total += os.path.getsize(path)
+                except OSError:
+                    continue
+    except OSError:
+        return 0
+    return total
 
 
 #: 확장자 판정은 file_kinds 한 곳에서만 한다(복사본이 갈라져 사고가 났다)

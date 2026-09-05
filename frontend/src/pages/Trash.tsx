@@ -3,6 +3,7 @@ import { Trash2, RotateCcw, XCircle, Loader2, FolderOpen, FileText, NotebookPen,
 import { Shell } from "../components/layout/Shell";
 import { Modal } from "../components/ui/Modal";
 import { api, TrashEntry } from "../lib/api";
+import { formatBytes } from "../lib/format";
 import { toast } from "../store/toast";
 
 function fmt(ts: number): string {
@@ -93,9 +94,18 @@ export function Trash() {
       title="휴지통"
       actions={
         items && items.length > 0 ? (
-          <button onClick={() => setEmptyOpen(true)} className="btn btn-danger h-8">
-            <Trash2 size={14} /> 비우기
-          </button>
+          <>
+            {/* 자동으로 비워지지 않는 설계다. 회의 녹음·논문 PDF 가 쌓여도
+                눈에 안 보이면 비워야 한다는 것조차 모른다. */}
+            {counts.bytes > 0 && (
+              <span className="shrink-0 text-[12px] text-fg-muted" title="휴지통이 차지하는 용량">
+                {formatBytes(counts.bytes)}
+              </span>
+            )}
+            <button onClick={() => setEmptyOpen(true)} className="btn btn-danger h-8">
+              <Trash2 size={14} /> 비우기
+            </button>
+          </>
         ) : null
       }
     >

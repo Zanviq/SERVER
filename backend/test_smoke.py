@@ -6483,6 +6483,29 @@ def test_every_mode_can_search_outside_its_own_screen():
         assert mode.allows("search_everything"), name
 
 
+def test_trash_reports_how_much_disk_it_holds():
+    """휴지통은 자동으로 비워지지 않는다 — 얼마나 쌓였는지 보이지 않으면
+    사용자는 비워야 한다는 것조차 모른다(회의 녹음·논문 PDF 가 그대로 남는다)."""
+    from backend import trash
+    from backend.storage import user_data_root
+
+    u, _ctx, st = _todo_ctx("trashsize")
+    counts = trash.counts_by_kind(u, st)
+    assert counts["bytes"] == 0, counts        # 빈 휴지통은 0
+
+    root = user_data_root(u, st)
+    big = root / "커다란문서.md"
+    big.write_text("가" * 5000, encoding="utf-8")
+    trash.move_to_trash(big, "커다란문서.md", u, st)
+
+    counts = trash.counts_by_kind(u, st)
+    assert counts["all"] == 1, counts
+    assert counts["bytes"] >= 5000, counts     # 실물이 그대로 자리를 차지한다
+
+    trash.empty(u, st)
+    assert trash.counts_by_kind(u, st)["bytes"] == 0
+
+
 def test_search_hit_ids_are_what_each_screen_needs():
     """검색이 준 id 를 그 화면이 그대로 쓸 수 있어야 한다.
 
