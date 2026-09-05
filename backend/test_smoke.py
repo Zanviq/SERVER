@@ -6483,6 +6483,35 @@ def test_every_mode_can_search_outside_its_own_screen():
         assert mode.allows("search_everything"), name
 
 
+def test_meeting_search_reaches_into_the_transcript():
+    """이 검색을 만든 이유가 "저번에 그 회의에서 나온 그 용어"였다.
+
+    정작 그 말이 들어 있는 곳은 받아쓰기 본문인데 제목·요약만 보고 있었다.
+    """
+    from backend import meeting_store, search_all
+
+    u, _ctx, st = _todo_ctx("meettext")
+    mid = meeting_store.register(u, st, filename="a.wav", mime="audio/wav", size=10,
+                                 ext="wav", day="2026-09-06", title="주간 회의")["id"]
+    meeting_store.update_meta(u, st, mid, {"status": "ready"})
+    meeting_store.write_transcript(u, st, mid, [
+        {"start": "00:00", "speaker": "화자 1", "text": "시작합니다."},
+        {"start": "12:34", "speaker": "화자 2", "text": "제올라이트 합성 조건을 바꿔 봅시다."},
+    ], "시작합니다. 제올라이트 합성 조건을 바꿔 봅시다.")
+
+    hits = [h for h in search_all.search(u, st, "제올라이트") if h["kind"] == "meeting"]
+    assert hits, "받아쓴 말을 못 찾았다"
+    assert hits[0]["title"] == "주간 회의", hits[0]
+    assert "12:34" in hits[0]["where"], hits[0]      # 몇 분쯤인지 알려 준다
+    assert "제올라이트" in hits[0]["snippet"], hits[0]
+
+    # 아직 받아쓰지 않은 회의는 본문을 읽지 않는다(읽을 것이 없다)
+    pending = meeting_store.register(u, st, filename="b.wav", mime="audio/wav", size=10,
+                                     ext="wav", day="2026-09-06", title="대기 중")["id"]
+    assert pending
+    assert all(h["id"] != pending for h in search_all.search(u, st, "제올라이트"))
+
+
 def test_paper_search_reaches_into_the_body_text():
     """논문을 찾는 사람은 대개 "그 논문에서 읽은 그 말"을 기억한다.
 

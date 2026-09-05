@@ -152,10 +152,15 @@ def _page_at(text: str, index: int) -> int:
 
 
 def _meetings(user: SessionUser, settings: Settings, q: str) -> list[dict]:
+    """제목·요약에 없으면 **받아쓴 원본까지** 뒤진다.
+
+    이 검색을 만든 이유가 "저번에 그 회의에서 나온 그 용어"였는데, 정작 그 말이
+    들어 있는 곳은 받아쓰기 본문이다. 몇 분쯤인지도 함께 준다.
+    """
     from backend import meeting_store
 
     ql = q.lower()
-    out = []
+    out, unmatched = [], []
     for m in meeting_store.list_meetings(user, settings):
         title = str(m.get("title") or "")
         body = _flat(m, ("summary", "category", "speakers", "filename"))
@@ -164,6 +169,28 @@ def _meetings(user: SessionUser, settings: Settings, q: str) -> list[dict]:
                             _snippet(str(m.get("summary") or ""), q),
                             str(m.get("date") or ""), str(m.get("category") or "회의"),
                             _score(q, title, body)))
+        elif m.get("status") == "ready":
+            unmatched.append(m)
+
+    budget = _PAPER_TEXT_BUDGET
+    for m in unmatched:
+        if budget <= 0:
+            break
+        mid = str(m.get("id") or "")
+        t = meeting_store.read_transcript(user, settings, mid)
+        seg = next((s for s in t.get("segments") or []
+                    if ql in str(s.get("text") or "").lower()), None)
+        budget -= len(t.get("text") or "")
+        if seg is None:
+            if ql not in str(t.get("text") or "").lower():
+                continue
+            where, snippet = "받아쓰기", _snippet(str(t.get("text") or ""), q)
+        else:
+            stamp = str(seg.get("start") or "")
+            where = f"받아쓰기 {stamp}" if stamp else "받아쓰기"
+            snippet = _snippet(str(seg.get("text") or ""), q)
+        out.append(_hit("meeting", mid, str(m.get("title") or ""), snippet,
+                        str(m.get("date") or ""), where, 15.0))
     return out
 
 
