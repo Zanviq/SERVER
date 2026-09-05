@@ -21,11 +21,14 @@ export function ThreePane({
   children,
   storageKey,
   showDetail = false,
+  side = "left",
 }: {
   children: ReactNode;
   storageKey: string;
   /** 모바일에서 목록 대신 문서를 보여줄지. 좁은 화면은 한 번에 하나만 띄운다. */
   showDetail?: boolean;
+  /** 폭이 고정된 첫 자식(목록)을 어느 쪽에 둘지. 영어 학습은 단어장이 오른쪽이다. */
+  side?: "left" | "right";
 }) {
   const [left, center, right] = Children.toArray(children);
   const [treeW, setTreeW] = useState<number>(() => load(storageKey).treeW ?? 260);
@@ -87,7 +90,8 @@ export function ThreePane({
 
   // treeW/editorFrac는 pointerdown 렌더 시점(=드래그 시작값)으로 캡처되고,
   // 드래그 중 move 리스너는 그 시작값 + dx로 절대 위치를 계산한다.
-  const treeDown = beginDrag((dx) => setTreeW(clamp(treeW + dx, 180, 560)));
+  // 고정 패널이 오른쪽이면 손잡이를 왼쪽으로 끌수록 넓어진다.
+  const treeDown = beginDrag((dx) => setTreeW(clamp(treeW + (side === "right" ? -dx : dx), 180, 560)));
   const splitDown = beginDrag((dx) => {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -108,12 +112,15 @@ export function ThreePane({
 
   // 자식이 2개면 트리 + 메인(단일 패널), 3개면 트리 + 에디터 + 미리보기.
   const twoPane = right == null;
+  const fixed = (
+    <div className="flex min-w-0 shrink-0 flex-col [&>*]:min-h-0 [&>*]:flex-1" style={{ width: treeW }}>
+      {left}
+    </div>
+  );
   return (
-    <div ref={wrapRef} className="flex h-view-9 items-stretch">
+    <div ref={wrapRef} className={`flex h-view-9 items-stretch ${side === "right" ? "flex-row-reverse" : ""}`}>
       {/* 각 래퍼를 flex-col로 만들고 자식 카드를 flex-1/min-h-0로 강제 → 카드가 패널 높이를 꽉 채움 */}
-      <div className="flex min-w-0 shrink-0 flex-col [&>*]:min-h-0 [&>*]:flex-1" style={{ width: treeW }}>
-        {left}
-      </div>
+      {fixed}
       <Handle onPointerDown={treeDown} />
       {twoPane ? (
         <div className="flex min-w-0 flex-1 flex-col [&>*]:min-h-0 [&>*]:flex-1">

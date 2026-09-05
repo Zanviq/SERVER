@@ -28,6 +28,7 @@ from .documents import (
     SearchDocuments,
     WriteDocument,
 )
+from .papers import PAPER_SKILLS
 from .system import GetSystemStatus
 from .todo import (
     BulkCompleteTodos,
@@ -42,6 +43,7 @@ from .todo import (
 )
 from .trash import ListTrash, RestoreFromTrash
 from .think import ThinkSkill
+from .vocab import VOCAB_SKILLS
 
 # 등록 순서 = LLM에 노출되는 카탈로그 순서
 ALL_SKILLS = [
@@ -77,6 +79,10 @@ ALL_SKILLS = [
     BulkCompleteTodos(),
     BulkDeleteTodos(),
     CreateTodoCategory(),
+    # 단어장(영어 학습·논문 화면과 공유)
+    *VOCAB_SKILLS,
+    # 논문
+    *PAPER_SKILLS,
     # 휴지통(되돌리기)
     ListTrash(),
     RestoreFromTrash(),

@@ -20,11 +20,13 @@ from .routers import (
     calendar,
     google,
     notes,
+    papers,
     settings as settings_router,
     system,
     terminal,
     todo,
     trash,
+    vocab,
 )
 
 logging.basicConfig(
@@ -100,6 +102,8 @@ app.include_router(settings_router.router, dependencies=_PROTECTED)
 app.include_router(ai.router, dependencies=_PROTECTED)
 app.include_router(todo.router, dependencies=_PROTECTED)
 app.include_router(trash.router, dependencies=_PROTECTED)
+app.include_router(vocab.router, dependencies=_PROTECTED)
+app.include_router(papers.router, dependencies=_PROTECTED)
 app.include_router(terminal.router, dependencies=_PROTECTED)
 app.include_router(admin.router, dependencies=_OWNER_ONLY)
 app.include_router(google.router, dependencies=_PROTECTED)

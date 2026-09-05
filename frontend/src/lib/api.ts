@@ -246,6 +246,60 @@ export const api = {
   /** 설정 드롭다운용 — 비서로 쓸 수 있는 Gemini 모델 목록 */
   aiModels: () =>
     req<{ models: { id: string; label: string }[]; server_default: string }>("/api/ai/models"),
+  /** 서버에 남는 대화 공간(영어 학습 "english" · 논문 "paper:<id>") */
+  aiSpace: (space: string) =>
+    req<{ messages: ChatMessage[] }>(`/api/ai/space/${encodeURIComponent(space)}`),
+  aiSpaceClear: (space: string) =>
+    req(`/api/ai/space/${encodeURIComponent(space)}`, { method: "DELETE" }),
+  aiSpaceDelete: (space: string, mid: string) =>
+    req(`/api/ai/space/${encodeURIComponent(space)}/${encodeURIComponent(mid)}`, { method: "DELETE" }),
+
+  // ── 단어장 ──
+  vocabBoard: () => req<VocabBoard>("/api/vocab/board"),
+  vocabWords: (p: { tag?: string; q?: string; due?: boolean; limit?: number } = {}) => {
+    const s: Record<string, string> = {};
+    if (p.tag) s.tag = p.tag;
+    if (p.q) s.q = p.q;
+    if (p.due) s.due = "true";
+    if (p.limit) s.limit = String(p.limit);
+    const qs = q(s);
+    return req<VocabWord[]>(`/api/vocab/words${qs ? `?${qs}` : ""}`);
+  },
+  vocabTags: () => req<VocabTag[]>("/api/vocab/tags"),
+  vocabCreate: (body: VocabInput) =>
+    req<{ word: VocabWord; merged: boolean }>("/api/vocab/words", jsonInit("POST", body)),
+  vocabBulk: (words: VocabInput[], tags: string[] = []) =>
+    req<{ added: VocabWord[]; merged: VocabWord[]; failed: { word: string; reason: string }[] }>(
+      "/api/vocab/words/bulk", jsonInit("POST", { words, tags })),
+  vocabUpdate: (id: string, body: Partial<VocabInput>) =>
+    req<VocabWord>(`/api/vocab/words/${encodeURIComponent(id)}`, jsonInit("PUT", body)),
+  vocabDelete: (id: string) =>
+    req<{ ok: boolean; id: string; word: string }>(
+      `/api/vocab/words/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  vocabRenameTag: (old: string, next: string) =>
+    req<{ ok: boolean; changed: number }>("/api/vocab/tags/rename", jsonInit("POST", { old, new: next })),
+  vocabReviewQueue: (tag = "", limit = 20) =>
+    req<VocabWord[]>(`/api/vocab/review?${q({ tag, limit: String(limit) })}`),
+  vocabReview: (id: string, ok: boolean) =>
+    req<VocabWord>(`/api/vocab/words/${encodeURIComponent(id)}/review`, jsonInit("POST", { ok })),
+
+  // ── 논문 ──
+  paperList: () => req<Paper[]>("/api/papers"),
+  paperGet: (id: string) => req<Paper>(`/api/papers/${encodeURIComponent(id)}`),
+  paperUpload: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return req<Paper>("/api/papers/upload", { method: "POST", body: fd });
+  },
+  /** PDF 원본 URL(inline). pdf.js 가 fetch 로 받는다 — 세션 쿠키가 실린다. */
+  paperFileUrl: (id: string) => `${BASE}/api/papers/${encodeURIComponent(id)}/file`,
+  paperUpdate: (id: string, body: Partial<Paper>) =>
+    req<Paper>(`/api/papers/${encodeURIComponent(id)}`, jsonInit("PUT", body)),
+  paperDelete: (id: string) =>
+    req<{ ok: boolean; id: string }>(`/api/papers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  paperExtract: (id: string) =>
+    req<{ ok: boolean; started: boolean; status: string }>(
+      `/api/papers/${encodeURIComponent(id)}/extract`, { method: "POST" }),
 
 };
 
@@ -256,8 +310,10 @@ export interface AiEvent {
   ok?: boolean;
   message?: string;
   text?: string;
-  /** 이 스킬이 성공하면 바뀌는 대상("calendar" | "documents"). 조회면 빈 값. */
+  /** 이 스킬이 성공하면 바뀌는 대상("calendar" | "documents" | "vocab" | "papers"). 조회면 빈 값. */
   mutates?: string;
+  /** 화면이 그려야 하는 스킬 결과(단어 후보 목록 등). 그런 스킬만 보낸다. */
+  data?: Record<string, unknown>;
 }
 
 export interface ChatTurn {
@@ -265,20 +321,60 @@ export interface ChatTurn {
   text: string;
 }
 
-/** AI 채팅 SSE 스트림. history로 이전 대화(멀티턴) 전달. */
+/** 서버에 남은 대화 한 줄(영어 학습·논문). */
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  ts: number;
+  meta: {
+    selections?: { text: string; page: number }[];
+    attachments?: { label: string; mime: string }[];
+    tools?: { name: string; ok: boolean; message: string; data?: Record<string, unknown> }[];
+  };
+}
+
+/** 논문 화면에서 드래그한 영역 이미지 — data 는 data URL 또는 base64. */
+export interface AiAttachment {
+  mime: string;
+  data: string;
+  label?: string;
+}
+export interface AiSelection {
+  text: string;
+  page?: number;
+}
+export interface AiChatOptions {
+  mode?: "" | "english" | "paper";
+  paper_id?: string;
+  attachments?: AiAttachment[];
+  selections?: AiSelection[];
+}
+
+/** AI 채팅 SSE 스트림. history로 이전 대화(멀티턴) 전달.
+ *  모드가 있으면 서버가 기록을 들고 있으므로 history 는 무시된다. */
 export async function aiChatStream(
   message: string,
   history: ChatTurn[],
   onEvent: (e: AiEvent) => void,
+  opts: AiChatOptions = {},
 ): Promise<void> {
   const res = await fetch(`${BASE}/api/ai/chat`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history }),
+    body: JSON.stringify({ message, history, ...opts }),
   });
   if (!res.ok || !res.body) {
-    throw new ApiError(res.status, "AI 요청 실패");
+    // 415(이미지 형식)·413(크기)·400(모드) 같은 거절은 이유를 그대로 보여 준다
+    let detail: unknown = "AI 요청 실패";
+    try {
+      const body = await res.json();
+      detail = body.detail ?? detail;
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(res.status, errorMessage(res.status, detail), detail);
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -383,7 +479,7 @@ export interface NotesTree {
 }
 export interface TrashEntry {
   id: string;
-  /** "document" | "event" | "todo". 예전 엔트리는 서버가 document로 채워 준다. */
+  /** "document" | "event" | "todo" | "vocab" | "paper". 예전 엔트리는 서버가 document로 채워 준다. */
   kind: string;
   orig_rel: string;
   name: string;
@@ -395,6 +491,100 @@ export interface TrashEntry {
   /** kind === "todo" 일 때만 */
   todo_due?: string;
   todo_done?: boolean;
+  /** kind === "vocab" 일 때만 */
+  vocab_tags?: string[];
+  vocab_meaning?: string;
+  /** kind === "paper" 일 때만 */
+  paper_id?: string;
+  paper_filename?: string;
+}
+
+// ── 단어장 ──
+export interface VocabExample {
+  en: string;
+  ko: string;
+  grammar: string;
+}
+/** 단어장 항목. 영어학습예시 형식(뜻/비슷한 단어/영어 해설/예문/변화/포인트)을 그대로 담는다. */
+export interface VocabWord {
+  id: string;
+  word: string;
+  pos: string;
+  pronunciation: string;
+  meanings: string[];
+  english_def: string;
+  synonyms: string[];
+  antonyms: string[];
+  examples: VocabExample[];
+  forms: string;
+  notes: string;
+  /** 출처(논문 제목·주제). 같은 단어를 여러 곳에서 만나면 다 붙는다. */
+  tags: string[];
+  context: string;
+  source: string;
+  /** 간격 반복 단계. 0 = 아직 안 봄. */
+  level: number;
+  /** YYYY-MM-DD. 비어 있거나 오늘 이전이면 복습 대상. */
+  next_review: string;
+  review_ok: number;
+  review_ng: number;
+  last_reviewed: number;
+  created_at: number;
+  updated_at: number;
+}
+export type VocabInput = Partial<Omit<VocabWord, "id" | "meanings" | "synonyms" | "antonyms" | "tags" | "examples">> & {
+  word: string;
+  meanings?: string[] | string;
+  synonyms?: string[] | string;
+  antonyms?: string[] | string;
+  tags?: string[] | string;
+  examples?: (VocabExample | string)[];
+};
+export interface VocabTag {
+  tag: string;
+  count: number;
+}
+export interface VocabStats {
+  total: number;
+  due: number;
+  learned: number;
+  tags: number;
+}
+export interface VocabBoard {
+  words: VocabWord[];
+  tags: VocabTag[];
+  stats: VocabStats;
+}
+
+// ── 논문 ──
+export type PaperStatus = "pending" | "ready" | "failed";
+export interface Paper {
+  id: string;
+  filename: string;
+  size: number;
+  pages: number;
+  created_at: number;
+  updated_at: number;
+  /** 정보 추출 상태. pending 이면 백그라운드에서 모델이 읽는 중. */
+  status: PaperStatus;
+  error: string;
+  extracted_at: number;
+  title: string;
+  authors: string[];
+  year: string;
+  venue: string;
+  abstract: string;
+  summary: string;
+  key_findings: string[];
+  methods: string;
+  limitations: string;
+  keywords: string[];
+  sections: string[];
+  starred: boolean;
+  notes: string;
+  /** 마지막으로 보던 쪽 — 다시 열면 여기서 시작 */
+  read_page: number;
+  tags: string[];
 }
 export interface NoteSearchHit {
   path: string;

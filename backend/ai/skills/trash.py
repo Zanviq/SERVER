@@ -17,7 +17,10 @@ from fastapi import HTTPException
 from ... import trash
 from ..skill_base import SkillBase, SkillResult
 
-_KIND_LABEL = {trash.KIND_DOCUMENT: "문서", trash.KIND_EVENT: "일정", trash.KIND_TODO: "할 일"}
+_KIND_LABEL = {
+    trash.KIND_DOCUMENT: "문서", trash.KIND_EVENT: "일정", trash.KIND_TODO: "할 일",
+    trash.KIND_VOCAB: "단어", trash.KIND_PAPER: "논문",
+}
 
 #: 한 번에 모델에게 보여줄 항목 수 상한(휴지통이 크면 컨텍스트를 다 먹는다)
 _MAX_ITEMS = 100
@@ -53,6 +56,10 @@ def _row(e: dict, now: float) -> dict:
     elif kind == trash.KIND_TODO:
         out["todo_due"] = e.get("todo_due", "")
         out["todo_done"] = bool(e.get("todo_done"))
+    elif kind == trash.KIND_VOCAB:
+        out["tags"] = list(e.get("vocab_tags") or [])
+    elif kind == trash.KIND_PAPER:
+        out["filename"] = e.get("paper_filename", "")
     else:
         out["orig_path"] = e.get("orig_rel", "")
     return out
@@ -61,7 +68,8 @@ def _row(e: dict, now: float) -> dict:
 class ListTrash(SkillBase):
     name = "list_trash"
     description = (
-        "휴지통 목록을 본다. kind로 '문서'(document)·'일정'(event)·'할 일'(todo)만 볼 수 있다. "
+        "휴지통 목록을 본다. kind로 '문서'(document)·'일정'(event)·'할 일'(todo)·"
+        "'단어'(vocab)·'논문'(paper)만 볼 수 있다. "
         "여기서 얻은 id를 restore_from_trash에 그대로 넘기면 복원된다."
     )
     parameters = {
@@ -69,7 +77,7 @@ class ListTrash(SkillBase):
         "properties": {
             "kind": {
                 "type": "string",
-                "enum": ["document", "event", "todo"],
+                "enum": ["document", "event", "todo", "vocab", "paper"],
                 "description": "생략하면 전체.",
             },
             "name_contains": {"type": "string", "description": "이름에 이 말이 든 것만."},
@@ -159,12 +167,20 @@ class RestoreFromTrash(SkillBase):
             # "복원하고 시간도 바꿔줘"에서 다음 스킬이 쓸 식별자가 없어 끊긴다.
             data["event_id"] = str(result.get("event_id") or "")
             data["event"] = result.get("event") or {}
+        elif kind == trash.KIND_VOCAB:
+            data["word_id"] = str(result.get("word_id") or "")
+            data["word"] = result.get("word") or {}
+        elif kind == trash.KIND_PAPER:
+            data["paper_id"] = str(result.get("paper_id") or "")
         elif kind == trash.KIND_DOCUMENT:
             data["path"] = where
+        mutates = {
+            trash.KIND_EVENT: "calendar", trash.KIND_VOCAB: "vocab", trash.KIND_PAPER: "papers",
+        }.get(kind, "documents")
         return SkillResult(
             ok=True,
             message=f"{label} '{where}' 복원됨",
             data=data,
             # 실제로 바뀐 화면을 알려야 프런트가 맞는 쪽을 새로고침한다
-            mutates="calendar" if kind == trash.KIND_EVENT else "documents",
+            mutates=mutates,
         )

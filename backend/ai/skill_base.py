@@ -30,6 +30,12 @@ class SkillContext:
     user: SessionUser
     settings: Settings
     today: str = ""  # 요청 기준 오늘(YYYY-MM-DD). 일정 기본 조회창 계산에 사용.
+    #: 어느 화면에서 부른 대화인가("" | "english" | "paper"). 스킬 묶음·프롬프트를 고른다.
+    mode: str = ""
+    #: 논문 화면이면 지금 보고 있는 논문 id. 논문 스킬이 "이 논문"을 해석하는 기준.
+    paper_id: str = ""
+    #: 이 화면에서 단어장에 넣는 단어에 무조건 붙는 태그(논문 제목 등).
+    vocab_tags: list[str] = field(default_factory=list)
 
 
 class SkillBase(ABC):
@@ -44,6 +50,11 @@ class SkillBase(ABC):
     #: 같이 고쳐야 하고 빠뜨리면 "고쳐졌는데 화면이 안 바뀌는" 증상이 된다
     #: (실제로 bulk_update_calendar_events에서 그랬다). 바뀌는 쪽이 선언한다.
     mutates: str = ""
+
+    #: 결과 data 를 화면(SSE tool_result)에도 실어 보낼지. 기본은 모델에게만 준다 —
+    #: 목록 조회 결과를 매번 브라우저로 흘리면 스트림이 무거워진다. 화면이 결과로
+    #: 무언가를 그려야 하는 스킬(단어 후보 체크 목록)만 켠다.
+    expose_data: bool = False
 
     @abstractmethod
     def run(self, args: dict, ctx: SkillContext) -> SkillResult: ...

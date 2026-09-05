@@ -5257,6 +5257,359 @@ def test_prompt_tells_the_model_which_syntax_renders():
         assert kw in sp, kw
 
 
+# ── 단어장 ──────────────────────────────────────────────────────────
+
+def test_vocab_store_merges_same_headword_and_filters_by_tag():
+    """같은 단어를 다른 출처에서 다시 넣으면 새로 생기지 않고 태그가 합쳐진다.
+
+    논문 두 편에서 'degrade' 를 만나면 항목 하나에 태그가 둘 — 그래야
+    "어디서 봤더라"에 답할 수 있다. 태그 필터·검색·복습 큐도 함께 본다.
+    """
+    from backend import vocab_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="vocab1", display_name="V", expires_at=0, remaining=0)
+
+    w1, merged = vocab_store.add_word(u, s, {
+        "word": "Degrade", "pos": "동사", "meanings": ["저하시키다", "비하하다"],
+        "synonyms": "worsen(악화시키다), impair(손상시키다)",
+        "examples": [{"en": "Noise degrades the signal.", "ko": "소음이 신호를 저하시킨다.", "grammar": "타동사"}],
+        "tags": ["Paper A"], "context": "…degrade their reasoning…",
+    })
+    assert merged is False and w1["word"] == "Degrade"
+    assert w1["synonyms"] == ["worsen(악화시키다)", "impair(손상시키다)"]  # 문자열도 목록으로
+
+    w2, merged = vocab_store.add_word(u, s, {
+        "word": "degrade", "meanings": ["분해되다"], "tags": ["Paper B"],
+        "examples": [{"en": "Plastics degrade slowly.", "ko": "플라스틱은 천천히 분해된다."}],
+        "context": "Plastics degrade slowly.",
+    })
+    assert merged is True and w2["id"] == w1["id"]
+    assert {t for t in w2["tags"]} == {"Paper A", "Paper B"}
+    assert "저하시키다" in w2["meanings"] and "분해되다" in w2["meanings"]
+    assert len(w2["examples"]) == 2
+    assert "Plastics degrade slowly." in w2["context"] and "reasoning" in w2["context"]
+    assert len(vocab_store.list_words(u, s)) == 1
+
+    vocab_store.add_word(u, s, {"word": "hinder", "meanings": ["방해하다"], "tags": ["Paper A"]})
+    vocab_store.add_word(u, s, {"word": "adequate", "meanings": ["충분한"], "tags": ["TOEIC"]})
+
+    # 태그만으로 거른다(대소문자 무시)
+    assert {w["word"] for w in vocab_store.list_words(u, s, tag="paper a")} == {"Degrade", "hinder"}
+    assert [w["word"] for w in vocab_store.list_words(u, s, tag="TOEIC")] == ["adequate"]
+    # 검색은 뜻·유사어에도 걸린다
+    assert [w["word"] for w in vocab_store.list_words(u, s, query="손상")] == ["Degrade"]
+    tags = vocab_store.list_tags(u, s)
+    assert tags[0] == {"tag": "Paper A", "count": 2}
+    assert len(tags) == 3
+
+    # 복습: 처음엔 전부 due, 맞히면 다음 날 이후로 밀린다
+    assert vocab_store.stats(u, s)["due"] == 3
+    r = vocab_store.record_review(u, s, w1["id"], ok=True)
+    assert r["level"] == 1 and r["next_review"] > "2000-01-01"
+    assert vocab_store.stats(u, s)["due"] == 2
+    r = vocab_store.record_review(u, s, w1["id"], ok=False)
+    assert r["level"] == 0 and r["review_ng"] == 1
+
+    # 태그 이름 바꾸기
+    assert vocab_store.rename_tag(u, s, "Paper A", "Paper A (2026)")["changed"] == 2
+    assert not vocab_store.list_words(u, s, tag="Paper A")
+    assert len(vocab_store.list_words(u, s, tag="Paper A (2026)")) == 2
+
+
+def test_vocab_api_and_trash_roundtrip():
+    """API 로 넣고 지우면 휴지통에 가고, 복원하면 같은 id 로 돌아온다."""
+    _login()
+    r = client.post("/api/vocab/words/bulk", json={
+        "words": [
+            {"word": "persona", "meanings": ["페르소나"], "pos": "명사"},
+            {"word": "hinder", "meanings": ["방해하다"]},
+            {"word": "", "meanings": ["빈 단어"]},
+        ],
+        "tags": ["Paper X"],
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [w["word"] for w in body["added"]] == ["persona", "hinder"]
+    assert len(body["failed"]) == 1
+    assert all("Paper X" in w["tags"] for w in body["added"])
+
+    board = client.get("/api/vocab/board").json()
+    assert board["stats"]["total"] >= 2
+    assert any(t["tag"] == "Paper X" for t in board["tags"])
+    wid = next(w["id"] for w in board["words"] if w["word"] == "persona")
+
+    r = client.put(f"/api/vocab/words/{wid}", json={"notes": "라틴어 '가면'에서", "tags": ["Paper X", "어원"]})
+    assert r.status_code == 200 and r.json()["notes"].startswith("라틴어")
+    assert client.get("/api/vocab/words", params={"tag": "어원"}).json()[0]["id"] == wid
+
+    r = client.delete(f"/api/vocab/words/{wid}")
+    assert r.status_code == 200
+    assert not any(w["id"] == wid for w in client.get("/api/vocab/words").json())
+    tr = client.get("/api/trash/list", params={"kind": "vocab"}).json()
+    entry = next(e for e in tr if e["name"] == "persona")
+    assert entry["kind"] == "vocab" and entry["vocab_tags"] == ["Paper X", "어원"]
+    assert client.get("/api/trash/counts").json()["vocab"] >= 1
+    r = client.post("/api/trash/restore", params={"id": entry["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "vocab" and r.json()["word"]["id"] == wid
+    assert any(w["id"] == wid for w in client.get("/api/vocab/words").json())
+
+    # 복습 큐와 채점
+    q = client.get("/api/vocab/review", params={"tag": "Paper X"}).json()
+    assert any(w["id"] == wid for w in q)
+    assert client.post(f"/api/vocab/words/{wid}/review", json={"ok": True}).json()["level"] == 1
+
+
+def test_vocab_skills_add_and_propose_with_context_tags():
+    """스킬 계약: 화면(논문)이 정한 태그가 자동으로 붙고, 후보 제안은 저장하지 않는다."""
+    from backend import vocab_store
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="vocabskill", display_name="VS", expires_at=0, remaining=0)
+    reg = default_registry()
+    ctx = SkillContext(user=u, settings=s, today="2026-09-05", mode="paper",
+                       paper_id="x", vocab_tags=["Attention Is All You Need"])
+
+    r = reg.dispatch("propose_vocab_words", {
+        "words": [{"word": "attend", "meaning": "주목하다"}, {"word": "Attend", "meaning": "중복"}],
+        "context": "The model attends to all positions.",
+    }, ctx)
+    assert r.ok and len(r.data["proposal"]) == 1
+    assert r.data["proposal"][0]["exists"] is False
+    assert r.data["tags"] == ["Attention Is All You Need"]
+    assert vocab_store.list_words(u, s) == []  # 저장되지 않았다
+    # 화면이 그리도록 data 를 SSE 로 내보내는 스킬이다
+    assert reg.get("propose_vocab_words").expose_data is True
+
+    r = reg.dispatch("add_vocab_words", {
+        "words": [{"word": "attend", "meanings": ["주목하다", "참석하다"], "pos": "동사",
+                   "examples": [{"en": "It attends to all positions.", "ko": "모든 위치에 주목한다."}]}],
+        "tags": ["Transformer"],
+    }, ctx)
+    assert r.ok, r.message
+    assert len(r.data["added"]) == 1
+    saved = vocab_store.find_by_word(u, s, "attend")
+    assert set(saved["tags"]) == {"Transformer", "Attention Is All You Need"}
+
+    # 이미 있으면 후보에 표시된다
+    r = reg.dispatch("propose_vocab_words", {"words": [{"word": "attend", "meaning": "x"}]}, ctx)
+    assert r.data["proposal"][0]["exists"] is True
+
+    # 조회가 준 id 로 수정·삭제
+    lst = reg.dispatch("list_vocab", {"tag": "transformer"}, ctx)
+    assert lst.ok and lst.data["items"][0]["word"] == "attend"
+    wid = lst.data["items"][0]["id"]
+    assert reg.dispatch("update_vocab_word", {"id": wid, "notes": "강세 뒤"}, ctx).ok
+    assert vocab_store.get_word(u, s, wid)["notes"] == "강세 뒤"
+    assert reg.dispatch("delete_vocab_word", {"id": wid}, ctx).ok
+    assert vocab_store.get_word(u, s, wid) is None
+    assert not reg.dispatch("delete_vocab_word", {"id": wid}, ctx).ok
+
+
+# ── 논문 ────────────────────────────────────────────────────────────
+
+def _tiny_pdf(text: str = "Hello paper") -> bytes:
+    """글자가 든 한 쪽짜리 PDF(pypdf 가 본문을 뽑을 수 있게 표준 폰트로)."""
+    from pypdf import PdfWriter
+
+    w = PdfWriter()
+    page = w.add_blank_page(width=300, height=300)
+    from pypdf.generic import DictionaryObject, NameObject, StreamObject
+
+    font = DictionaryObject({
+        NameObject("/Type"): NameObject("/Font"),
+        NameObject("/Subtype"): NameObject("/Type1"),
+        NameObject("/BaseFont"): NameObject("/Helvetica"),
+    })
+    font_ref = w._add_object(font)
+    page[NameObject("/Resources")] = DictionaryObject({
+        NameObject("/Font"): DictionaryObject({NameObject("/F1"): font_ref}),
+    })
+    stream = StreamObject()
+    stream._data = f"BT /F1 18 Tf 20 150 Td ({text}) Tj ET".encode("latin-1")
+    page[NameObject("/Contents")] = w._add_object(stream)
+    buf = io.BytesIO()
+    w.write(buf)
+    return buf.getvalue()
+
+
+def test_paper_upload_extracts_in_background_and_ai_context(monkeypatch):
+    """업로드하면 백그라운드 추출이 돌고, 논문 모드 대화는 서버에 남으며
+    다른 논문의 대화도 검색된다."""
+    from backend import chat_store, paper_extract, paper_store
+    from backend.ai import orchestrator
+    from backend.ai.orchestrator import LLMResult
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    # 모델 대신 가짜 추출기: 스레드를 띄우지 않고 그 자리에서 돌린다
+    def fake_ask(settings, pdf, text):
+        assert "[[page 1]]" in text and pdf.exists()
+        if "Second one" in text:
+            return {"title": "Second Paper", "summary": "두 번째"}
+        assert "Hello paper" in text
+        return {"title": "Hello Paper: A Study", "authors": ["A. Author"], "year": "2026",
+                "summary": "인사에 대한 연구", "key_findings": ["인사는 중요하다"],
+                "keywords": ["greeting"], "sections": ["1 Intro"]}
+
+    started = []
+
+    def fake_start(user, settings, pid):
+        started.append(pid)
+        paper_extract.run_sync(user, settings, pid, asker=fake_ask)
+        return True
+
+    monkeypatch.setattr(paper_extract, "start", fake_start)
+
+    _login()
+    r = client.post("/api/papers/upload", files={"file": ("hello.pdf", _tiny_pdf(), "application/pdf")})
+    assert r.status_code == 200, r.text
+    pid = r.json()["id"]
+    assert started == [pid]
+    p = client.get(f"/api/papers/{pid}").json()
+    assert p["status"] == "ready" and p["title"] == "Hello Paper: A Study" and p["pages"] == 1
+    assert p["summary"] == "인사에 대한 연구"
+
+    # PDF 가 아닌 것은 거절
+    r = client.post("/api/papers/upload", files={"file": ("x.pdf", b"not a pdf", "application/pdf")})
+    assert r.status_code == 415
+    # 원본 내려받기(inline)
+    f = client.get(f"/api/papers/{pid}/file")
+    assert f.status_code == 200 and f.headers["content-type"].startswith("application/pdf")
+    assert f.headers["content-disposition"] == "inline"
+
+    # 두 번째 논문 + 그 논문에서 나눈 대화
+    r = client.post("/api/papers/upload", files={"file": ("second.pdf", _tiny_pdf("Second one"), "application/pdf")})
+    pid2 = r.json()["id"]
+    u = SessionUser(username="tester", display_name="Tester", expires_at=0, remaining=0)
+    chat_store.append(paper_store.chat_path(u, s, pid2),
+                      chat_store.message("user", "positional encoding 이 뭐야"),
+                      chat_store.message("assistant", "위치 정보를 더하는 방식입니다."))
+
+    # 논문 모드 대화: 시스템 프롬프트에 이 논문 정보와 다른 논문 목록이 들어가고,
+    # 영역 이미지가 inline_data 로 붙고, 논문 태그가 스킬 컨텍스트에 실린다
+    seen = {}
+
+    class FakeLLM:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, contents, catalog, system):
+            self.n += 1
+            seen["system"] = system
+            seen["catalog"] = [c["name"] for c in catalog]
+            seen["contents"] = contents
+            if self.n == 1:
+                return LLMResult(text="", tool_use={"name": "search_paper_chats", "args": {"query": "positional"}})
+            if self.n == 2:
+                return LLMResult(text="", tool_use={"name": "propose_vocab_words", "args": {
+                    "words": [{"word": "encode", "meaning": "부호화하다"}]}})
+            return LLMResult(text="다른 논문에서 설명했었습니다.", tool_use=None)
+
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": FakeLLM())
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    import base64 as _b64
+    r = client.post("/api/ai/chat", json={
+        "message": "이 그림 설명해줘", "mode": "paper", "paper_id": pid,
+        "attachments": [{"mime": "image/png", "data": _b64.b64encode(png).decode(), "label": "2쪽 영역"}],
+        "selections": [{"text": "We propose a greeting.", "page": 1}],
+    })
+    assert r.status_code == 200, r.text
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+    assert "Hello Paper: A Study" in seen["system"]
+    assert pid2 in seen["system"] and "Second Paper" in seen["system"]  # 다른 논문 목록
+    assert "read_paper_text" in seen["catalog"] and "get_system_status" not in seen["catalog"]
+    # 마지막 LLM 호출의 대화에는 [사용자 메시지, 도구 호출, 도구 결과, …] 순으로 쌓인다
+    user_turn = next(c for c in seen["contents"] if c["role"] == "user" and "text" in c["parts"][0]
+                     and "이 그림 설명해줘" in c["parts"][0]["text"])
+    assert any("inline_data" in p and p["inline_data"]["data"] == png for p in user_turn["parts"])
+    assert "We propose a greeting." in user_turn["parts"][0]["text"] and "1쪽" in user_turn["parts"][0]["text"]
+    hits = next(e for e in events if e["type"] == "tool_result" and e["name"] == "search_paper_chats")
+    assert hits["ok"]
+    prop = next(e for e in events if e["type"] == "tool_result" and e["name"] == "propose_vocab_words")
+    assert prop["data"]["proposal"][0]["word"] == "encode"
+    assert prop["data"]["tags"] == ["Hello Paper: A Study"]
+
+    # 대화가 서버에 남았고(선택 글 메타 포함), 다시 열면 그대로 온다
+    msgs = client.get(f"/api/ai/space/paper:{pid}").json()["messages"]
+    assert [m["role"] for m in msgs] == ["user", "assistant"]
+    assert msgs[0]["text"] == "이 그림 설명해줘"
+    assert msgs[0]["meta"]["selections"][0]["page"] == 1
+    assert msgs[0]["meta"]["attachments"][0]["label"] == "2쪽 영역"
+    assert msgs[1]["meta"]["tools"][-1]["data"]["proposal"][0]["word"] == "encode"
+    # 다음 요청은 서버 기록을 history 로 쓴다(브라우저 history 는 무시)
+    client.post("/api/ai/chat", json={"message": "고마워", "mode": "paper", "paper_id": pid,
+                                      "history": [{"role": "user", "text": "가짜 기록"}]})
+    texts = [p.get("text", "") for c in seen["contents"] for p in c["parts"]]
+    assert any("이 그림 설명해줘" in t for t in texts) and not any("가짜 기록" in t for t in texts)
+
+    # 영역 이미지는 논문 모드에서만: PNG·JPEG·WebP 만, 크기 제한
+    r = client.post("/api/ai/chat", json={"message": "x", "mode": "paper", "paper_id": pid,
+                                          "attachments": [{"mime": "image/gif", "data": "AAAA"}]})
+    assert r.status_code == 415
+    assert client.post("/api/ai/chat", json={"message": "x", "mode": "nope"}).status_code == 400
+
+    # 삭제 → 휴지통(폴더째) → 복원(같은 id, 대화도 함께)
+    r = client.delete(f"/api/papers/{pid2}")
+    assert r.status_code == 200
+    assert client.get(f"/api/papers/{pid2}").status_code == 404
+    entry = next(e for e in client.get("/api/trash/list", params={"kind": "paper"}).json() if e["paper_id"] == pid2)
+    assert entry["is_dir"] is True and entry["paper_filename"] == "second.pdf"
+    r = client.post("/api/trash/restore", params={"id": entry["id"]})
+    assert r.status_code == 200 and r.json()["paper_id"] == pid2, r.text
+    assert client.get(f"/api/papers/{pid2}/file").status_code == 200
+    assert len(client.get(f"/api/ai/space/paper:{pid2}").json()["messages"]) == 2
+
+
+def test_english_mode_persists_chat_and_limits_skills(monkeypatch):
+    """영어 학습 모드: 단어장 스킬만 보이고 대화가 서버에 남는다."""
+    from backend.ai import orchestrator
+    from backend.ai.orchestrator import LLMResult
+
+    seen = {}
+
+    class FakeLLM:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, contents, catalog, system):
+            self.n += 1
+            seen["system"] = system
+            seen["catalog"] = set(c["name"] for c in catalog)
+            if self.n == 1:
+                return LLMResult(text="", tool_use={"name": "add_vocab_words", "args": {
+                    "words": [{"word": "adequate", "meanings": ["충분한"], "pos": "형용사"}],
+                    "tags": ["영어 학습"]}})
+            return LLMResult(text="adequate 를 넣었습니다.", tool_use=None)
+
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": FakeLLM())
+    _login()
+    client.delete("/api/ai/space/english")
+    r = client.post("/api/ai/chat", json={"message": "adequate 단어장에 넣어줘", "mode": "english"})
+    assert r.status_code == 200, r.text
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+    added = next(e for e in events if e["type"] == "tool_result" and e["name"] == "add_vocab_words")
+    assert added["ok"] and added["mutates"] == "vocab" and added["data"]["added"][0]["word"] == "adequate"
+    assert "add_vocab_words" in seen["catalog"] and "create_calendar_event" not in seen["catalog"]
+    assert "영어 학습 튜터" in seen["system"]
+    msgs = client.get("/api/ai/space/english").json()["messages"]
+    assert [m["role"] for m in msgs] == ["user", "assistant"]
+    assert any(w["word"] == "adequate" for w in client.get("/api/vocab/words", params={"tag": "영어 학습"}).json())
+    # 한 줄 지우기·비우기
+    assert client.delete(f"/api/ai/space/english/{msgs[0]['id']}").status_code == 200
+    assert len(client.get("/api/ai/space/english").json()["messages"]) == 1
+    client.delete("/api/ai/space/english")
+    assert client.get("/api/ai/space/english").json()["messages"] == []
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"

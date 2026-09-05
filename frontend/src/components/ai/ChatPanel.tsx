@@ -1,20 +1,31 @@
-import { ReactNode, useEffect, useRef, useState } from "react";
-import { Bot, Send, Loader2, CheckCircle2, XCircle, Sparkles } from "lucide-react";
+import {
+  ReactNode, forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState,
+} from "react";
+import {
+  Bot, Send, Loader2, CheckCircle2, XCircle, Sparkles, X, Quote, ImageIcon, Eraser,
+} from "lucide-react";
 import { MarkdownView } from "../notes/LazyMarkdownView";
-import { aiChatStream, api, AiEvent } from "../../lib/api";
+import { aiChatStream, api, AiEvent, ChatMessage } from "../../lib/api";
 import { toast } from "../../store/toast";
 import { useMediaQuery } from "../../lib/useMediaQuery";
+import { VocabProposal, VocabProposalData } from "./VocabProposal";
 
 interface Step {
   name: string;
   ok?: boolean;
   message?: string;
+  /** 화면이 그려야 하는 결과(단어 후보 등). 그런 스킬만 온다. */
+  data?: Record<string, unknown>;
 }
 interface Msg {
+  id?: string;
   role: "user" | "assistant";
   text: string;
   steps: Step[];
   pending?: boolean;
+  /** 사용자 메시지에 같이 보낸 것(논문 화면) — 말풍선 아래 작게 보여 준다 */
+  selections?: { text: string; page: number }[];
+  attachments?: { label: string }[];
 }
 
 // 스킬 이름 -> 사람이 읽는 이름. 여기 없으면 AI 단계에 raw 이름이 그대로 뜬다
@@ -51,6 +62,19 @@ const SKILL_LABEL: Record<string, string> = {
   bulk_delete_todos: "할 일 일괄 삭제",
   list_todo_categories: "카테고리 조회",
   create_todo_category: "카테고리 생성",
+  // 단어장
+  list_vocab: "단어장 조회",
+  list_vocab_tags: "단어장 태그",
+  add_vocab_words: "단어장에 추가",
+  propose_vocab_words: "단어 후보 제안",
+  update_vocab_word: "단어 수정",
+  delete_vocab_word: "단어 삭제",
+  // 논문
+  list_papers: "논문 목록",
+  get_paper_info: "논문 정보",
+  read_paper_text: "논문 본문 읽기",
+  search_paper_chats: "지난 대화 검색",
+  set_paper_notes: "논문 메모",
   // 폴더·휴지통
   list_folders: "폴더 목록",
   list_trash: "휴지통 목록",
@@ -69,6 +93,27 @@ export const DEFAULT_SUGGESTIONS = [
   "내일 오후 3시에 운동 일정 잡아줘",
 ];
 
+/** 논문 화면에서 드래그한 영역 — data 는 PNG data URL. */
+export interface ChatAttachment {
+  id: string;
+  mime: string;
+  data: string;
+  label: string;
+}
+/** 논문 화면에서 드래그해 고른 글. */
+export interface ChatSelection {
+  id: string;
+  text: string;
+  page: number;
+}
+
+/** 부모가 대화를 조작할 손잡이(빠른 질문 칩, 대화 비우기). */
+export interface ChatPanelHandle {
+  send: (text: string) => void;
+  focus: () => void;
+  clear: () => Promise<void>;
+}
+
 interface ChatPanelProps {
   /** 빈 화면에 보여줄 추천 프롬프트 */
   suggestions?: string[];
@@ -80,32 +125,90 @@ interface ChatPanelProps {
   composerTop?: ReactNode;
   /** 전송 전 메시지 변환 (예: 색상 힌트 추가) */
   transformMessage?: (text: string) => string;
+  /** 비서("") · 영어 학습 · 논문. 모드가 있으면 서버가 대화를 들고 있다. */
+  mode?: "" | "english" | "paper";
+  paperId?: string;
+  /** 서버 대화 공간("english" | "paper:<id>"). 바뀌면 그 공간의 기록을 다시 받는다. */
+  space?: string;
+  attachments?: ChatAttachment[];
+  selections?: ChatSelection[];
+  onRemoveAttachment?: (id: string) => void;
+  onRemoveSelection?: (id: string) => void;
+  /** 첨부·선택을 모두 비운다(전송 직후에도 불린다) */
+  onClearContext?: () => void;
+  emptyTitle?: string;
+  emptySubtitle?: string;
+  placeholder?: string;
 }
 
-/** 재사용 가능한 AI 채팅 패널 (AI 비서 페이지 + 캘린더 사이드 패널 공용) */
-export function ChatPanel({
+function fromServer(m: ChatMessage): Msg {
+  return {
+    id: m.id,
+    role: m.role,
+    text: m.text,
+    steps: (m.meta?.tools ?? []).map((t) => ({ name: t.name, ok: t.ok, message: t.message, data: t.data })),
+    selections: m.meta?.selections,
+    attachments: m.meta?.attachments,
+  };
+}
+
+/** 재사용 가능한 AI 채팅 패널 (AI 비서 · 캘린더 사이드 · 영어 학습 · 논문 공용) */
+export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function ChatPanel({
   suggestions = DEFAULT_SUGGESTIONS,
   onToolSuccess,
   className = "",
   composerTop,
   transformMessage,
-}: ChatPanelProps) {
+  mode = "",
+  paperId = "",
+  space,
+  attachments = [],
+  selections = [],
+  onRemoveAttachment,
+  onRemoveSelection,
+  onClearContext,
+  emptyTitle = "무엇을 도와드릴까요?",
+  emptySubtitle = "파일·노트·일정을 자동으로 처리합니다",
+  placeholder,
+}, ref) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [loadingSpace, setLoadingSpace] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // 화면 폭이 아니라 입력 방식으로 판단한다 — 태블릿 가로처럼 넓어도 소프트 키보드다.
   const touch = useMediaQuery("(pointer: coarse)");
+  const hasContext = attachments.length > 0 || selections.length > 0;
 
   useEffect(() => {
     api.aiStatus().then((s) => setEnabled(s.enabled)).catch(() => setEnabled(false));
   }, []);
 
+  // 서버 공간의 기록. 논문을 바꾸면 그 논문의 대화로 갈아탄다.
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!space) {
+      setMessages([]);
+      return;
+    }
+    let alive = true;
+    setLoadingSpace(true);
+    setMessages([]);
+    api.aiSpace(space)
+      .then((r) => { if (alive) setMessages(r.messages.map(fromServer)); })
+      .catch((e) => { if (alive) toast.error(e instanceof Error ? e.message : "대화 기록을 불러오지 못했습니다"); })
+      .finally(() => { if (alive) setLoadingSpace(false); });
+    return () => { alive = false; };
+  }, [space]);
+
+  const firstScroll = useRef(true);
+  useEffect(() => {
+    // 기록을 처음 받았을 때는 스르륵 내리지 않는다(수백 줄을 애니메이션으로 지나간다)
+    endRef.current?.scrollIntoView({ behavior: firstScroll.current ? "auto" : "smooth" });
+    if (messages.length > 0) firstScroll.current = false;
   }, [messages]);
+  useEffect(() => { firstScroll.current = true; }, [space]);
 
   // 입력 내용에 맞춰 textarea 높이 자동 조절(장문이면 줄바꿈되며 늘어남, 최대 높이까지)
   useEffect(() => {
@@ -115,20 +218,29 @@ export function ChatPanel({
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input]);
 
-  const send = async (raw: string) => {
-    if (!raw.trim() || busy) return;
+  const send = useCallback(async (raw: string) => {
+    if ((!raw.trim() && !hasContext) || busy) return;
     const text = transformMessage ? transformMessage(raw) : raw;
     setInput("");
     setBusy(true);
-    // 직전까지의 대화(완료된 것만)를 멀티턴 컨텍스트로 전달
+    // 직전까지의 대화(완료된 것만)를 멀티턴 컨텍스트로 전달(모드가 있으면 서버가 무시한다)
     const history = messages
       .filter((m) => m.text)
       .map((m) => ({ role: m.role, text: m.text }));
+    const sent = {
+      attachments: attachments.map((a) => ({ mime: a.mime, data: a.data, label: a.label })),
+      selections: selections.map((s) => ({ text: s.text, page: s.page })),
+    };
     setMessages((m) => [
       ...m,
-      { role: "user", text, steps: [] },
+      {
+        role: "user", text, steps: [],
+        selections: sent.selections, attachments: sent.attachments.map((a) => ({ label: a.label })),
+      },
       { role: "assistant", text: "", steps: [], pending: true },
     ]);
+    // 보낸 첨부는 칩에서 내린다(클로드처럼) — 다음 질문에 또 실리면 안 된다
+    onClearContext?.();
 
     const patchLast = (fn: (m: Msg) => Msg) =>
       setMessages((arr) => arr.map((m, i) => (i === arr.length - 1 ? fn(m) : m)));
@@ -142,7 +254,7 @@ export function ChatPanel({
             const steps = [...m.steps];
             for (let i = steps.length - 1; i >= 0; i--) {
               if (steps[i].name === e.name && steps[i].ok === undefined) {
-                steps[i] = { ...steps[i], ok: e.ok, message: e.message };
+                steps[i] = { ...steps[i], ok: e.ok, message: e.message, data: e.data };
                 break;
               }
             }
@@ -154,7 +266,7 @@ export function ChatPanel({
         } else if (e.type === "error") {
           patchLast((m) => ({ ...m, text: `오류: ${e.message}` }));
         }
-      });
+      }, { mode, paper_id: paperId, ...sent });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "AI 오류");
       patchLast((m) => ({ ...m, text: "요청 처리 중 오류가 발생했습니다." }));
@@ -162,7 +274,20 @@ export function ChatPanel({
       patchLast((m) => ({ ...m, pending: false }));
       setBusy(false);
     }
-  };
+  }, [attachments, busy, hasContext, messages, mode, onClearContext, onToolSuccess, paperId, selections, transformMessage]);
+
+  const clear = useCallback(async () => {
+    if (space) await api.aiSpaceClear(space);
+    setMessages([]);
+  }, [space]);
+
+  useImperativeHandle(ref, () => ({
+    send: (t: string) => { void send(t); },
+    focus: () => inputRef.current?.focus(),
+    clear,
+  }), [send, clear]);
+
+  const canSend = !busy && (!!input.trim() || hasContext);
 
   return (
     <div className={`flex min-h-0 flex-col ${className}`}>
@@ -175,33 +300,58 @@ export function ChatPanel({
       <div className="flex-1 space-y-4 overflow-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {messages.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-            <div className="grid h-14 w-14 place-items-center rounded-xl bg-accent-muted text-accent">
-              <Sparkles size={26} />
-            </div>
-            <div>
-              <p className="text-sm font-semibold">무엇을 도와드릴까요?</p>
-              <p className="mt-1 text-[13px] text-fg-muted">파일·노트·일정을 자동으로 처리합니다</p>
-            </div>
-            <div className="flex flex-wrap justify-center gap-2">
-              {suggestions.map((s) => (
-                <button key={s} onClick={() => send(s)}
-                  className="rounded-full border border-line bg-surface px-3 py-1.5 text-[12px] text-fg2 hover:border-accent hover:text-accent">
-                  {s}
-                </button>
-              ))}
-            </div>
+            {loadingSpace ? (
+              <Loader2 size={20} className="animate-spin text-fg-muted" />
+            ) : (
+              <>
+                <div className="grid h-14 w-14 place-items-center rounded-xl bg-accent-muted text-accent">
+                  <Sparkles size={26} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">{emptyTitle}</p>
+                  <p className="mt-1 text-[13px] text-fg-muted">{emptySubtitle}</p>
+                </div>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {suggestions.map((s) => (
+                    <button key={s} onClick={() => send(s)}
+                      className="rounded-full border border-line bg-surface px-3 py-1.5 text-[12px] text-fg2 hover:border-accent hover:text-accent">
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
 
         {messages.map((m, i) =>
           m.role === "user" ? (
-            <div key={i} className="flex justify-end">
-              <div className="max-w-[80%] rounded-lg rounded-br-sm bg-accent px-4 py-2.5 text-[13.5px] text-accent-contrast">
-                {m.text}
-              </div>
+            <div key={m.id ?? i} className="flex flex-col items-end gap-1">
+              {(m.selections?.length || m.attachments?.length) ? (
+                <div className="flex max-w-[80%] flex-wrap justify-end gap-1">
+                  {m.selections?.map((s, j) => (
+                    <span key={`s${j}`} title={s.text}
+                      className="inline-flex max-w-[240px] items-center gap-1 rounded-full border border-line bg-subtle px-2 py-0.5 text-[11px] text-fg-muted">
+                      <Quote size={10} className="shrink-0" />
+                      <span className="truncate">{s.page ? `${s.page}쪽 · ` : ""}{s.text}</span>
+                    </span>
+                  ))}
+                  {m.attachments?.map((a, j) => (
+                    <span key={`a${j}`}
+                      className="inline-flex items-center gap-1 rounded-full border border-line bg-subtle px-2 py-0.5 text-[11px] text-fg-muted">
+                      <ImageIcon size={10} /> {a.label || "영역 이미지"}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              {m.text && (
+                <div className="max-w-[80%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-accent px-4 py-2.5 text-[13.5px] text-accent-contrast">
+                  {m.text}
+                </div>
+              )}
             </div>
           ) : (
-            <div key={i} className="flex gap-2.5">
+            <div key={m.id ?? i} className="flex gap-2.5">
               <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-muted text-accent">
                 <Bot size={15} />
               </div>
@@ -209,7 +359,7 @@ export function ChatPanel({
                 {m.steps.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {m.steps.map((s, j) => (
-                      <span key={j}
+                      <span key={j} title={s.message}
                         className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] ${
                           s.ok === false ? "border-danger/30 text-danger"
                           : s.ok ? "border-accent/30 bg-accent-muted text-accent-fg"
@@ -230,6 +380,17 @@ export function ChatPanel({
                     <Loader2 size={14} className="animate-spin" /> 생각 중…
                   </div>
                 ) : null}
+                {/* 단어 후보: 사용자가 고른 것만 단어장에 들어간다 */}
+                {m.steps.map((s, j) =>
+                  s.name === "propose_vocab_words" && s.ok && s.data && Array.isArray(s.data.proposal) ? (
+                    <VocabProposal
+                      key={`p${j}`}
+                      data={s.data as unknown as VocabProposalData}
+                      disabled={busy}
+                      onSubmit={(text) => send(text)}
+                    />
+                  ) : null,
+                )}
               </div>
             </div>
           ),
@@ -238,7 +399,36 @@ export function ChatPanel({
       </div>
 
       {composerTop && <div className="mt-3">{composerTop}</div>}
-      <div className={`${composerTop ? "mt-2" : "mt-3"} flex items-end gap-2`}>
+      {hasContext && (
+        <div className={`${composerTop ? "mt-2" : "mt-3"} flex flex-wrap items-center gap-1.5`}>
+          {attachments.map((a) => (
+            <span key={a.id} className="group relative inline-flex items-center gap-1.5 rounded-md border border-line bg-subtle p-1 pr-1.5 text-[11.5px] text-fg2">
+              <img src={a.data} alt={a.label} className="h-10 w-auto max-w-[96px] rounded-sm object-cover" />
+              <span className="max-w-[120px] truncate">{a.label}</span>
+              <button type="button" onClick={() => onRemoveAttachment?.(a.id)} aria-label={`${a.label} 빼기`}
+                className="grid h-5 w-5 place-items-center rounded-full text-fg-muted hover:bg-hovered hover:text-danger">
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+          {selections.map((s) => (
+            <span key={s.id} title={s.text}
+              className="inline-flex max-w-[260px] items-center gap-1.5 rounded-md border border-line bg-subtle px-2 py-1 text-[11.5px] text-fg2">
+              <Quote size={11} className="shrink-0 text-accent" />
+              <span className="truncate">{s.page ? `${s.page}쪽 · ` : ""}{s.text}</span>
+              <button type="button" onClick={() => onRemoveSelection?.(s.id)} aria-label="선택한 글 빼기"
+                className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-fg-muted hover:bg-hovered hover:text-danger">
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+          <button type="button" onClick={() => onClearContext?.()}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] text-fg-muted hover:bg-hovered hover:text-fg">
+            <Eraser size={12} /> 모두 지우기
+          </button>
+        </div>
+      )}
+      <div className={`${composerTop || hasContext ? "mt-2" : "mt-3"} flex items-end gap-2`}>
         <textarea
           ref={inputRef}
           value={input}
@@ -252,16 +442,16 @@ export function ChatPanel({
               send(input);
             }
           }}
-          placeholder={touch ? "메시지를 입력하세요…" : "메시지를 입력하세요… (Shift+Enter 줄바꿈)"}
+          placeholder={placeholder ?? (touch ? "메시지를 입력하세요…" : "메시지를 입력하세요… (Shift+Enter 줄바꿈)")}
           disabled={busy}
           rows={1}
           className="input flex-1 resize-none !h-auto min-h-[2.25rem] py-2 leading-relaxed [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           style={{ maxHeight: 160, overflowY: "auto" }}
         />
-        <button onClick={() => send(input)} disabled={busy || !input.trim()} className="btn btn-primary h-9 px-4">
+        <button onClick={() => send(input)} disabled={!canSend} className="btn btn-primary h-9 px-4" aria-label="보내기">
           {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
         </button>
       </div>
     </div>
   );
-}
+});

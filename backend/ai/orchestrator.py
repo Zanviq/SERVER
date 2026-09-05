@@ -96,19 +96,32 @@ def run(
     llm=None,
     registry: SkillRegistry | None = None,
     history: list[dict] | None = None,
+    mode: str = "",
+    system: str = "",
+    attachments: list[dict] | None = None,
+    paper_id: str = "",
+    vocab_tags: list[str] | None = None,
 ) -> Iterator[dict]:
     """ReAct 루프 실행. 이벤트 dict를 순차적으로 yield.
 
     이벤트: {type: tool_call|tool_result|text|done|error, ...}
+
+    mode 를 주면(english/paper) 그 화면의 스킬 부분집합만 모델에 보이고, system 은
+    호출한 쪽이 만든 프롬프트로 바꾼다. attachments 는 [{mime, data(bytes)}] —
+    논문 화면에서 드래그한 영역 이미지가 마지막 사용자 메시지에 함께 실린다.
     """
+    from .modes import get_mode
+
     registry = registry or default_registry()
-    ctx = SkillContext(user=user, settings=settings, today=today)
-    catalog = registry.build_catalog()
+    ctx = SkillContext(user=user, settings=settings, today=today,
+                       mode=mode, paper_id=paper_id, vocab_tags=list(vocab_tags or []))
+    spec = get_mode(mode) if mode else None
+    catalog = [s for s in registry.build_catalog() if spec is None or spec.allows(s["name"])]
 
     prefs = _user_ai_prefs(user, settings)
     # 모델은 사용자 설정을 따르므로 prefs를 읽은 뒤에 만든다
     llm = llm or GeminiLLM(settings, prefs.get("model", ""))
-    system = build_system(user, prefs["tone"], today, prefs.get("calendar"))
+    system = system or build_system(user, prefs["tone"], today, prefs.get("calendar"))
     max_steps = max(1, min(16, int(prefs["max_steps"])))
 
     # 이전 대화(멀티턴): [{role: user|assistant, text}] → genai 형식
@@ -118,7 +131,13 @@ def run(
         text = str(turn.get("text", ""))
         if text:
             contents.append({"role": role, "parts": [{"text": text}]})
-    contents.append({"role": "user", "parts": [{"text": message}]})
+    last_parts: list[dict] = [{"text": message}]
+    for att in attachments or []:
+        data = att.get("data")
+        mime = str(att.get("mime") or "")
+        if isinstance(data, (bytes, bytearray)) and data and mime.startswith("image/"):
+            last_parts.append({"inline_data": {"mime_type": mime, "data": bytes(data)}})
+    contents.append({"role": "user", "parts": last_parts})
 
     final_text = ""
     executed: list[tuple[str, bool]] = []  # 한도 초과 시 요약용
@@ -153,15 +172,19 @@ def run(
 
                 skill_result = registry.dispatch(name, args, ctx)
                 executed.append((name, skill_result.ok))
-                yield {
+                skill_obj = registry.get(name)
+                ev = {
                     "type": "tool_result",
                     "name": name,
                     "ok": skill_result.ok,
                     "message": skill_result.message,
                     # 무엇이 바뀌었는지 스킬이 직접 알려준다 → 프런트가 해당 화면만 새로고침
                     # 결과가 직접 알린 값이 우선(휴지통 복원처럼 실행 후에야 갈래를 안다)
-                    "mutates": skill_result.mutates or getattr(registry.get(name), "mutates", "") or "",
+                    "mutates": skill_result.mutates or getattr(skill_obj, "mutates", "") or "",
                 }
+                if skill_result.ok and getattr(skill_obj, "expose_data", False):
+                    ev["data"] = skill_result.data
+                yield ev
 
                 call_parts.append({"function_call": {"name": name, "args": args}})
                 response_parts.append(

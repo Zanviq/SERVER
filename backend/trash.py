@@ -10,6 +10,8 @@ kind 는 휴지통을 갈래별로 보기 위한 것이다.
   - "document" : 파일/폴더. data/<id>/<name> 에 실물이 들어 있다.
   - "event"    : 캘린더 일정. 파일이 아니라 data/<id>/event.json 에 내용을 적어 둔다.
   - "todo"     : 할 일. data/<id>/todo.json 에 내용을 적어 둔다(원래 id 되살림).
+  - "vocab"    : 단어장 항목. data/<id>/vocab.json.
+  - "paper"    : 논문. data/<id>/ 아래에 pdf·메타·대화가 폴더째 들어 있다.
 kind 가 없는 예전 엔트리는 문서로 본다(기존 휴지통이 비지 않도록).
 
 .trash 는 개인 루트 바로 아래(data/ 형제)에 있으므로
@@ -36,8 +38,12 @@ TRASH_DIRNAME = ".trash"
 KIND_DOCUMENT = "document"
 KIND_EVENT = "event"
 KIND_TODO = "todo"
+KIND_VOCAB = "vocab"
+KIND_PAPER = "paper"
 EVENT_FILE = "event.json"
 TODO_FILE = "todo.json"
+VOCAB_FILE = "vocab.json"
+PAPER_DIRNAME = "paper"
 
 
 def entry_kind(entry: dict) -> str:
@@ -167,6 +173,52 @@ def move_todo_to_trash(todo: dict, user: SessionUser, settings: Settings) -> str
     return entry["id"]
 
 
+def move_vocab_to_trash(word: dict, user: SessionUser, settings: Settings) -> str:
+    """단어장 항목을 휴지통에 넣는다. 할 일과 같은 방식(내용을 적어 둔다)."""
+    entry = _entry(
+        KIND_VOCAB, str(word.get("word") or "(단어 없음)"),
+        vocab_tags=list(word.get("tags") or [])[:5],
+        vocab_meaning=str((word.get("meanings") or [""])[0] or "")[:80],
+    )
+    dest_dir = _trash_root(user, settings) / "data" / entry["id"]
+    _append_entry(entry, user, settings, payload=(dest_dir / VOCAB_FILE, word))
+    return entry["id"]
+
+
+def move_paper_to_trash(paper_dir: Path, meta: dict, user: SessionUser, settings: Settings) -> str:
+    """논문 폴더(pdf·메타·대화)를 통째로 휴지통에 옮긴다.
+
+    문서와 같은 이유로 이동과 인덱스 기록을 한 락 안에서 한다.
+    """
+    if not paper_dir.is_dir():
+        raise HTTPException(status_code=404, detail="논문을 찾을 수 없습니다.")
+    entry = _entry(
+        KIND_PAPER, str(meta.get("title") or meta.get("filename") or "(제목 없음)"),
+        paper_id=str(meta.get("id") or paper_dir.name),
+        paper_filename=str(meta.get("filename") or ""),
+    )
+    entry["is_dir"] = True
+    root = _trash_root(user, settings)
+    idx_path = _index_path(user, settings)
+    with lock_for(idx_path):
+        dest_dir = root / "data" / entry["id"]
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / PAPER_DIRNAME
+        shutil.move(str(paper_dir), str(dest))
+        try:
+            entries = read_json(idx_path, [])
+            entries.append(entry)
+            write_atomic(idx_path, entries)
+        except BaseException:
+            try:
+                shutil.move(str(dest), str(paper_dir))
+                shutil.rmtree(dest_dir, ignore_errors=True)
+            except OSError:
+                pass
+            raise
+    return entry["id"]
+
+
 def list_trash(user: SessionUser, settings: Settings, kind: str = "") -> list[dict]:
     entries = read_json(_index_path(user, settings), [])
     if kind:
@@ -180,7 +232,7 @@ def list_trash(user: SessionUser, settings: Settings, kind: str = "") -> list[di
 def counts_by_kind(user: SessionUser, settings: Settings) -> dict:
     """갈래별 개수 — 휴지통 탭에 숫자를 띄우기 위한 것."""
     entries = read_json(_index_path(user, settings), [])
-    out = {KIND_DOCUMENT: 0, KIND_EVENT: 0, KIND_TODO: 0}
+    out = {KIND_DOCUMENT: 0, KIND_EVENT: 0, KIND_TODO: 0, KIND_VOCAB: 0, KIND_PAPER: 0}
     for e in entries:
         k = entry_kind(e)
         out[k] = out.get(k, 0) + 1
@@ -217,13 +269,42 @@ def restore(entry_id: str, user: SessionUser, settings: Settings) -> dict:
     idx_path = _index_path(user, settings)
     pending_event: dict | None = None
     pending_todo: dict | None = None
+    pending_vocab: dict | None = None
     with lock_for(idx_path):
         entries = read_json(idx_path, [])
         entry = next((e for e in entries if e.get("id") == entry_id), None)
         if entry is None:
             raise HTTPException(status_code=404, detail="휴지통 항목을 찾을 수 없습니다.")
 
-        if entry_kind(entry) == KIND_TODO:
+        if entry_kind(entry) == KIND_PAPER:
+            # 논문은 폴더째 제자리로. 저장소가 id 폴더를 쓰므로 같은 id 가 다시
+            # 생겼을 리 없지만(uuid), 있다면 새 id 로 옮긴다.
+            from . import paper_store
+
+            src = _trash_root(user, settings) / "data" / entry_id / PAPER_DIRNAME
+            if not src.is_dir():
+                entries = [e for e in entries if e.get("id") != entry_id]
+                write_atomic(idx_path, entries)
+                raise HTTPException(status_code=410, detail="복원할 논문 파일이 없습니다.")
+            restored = paper_store.restore_dir(user, settings, src, str(entry.get("paper_id") or ""))
+            shutil.rmtree(src.parent, ignore_errors=True)
+            entries = [e for e in entries if e.get("id") != entry_id]
+            write_atomic(idx_path, entries)
+            return {"ok": True, "kind": KIND_PAPER, "paper": restored,
+                    "paper_id": restored.get("id", ""), "restored_to": restored.get("title", "")}
+
+        if entry_kind(entry) == KIND_VOCAB:
+            src = _trash_root(user, settings) / "data" / entry_id / VOCAB_FILE
+            payload = read_json(src, None)
+            if payload is None:
+                entries = [e for e in entries if e.get("id") != entry_id]
+                write_atomic(idx_path, entries)
+                raise HTTPException(status_code=410, detail="복원할 단어 내용이 없습니다.")
+            entries = [e for e in entries if e.get("id") != entry_id]
+            write_atomic(idx_path, entries)
+            pending_vocab = payload
+
+        elif entry_kind(entry) == KIND_TODO:
             src = _trash_root(user, settings) / "data" / entry_id / TODO_FILE
             payload = read_json(src, None)
             if payload is None:
@@ -249,6 +330,22 @@ def restore(entry_id: str, user: SessionUser, settings: Settings) -> dict:
             entries = [e for e in entries if e.get("id") != entry_id]
             write_atomic(idx_path, entries)
             pending_event = payload
+
+    if pending_vocab is not None:
+        from . import vocab_store
+
+        try:
+            restored = vocab_store.restore_word(user, settings, pending_vocab)
+        except Exception:
+            with lock_for(idx_path):
+                back = read_json(idx_path, [])
+                if not any(e.get("id") == entry_id for e in back):
+                    back.append(entry)
+                    write_atomic(idx_path, back)
+            raise
+        shutil.rmtree(_trash_root(user, settings) / "data" / entry_id, ignore_errors=True)
+        return {"ok": True, "kind": KIND_VOCAB, "word": restored,
+                "word_id": restored.get("id", ""), "restored_to": restored.get("word", "")}
 
     if pending_todo is not None:
         from . import todo_store

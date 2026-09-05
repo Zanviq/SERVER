@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Trash2, RotateCcw, XCircle, Loader2, FolderOpen, FileText, NotebookPen, CalendarDays, ListChecks } from "lucide-react";
+import { Trash2, RotateCcw, XCircle, Loader2, FolderOpen, FileText, NotebookPen, CalendarDays, ListChecks, BookMarked, GraduationCap } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { Modal } from "../components/ui/Modal";
 import { api, TrashEntry } from "../lib/api";
@@ -19,6 +19,8 @@ const TABS = [
   { key: "document", label: "문서" },
   { key: "event", label: "일정" },
   { key: "todo", label: "할 일" },
+  { key: "vocab", label: "단어" },
+  { key: "paper", label: "논문" },
 ] as const;
 
 export function Trash() {
@@ -120,6 +122,8 @@ export function Trash() {
           <span className="text-[12px] text-fg-muted">
             {tab === "event" ? "복원하면 캘린더에 다시 만들어집니다"
               : tab === "todo" ? "복원하면 할 일 목록에 다시 생깁니다"
+              : tab === "vocab" ? "복원하면 단어장에 태그째 돌아갑니다"
+              : tab === "paper" ? "복원하면 PDF·정보·대화가 함께 돌아갑니다"
               : "복원하면 원래 위치로 돌아갑니다"}
           </span>
         </div>
@@ -135,6 +139,8 @@ export function Trash() {
               {tab === "event" ? "삭제된 일정이 없습니다"
                 : tab === "document" ? "삭제된 문서가 없습니다"
                 : tab === "todo" ? "삭제된 할 일이 없습니다"
+                : tab === "vocab" ? "삭제된 단어가 없습니다"
+                : tab === "paper" ? "삭제된 논문이 없습니다"
                 : "휴지통이 비어 있습니다"}
             </span>
           </div>
@@ -143,8 +149,11 @@ export function Trash() {
             {items.map((e) => {
               const isEvent = e.kind === "event";
               const isTodo = e.kind === "todo";
-              const Icon = isEvent ? CalendarDays : isTodo ? ListChecks : icon(e);
+              const isVocab = e.kind === "vocab";
+              const isPaper = e.kind === "paper";
+              const Icon = isEvent ? CalendarDays : isTodo ? ListChecks : isVocab ? BookMarked : isPaper ? GraduationCap : icon(e);
               const due = (e.todo_due ?? "").slice(0, 16).replace("T", " ");
+              const vocabTags = e.vocab_tags?.length ? ` · ${e.vocab_tags.join(", ")}` : "";
               return (
                 <li key={e.id} className="flex items-center gap-3 px-4 py-2.5">
                   <Icon size={16} className="shrink-0 text-fg-muted" />
@@ -155,6 +164,10 @@ export function Trash() {
                         ? `일정 · ${(e.event_start ?? "").slice(0, 16).replace("T", " ")} · 삭제 ${fmt(e.deleted_at)}`
                         : isTodo
                         ? `할 일${e.todo_done ? " · 완료" : ""}${due ? ` · ${due}` : ""} · 삭제 ${fmt(e.deleted_at)}`
+                        : isVocab
+                        ? `단어${e.vocab_meaning ? ` · ${e.vocab_meaning}` : ""}${vocabTags} · 삭제 ${fmt(e.deleted_at)}`
+                        : isPaper
+                        ? `논문${e.paper_filename ? ` · ${e.paper_filename}` : ""} · 삭제 ${fmt(e.deleted_at)}`
                         : `${e.orig_rel} · ${fmt(e.deleted_at)}`}
                     </p>
                   </div>

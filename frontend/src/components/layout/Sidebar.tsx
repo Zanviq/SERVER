@@ -9,6 +9,8 @@ import {
   Settings,
   User,
   Bot,
+  Languages,
+  GraduationCap,
   Trash2,
   TerminalSquare,
   MoreHorizontal,
@@ -39,6 +41,8 @@ const NAV = [
   { to: "/calendar", icon: CalendarDays, label: "캘린더", primary: true },
   { to: "/todo", icon: ListTodo, label: "할 일", primary: true },
   { to: "/assistant", icon: Bot, label: "AI 비서", primary: true },
+  { to: "/english", icon: Languages, label: "영어 학습" },
+  { to: "/papers", icon: GraduationCap, label: "논문" },
   { to: "/graph", icon: Share2, label: "그래프" },
   { to: "/trash", icon: Trash2, label: "휴지통" },
 ];
