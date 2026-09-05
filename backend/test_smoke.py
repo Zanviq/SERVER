@@ -5697,6 +5697,71 @@ def test_assistant_and_calendar_modes_persist_conversations():
         assert spec.allows("read_context"), name
 
 
+def test_unexpected_skill_errors_do_not_leak_internals():
+    """예상 못 한 예외의 문자열이 그대로 나가면 안 된다.
+
+    스킬 결과 메시지는 **세 곳**으로 간다 — 화면의 스킬 칩, 대화 기록(감사 로그),
+    그리고 다음 차례의 모델 입력. 예외 문자열에는 경로·키·요청 본문이 섞일 수 있다.
+    우리가 직접 쓴 HTTPException 문구는 그대로 내보낸다(모델이 스스로 고쳐야 한다).
+    """
+    from fastapi import HTTPException
+
+    from backend.ai.skill_base import SkillBase, SkillContext, SkillResult
+    from backend.ai.skill_registry import SkillRegistry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    secret = "/srv/secret/key-AIzaSyDEADBEEF"
+
+    class Boom(SkillBase):
+        name = "boom"
+        description = "언제나 터진다"
+        parameters = {"type": "object", "properties": {}}
+
+        def run(self, args, ctx):
+            raise RuntimeError(f"내부 오류 {secret}")
+
+    class Refuse(SkillBase):
+        name = "refuse"
+        description = "우리가 쓴 문구로 거절한다"
+        parameters = {"type": "object", "properties": {}}
+
+        def run(self, args, ctx):
+            raise HTTPException(status_code=404, detail="논문을 찾을 수 없습니다.")
+
+    s = get_settings()
+    u = SessionUser(username="leak", display_name="L", expires_at=0, remaining=0)
+    reg = SkillRegistry()
+    reg.register(Boom())
+    reg.register(Refuse())
+    ctx = SkillContext(user=u, settings=s, today="2026-09-06")
+
+    # 운영 조건(DEBUG=false)에서는 자세한 내용이 나가지 않는다.
+    # 이 테스트 모듈은 DEBUG=true 로 돌아가므로 잠깐 꺼서 확인한다.
+    was = s.debug
+    s.debug = False
+    try:
+        r = reg.dispatch("boom", {}, ctx)
+    finally:
+        s.debug = was
+    assert r.ok is False and r.error_code == "internal"
+    assert secret not in r.message and "AIzaSy" not in r.message, r.message
+    assert "boom" in r.message  # 어느 스킬이 터졌는지는 알려 준다
+
+    # DEBUG=true 인 개발 환경에서는 원인을 봐야 하므로 붙여 준다
+    s.debug = True
+    try:
+        assert secret in reg.dispatch("boom", {}, ctx).message
+    finally:
+        s.debug = was
+
+    # 우리가 쓴 문구는 그대로 — 모델이 그걸 보고 다시 조회해야 한다
+    r = reg.dispatch("refuse", {}, ctx)
+    assert r.error_code == "not_found" and "찾을 수 없습니다" in r.message
+
+    # 없는 스킬도 스트림을 죽이지 않고 실패로만 돌아온다
+    assert reg.dispatch("없는스킬", {}, ctx).error_code == "not_found"
+
 def test_context_is_isolated_per_user_and_survives_concurrent_writes():
     """컨텍스트는 사용자별로 갇혀 있고, 동시에 써도 잃어버리지 않는다.
 

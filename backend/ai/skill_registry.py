@@ -36,8 +36,15 @@ class SkillRegistry:
                     409: "conflict", 410: "gone", 415: "unsupported"}.get(e.status_code, "error")
             return SkillResult(ok=False, message=str(e.detail), error_code=code)
         except Exception as e:  # noqa: BLE001
+            # 예상 못 한 예외의 문자열에는 경로·키·요청 본문이 섞일 수 있다. 이 값은
+            # 화면의 스킬 칩에 보이고, 대화 기록(감사 로그)에 남고, 다음 차례에 모델
+            # 에게도 들어간다 — 세 곳 모두로 새어 나간다. 자세한 내용은 서버 로그에만
+            # 남기고(위 logger.exception), 밖으로는 갈래만 알린다.
+            # HTTPException 은 우리가 직접 쓴 문구라 그대로 내보낸다(위 분기).
             logger.exception("스킬 실행 오류: %s", name)
-            return SkillResult(ok=False, message=str(e), error_code="internal")
+            detail = str(e) if getattr(ctx.settings, "debug", False) else ""
+            msg = f"'{name}' 실행 중 오류가 났습니다." + (f" ({detail[:300]})" if detail else "")
+            return SkillResult(ok=False, message=msg, error_code="internal")
 
 
 def default_registry() -> SkillRegistry:
