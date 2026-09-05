@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Mic, Square, Upload } from "lucide-react";
+import { AlertTriangle, Loader2, Mic, Square, Upload } from "lucide-react";
 import { Modal } from "../ui/Modal";
-import { toast } from "../../store/toast";
 
 interface Props {
   open: boolean;
@@ -41,6 +40,26 @@ const fmt = (sec: number) => {
 type Phase = "idle" | "recording" | "done";
 
 /**
+ * 마이크를 못 잡은 이유를 사람 말로. 이유마다 할 일이 달라서 뭉뚱그리면 안 된다
+ * — "권한을 확인하세요"만 띄우면 사실은 http 로 들어와서 팝업조차 안 뜬 경우에
+ * 사용자가 설정만 뒤지게 된다.
+ */
+function micProblem(e: unknown): string {
+  const name = e instanceof Error ? e.name : "";
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "브라우저가 마이크를 막았습니다. 주소창 왼쪽의 자물쇠(또는 ⓘ) → 사이트 설정에서 "
+      + "마이크를 '허용'으로 바꾼 뒤 다시 눌러 주세요.";
+  }
+  if (name === "NotFoundError" || name === "OverconstrainedError") {
+    return "마이크를 찾지 못했습니다. 마이크가 연결돼 있는지 확인하세요.";
+  }
+  if (name === "NotReadableError" || name === "AbortError") {
+    return "다른 프로그램이 마이크를 쓰고 있어 열지 못했습니다. 그 프로그램을 닫고 다시 시도하세요.";
+  }
+  return "마이크를 열지 못했습니다. 파일 올리기로 녹음본을 올릴 수 있습니다.";
+}
+
+/**
  * 마이크로 회의를 녹음해 올린다. 멈추면 들어 본 뒤 저장할 수 있고,
  * 저장하면 서버가 뒤에서 받아쓰기·요약을 만든다.
  */
@@ -52,6 +71,8 @@ export function Recorder({ open, onClose, categories, onSave }: Props) {
   const [elapsed, setElapsed] = useState(0);
   const [blob, setBlob] = useState<Blob | null>(null);
   const [saving, setSaving] = useState(false);
+  // 마이크 문제는 토스트로 흘려보내지 않는다 — 창 안에 남아 있어야 고칠 수 있다
+  const [problem, setProblem] = useState("");
   const rec = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const chunks = useRef<Blob[]>([]);
@@ -78,18 +99,34 @@ export function Recorder({ open, onClose, categories, onSave }: Props) {
     setElapsed(0);
     setTitle("");
     setSaving(false);
+    setProblem("");
   }, [open]);
   useEffect(() => () => { stopStream(); window.clearInterval(timer.current); }, []);
 
   const start = async () => {
-    if (typeof MediaRecorder === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      toast.error("이 브라우저는 녹음을 지원하지 않습니다. 파일 올리기를 쓰세요.");
+    setProblem("");
+    // 브라우저는 **보안 컨텍스트**(https 또는 localhost)에서만 마이크를 준다.
+    // LAN 의 http 주소로 들어오면 navigator.mediaDevices 자체가 없어서, 권한
+    // 팝업이 뜰 기회조차 없다 — 그 사실을 그대로 알려 준다.
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      setProblem(
+        window.isSecureContext
+          ? "이 브라우저는 녹음을 지원하지 않습니다. 파일 올리기를 쓰세요."
+          : `녹음은 https 주소에서만 됩니다(지금은 ${window.location.protocol}//${window.location.host}). `
+            + "도메인 주소로 접속하거나, 녹음 파일을 '올리기'로 올려 주세요.",
+      );
+      return;
+    }
+    if (typeof MediaRecorder === "undefined") {
+      setProblem("이 브라우저는 녹음을 지원하지 않습니다. 파일 올리기를 쓰세요.");
       return;
     }
     try {
+      // 여기서 브라우저 권한 팝업이 뜬다(처음 한 번). 거부됐거나 서버가
+      // Permissions-Policy 로 막아 두면 팝업 없이 NotAllowedError 로 온다.
       stream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      toast.error("마이크를 쓸 수 없습니다. 권한을 확인하세요.");
+    } catch (e) {
+      setProblem(micProblem(e));
       return;
     }
     const { mime, ext } = pickMime();
@@ -159,8 +196,13 @@ export function Recorder({ open, onClose, categories, onSave }: Props) {
           </div>
           {phase === "idle" && (
             <button type="button" onClick={start} className="btn btn-primary gap-2">
-              <Mic size={16} /> 녹음 시작
+              <Mic size={16} /> {problem ? "다시 시도" : "녹음 시작"}
             </button>
+          )}
+          {problem && phase === "idle" && (
+            <p className="flex items-start gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-left text-[12px] text-warning">
+              <AlertTriangle size={13} className="mt-[2px] shrink-0" /> <span>{problem}</span>
+            </p>
           )}
           {phase === "recording" && (
             <button type="button" onClick={stop} className="btn btn-danger gap-2">
