@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { AlertCircle, ChevronDown, ChevronRight, FolderClosed, Loader2, Pencil, RefreshCw, Sparkles, Star } from "lucide-react";
 import { Paper } from "../../lib/api";
 import { formatBytes } from "../../lib/format";
+import { isSubmitEnter } from "../../lib/keys";
 import { paperTitle } from "./PaperList";
 
 interface Props {
@@ -51,7 +52,7 @@ export function PaperInfo({ paper: p, categories = [], onUpdate, onAsk, onRetry 
         {editingTitle ? (
           <input className="input h-8 text-[13.5px] font-semibold" value={title} autoFocus
             onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
-            onKeyDown={(e) => { if (e.key === "Enter") saveTitle(); if (e.key === "Escape") { setTitle(p.title); setEditingTitle(false); } }} />
+            onKeyDown={(e) => { if (isSubmitEnter(e)) saveTitle(); if (e.key === "Escape") { setTitle(p.title); setEditingTitle(false); } }} />
         ) : (
           <h2 className="group flex items-start gap-1.5 text-[14px] font-semibold leading-snug">
             <span className="min-w-0 flex-1">{paperTitle(p)}</span>
@@ -77,7 +78,7 @@ export function PaperInfo({ paper: p, categories = [], onUpdate, onAsk, onRetry 
             placeholder="분류 없음" aria-label="폴더"
             onChange={(e) => setCategory(e.target.value)} onBlur={saveCategory}
             onKeyDown={(e) => {
-              if (e.key === "Enter") e.currentTarget.blur();
+              if (isSubmitEnter(e)) e.currentTarget.blur();
               if (e.key === "Escape") { setCategory(p.category); e.currentTarget.blur(); }
             }} />
           <datalist id="paper-categories">
@@ -89,7 +90,7 @@ export function PaperInfo({ paper: p, categories = [], onUpdate, onAsk, onRetry 
           <input className="input h-8 font-mono text-[12px]" value={filename} aria-label="파일 이름"
             onChange={(e) => setFilename(e.target.value)} onBlur={saveFilename}
             onKeyDown={(e) => {
-              if (e.key === "Enter") e.currentTarget.blur();
+              if (isSubmitEnter(e)) e.currentTarget.blur();
               if (e.key === "Escape") { setFilename(p.filename); e.currentTarget.blur(); }
             }} />
         </label>

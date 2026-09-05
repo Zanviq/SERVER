@@ -10,6 +10,7 @@ import { PdfViewer, PdfMark, PdfRect } from "../components/papers/PdfViewer";
 import { PaperInfo } from "../components/papers/PaperInfo";
 import { VocabPanel } from "../components/vocab/VocabPanel";
 import { api, Paper } from "../lib/api";
+import { isSubmitEnter } from "../lib/keys";
 import { toast } from "../store/toast";
 
 const SUGGESTIONS = [
@@ -279,7 +280,7 @@ export function Papers() {
         <div className="space-y-3">
           <input className="input" value={newFolder} autoFocus placeholder="예: 강화학습, 세미나, 2026-1학기"
             onChange={(e) => setNewFolder(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") createFolder(); }} />
+            onKeyDown={(e) => { if (isSubmitEnter(e)) createFolder(); }} />
           <p className="text-[12px] text-fg-muted">
             폴더는 이름일 뿐입니다 — 논문이 하나도 없는 폴더는 목록에서 저절로 사라집니다.
           </p>

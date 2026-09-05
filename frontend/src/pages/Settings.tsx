@@ -6,6 +6,7 @@ import { useAuth } from "../store/auth";
 import { useSettings } from "../store/settings";
 import { toast } from "../store/toast";
 import { api } from "../lib/api";
+import { isSubmitEnter } from "../lib/keys";
 import { GCAL_COLORS, GCAL_COLOR_NAMES } from "../components/calendar/EventDialog";
 import { AccountAdmin } from "../components/settings/AccountAdmin";
 import { GoogleConnect } from "../components/settings/GoogleConnect";
@@ -67,7 +68,7 @@ function NumberField({
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
-      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+      onKeyDown={(e) => { if (isSubmitEnter(e)) (e.target as HTMLInputElement).blur(); }}
     />
   );
 }

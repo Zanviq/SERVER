@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Loader2, Pencil, RefreshCw } from "lucide-react";
 import { api, Meeting, Transcript } from "../../lib/api";
+import { isSubmitEnter } from "../../lib/keys";
 import { toast } from "../../store/toast";
 
 interface Props {
@@ -92,7 +93,7 @@ export function TranscriptView({ meeting, onSeek, onRenameSpeaker, onRetry }: Pr
                 editing === label ? (
                   <input key={label} autoFocus value={draft} onChange={(e) => setDraft(e.target.value)}
                     onBlur={() => commitName(label)}
-                    onKeyDown={(e) => { if (e.key === "Enter") commitName(label); if (e.key === "Escape") setEditing(null); }}
+                    onKeyDown={(e) => { if (isSubmitEnter(e)) commitName(label); if (e.key === "Escape") setEditing(null); }}
                     placeholder={label} aria-label={`${label} 이름`}
                     className="input h-6 w-28 px-2 text-[11.5px]" />
                 ) : (

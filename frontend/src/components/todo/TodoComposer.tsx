@@ -3,6 +3,7 @@ import { CalendarDays, ChevronDown, Clock, Folder, Loader2, Palette, Plus, X } f
 import { Dropdown, DropdownItem } from "../ui/Dropdown";
 import { GCAL_COLORS, GCAL_COLOR_NAMES } from "../calendar/EventDialog";
 import type { Todo, TodoCategory } from "../../lib/api";
+import { isSubmitEnter } from "../../lib/keys";
 
 export interface TodoDraft {
   title: string;
@@ -354,7 +355,7 @@ export function TodoComposer({ cats, selectedCat, busy, onSubmit }: Props) {
             value={draft.title}
             onChange={(e) => set({ title: e.target.value })}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+              if (isSubmitEnter(e)) {
                 e.preventDefault();
                 submit();
               }

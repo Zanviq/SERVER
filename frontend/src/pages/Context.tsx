@@ -8,6 +8,7 @@ import { Shell } from "../components/layout/Shell";
 import { ThreePane } from "../components/notes/ThreePane";
 import { MarkdownView } from "../components/notes/LazyMarkdownView";
 import { api, ChatMessage, ContextHit, ContextSession, ContextSpace } from "../lib/api";
+import { isSubmitEnter } from "../lib/keys";
 import { toast } from "../store/toast";
 
 /** 스킬 이름 → 사람이 읽는 이름. ChatPanel 과 같은 표를 쓰면 좋지만, 여기서는
@@ -174,7 +175,7 @@ export function Context() {
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") void runSearch(); }}
+                onKeyDown={(e) => { if (isSubmitEnter(e)) void runSearch(); }}
                 placeholder="지난 대화 검색…"
                 aria-label="지난 대화 검색"
                 className="input h-8 pl-8 pr-7 text-[12.5px]"

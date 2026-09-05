@@ -1,6 +1,7 @@
 import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { BookMarked, GraduationCap, Loader2, Pencil, Plus, Search, Tag, X } from "lucide-react";
 import { api, VocabBoard, VocabKind, VocabWord } from "../../lib/api";
+import { isSubmitEnter } from "../../lib/keys";
 import { toast } from "../../store/toast";
 import { useVocabJobs } from "../../store/vocabJobs";
 import { Modal } from "../ui/Modal";
@@ -253,7 +254,7 @@ export function VocabPanel({ refreshKey = 0, initialTag = "", defaultTags = [], 
       <Modal open={renaming !== null} onClose={() => setRenaming(null)} title="태그 이름 바꾸기" width="max-w-sm">
         <div className="space-y-3">
           <input className="input" value={renameTo} onChange={(e) => setRenameTo(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") void doRename(); }} />
+            onKeyDown={(e) => { if (isSubmitEnter(e)) void doRename(); }} />
           <p className="text-[12px] text-fg-muted">이 태그가 붙은 단어 전부에 적용됩니다.</p>
           <div className="flex justify-end gap-2">
             <button type="button" className="btn btn-secondary" onClick={() => setRenaming(null)}>취소</button>

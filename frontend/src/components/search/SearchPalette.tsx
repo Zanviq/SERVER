@@ -5,6 +5,7 @@ import {
   MessageSquare, Loader2, CornerDownLeft,
 } from "lucide-react";
 import { api, SearchHit, SearchKind } from "../../lib/api";
+import { isSubmitEnter } from "../../lib/keys";
 
 /** 검색창을 열어 달라는 신호. 상태 저장소를 새로 만들 만한 일이 아니다. */
 export const OPEN_SEARCH = "twoems:open-search";
@@ -109,7 +110,9 @@ export function SearchPalette() {
     } else if (e.key === "ArrowUp" || (e.key === "p" && e.ctrlKey)) {
       e.preventDefault();
       setCursor((c) => Math.max(c - 1, 0));
-    } else if (e.key === "Enter" && hits[cursor]) {
+    } else if (isSubmitEnter(e) && hits[cursor]) {
+      // 한글 조합 중의 Enter 는 '조합 확정'이다. 그걸 이동으로 받으면 "제올" 까지
+      // 친 상태에서 엉뚱한 결과로 튄다.
       e.preventDefault();
       go(hits[cursor]);
     }

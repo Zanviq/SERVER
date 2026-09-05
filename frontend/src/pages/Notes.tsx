@@ -16,6 +16,7 @@ import { api, ApiError, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/ap
 import { looksLikeExtension } from "../lib/names";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { Draft, draftAgeText, dropDraft, keepDraft, moveDraft, readDraft } from "../lib/draftBackup";
+import { isSubmitEnter } from "../lib/keys";
 import { embedMarkdownFor, makeResolver } from "../lib/embeds";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
@@ -967,7 +968,7 @@ export function Notes() {
         <div className="space-y-3">
           <input autoFocus className="input" value={renameName} placeholder="새 이름"
             onChange={(e) => setRenameName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") doRenameNote(); if (e.key === "Escape") setRenameFor(null); }} />
+            onKeyDown={(e) => { if (isSubmitEnter(e)) doRenameNote(); if (e.key === "Escape") setRenameFor(null); }} />
           <div className="flex justify-end gap-2">
             <button onClick={() => setRenameFor(null)} className="btn btn-ghost">취소</button>
             <button onClick={doRenameNote} className="btn btn-primary">변경</button>
@@ -1011,7 +1012,7 @@ export function Notes() {
         <div className="space-y-3">
           <input autoFocus className="input" value={newName} placeholder="예: 회의록.md, todo.txt, script.py"
             onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") createNote(); if (e.key === "Escape") setNewNoteOpen(false); }} />
+            onKeyDown={(e) => { if (isSubmitEnter(e)) createNote(); if (e.key === "Escape") setNewNoteOpen(false); }} />
           <p className="text-[12px] text-fg-muted">
             확장자까지 적어 주세요. 안 적으면 확장자 없는 파일로 만들어집니다.
           </p>
@@ -1027,7 +1028,7 @@ export function Notes() {
         <div className="space-y-3">
           <input autoFocus className="input" value={newName} placeholder="폴더 이름"
             onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") createFolder(); if (e.key === "Escape") setNewFolderOpen(false); }} />
+            onKeyDown={(e) => { if (isSubmitEnter(e)) createFolder(); if (e.key === "Escape") setNewFolderOpen(false); }} />
           <div className="flex justify-end gap-2">
             <button onClick={() => setNewFolderOpen(false)} className="btn btn-ghost">취소</button>
             <button onClick={createFolder} className="btn btn-primary">만들기</button>

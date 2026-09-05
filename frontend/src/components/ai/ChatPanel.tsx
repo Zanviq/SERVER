@@ -7,6 +7,7 @@ import {
 import { MarkdownView } from "../notes/LazyMarkdownView";
 import { useNavigate } from "react-router-dom";
 import { aiChatStream, api, AiEvent, ChatMessage } from "../../lib/api";
+import { isSubmitEnter } from "../../lib/keys";
 import { toast } from "../../store/toast";
 import { useMediaQuery } from "../../lib/useMediaQuery";
 import { VocabProposal, VocabProposalData } from "./VocabProposal";
@@ -498,7 +499,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
             // Enter=전송, Shift+Enter=줄바꿈. 단 소프트 키보드에서는 Enter가 줄바꿈
             // 키라 Shift+Enter를 칠 방법이 없다 — 터치 기기에서는 전송을 버튼으로만.
             // (한글 조합 중 Enter는 조합 확정이므로 전송하면 마지막 글자가 잘린다)
-            if (e.key === "Enter" && !e.shiftKey && !touch && !e.nativeEvent.isComposing) {
+            if (isSubmitEnter(e) && !e.shiftKey && !touch) {
               e.preventDefault();
               send(input);
             }
