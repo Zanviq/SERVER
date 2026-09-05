@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  NotebookPen, CalendarDays, Bot, FileText, Clock, ChevronRight,
+  NotebookPen, CalendarDays, Bot, FileText, Clock, ChevronRight, ListTodo, Languages,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { SystemMonitor } from "../components/system/SystemMonitor";
 import { SshCard } from "../components/system/SshCard";
-import { api, NoteSummary, CalEvent } from "../lib/api";
+import { api, NoteSummary, CalEvent, Todo } from "../lib/api";
 import { useAuth } from "../store/auth";
 
 const SHORTCUTS = [
@@ -28,6 +28,9 @@ export function Dashboard() {
   const navigate = useNavigate();
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [events, setEvents] = useState<CalEvent[]>([]);
+  // 아침에 열었을 때 바로 손이 가는 두 가지 — 오늘까지 해야 할 일과 복습할 단어.
+  const [todos, setTodos] = useState<Todo[]>([]);
+  const [due, setDue] = useState<number | null>(null);
 
   useEffect(() => {
     api.noteList()
@@ -46,6 +49,15 @@ export function Dashboard() {
       .then((evs) =>
         setEvents([...evs].sort((a, b) => a.start.localeCompare(b.start)).slice(0, 5)),
       )
+      .catch(() => {});
+    // 마감이 지났거나 오늘까지인 것만. 기한 없는 할 일은 "오늘 해야 하는 것"이
+    // 아니라서 뺀다 — 그것까지 넣으면 목록이 길어져 오늘 것이 묻힌다.
+    const today = iso(now).slice(0, 10);
+    api.todoList({ include_done: false, to: today, include_undated: false })
+      .then((list) => setTodos([...list].sort((a, b) => (a.due || "").localeCompare(b.due || "")).slice(0, 5)))
+      .catch(() => {});
+    api.vocabBoard()
+      .then((b) => setDue(b.stats.due))
       .catch(() => {});
   }, []);
 
@@ -127,6 +139,62 @@ export function Dashboard() {
                 <li className="px-4 py-6 text-center text-[12px] text-fg-muted">예정된 일정이 없습니다</li>
               )}
             </ul>
+          </section>
+
+          {/* 오늘까지 할 일 — 기한 없는 것은 빼서 '오늘 것'이 묻히지 않게 한다 */}
+          <section className="card overflow-hidden">
+            <header className="flex items-center justify-between border-b border-line px-4 py-2.5">
+              <span className="flex items-center gap-1.5 text-sm font-semibold">
+                <ListTodo size={15} className="text-accent" /> 오늘까지 할 일
+              </span>
+              <Link to="/todo" aria-label="할 일 전체 보기"
+                className="-mr-1 grid h-7 w-7 place-items-center text-fg-muted hover:text-accent">
+                <ChevronRight size={16} />
+              </Link>
+            </header>
+            <ul className="divide-y divide-line">
+              {todos.map((t) => {
+                const late = !!t.due && t.due.slice(0, 10) < new Date().toISOString().slice(0, 10);
+                return (
+                  <li key={t.id} className="flex items-center gap-2 px-4 py-2.5">
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${late ? "bg-danger" : "bg-warning"}`} />
+                    <span className="min-w-0 flex-1 truncate text-[13px]">{t.title}</span>
+                    <span className={`shrink-0 font-mono text-[11px] ${late ? "text-danger" : "text-fg-muted"}`}>
+                      {late ? "지남" : "오늘"}
+                    </span>
+                  </li>
+                );
+              })}
+              {todos.length === 0 && (
+                <li className="px-4 py-6 text-center text-[12px] text-fg-muted">오늘까지 할 일이 없습니다</li>
+              )}
+            </ul>
+          </section>
+
+          {/* 오늘 복습할 단어 — 개수만 보여 주고 누르면 단어장으로 */}
+          <section className="card overflow-hidden">
+            <header className="flex items-center justify-between border-b border-line px-4 py-2.5">
+              <span className="flex items-center gap-1.5 text-sm font-semibold">
+                <Languages size={15} className="text-accent" /> 오늘 복습
+              </span>
+              <Link to="/english" aria-label="영어 학습으로"
+                className="-mr-1 grid h-7 w-7 place-items-center text-fg-muted hover:text-accent">
+                <ChevronRight size={16} />
+              </Link>
+            </header>
+            <div className="px-4 py-5 text-center">
+              {due === null ? (
+                <p className="text-[12px] text-fg-muted">불러오는 중…</p>
+              ) : due === 0 ? (
+                <p className="text-[12px] text-fg-muted">오늘 복습할 단어가 없습니다</p>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold tracking-tight">{due}<span className="ml-1 text-sm font-normal text-fg-muted">개</span></p>
+                  <button onClick={() => navigate("/english")}
+                    className="btn btn-primary mt-3 h-8 px-3 text-[12.5px]">복습하러 가기</button>
+                </>
+              )}
+            </div>
           </section>
         </div>
 
