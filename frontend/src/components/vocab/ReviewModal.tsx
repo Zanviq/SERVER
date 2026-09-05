@@ -110,8 +110,18 @@ export function ReviewModal({ open, onClose, tag = "", onDone }: Props) {
                   <p className="rounded-md bg-surface px-2.5 py-1.5 text-[12.5px]">
                     {cur.examples[0].en}
                     {cur.examples[0].ko && <span className="block text-fg2">→ {cur.examples[0].ko}</span>}
+                    {/* 예문의 문법 설명이 저장돼 있는데 복습에서는 안 보였다.
+                        사용자가 형식에 넣어 둔 이유가 "그 문장에서의 문법"이다. */}
+                    {cur.examples[0].grammar && (
+                      <span className="mt-1 block text-[11.5px] text-fg-muted">
+                        문법: {cur.examples[0].grammar}
+                      </span>
+                    )}
                   </p>
                 )}
+                {/* 동사 변화·포인트도 마찬가지 — 외울 거리는 카드에 있어야 한다 */}
+                {cur.forms && <p className="font-mono text-[12px] text-fg2">{cur.forms}</p>}
+                {cur.notes && <p className="text-[12px] text-fg-muted">{cur.notes}</p>}
                 {cur.tags.length > 0 && <p className="text-[11px] text-fg-subtle">{cur.tags.join(" · ")}</p>}
               </div>
             )}

@@ -56,8 +56,14 @@ export function VocabCollectModal({ open, onClose, tags = [], onManual }: Props)
 
   const lines = text.split(/\r?\n/).filter((l) => l.trim()).length;
 
+  /** 붙여 넣은 목록을 Esc 한 번으로 잃지 않게. 빈 채면 그냥 닫힌다. */
+  const guardedClose = () => {
+    if (text.trim() && !confirm("적은 내용이 사라집니다. 닫을까요?")) return;
+    onClose();
+  };
+
   return (
-    <Modal open={open} onClose={onClose} title="단어장에 모아 넣기" width="max-w-lg">
+    <Modal open={open} onClose={guardedClose} title="단어장에 모아 넣기" width="max-w-lg">
       <div className="space-y-3">
         <p className="text-[12.5px] text-fg-muted">
           단어·표현·문장·문법·전문 용어를 형식 없이 적으세요. AI 가 갈래를 나누고 뜻·예문·문법 포인트를
