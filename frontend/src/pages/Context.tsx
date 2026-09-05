@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Bot, CalendarDays, ChevronDown, ChevronRight, GraduationCap, History, Languages,
-  List, Loader2, MessageSquare, Search, Terminal, Trash2, User, X, AudioLines,
+  List, Loader2, MessageSquare, Search, Terminal, Trash2, User, X, AudioLines, ExternalLink,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { ThreePane } from "../components/notes/ThreePane";
@@ -12,6 +12,13 @@ import { toast } from "../store/toast";
 
 /** 스킬 이름 → 사람이 읽는 이름. ChatPanel 과 같은 표를 쓰면 좋지만, 여기서는
  *  모르는 이름이 와도 그대로 보여 주는 편이 감사에 낫다(가리지 않는다). */
+/** 대화 공간 → 그 대화를 나눈 화면 주소. 모르는 공간이면 빈 문자열. */
+function screenHref(space: string): string {
+  if (space.startsWith("paper:")) return `/papers?p=${encodeURIComponent(space.slice(6))}`;
+  if (space.startsWith("meeting:")) return `/meetings?m=${encodeURIComponent(space.slice(8))}`;
+  return { assistant: "/assistant", calendar: "/calendar", english: "/english" }[space] ?? "";
+}
+
 const KIND_ICON: Record<string, typeof Bot> = {
   assistant: Bot,
   calendar: CalendarDays,
@@ -40,6 +47,7 @@ function fmtTime(ts: number): string {
  */
 export function Context() {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const space = params.get("space") ?? "";
   const session = params.get("s") ?? "";
 
@@ -278,6 +286,16 @@ export function Context() {
                     전체
                   </button>
                 )}
+                {/* 대화를 읽다 "그래서 그 논문이 뭐였지"가 되면 여기서 바로 간다.
+                    공간 이름이 곧 화면이므로 주소를 만들 수 있다. */}
+                {screenHref(space) && (
+                  <a href={screenHref(space)}
+                    onClick={(e) => { e.preventDefault(); navigate(screenHref(space)); }}
+                    className="btn btn-ghost h-7 shrink-0 gap-1 px-2 text-[11.5px]"
+                    title="이 대화를 나눈 화면으로">
+                    <ExternalLink size={12} /> 화면
+                  </a>
+                )}
               </header>
               <div className="flex-1 space-y-3 overflow-auto p-3">
                 {loadingMsgs && (
@@ -299,6 +317,7 @@ export function Context() {
 /** 대화 한 턴. 사용자는 오른쪽 말풍선, AI 는 왼쪽 카드(대화 화면과 같은 규칙). */
 function Turn({ msg, onDelete }: { msg: ChatMessage; onDelete: () => void }) {
   const tools = msg.meta?.tools ?? [];
+  const navigate = useNavigate();
   if (msg.role === "user") {
     return (
       <div className="flex flex-col items-end gap-1">
@@ -333,7 +352,10 @@ function Turn({ msg, onDelete }: { msg: ChatMessage; onDelete: () => void }) {
         {tools.map((t, i) => <ToolRow key={i} tool={t} />)}
         {msg.text && (
           <div className="card px-3.5 py-2">
-            <MarkdownView content={msg.text} onWikiClick={() => {}} />
+            {/* 지난 대화에서 문서를 언급했으면 여기서도 눌러 열 수 있어야 한다
+                (없는 문서를 만들지는 않는다 — 읽으러 온 화면이다). */}
+            <MarkdownView content={msg.text}
+              onWikiClick={(t) => navigate(`/notes?open=${encodeURIComponent(t)}&create=0`)} />
           </div>
         )}
         <TurnFoot ts={msg.ts} onDelete={onDelete} />
