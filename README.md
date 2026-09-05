@@ -569,9 +569,40 @@ Host ssh.<도메인>
     IdentitiesOnly yes
 ```
 
-그 뒤로는 `ssh ssh.<도메인>`이면 된다. 인증은 파이의 sshd가 그대로 하므로 **비밀번호
-로그인은 끄고 키만 받도록** 해 두는 편이 안전하다. 서버 쪽 코드가 하는 일은 안내를
-보여 주는 것뿐이고(`/api/system/ssh`, 주인 전용), 접속 자체에는 관여하지 않는다.
+그 뒤로는 `ssh ssh.<도메인>`이면 된다. 서버 쪽 코드가 하는 일은 안내를 보여 주는 것뿐이고
+(`/api/system/ssh`, 주인 전용), 접속 자체에는 관여하지 않는다.
+
+#### 반드시 Access 정책을 건다
+
+Public Hostname만 만들어 두면 **인증이 파이의 sshd 하나뿐이다.** 호스트 이름은 공개된
+DNS라 누구나 `cloudflared`만 있으면 로그인 프롬프트까지 닿을 수 있다 — 비밀번호 로그인이
+켜져 있으면 사실상 인터넷에 열린 sshd다. 그 앞에 Cloudflare Access를 세워 **터널에 들어오기
+전에** 신원을 확인한다.
+
+Zero Trust → Access → Applications → **Add an application → Self-hosted**
+
+| 칸 | 값 |
+|---|---|
+| Application name | 아무 이름 (예: `Pi SSH`) |
+| Session Duration | 원하는 기간 (기본 24시간) |
+| Public hostname | Subdomain `ssh` / Domain `<도메인>` (Path 는 비운다) |
+
+정책은 Add policy → Action **Allow**, Include **Emails** = 내 이메일 한 줄이면 된다.
+로그인 수단을 따로 붙이지 않았다면 Zero Trust 기본값인 **One-time PIN**(이메일로 오는 코드)이
+그대로 쓰인다 — Google 연동 같은 사전 준비가 필요 없다.
+
+정책을 걸면 클라이언트가 처음 한 번 브라우저로 로그인해야 한다.
+
+```bash
+cloudflared access login https://ssh.<도메인>
+```
+
+받은 토큰은 세션 기간 동안 캐시되므로 그 뒤의 `ssh ssh.<도메인>`은 그대로 된다. 만료되면
+`ProxyCommand`가 알아서 브라우저를 다시 띄운다. 스크립트·CI처럼 브라우저를 못 쓰는 곳은
+Service Token을 만들어 `--service-token-id`/`--service-token-secret`으로 넘긴다.
+
+Access를 걸어도 파이의 sshd 인증은 그대로 남는다. **키만 받도록**
+(`PasswordAuthentication no`) 해 두면 두 겹이 된다.
 
 ---
 
