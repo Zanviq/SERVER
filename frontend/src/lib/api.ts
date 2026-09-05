@@ -215,6 +215,8 @@ export const api = {
 
   /** 폴더를 zip으로 받는 URL(비어 있으면 전체). 앵커 이동으로 세션 쿠키가 실린다. */
   noteArchiveUrl: (path = "") => `${BASE}/api/notes/archive?${q({ path })}`,
+  /** 계정 전체(문서·논문·회의·단어장·일정·할 일·대화)를 zip 으로 받는 URL. */
+  accountArchiveUrl: () => `${BASE}/api/notes/archive/account`,
 
   // ── 터미널 ──
   terminalStatus: () =>

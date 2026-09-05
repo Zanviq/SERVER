@@ -6616,6 +6616,38 @@ def test_saving_a_note_changed_elsewhere_stops_instead_of_overwriting():
         client.delete("/api/notes/delete", params={"path": path})
 
 
+def test_account_backup_includes_everything_but_the_trash():
+    """백업은 손이 닿는 곳에 있어야 실제로 한다.
+
+    문서 폴더 받기만 있던 때는, 논문·회의·단어장을 꺼내려면 SSH 로 들어가야 했다.
+    휴지통은 뺀다 — 지운 것을 다시 받을 이유가 없고 용량의 대부분을 차지할 수 있다.
+    """
+    import io
+    import zipfile
+
+    from backend import trash, vocab_store
+    from backend.storage import user_data_root
+
+    from backend.auth import SessionUser
+
+    _login()
+    me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    st = get_settings()
+    (user_data_root(me, st) / "백업시험.md").write_text("# 백업\n", encoding="utf-8")
+    vocab_store.add_words(me, st, [{"word": "backup", "meanings": ["백업"]}])
+    victim = user_data_root(me, st) / "버릴것.md"
+    victim.write_text("지울 문서", encoding="utf-8")
+    trash.move_to_trash(victim, "버릴것.md", me, st)
+
+    r = client.get("/api/notes/archive/account")
+    assert r.status_code == 200, r.status_code
+    assert r.headers["content-type"] == "application/zip", r.headers["content-type"]
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert any(n.endswith("백업시험.md") for n in names), names[:10]
+    assert any("vocab" in n for n in names), names[:10]      # 문서 밖의 것도 들어간다
+    assert not any(n.startswith(".trash/") for n in names), [n for n in names if ".trash" in n]
+
+
 def test_words_are_not_added_unless_the_user_asked():
     """낱말 하나만 쳤는데 모델이 제멋대로 단어장에 넣던 것(71차: 3번 중 2번).
 

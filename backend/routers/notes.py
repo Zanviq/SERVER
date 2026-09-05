@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import doc_cache
+from .. import archive, doc_cache
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..json_store import lock_for, write_text_atomic
@@ -346,57 +346,35 @@ def archive_folder(
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    """폴더를 zip으로 내려받는다(하위 구조 유지).
-
-    임시파일 + FileResponse로 만든다 —
-    - BytesIO는 라즈베리파이에서 사진·영상 폴더를 통째로 메모리에 올린다.
-    - FileResponse가 RFC 5987(`filename*=UTF-8''`)을 붙여줘 한글 폴더명이 안 깨진다.
-      직접 Content-Disposition을 만들면 손으로 퍼센트 인코딩해야 한다.
-    """
+    """폴더를 zip으로 내려받는다(하위 구조 유지). 압축은 archive.zip_dir 이 한다."""
     root = user_data_root(user, settings)
     target = safe_join(root, path)
     if not target.exists() or not target.is_dir():
         raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다.")
 
     name = (target.name if target != root else "문서") + ".zip"
-    # 임시파일을 데이터 볼륨에 만든다 — 컨테이너 기본 /tmp는 SD카드의 오버레이라
-    # 큰 폴더를 압축하면 방금 비운 SD를 다시 채운다.
-    tmp_dir = settings.storage_root / ".tmp"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    tmp = tempfile.NamedTemporaryFile(dir=tmp_dir, suffix=".zip", delete=False)
-    tmp.close()
-    tmp_path = Path(tmp.name)
-    try:
-        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for p in sorted(target.rglob("*")):
-                # 심볼릭 링크는 건너뛴다 — safe_join은 '요청 경로'만 검증하므로
-                # 루트 밖을 가리키는 링크를 따라가면 그 내용이 통째로 나간다.
-                if p.is_symlink() or not p.is_file():
-                    continue
-                try:
-                    zf.write(p, arcname=p.relative_to(target).as_posix())
-                except (OSError, ValueError) as e:
-                    # 1980년 이전 mtime이나 인코딩 불가 파일명은 zipfile이 ValueError를
-                    # 낸다. 한 파일 때문에 전체 내보내기를 실패시키지 않고 건너뛴다.
-                    logger.warning("압축 제외: %s (%s)", p, e)
-    except BaseException:
-        # OSError만 잡으면 ValueError 등이 새어나가 임시파일이 영구히 남는다.
-        tmp_path.unlink(missing_ok=True)
-        raise
+    return archive.zip_dir(target, filename=name, settings=settings)
 
-    return FileResponse(
-        tmp_path,
-        filename=name,
-        media_type="application/zip",
-        headers={
-            "X-Content-Type-Options": "nosniff",
-            # 요청마다 새로 만드는 아카이브라 이어받기를 허용하면 서로 다른 zip이
-            # 이어 붙어 조용히 깨진다(오류도 안 난다).
-            "Accept-Ranges": "none",
-            "Cache-Control": "no-store",
-        },
-        background=BackgroundTask(tmp_path.unlink, True),
-    )
+
+@router.get("/archive/account")
+def archive_account(
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """내 계정 전체를 zip 으로. 문서만이 아니라 논문 PDF·회의 녹음·단어장·일정·
+    할 일·지난 대화까지 **한 번에** 받는다.
+
+    문서 폴더 받기만 있던 때는, 서비스를 못 쓰게 됐을 때 나머지를 꺼내려면 SSH 로
+    들어가야 했다. 백업은 손이 닿는 곳에 있어야 실제로 한다.
+
+    휴지통과 임시 폴더는 뺀다 — 지운 것을 다시 받을 이유가 없고, 오히려 용량의
+    대부분을 차지할 수 있다(회의 녹음이 폴더째 들어가 있다).
+    """
+    root = settings.user_root(user.username)
+    if not root.exists():
+        raise HTTPException(status_code=404, detail="저장된 것이 없습니다.")
+    return archive.zip_dir(root, filename=f"{user.username}-백업.zip", settings=settings,
+                           skip_dirs=frozenset({".trash", ".tmp"}))
 
 
 @router.post("/upload", response_model=NoteSummary)
