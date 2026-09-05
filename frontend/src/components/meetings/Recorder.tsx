@@ -85,6 +85,28 @@ export function Recorder({ open, onClose, categories, onSave }: Props) {
     stream.current = null;
   };
 
+  /** 녹음 중이거나 아직 안 올린 녹음이 있으면 되묻고 닫는다.
+   *
+   *  이 창은 Esc·바깥 클릭으로도 닫힌다. 40분짜리 회의를 녹음하는 중에 그렇게
+   *  닫히면 소리는 브라우저 메모리에만 있었으므로 통째로 사라진다. */
+  const guardedClose = () => {
+    const risky = phase === "recording" || (phase === "done" && !!blob && !saving);
+    if (risky && !confirm(
+      phase === "recording"
+        ? "녹음 중입니다. 닫으면 지금까지 녹음한 소리가 사라집니다. 닫을까요?"
+        : "아직 올리지 않은 녹음이 있습니다. 닫으면 사라집니다. 닫을까요?",
+    )) return;
+    onClose();
+  };
+
+  // 탭을 닫으려 하면 브라우저가 되묻는다(창 안 확인만으로는 못 막는다).
+  useEffect(() => {
+    if (!open || (phase !== "recording" && !blob)) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [open, phase, blob]);
+
   // 닫히면 모두 되돌린다 — 마이크는 반드시 놓아야 한다(브라우저 탭에 빨간 점이 남는다)
   useEffect(() => {
     if (open) return;
@@ -168,7 +190,7 @@ export function Recorder({ open, onClose, categories, onSave }: Props) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="회의 녹음" width="max-w-md">
+    <Modal open={open} onClose={guardedClose} title="회의 녹음" width="max-w-md">
       <div className="space-y-3">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <label className="block sm:col-span-2">
