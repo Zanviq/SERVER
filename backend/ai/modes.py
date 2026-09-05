@@ -213,6 +213,8 @@ def paper_system(user: SessionUser, tone: str, today: str, paper: dict | None,
         + (f" — {o.get('summary', '')[:120]}" if o.get("summary") else "")
         for o in others[:30]
     ) or "  (없음)"
+    if len(others) > 30:
+        other_lines += f"\n  … 그리고 {len(others) - 30}편 더(전부 보려면 목록 스킬을 부르세요)"
 
     return f"""{_head(user, today)}
 
@@ -270,6 +272,8 @@ def meeting_system(user: SessionUser, tone: str, today: str, meeting: dict | Non
         + (f" ({o.get('category')})" if o.get("category") else "")
         for o in others[:30]
     ) or "  (없음)"
+    if len(others) > 30:
+        other_lines += f"\n  … 그리고 {len(others) - 30}편 더(전부 보려면 목록 스킬을 부르세요)"
 
     return f"""{_head(user, today)}
 

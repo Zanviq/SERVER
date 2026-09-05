@@ -6483,6 +6483,42 @@ def test_every_mode_can_search_outside_its_own_screen():
         assert mode.allows("search_everything"), name
 
 
+def test_lists_never_report_the_shown_count_as_the_total():
+    """상한에서 끊은 목록이 그 수를 전체처럼 말하면, 모델이 그대로 답한다.
+
+    60차에서 "잘린 것을 모르면 지어낸다"를 겪고 목록 스킬을 훑었다. 논문·회의
+    목록이 보여 준 개수를 그대로 "N편/건"이라고 말하고 있었다 — 60편을 가진
+    사람이 "논문 몇 편 있어?"라고 물으면 50이라고 답하게 된다.
+    """
+    import backend.ai.skills.papers as psk
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    u, ctx, st = _todo_ctx("listcap")
+
+    # 논문 51편을 흉내 낸다(파일 없이 목록만)
+    fake = [{"id": f"p{i}", "title": f"논문{i}", "status": "ready"} for i in range(51)]
+    real = psk.paper_store.list_papers
+    psk.paper_store.list_papers = lambda *a, **k: fake
+    try:
+        r = reg.dispatch("list_papers", {}, ctx)
+    finally:
+        psk.paper_store.list_papers = real
+    assert r.ok and r.data["total"] == 51, (r.message, r.data.get("total"))
+    assert len(r.data["items"]) == 50, len(r.data["items"])
+    assert "51편" in r.message and r.data.get("truncated"), r.message
+    assert "좁히세요" in r.message, r.message
+
+    # 상한에 못 미치면 군더더기를 붙이지 않는다
+    psk.paper_store.list_papers = lambda *a, **k: fake[:3]
+    try:
+        r2 = reg.dispatch("list_papers", {}, ctx)
+    finally:
+        psk.paper_store.list_papers = real
+    assert r2.message == "논문 3편", r2.message
+    assert not r2.data.get("truncated")
+
+
 def test_short_turns_are_not_cut_before_the_char_budget_is_spent():
     """자르는 일은 글자 수가 맡는다. 턴 수는 안전망일 뿐이다.
 

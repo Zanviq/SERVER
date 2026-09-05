@@ -76,7 +76,11 @@ class ListMeetings(SkillBase):
             rows.append(r)
             if len(rows) >= 50:
                 break
-        return SkillResult(ok=True, message=f"회의 {len(rows)}건", data={"items": rows})
+        # 50건에서 끊은 것을 알리지 않으면 모델이 그 수를 전체로 말한다
+        capped = len(rows) >= 50
+        msg = f"회의 {len(rows)}건" + (" (상한 50건에 도달 — 더 있을 수 있으니 date/query/category 로 좁히세요)"
+                                     if capped else "")
+        return SkillResult(ok=True, message=msg, data={"items": rows, "truncated": capped})
 
 
 class GetMeetingInfo(SkillBase):

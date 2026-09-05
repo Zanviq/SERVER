@@ -70,7 +70,15 @@ class ListPapers(SkillBase):
         rows = [paper_store.brief(p) for p in papers[:50]]
         for r in rows:
             r["current"] = r["id"] == ctx.paper_id
-        return SkillResult(ok=True, message=f"논문 {len(rows)}편", data={"items": rows})
+        # 보여 준 개수를 전체 개수처럼 말하면 안 된다. 60편을 가진 사람이
+        # "논문 몇 편 있어?"라고 물었을 때 50이라고 답하게 된다.
+        total = len(papers)
+        msg = f"논문 {total}편"
+        data: dict = {"items": rows, "total": total}
+        if total > len(rows):
+            data["truncated"] = True
+            msg += f" — 앞 {len(rows)}편만 표시(query 로 좁히세요)"
+        return SkillResult(ok=True, message=msg, data=data)
 
 
 class GetPaperInfo(SkillBase):
@@ -211,7 +219,11 @@ class SearchPaperChats(SkillBase):
                 })
             if len(out) >= 30:
                 break
-        return SkillResult(ok=True, message=f"이전 대화 {len(out)}건", data={"hits": out[:30]})
+        hits = out[:30]
+        # 30건에서 끊은 것을 조용히 넘기면 모델이 "이게 전부"라고 답한다
+        capped = len(out) >= 30
+        msg = f"이전 대화 {len(hits)}건" + (" (상한 30건에 도달 — 더 있을 수 있습니다)" if capped else "")
+        return SkillResult(ok=True, message=msg, data={"hits": hits, "truncated": capped})
 
 
 class SetPaperNotes(SkillBase):
