@@ -391,7 +391,7 @@ export function Notes() {
   };
 
   const openByTitle = useCallback(
-    (title: string) => {
+    (title: string, create = true) => {
       const key = title.toLowerCase();
       const found =
         notes.find((n) => n.title.toLowerCase() === key) ??
@@ -404,6 +404,12 @@ export function Notes() {
       // 확장자가 붙은 이름은 '이미 있는 파일'을 가리킨 것이다. 못 찾았다고 새로 만들면
       // 백엔드 save가 덮어쓰기라 todo.txt 같은 파일 내용이 '# todo.txt'로 날아간다.
       if (looksLikeExtension(title)) {
+        toast.error(`문서를 찾을 수 없습니다: ${title}`);
+        return;
+      }
+      // AI 답변 속 링크처럼 **읽으러 온 것**이면 없는 문서를 만들지 않는다.
+      // 편집기 안에서 누른 위키링크만 "없으면 만든다"가 자연스럽다.
+      if (!create) {
         toast.error(`문서를 찾을 수 없습니다: ${title}`);
         return;
       }
@@ -423,8 +429,10 @@ export function Notes() {
       params.delete("path");
       setParams(params, { replace: true });
     } else if (open && notes.length) {
-      openByTitle(open);
+      // create=0 이면 없는 문서를 만들지 않는다(AI 답변 속 링크로 들어온 경우)
+      openByTitle(open, params.get("create") !== "0");
       params.delete("open");
+      params.delete("create");
       setParams(params, { replace: true });
     }
   }, [params, notes, openByTitle, openNote, setParams]);

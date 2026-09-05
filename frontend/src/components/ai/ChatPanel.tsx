@@ -5,6 +5,7 @@ import {
   Bot, Send, Square, Loader2, CheckCircle2, XCircle, Sparkles, X, Quote, ImageIcon, Eraser,
 } from "lucide-react";
 import { MarkdownView } from "../notes/LazyMarkdownView";
+import { useNavigate } from "react-router-dom";
 import { aiChatStream, api, AiEvent, ChatMessage } from "../../lib/api";
 import { toast } from "../../store/toast";
 import { useMediaQuery } from "../../lib/useMediaQuery";
@@ -203,6 +204,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);   // 중단 버튼
+  const navigate = useNavigate();
   // 화면 폭이 아니라 입력 방식으로 판단한다 — 태블릿 가로처럼 넓어도 소프트 키보드다.
   const touch = useMediaQuery("(pointer: coarse)");
   const hasContext = attachments.length > 0 || selections.length > 0;
@@ -321,6 +323,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
+  /** 답 속의 `[[문서 제목]]` 을 눌렀을 때. 문서 화면이 제목으로 찾아 연다
+   *  (`?open=`). 이미 문서 화면이면 그 안에서 열리고, 다른 화면이면 옮겨 간다. */
+  const openDoc = useCallback((title: string) => {
+    // create=0 — 없는 문서를 만들지는 않는다. 여기서 누르는 것은 "읽으러 가기"지
+    // "만들기"가 아니다(편집기 안의 위키링크는 없으면 만드는 것이 맞다).
+    navigate(`/notes?open=${encodeURIComponent(title)}&create=0`);
+  }, [navigate]);
+
   const clear = useCallback(async () => {
     if (space) await api.aiSpaceClear(space);
     setMessages([]);
@@ -418,7 +428,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
                 )}
                 {m.text ? (
                   <div className="card px-4 py-2.5">
-                    <MarkdownView content={m.text} onWikiClick={() => {}} />
+                    {/* AI 가 "[[주간정리]] 로 만들었습니다"라고 답할 때, 그 링크가
+                        아무 데도 가지 않으면 이름만 알려 주고 끝난 셈이다. */}
+                    <MarkdownView content={m.text} onWikiClick={openDoc} />
                     {/* 아직 쓰는 중이면 커서를 남겨 둔다 — 없으면 잘린 답을
                         다 쓴 답으로 착각한다. */}
                     {m.pending && (
