@@ -31,17 +31,20 @@ interface Props {
   onTag: (tag: string) => void;
   /** 이 태그를 지금 거르고 있으면 진하게 */
   activeTag?: string;
+  /** 전역 검색이 이 줄로 스크롤할 때 쓰는 표식 */
+  anchorId?: string;
 }
 
 /**
  * 단어 한 장. 접혀 있으면 단어·품사·첫 뜻·태그, 펼치면 영어학습예시.md 의
  * 사전 형식(뜻 / 비슷한 단어 ↔ 반대 / 영어 해설 / 예문 → 해석 + 문법 / 변화형 / 포인트).
  */
-export function WordCard({ word: w, open, onToggle, onEdit, onDelete, onTag, activeTag }: Props) {
+export function WordCard({ word: w, open, onToggle, onEdit, onDelete, onTag, activeTag, anchorId }: Props) {
   const due = isDue(w);
   const kind = kindOf(w);
   return (
-    <li className={`rounded-md border transition-colors ${open ? "border-line-strong bg-surface" : "border-transparent hover:bg-hovered"}`}>
+    <li data-word-id={anchorId}
+      className={`rounded-md border transition-colors ${open ? "border-line-strong bg-surface" : "border-transparent hover:bg-hovered"}`}>
       <button type="button" onClick={onToggle} aria-expanded={open}
         className="flex w-full items-start gap-2 px-2.5 py-2 text-left">
         <span className="mt-[3px] shrink-0 text-fg-subtle">

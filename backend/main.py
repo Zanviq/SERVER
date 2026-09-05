@@ -24,6 +24,7 @@ from .routers import (
     meetings,
     notes,
     papers,
+    search,
     settings as settings_router,
     system,
     terminal,
@@ -110,6 +111,7 @@ app.include_router(papers.router, dependencies=_PROTECTED)
 app.include_router(diary.router, dependencies=_PROTECTED)
 app.include_router(meetings.router, dependencies=_PROTECTED)
 app.include_router(context.router, dependencies=_PROTECTED)
+app.include_router(search.router, dependencies=_PROTECTED)
 app.include_router(terminal.router, dependencies=_PROTECTED)
 app.include_router(admin.router, dependencies=_OWNER_ONLY)
 app.include_router(google.router, dependencies=_PROTECTED)

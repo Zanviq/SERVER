@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { BookMarked, MessageSquare, Trash2 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { ThreePane } from "../components/notes/ThreePane";
@@ -25,6 +26,10 @@ export function English() {
   const [vocabKey, setVocabKey] = useState(0);
   // 모바일은 한 번에 하나 — 대화 ↔ 단어장
   const [mobileView, setMobileView] = useState<"chat" | "vocab">("chat");
+  // 전역 검색(Ctrl+K)에서 단어를 고르면 `?w=<id>` 로 들어온다
+  const [params] = useSearchParams();
+  const focusWord = params.get("w") ?? "";
+  useEffect(() => { if (focusWord) setMobileView("vocab"); }, [focusWord]);
 
   const clearChat = async () => {
     if (!confirm("영어 학습 대화를 모두 지울까요? 단어장은 그대로 남습니다.")) return;
@@ -57,7 +62,8 @@ export function English() {
   return (
     <Shell title="영어 학습" actions={actions}>
       <ThreePane storageKey="english.panes.v1" side="right" showDetail={mobileView === "chat"} fixedLabel="단어장">
-        <VocabPanel refreshKey={vocabKey} defaultTags={ENGLISH_TAG} className="h-view-11 lg:h-auto" />
+        <VocabPanel refreshKey={vocabKey} defaultTags={ENGLISH_TAG} focusId={focusWord}
+          className="h-view-11 lg:h-auto" />
         <div className="card flex h-view-11 flex-col overflow-hidden p-3 lg:h-auto">
           <ChatPanel
             ref={chat}

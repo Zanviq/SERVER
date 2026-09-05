@@ -8,6 +8,7 @@ import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { Toaster } from "./components/ui/Toaster";
 import { ReminderPoller } from "./components/ReminderPoller";
+import { SearchPalette } from "./components/search/SearchPalette";
 
 // 무거운 라우트는 코드 분할(지연 로드) — 초기 번들 축소
 // 라우트별 동적 import 썽크 — lazy()와 프리페치에 함께 사용
@@ -117,6 +118,8 @@ export default function App() {
       {session ? (
         <BrowserRouter>
           <AuthedRoutes />
+          {/* 화면마다 껍데기가 달라서(노트·논문은 Shell 을 쓰지 않는다) 여기에 둔다 */}
+          <SearchPalette />
           <ReminderPoller />
         </BrowserRouter>
       ) : (

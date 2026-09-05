@@ -361,7 +361,24 @@ export const api = {
       `/api/context/messages?${q({ space, session })}`),
   contextSearch: (query: string, space = "") =>
     req<{ hits: ContextHit[]; query: string }>(`/api/context/search?${q({ q: query, space })}`),
+  /** 화면을 가로지르는 검색. kinds 를 비우면 전부 뒤진다. */
+  searchAll: (query: string, kinds = "", limit = 40) =>
+    req<{ hits: SearchHit[]; query: string }>(
+      `/api/search?${q({ q: query, kinds, limit: String(limit) })}`),
 };
+
+export type SearchKind = "note" | "paper" | "meeting" | "vocab" | "todo" | "event" | "chat";
+
+export interface SearchHit {
+  kind: SearchKind;
+  /** 갈래마다 뜻이 다르다 — 노트는 상대경로, 대화는 "<space>|<session>", 나머지는 id. */
+  id: string;
+  title: string;
+  snippet: string;
+  when: string;
+  where: string;
+  score: number;
+}
 
 export interface AiEvent {
   /** `text_delta` 는 만들어지는 중인 답의 조각이다. 마지막에 오는 `text` 가

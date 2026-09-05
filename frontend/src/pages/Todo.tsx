@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   ChevronRight,
   Circle,
@@ -178,6 +179,10 @@ export function Todo() {
   const [counts, setCounts] = useState<TodoCounts>({});
   const [selectedCat, setSelectedCat] = useState<string | null>(null); // null = 전체
   const [selectedTodo, setSelectedTodo] = useState<string | null>(null);
+  // 전역 검색에서 고른 할 일(`?t=<id>`). 카테고리를 거르고 있으면 그것도 푼다 —
+  // 찾아서 왔는데 목록에 없으면 사라진 것으로 보인다.
+  const [params] = useSearchParams();
+  const focusTodo = params.get("t") ?? "";
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -265,6 +270,17 @@ export function Todo() {
     () => todos.find((t) => t.id === selectedTodo) ?? null,
     [todos, selectedTodo],
   );
+
+  useEffect(() => {
+    if (!focusTodo || !todos.some((t) => t.id === focusTodo)) return;
+    setSelectedCat(null);
+    setSelectedTodo(focusTodo);
+    const timer = setTimeout(() => {
+      document.querySelector(`[data-todo-id="${CSS.escape(focusTodo)}"]`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [focusTodo, todos]);
 
   // ── 조작 ──────────────────────────────────────────────────────────
   /** 실제로 해냈으면 true. 바빠서 아무 일도 안 했거나 **실패했으면 false**.
@@ -426,7 +442,7 @@ export function Todo() {
             const tone = dueTone(t.due);
             const hex = GCAL_COLORS[colorOf(t, cats)] ?? GCAL_COLORS["2"];
             return (
-              <li key={t.id} className="relative py-1.5">
+              <li key={t.id} data-todo-id={t.id} className="relative py-1.5">
                 <span
                   className="absolute -left-[21px] top-3 h-2.5 w-2.5 rounded-full ring-2 ring-surface"
                   style={{ background: t.done ? "rgb(var(--fg-subtle))" : hex }}

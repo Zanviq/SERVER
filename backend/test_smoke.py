@@ -6286,6 +6286,74 @@ def test_stream_chunks_stop_flowing_once_a_tool_call_appears():
     assert [c["name"] for c in res.calls()] == ["list_todos"], res.calls()
 
 
+def test_global_search_finds_the_same_word_across_every_screen():
+    """화면을 몰라도 찾을 수 있어야 한다 — 노트·논문·회의·단어·할 일·일정을 한 번에.
+
+    이 검색이 없을 때는 "저번에 그 회의에서 나온 그 용어"를 찾으려면 어느 화면에
+    넣었는지를 먼저 기억해야 했다. 기억하려고 쓰는 도구가 기억을 요구한 셈이다.
+    """
+    from backend import calendar_store, paper_store, search_all, todo_store, vocab_store
+    from backend.storage import user_data_root
+
+    u, _ctx, st = _todo_ctx("searchall")
+    seed = "형광체"
+
+    root = user_data_root(u, st)
+    (root / f"{seed}메모.md").write_text(f"# {seed}\n\n{seed}는 빛을 낸다.", encoding="utf-8")
+    (root / "딴것.md").write_text("여기엔 그 낱말이 없다.", encoding="utf-8")
+    todo_store.create_todo(u, st, {"title": f"{seed} 논문 읽기"})
+    todo_store.create_todo(u, st, {"title": "관계없는 할 일"})
+    vocab_store.add_words(u, st, [{"word": seed, "meanings": ["빛을 내는 물질"]}])
+    calendar_store.create_event(u, st, {"title": f"{seed} 세미나", "start": "2026-09-10",
+                                        "allDay": True})
+    search_all._EVENT_CACHE.pop(u.username, None)   # 앞 테스트의 30초 캐시를 비운다
+
+    hits = search_all.search(u, st, seed)
+    kinds = {h["kind"] for h in hits}
+    assert {"note", "todo", "vocab", "event"} <= kinds, kinds
+    assert all(seed in h["title"] or seed in h["snippet"] for h in hits), hits
+    assert hits[0]["title"] == seed and hits[0]["kind"] == "vocab", hits[0]  # 정확 일치가 1등
+
+    # 갈래를 지정하면 그것만
+    only = search_all.search(u, st, seed, kinds=("todo",))
+    assert {h["kind"] for h in only} == {"todo"}, only
+
+    # 없는 낱말은 조용히 0건, 빈 검색어도 0건(예외가 아니다)
+    assert search_all.search(u, st, "없는낱말zzzz") == []
+    assert search_all.search(u, st, "   ") == []
+
+    # 한 갈래가 통째로 깨져도 나머지는 나온다
+    broken = dict(search_all._SOURCES)
+    broken["paper"] = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("깨짐"))
+    saved, search_all._SOURCES = search_all._SOURCES, broken
+    try:
+        assert {h["kind"] for h in search_all.search(u, st, seed)} >= {"note", "todo"}
+    finally:
+        search_all._SOURCES = saved
+
+    # 논문 제목을 바꾸면 검색도 따라온다(색인을 따로 두지 않기 때문)
+    papers = paper_store.list_papers(u, st)
+    if papers:
+        paper_store.update_meta(u, st, papers[0]["id"], {"title": f"{seed} 총설"})
+        assert any(h["kind"] == "paper" for h in search_all.search(u, st, seed))
+
+
+def test_recurring_events_appear_once_in_search():
+    """매년 오는 생일이 스무 줄로 나오면 검색 결과가 그것만으로 찬다."""
+    from backend import calendar_store, search_all
+
+    u, _ctx, st = _todo_ctx("searchrecur")
+    calendar_store.create_event(u, st, {
+        "title": "생일 축하합니다", "start": "2020-11-12", "allDay": True,
+        "recurrence": "yearly", "interval": 1})
+    search_all._EVENT_CACHE.pop(u.username, None)
+
+    hits = [h for h in search_all.search(u, st, "생일") if h["kind"] == "event"]
+    assert len(hits) == 1, [h["when"] for h in hits]
+    # 남는 것은 오늘에 가장 가까운 회차여야 한다(1년 전 것이 아니라)
+    assert hits[0]["when"].endswith("-11-12"), hits[0]
+
+
 def test_a_stopped_turn_records_what_it_already_did():
     """중단된 차례는 '무엇까지 했는지'를 남겨야 다음 차례가 두 번 하지 않는다."""
     from backend.routers.ai import _stopped_note

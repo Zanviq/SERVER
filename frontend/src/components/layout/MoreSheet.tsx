@@ -1,8 +1,9 @@
 import { useDismissable } from "../../lib/useDismissable";
 import { createPortal } from "react-dom";
 import { NavLink } from "react-router-dom";
-import { LogOut, User, X } from "lucide-react";
+import { LogOut, Search, User, X } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
+import { openSearch } from "../search/SearchPalette";
 import { useAuth } from "../../store/auth";
 
 export interface SheetItem {
@@ -78,6 +79,13 @@ export function MoreSheet({
 
         {/* 테마·로그아웃은 모바일 헤더에서 빼고 여기로 모았다(헤더가 너무 좁다) */}
         <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
+          {/* 휴대폰에는 Ctrl+K 가 없다 — 전역 검색으로 들어가는 유일한 문 */}
+          <button
+            onClick={() => { onClose(); openSearch(); }}
+            className="btn btn-ghost h-9 gap-1.5 px-3 text-[13px]"
+          >
+            <Search size={15} /> 검색
+          </button>
           <ThemeToggle />
           <button
             onClick={() => {

@@ -16,9 +16,11 @@ import {
   Trash2,
   TerminalSquare,
   MoreHorizontal,
+  Search,
 } from "lucide-react";
 import { useAuth } from "../../store/auth";
 import { api } from "../../lib/api";
+import { openSearch } from "../search/SearchPalette";
 import { MoreSheet, SheetItem } from "./MoreSheet";
 
 // 터미널 가용 여부 캐시. 계정별로 키를 둔다 —
@@ -128,6 +130,18 @@ export function Sidebar() {
         <div className="mb-2 grid h-9 w-9 place-items-center rounded-md bg-[var(--sidebar-icon-active)] font-mono text-xs font-bold text-sidebar-fg-active">
           SV
         </div>
+        {/* 검색은 화면이 아니라 도구라 NavLink 가 아니다(주소가 바뀌지 않는다) */}
+        <button
+          onClick={openSearch}
+          aria-label="검색 (Ctrl+K)"
+          title="검색 (Ctrl+K)"
+          className="group relative grid h-10 w-10 place-items-center rounded-md text-sidebar-fg transition-colors hover:bg-[var(--sidebar-icon)] hover:text-sidebar-fg-active"
+        >
+          <Search size={19} />
+          <span className="pointer-events-none absolute left-[calc(100%+12px)] z-50 whitespace-nowrap rounded-sm bg-fg px-2 py-1 text-xs font-medium text-bg opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+            검색 (Ctrl+K)
+          </span>
+        </button>
         <nav className="flex flex-1 flex-col items-center gap-1">
           {nav.map((n) => (
             <DesktopItem key={n.to} {...n} />

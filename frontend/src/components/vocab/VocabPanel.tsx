@@ -22,6 +22,8 @@ interface Props {
    * 것인지"로 묶어 볼 수 없다 — 화면마다 기본값을 준다(영어 학습 / 논문 제목).
    */
   defaultTags?: string[];
+  /** 전역 검색에서 고른 단어 id. 그 줄을 펼치고 화면 안으로 끌어온다. */
+  focusId?: string;
   className?: string;
 }
 
@@ -29,7 +31,7 @@ interface Props {
  * 단어장. 태그는 폴더처럼 쓴다 — "어디서 이 단어를 가져왔는지"(논문 제목, 영어 학습).
  * 태그 이름으로 태그를 찾고, 고른 태그의 단어만 본다. 단어·뜻 검색은 그 위에 얹힌다.
  */
-export function VocabPanel({ refreshKey = 0, initialTag = "", defaultTags = [], className = "" }: Props) {
+export function VocabPanel({ refreshKey = 0, initialTag = "", defaultTags = [], focusId = "", className = "" }: Props) {
   const [board, setBoard] = useState<VocabBoard | null>(null);
   const [tag, setTag] = useState(initialTag);
   const [tagQuery, setTagQuery] = useState("");
@@ -56,6 +58,19 @@ export function VocabPanel({ refreshKey = 0, initialTag = "", defaultTags = [], 
   }, []);
   useEffect(() => { void load(); }, [load, refreshKey, jobVersion]);
   useEffect(() => { if (initialTag) setTag(initialTag); }, [initialTag]);
+
+  // 전역 검색에서 넘어왔을 때. 거르개가 켜져 있으면 그 단어가 목록에 없을 수 있어
+  // 함께 푼다 — 찾아서 왔는데 빈 목록이 나오면 고장으로 보인다.
+  useEffect(() => {
+    if (!focusId || !board) return;
+    setOpenId(focusId);
+    setTag(""); setQ(""); setDueOnly(false); setKind("");
+    const t = setTimeout(() => {
+      document.querySelector(`[data-word-id="${CSS.escape(focusId)}"]`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 60);
+    return () => clearTimeout(t);
+  }, [focusId, board]);
 
   const today = new Date().toISOString().slice(0, 10);
   const words = useMemo(() => {
@@ -214,7 +229,7 @@ export function VocabPanel({ refreshKey = 0, initialTag = "", defaultTags = [], 
           </li>
         ) : (
           words.map((w) => (
-            <WordCard key={w.id} word={w} open={openId === w.id} activeTag={tag}
+            <WordCard key={w.id} word={w} open={openId === w.id} activeTag={tag} anchorId={w.id}
               onToggle={() => setOpenId((v) => (v === w.id ? null : w.id))}
               onEdit={() => setEditing(w)}
               onDelete={() => remove(w)}

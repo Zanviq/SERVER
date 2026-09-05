@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
@@ -90,6 +90,16 @@ export function Calendar() {
 
   // Tailwind의 sm(640px) 경계와 맞춘다 — 사이드바가 하단 탭바로 바뀌는 지점이다.
   const isNarrow = useMediaQuery("(max-width: 639px)");
+
+  // 전역 검색에서 일정을 고르면 `?d=YYYY-MM-DD` 로 온다. 달력을 그 날짜로 옮기고
+  // 그 날을 고른다(일정 하나만 띄우면 앞뒤 맥락이 사라진다).
+  const [params] = useSearchParams();
+  const jumpDay = params.get("d") ?? "";
+  useEffect(() => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(jumpDay)) return;
+    calRef.current?.getApi().gotoDate(jumpDay);
+    setSelectedDay(jumpDay);
+  }, [jumpDay]);
 
   const defaultColor = s?.calendar.default_color ?? "2";
   const defaultView = s?.calendar.default_view ?? "dayGridMonth";
