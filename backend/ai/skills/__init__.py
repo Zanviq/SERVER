@@ -32,6 +32,7 @@ from .documents import (
 )
 from .meetings import MEETING_SKILLS
 from .papers import PAPER_SKILLS
+from .search import SearchEverything
 from .system import GetSystemStatus
 from .todo import (
     BulkCompleteTodos,
@@ -92,6 +93,8 @@ ALL_SKILLS = [
     *DIARY_SKILLS,
     # 지난 대화(컨텍스트) — 어디의 언제 대화를 꺼낼지 모델이 고른다
     *CONTEXT_SKILLS,
+    # 화면을 가로지르는 검색 — 어느 화면인지 모를 때 먼저 부른다
+    SearchEverything(),
     # 휴지통(되돌리기)
     ListTrash(),
     RestoreFromTrash(),
@@ -102,6 +105,7 @@ ALL_SKILLS = [
 __all__ = [
     "ALL_SKILLS",
     "ThinkSkill",
+    "SearchEverything",
     "ListDocuments", "ReadDocument", "SearchDocuments", "WriteDocument",
     "AppendDocument", "DeleteDocument", "RenameDocument", "MoveDocument",
     "CreateFolder", "DocumentBacklinks",

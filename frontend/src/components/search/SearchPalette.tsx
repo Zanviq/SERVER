@@ -172,7 +172,9 @@ export function SearchPalette() {
                           <span className="block truncate text-[12px] text-fg-muted">{h.snippet}</span>
                         )}
                       </span>
-                      <span className="shrink-0 whitespace-nowrap text-[11px] text-fg-muted">
+                      {/* 태그가 논문 제목이면 아주 길다 — 제목을 밀어내지 않게 잘라 둔다 */}
+                      <span className="max-w-[30%] shrink-0 truncate text-[11px] text-fg-muted"
+                        title={h.when || h.where}>
                         {h.when || h.where}
                       </span>
                       {i === cursor && <CornerDownLeft size={13} className="mt-1 shrink-0 text-fg-muted" />}

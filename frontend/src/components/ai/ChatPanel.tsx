@@ -93,6 +93,7 @@ const SKILL_LABEL: Record<string, string> = {
   list_context_spaces: "대화 공간 목록",
   search_context: "지난 대화 검색",
   read_context: "지난 대화 읽기",
+  search_everything: "전체 검색",
   // 폴더·휴지통
   list_folders: "폴더 목록",
   list_trash: "휴지통 목록",

@@ -18,7 +18,10 @@ ENGLISH_TAG = "영어 학습"
 
 #: 어느 모드에서나 지난 대화를 꺼낼 수 있어야 한다 — "전에 말한 그거" 는 화면을 가리지 않는다.
 _CONTEXT_SKILLS = {"list_context_spaces", "search_context", "read_context"}
-_COMMON_SKILLS = {"think"} | _CONTEXT_SKILLS
+# 전역 검색은 어느 화면에서 물어도 뜻이 통한다("그거 어디 있었지"). 모드마다 스킬을
+# 줄이는 이유는 엉뚱한 도구를 고르지 않게 하려는 것인데, 이건 반대로 **화면 밖을
+# 찾는 유일한 길**이라 모든 모드에 둔다.
+_COMMON_SKILLS = {"think", "search_everything"} | _CONTEXT_SKILLS
 _VOCAB_SKILLS = {
     "list_vocab", "list_vocab_tags", "add_vocab_words", "propose_vocab_words",
     "update_vocab_word", "delete_vocab_word",

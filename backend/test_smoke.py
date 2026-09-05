@@ -6338,6 +6338,15 @@ def test_global_search_finds_the_same_word_across_every_screen():
         assert any(h["kind"] == "paper" for h in search_all.search(u, st, seed))
 
 
+def test_every_mode_can_search_outside_its_own_screen():
+    """모드마다 스킬을 줄이는 이유는 엉뚱한 도구를 막으려는 것이지만,
+    전체 검색만은 예외다 — 화면 밖을 찾는 유일한 길이라 모든 모드에 있어야 한다."""
+    from backend.ai import modes
+
+    for name, mode in modes.MODES.items():
+        assert mode.allows("search_everything"), name
+
+
 def test_recurring_events_appear_once_in_search():
     """매년 오는 생일이 스무 줄로 나오면 검색 결과가 그것만으로 찬다."""
     from backend import calendar_store, search_all
