@@ -40,7 +40,8 @@ def _split_pages(text: str) -> dict[int, str]:
 class ListPapers(SkillBase):
     name = "list_papers"
     description = (
-        "내 논문 목록(제목·저자·연도·키워드·한 줄 요약). query 를 주면 제목·초록·요약·키워드·메모에서 찾는다. "
+        "내 논문 목록(제목·저자·연도·키워드·**짧은** 한 줄 요약). query 를 주면 제목·초록·요약·키워드·메모에서 찾는다. "
+        "요약은 어느 논문인지 알아볼 만큼만 잘려 있다 — 자세한 내용이 필요하면 그 논문만 get_paper_info 로 가져간다. "
         "'전에 읽은 ~ 관련 논문', '다른 논문에서는 어땠어?' 같은 질문은 여기서 시작한다."
     )
     parameters = {

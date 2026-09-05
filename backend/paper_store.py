@@ -358,17 +358,24 @@ def search(user: SessionUser, settings: Settings, query: str, limit: int = 20) -
     return out
 
 
+#: 목록에 실리는 한 줄 요약의 길이. **어느 논문인지 알아보는 데 필요한 만큼만.**
+#: 400자로 두었더니 논문 30편에 결과가 23,000자(약 1만 2천 토큰)였다 — 도구 카탈로그
+#: 전체와 맞먹는다. 자세한 내용은 모델이 get_paper_info 로 그 논문만 따로 가져간다.
+BRIEF_SUMMARY = 150
+
+
 def brief(p: dict) -> dict:
     """모델·목록에 주는 요약본(초록 전체는 뺀다)."""
+    summary = str(p.get("summary") or "")
     return {
         "id": p.get("id", ""),
         "title": p.get("title", ""),
         "category": p.get("category", ""),
-        "authors": list(p.get("authors") or [])[:6],
+        "authors": list(p.get("authors") or [])[:4],
         "year": p.get("year", ""),
         "venue": p.get("venue", ""),
-        "keywords": list(p.get("keywords") or [])[:8],
-        "summary": str(p.get("summary") or "")[:400],
+        "keywords": list(p.get("keywords") or [])[:5],
+        "summary": summary[:BRIEF_SUMMARY] + ("…" if len(summary) > BRIEF_SUMMARY else ""),
         "status": p.get("status", ""),
         "pages": p.get("pages", 0),
         "starred": bool(p.get("starred")),
