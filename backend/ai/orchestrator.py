@@ -61,6 +61,25 @@ def _claims_without_doing(text: str, mutated: bool) -> bool:
     return bool(_DID_IT.search(tail))
 
 
+def _empty_answer_note(finish_reason: str) -> str:
+    """두 번 물어도 빈 답이 왔을 때 사용자에게 할 말.
+
+    "응답을 생성하지 못했습니다"만 내밀면 사용자는 같은 말을 그대로 다시 친다.
+    같은 이유로 또 막히면 두 번 헛수고다. 왜 막혔는지 알면 바꿔 볼 수 있다.
+    """
+    r = (finish_reason or "").upper()
+    if "SAFETY" in r or "BLOCK" in r or "PROHIBITED" in r:
+        return ("모델이 이 요청에 답하지 않았습니다(안전 필터). 표현을 바꾸거나 "
+                "질문을 나눠서 다시 물어봐 주세요.")
+    if "RECITATION" in r:
+        return ("모델이 답을 멈췄습니다(외부 글을 그대로 옮기는 것으로 판단). "
+                "요약해 달라고 바꿔 물어봐 주세요.")
+    if "MAX_TOKEN" in r:
+        return ("답이 너무 길어 잘렸습니다. 범위를 좁혀서(예: 한 부분씩) 다시 "
+                "물어봐 주세요.")
+    return "응답을 생성하지 못했습니다. 다시 말씀해 주세요."
+
+
 @dataclass
 class LLMResult:
     text: str
@@ -68,6 +87,8 @@ class LLMResult:
     error: str = ""
     tool_use: dict | None = None  # {"name": str, "args": dict} — 단일 호출(하위호환)
     tool_uses: list[dict] = field(default_factory=list)  # 한 응답에 여러 호출이 올 때
+    #: 모델이 왜 멈췄는가(STOP/MAX_TOKENS/SAFETY/…). 빈 답이 왔을 때 이것만이 단서다.
+    finish_reason: str = ""
 
     def calls(self) -> list[dict]:
         """이번 응답이 요청한 스킬 호출 전부."""
@@ -101,17 +122,20 @@ def consume_stream(chunks):
     최종 답이 아니라 머리말이고, 도구를 쓴 뒤 모델이 답을 처음부터 다시 쓰기
     때문에 화면에 썼다 지우는 깜빡임이 생긴다.
     """
-    text, tool_uses = "", []
+    text, tool_uses, finish = "", [], ""
     for chunk in chunks:
         cand = chunk.candidates[0] if chunk.candidates else None
         piece, calls = parse_candidate(cand)
+        reason = getattr(cand, "finish_reason", None)
+        if reason:
+            finish = getattr(reason, "name", None) or str(reason)
         if calls:
             tool_uses.extend(calls)
         if piece:
             text += piece
             if not tool_uses:
                 yield piece
-    return LLMResult(text=text, tool_uses=tool_uses)
+    return LLMResult(text=text, tool_uses=tool_uses, finish_reason=finish)
 
 
 class GeminiLLM:
@@ -147,7 +171,9 @@ class GeminiLLM:
 
         cand = resp.candidates[0] if resp.candidates else None
         text, tool_uses = parse_candidate(cand)
-        return LLMResult(text=text, tool_uses=tool_uses)
+        reason = getattr(cand, "finish_reason", None)
+        return LLMResult(text=text, tool_uses=tool_uses,
+                         finish_reason=(getattr(reason, "name", None) or str(reason or "")))
 
     def stream(self, contents: list[dict], catalog: list[dict], system: str):
         """한 번 호출하되 **글자가 오는 대로** yield 한다. 끝나면 LLMResult 를 return.
@@ -241,22 +267,33 @@ def run(
     final_text = ""
     executed: list[tuple[str, bool]] = []  # 한도 초과 시 요약용
     mutated = False                        # 이번 차례에 실제로 바꾼 것이 있는가
+    last_finish = ""                       # 빈 답일 때 왜 멈췄는지가 유일한 단서다
 
     for step in range(max_steps):
         # 글자가 오는 대로 흘려보낸다. 스트림을 못 쓰는 LLM(테스트의 가짜 모델)은
         # 예전처럼 한 번에 받는다. `stream()` 은 조각을 yield 하다가 마지막에
         # LLMResult 를 return 하므로 StopIteration.value 로 결과를 받는다.
-        if hasattr(llm, "stream"):
-            gen = llm.stream(contents, catalog, system)
-            while True:
-                try:
-                    piece = next(gen)
-                except StopIteration as stop:
-                    result = stop.value
-                    break
-                yield {"type": "text_delta", "text": piece}
-        else:
-            result = llm.chat(contents, catalog, system)
+        # 아무것도 없는 답(글도 호출도 없음)이 이따금 온다. 예전에는 그대로
+        # "응답을 생성하지 못했습니다"를 내밀어 사용자가 같은 말을 다시 쳐야 했다.
+        # 사람이 할 일을 서버가 한다 — 한 번만 다시 물어본다.
+        for attempt in range(2):
+            if hasattr(llm, "stream"):
+                gen = llm.stream(contents, catalog, system)
+                while True:
+                    try:
+                        piece = next(gen)
+                    except StopIteration as stop:
+                        result = stop.value
+                        break
+                    yield {"type": "text_delta", "text": piece}
+            else:
+                result = llm.chat(contents, catalog, system)
+            if result.error or result.calls() or (result.text or "").strip():
+                break
+            if attempt == 0:
+                logger.warning("빈 응답(finish_reason=%s) — 한 번 다시 부른다",
+                               result.finish_reason or "?")
+        last_finish = result.finish_reason or last_finish
         if result.error:
             # 상류(Gemini SDK)의 예외 문자열에는 경로·키·요청 본문이 섞일 수 있다.
             # 라우터는 예외를 DEBUG 일 때만 흘리는데, 이 경로는 예외가 아니라
@@ -359,7 +396,7 @@ def run(
                 parts.append("실패: " + ", ".join(bad))
             final_text = " / ".join(parts)
         else:
-            final_text = "응답을 생성하지 못했습니다. 다시 말씀해 주세요."
+            final_text = _empty_answer_note(last_finish)
 
     # 말과 실제를 맞춰 본다. "삭제했습니다"라고 해 놓고 아무것도 안 바꾼 적이 있다
     # (list_todos 만 부르고 그렇게 답했다). 사용자는 다 된 줄 알고 넘어간다 —

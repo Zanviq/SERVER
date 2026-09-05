@@ -6363,6 +6363,62 @@ def test_recurring_events_appear_once_in_search():
     assert hits[0]["when"].endswith("-11-12"), hits[0]
 
 
+def test_an_empty_answer_is_retried_once_before_giving_up(monkeypatch):
+    """모델이 이따금 글도 호출도 없는 답을 준다(실제로 겪었다).
+
+    예전에는 그대로 "응답을 생성하지 못했습니다"를 내밀어 사용자가 같은 말을 다시
+    쳐야 했다. 사람이 할 일을 서버가 한다 — 한 번만 다시 부른다.
+    """
+    from backend.ai import orchestrator
+    from backend.ai.orchestrator import LLMResult, _empty_answer_note
+
+    _login()
+
+    class EmptyThenFine:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, contents, catalog, system):
+            self.n += 1
+            if self.n == 1:
+                return LLMResult(text="", tool_use=None, finish_reason="STOP")
+            return LLMResult(text="두 번째에 제대로 답했습니다.", tool_use=None)
+
+    llm = EmptyThenFine()
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": llm)
+    client.delete("/api/ai/space/assistant")
+    r = client.post("/api/ai/chat", json={"message": "안녕", "mode": "assistant"})
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+    assert next(e for e in events if e["type"] == "text")["text"] == "두 번째에 제대로 답했습니다."
+    assert llm.n == 2, llm.n            # 한 번만 더 부른다
+    # 한 단계 안에서 다시 부른 것이지 단계를 쓴 것이 아니다(대화도 한 벌만 남는다)
+    msgs = client.get("/api/ai/space/assistant").json()["messages"]
+    assert [m["role"] for m in msgs] == ["user", "assistant"], msgs
+
+    class AlwaysEmpty:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, contents, catalog, system):
+            self.n += 1
+            return LLMResult(text="", tool_use=None, finish_reason="SAFETY")
+
+    llm2 = AlwaysEmpty()
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": llm2)
+    client.delete("/api/ai/space/assistant")
+    r = client.post("/api/ai/chat", json={"message": "안녕", "mode": "assistant"})
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+    text = next(e for e in events if e["type"] == "text")["text"]
+    assert "안전 필터" in text, text        # 왜 막혔는지 말해 준다
+    assert llm2.n == 2, llm2.n            # 끝없이 다시 부르지 않는다
+
+    # 이유별 안내
+    assert "안전 필터" in _empty_answer_note("SAFETY")
+    assert "잘렸습니다" in _empty_answer_note("MAX_TOKENS")
+    assert "요약해" in _empty_answer_note("RECITATION")
+    assert _empty_answer_note("") == "응답을 생성하지 못했습니다. 다시 말씀해 주세요."
+
+
 def test_a_stopped_turn_records_what_it_already_did():
     """중단된 차례는 '무엇까지 했는지'를 남겨야 다음 차례가 두 번 하지 않는다."""
     from backend.routers.ai import _stopped_note
