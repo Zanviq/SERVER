@@ -30,10 +30,12 @@ class SkillContext:
     user: SessionUser
     settings: Settings
     today: str = ""  # 요청 기준 오늘(YYYY-MM-DD). 일정 기본 조회창 계산에 사용.
-    #: 어느 화면에서 부른 대화인가("" | "english" | "paper"). 스킬 묶음·프롬프트를 고른다.
+    #: 어느 화면에서 부른 대화인가("" | "english" | "paper" | "meeting"). 스킬 묶음·프롬프트를 고른다.
     mode: str = ""
     #: 논문 화면이면 지금 보고 있는 논문 id. 논문 스킬이 "이 논문"을 해석하는 기준.
     paper_id: str = ""
+    #: 회의 화면이면 지금 보고 있는 회의 id. 회의 스킬이 "이 회의"를 해석하는 기준.
+    meeting_id: str = ""
     #: 이 화면에서 단어장에 넣는 단어에 무조건 붙는 태그(논문 제목 등).
     vocab_tags: list[str] = field(default_factory=list)
 

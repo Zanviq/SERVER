@@ -301,6 +301,46 @@ export const api = {
     req<{ ok: boolean; started: boolean; status: string }>(
       `/api/papers/${encodeURIComponent(id)}/extract`, { method: "POST" }),
 
+  // ── 기록(상태·일기) ──
+  diaryRange: (from: string, to: string) => req<DiaryDay[]>(`/api/diary?${q({ from, to })}`),
+  diaryGet: (day: string) => req<DiaryDay>(`/api/diary/${day}`),
+  diarySave: (day: string, body: Partial<Pick<DiaryDay, "body" | "heart" | "mind" | "text">>) =>
+    req<DiaryDay>(`/api/diary/${day}`, jsonInit("PUT", body)),
+
+  // ── 회의 녹음 ──
+  meetingList: () => req<Meeting[]>("/api/meetings"),
+  meetingCategories: () => req<string[]>("/api/meetings/categories"),
+  meetingGet: (id: string) => req<Meeting>(`/api/meetings/${encodeURIComponent(id)}`),
+  meetingUpload: (file: File, opts: { title?: string; category?: string; day?: string } = {}) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (opts.title) fd.append("title", opts.title);
+    if (opts.category) fd.append("category", opts.category);
+    if (opts.day) fd.append("day", opts.day);
+    return req<Meeting>("/api/meetings/upload", { method: "POST", body: fd });
+  },
+  /** 원본 녹음 URL(inline, Range 지원) — <audio> 가 그대로 쓴다. */
+  meetingAudioUrl: (id: string) => `${BASE}/api/meetings/${encodeURIComponent(id)}/audio`,
+  meetingTranscript: (id: string) => req<Transcript>(`/api/meetings/${encodeURIComponent(id)}/transcript`),
+  meetingUpdate: (id: string, body: Partial<Pick<Meeting, "title" | "category" | "date" | "summary" | "speakers">>) =>
+    req<Meeting>(`/api/meetings/${encodeURIComponent(id)}`, jsonInit("PUT", body)),
+  meetingDelete: (id: string) =>
+    req<{ ok: boolean; id: string }>(`/api/meetings/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  meetingTranscribe: (id: string) =>
+    req<{ ok: boolean; started: boolean; status: string }>(
+      `/api/meetings/${encodeURIComponent(id)}/transcribe`, { method: "POST" }),
+  meetingDocs: (id: string) => req<MeetingDocSummary[]>(`/api/meetings/${encodeURIComponent(id)}/docs`),
+  meetingDocRead: (id: string, name: string) =>
+    req<MeetingDoc>(`/api/meetings/${encodeURIComponent(id)}/docs/${encodeURIComponent(name)}`),
+  meetingDocWrite: (id: string, name: string, content: string) =>
+    req<MeetingDoc>(`/api/meetings/${encodeURIComponent(id)}/docs/${encodeURIComponent(name)}`, jsonInit("PUT", { content })),
+  meetingDocRename: (id: string, name: string, next: string) =>
+    req<{ name: string }>(`/api/meetings/${encodeURIComponent(id)}/docs/${encodeURIComponent(name)}/rename`, jsonInit("POST", { name: next })),
+  meetingDocDelete: (id: string, name: string) =>
+    req<{ ok: boolean }>(`/api/meetings/${encodeURIComponent(id)}/docs/${encodeURIComponent(name)}`, { method: "DELETE" }),
+
+  // ── 외부 SSH(주인 전용) ──
+  sshAccess: () => req<SshAccess>("/api/system/ssh"),
 };
 
 export interface AiEvent {
@@ -345,8 +385,9 @@ export interface AiSelection {
   page?: number;
 }
 export interface AiChatOptions {
-  mode?: "" | "english" | "paper";
+  mode?: "" | "english" | "paper" | "meeting";
   paper_id?: string;
+  meeting_id?: string;
   attachments?: AiAttachment[];
   selections?: AiSelection[];
 }
@@ -479,7 +520,7 @@ export interface NotesTree {
 }
 export interface TrashEntry {
   id: string;
-  /** "document" | "event" | "todo" | "vocab" | "paper". 예전 엔트리는 서버가 document로 채워 준다. */
+  /** "document" | "event" | "todo" | "vocab" | "paper" | "meeting". 예전 엔트리는 서버가 document로 채워 준다. */
   kind: string;
   orig_rel: string;
   name: string;
@@ -497,6 +538,78 @@ export interface TrashEntry {
   /** kind === "paper" 일 때만 */
   paper_id?: string;
   paper_filename?: string;
+  /** kind === "meeting" 일 때만 */
+  meeting_id?: string;
+  meeting_date?: string;
+  meeting_category?: string;
+}
+
+// ── 기록(상태·일기) ──
+/** 하루의 상태 도형. 빈 문자열은 '표시 안 함'. */
+export type DiaryShape = "" | "star" | "circle" | "triangle" | "square" | "pentagon";
+export type DiaryAxis = "body" | "heart" | "mind";
+export interface DiaryDay {
+  date: string;
+  body: DiaryShape;
+  heart: DiaryShape;
+  mind: DiaryShape;
+  text: string;
+  updated_at: string;
+}
+
+// ── 회의 녹음 ──
+export type MeetingStatus = "pending" | "ready" | "failed";
+export interface Meeting {
+  id: string;
+  title: string;
+  date: string;
+  category: string;
+  filename: string;
+  mime: string;
+  ext: string;
+  size: number;
+  duration: number;
+  created_at: string;
+  updated_at: string;
+  status: MeetingStatus;
+  error: string;
+  transcribed_at: string;
+  /** 화자 라벨("화자 1") → 사용자가 붙인 이름 */
+  speakers: Record<string, string>;
+  summary: string;
+  segments: number;
+  docs: number;
+}
+export interface TranscriptSegment {
+  start: string;
+  end: string;
+  speaker: string;
+  text: string;
+}
+export interface Transcript {
+  segments: TranscriptSegment[];
+  text: string;
+}
+export interface MeetingDocSummary {
+  name: string;
+  size: number;
+  updated_at: string;
+}
+export interface MeetingDoc {
+  name: string;
+  content: string;
+  updated_at: string;
+  created?: boolean;
+}
+
+// ── 외부 SSH(주인 전용) ──
+export interface SshAccess {
+  configured: boolean;
+  hostname: string;
+  user: string;
+  service: string;
+  ssh_config: string;
+  command: string;
 }
 
 // ── 단어장 ──

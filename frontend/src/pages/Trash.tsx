@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Trash2, RotateCcw, XCircle, Loader2, FolderOpen, FileText, NotebookPen, CalendarDays, ListChecks, BookMarked, GraduationCap } from "lucide-react";
+import { Trash2, RotateCcw, XCircle, Loader2, FolderOpen, FileText, NotebookPen, CalendarDays, ListChecks, BookMarked, GraduationCap, AudioLines } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { Modal } from "../components/ui/Modal";
 import { api, TrashEntry } from "../lib/api";
@@ -21,6 +21,7 @@ const TABS = [
   { key: "todo", label: "할 일" },
   { key: "vocab", label: "단어" },
   { key: "paper", label: "논문" },
+  { key: "meeting", label: "회의" },
 ] as const;
 
 export function Trash() {
@@ -124,6 +125,7 @@ export function Trash() {
               : tab === "todo" ? "복원하면 할 일 목록에 다시 생깁니다"
               : tab === "vocab" ? "복원하면 단어장에 태그째 돌아갑니다"
               : tab === "paper" ? "복원하면 PDF·정보·대화가 함께 돌아갑니다"
+              : tab === "meeting" ? "복원하면 녹음·받아쓰기·문서·대화가 함께 돌아갑니다"
               : "복원하면 원래 위치로 돌아갑니다"}
           </span>
         </div>
@@ -141,6 +143,7 @@ export function Trash() {
                 : tab === "todo" ? "삭제된 할 일이 없습니다"
                 : tab === "vocab" ? "삭제된 단어가 없습니다"
                 : tab === "paper" ? "삭제된 논문이 없습니다"
+                : tab === "meeting" ? "삭제된 회의가 없습니다"
                 : "휴지통이 비어 있습니다"}
             </span>
           </div>
@@ -151,7 +154,8 @@ export function Trash() {
               const isTodo = e.kind === "todo";
               const isVocab = e.kind === "vocab";
               const isPaper = e.kind === "paper";
-              const Icon = isEvent ? CalendarDays : isTodo ? ListChecks : isVocab ? BookMarked : isPaper ? GraduationCap : icon(e);
+              const isMeeting = e.kind === "meeting";
+              const Icon = isEvent ? CalendarDays : isTodo ? ListChecks : isVocab ? BookMarked : isPaper ? GraduationCap : isMeeting ? AudioLines : icon(e);
               const due = (e.todo_due ?? "").slice(0, 16).replace("T", " ");
               const vocabTags = e.vocab_tags?.length ? ` · ${e.vocab_tags.join(", ")}` : "";
               return (
@@ -168,6 +172,8 @@ export function Trash() {
                         ? `단어${e.vocab_meaning ? ` · ${e.vocab_meaning}` : ""}${vocabTags} · 삭제 ${fmt(e.deleted_at)}`
                         : isPaper
                         ? `논문${e.paper_filename ? ` · ${e.paper_filename}` : ""} · 삭제 ${fmt(e.deleted_at)}`
+                        : isMeeting
+                        ? `회의${e.meeting_date ? ` · ${e.meeting_date}` : ""}${e.meeting_category ? ` · ${e.meeting_category}` : ""} · 삭제 ${fmt(e.deleted_at)}`
                         : `${e.orig_rel} · ${fmt(e.deleted_at)}`}
                     </p>
                   </div>

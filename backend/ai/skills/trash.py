@@ -19,7 +19,7 @@ from ..skill_base import SkillBase, SkillResult
 
 _KIND_LABEL = {
     trash.KIND_DOCUMENT: "문서", trash.KIND_EVENT: "일정", trash.KIND_TODO: "할 일",
-    trash.KIND_VOCAB: "단어", trash.KIND_PAPER: "논문",
+    trash.KIND_VOCAB: "단어", trash.KIND_PAPER: "논문", trash.KIND_MEETING: "회의",
 }
 
 #: 한 번에 모델에게 보여줄 항목 수 상한(휴지통이 크면 컨텍스트를 다 먹는다)
@@ -60,6 +60,9 @@ def _row(e: dict, now: float) -> dict:
         out["tags"] = list(e.get("vocab_tags") or [])
     elif kind == trash.KIND_PAPER:
         out["filename"] = e.get("paper_filename", "")
+    elif kind == trash.KIND_MEETING:
+        out["date"] = e.get("meeting_date", "")
+        out["category"] = e.get("meeting_category", "")
     else:
         out["orig_path"] = e.get("orig_rel", "")
     return out
@@ -69,7 +72,7 @@ class ListTrash(SkillBase):
     name = "list_trash"
     description = (
         "휴지통 목록을 본다. kind로 '문서'(document)·'일정'(event)·'할 일'(todo)·"
-        "'단어'(vocab)·'논문'(paper)만 볼 수 있다. "
+        "'단어'(vocab)·'논문'(paper)·'회의'(meeting)만 볼 수 있다. "
         "여기서 얻은 id를 restore_from_trash에 그대로 넘기면 복원된다."
     )
     parameters = {
@@ -77,7 +80,7 @@ class ListTrash(SkillBase):
         "properties": {
             "kind": {
                 "type": "string",
-                "enum": ["document", "event", "todo", "vocab", "paper"],
+                "enum": ["document", "event", "todo", "vocab", "paper", "meeting"],
                 "description": "생략하면 전체.",
             },
             "name_contains": {"type": "string", "description": "이름에 이 말이 든 것만."},
@@ -172,10 +175,13 @@ class RestoreFromTrash(SkillBase):
             data["word"] = result.get("word") or {}
         elif kind == trash.KIND_PAPER:
             data["paper_id"] = str(result.get("paper_id") or "")
+        elif kind == trash.KIND_MEETING:
+            data["meeting_id"] = str(result.get("meeting_id") or "")
         elif kind == trash.KIND_DOCUMENT:
             data["path"] = where
         mutates = {
             trash.KIND_EVENT: "calendar", trash.KIND_VOCAB: "vocab", trash.KIND_PAPER: "papers",
+            trash.KIND_MEETING: "meetings",
         }.get(kind, "documents")
         return SkillResult(
             ok=True,

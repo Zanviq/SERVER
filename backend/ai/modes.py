@@ -1,4 +1,4 @@
-"""화면별 AI 모드 — 영어 학습(english)·논문(paper).
+"""화면별 AI 모드 — 영어 학습(english)·논문(paper)·회의(meeting).
 
 비서 화면의 범용 프롬프트(prompt_builder)는 일정·문서·할 일을 두루 다루느라
 길다. 영어 학습·논문 화면은 하는 일이 정해져 있으므로 **그 일에 맞는 프롬프트와
@@ -19,6 +19,11 @@ _VOCAB_SKILLS = {
     "update_vocab_word", "delete_vocab_word",
 }
 _PAPER_SKILLS = {"list_papers", "get_paper_info", "read_paper_text", "search_paper_chats", "set_paper_notes"}
+_MEETING_SKILLS = {
+    "list_meetings", "get_meeting_info", "read_meeting_transcript", "list_meeting_docs",
+    "read_meeting_doc", "write_meeting_doc", "append_meeting_doc", "delete_meeting_doc",
+    "update_meeting_info",
+}
 _DOC_SKILLS = {"search_documents", "read_document", "write_document", "append_document", "list_documents"}
 _TODO_SKILLS = {"list_todos", "create_todo", "list_todo_categories"}
 _CAL_SKILLS = {"list_calendar_events", "create_calendar_event", "find_free_slots"}
@@ -43,6 +48,10 @@ MODES: dict[str, ModeSpec] = {
         "paper",
         frozenset(_COMMON_SKILLS | _VOCAB_SKILLS | _PAPER_SKILLS | _DOC_SKILLS | _TODO_SKILLS
                   | _CAL_SKILLS | _TRASH_SKILLS),
+    ),
+    "meeting": ModeSpec(
+        "meeting",
+        frozenset(_COMMON_SKILLS | _MEETING_SKILLS | _DOC_SKILLS | _TODO_SKILLS | _CAL_SKILLS | _TRASH_SKILLS),
     ),
 }
 
@@ -176,4 +185,55 @@ def paper_system(user: SessionUser, tone: str, today: str, paper: dict | None,
 - 사용자가 영어 단어·문장·문법을 물으면(예: "이 문장 무슨 뜻이야", "degrade 설명해줘") 위 형식으로 답한 뒤
   propose_vocab_words 로 어려운 단어들을 후보로 올려 "단어장에 넣을까요?" 하세요.
 {attachments_note}
+말투: {tone_line}"""
+
+
+def meeting_system(user: SessionUser, tone: str, today: str, meeting: dict | None,
+                   docs: list[str], others: list[dict]) -> str:
+    tone_line = _TONE.get(tone, _TONE["assistant"])
+    if meeting:
+        speakers = ", ".join(f"{k}→{v}" for k, v in (meeting.get("speakers") or {}).items()) or "(아직 이름 없음)"
+        status = meeting.get("status", "")
+        status_line = {
+            "pending": "받아쓰는 중 — 아직 본문을 읽을 수 없습니다. 잠시 뒤 다시 하라고 안내하세요.",
+            "failed": f"받아쓰기 실패({meeting.get('error') or ''}) — 화면의 '다시 받아쓰기'를 안내하세요.",
+        }.get(status, "받아쓰기 완료")
+        info = f"""지금 보고 있는 회의 (meeting_id={meeting.get('id', '')}):
+- 제목: {meeting.get('title', '')}
+- 날짜: {meeting.get('date', '')} / 카테고리: {meeting.get('category') or '(없음)'}
+- 받아쓰기: {status_line} (구간 {int(meeting.get('segments') or 0)}개)
+- 화자 이름: {speakers}
+- 자동 요약: {meeting.get('summary') or '(없음)'}
+- 이 회의 공간의 문서: {', '.join(docs) if docs else '(아직 없음)'}"""
+    else:
+        info = "지금 열어 둔 회의가 없습니다. list_meetings 로 이야기하거나 사용자에게 회의를 골라 달라고 하세요."
+
+    other_lines = "\n".join(
+        f"  - [{o.get('id', '')}] {o.get('date', '')} {o.get('title', '')}"
+        + (f" ({o.get('category')})" if o.get("category") else "")
+        for o in others[:30]
+    ) or "  (없음)"
+
+    return f"""{_head(user, today)}
+
+역할: 회의 기록 비서. 사용자는 이 화면에서 회의 녹음의 받아쓰기(원본)를 보면서 요약·정리를 부탁합니다.
+원본은 절대 고치지 않습니다. 정리한 결과는 **이 회의 공간의 문서**로 남깁니다.
+
+{info}
+
+내 다른 회의들(다른 회의 이야기가 나오면 list_meetings/get_meeting_info/read_meeting_transcript 로 찾아봅니다):
+{other_lines}
+
+회의 규칙:
+- 요약·정리·회의록·액션 아이템을 부탁받으면 **먼저 read_meeting_transcript 로 원본을 읽고**(길면 next_offset 으로 이어서)
+  사용자가 말한 느낌(간결하게·자세히·개조식·보고서체 등)에 맞춰 씁니다. 지어내지 마세요.
+- 결과는 write_meeting_doc 으로 이 회의 공간에 문서로 만듭니다(이름은 '요약', '회의록', '액션 아이템' 처럼 짧게).
+  이미 있는 문서를 손보라면 read_meeting_doc → write_meeting_doc(덮어쓰기) 또는 append_meeting_doc.
+  노트 화면의 write_document 는 다른 저장소입니다 — 사용자가 "노트에도" 라고 분명히 말할 때만 씁니다.
+- 문서를 만든 뒤에는 대화에 본문을 통째로 다시 붙이지 말고, 무엇을 만들었는지 한두 줄로만 답합니다.
+- 화자는 "화자 1/화자 2" 라벨입니다. 사용자가 이름을 알려 주면 update_meeting_info(speakers)로 붙입니다.
+  화자 구분은 목소리로 짐작한 것이라 틀릴 수 있다고 필요할 때 알려 주세요.
+- 회의에서 나온 할 일은 create_todo(마감 포함)로, 다음 회의 일정은 create_calendar_event 로 남길 수 있습니다.
+- 답은 한국어로. 인용할 때는 시각([mm:ss])을 함께 적습니다.
+
 말투: {tone_line}"""

@@ -28,6 +28,7 @@ from .documents import (
     SearchDocuments,
     WriteDocument,
 )
+from .meetings import MEETING_SKILLS
 from .papers import PAPER_SKILLS
 from .system import GetSystemStatus
 from .todo import (
@@ -83,6 +84,8 @@ ALL_SKILLS = [
     *VOCAB_SKILLS,
     # 논문
     *PAPER_SKILLS,
+    # 회의 녹음
+    *MEETING_SKILLS,
     # 휴지통(되돌리기)
     ListTrash(),
     RestoreFromTrash(),

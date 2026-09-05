@@ -74,11 +74,19 @@ services:
   # 4단계: 포트포워딩 없이 외부 접속 (Cloudflare Tunnel)
   # 사용하려면: 대시보드에서 터널 생성 후 토큰을 .env의 CF_TUNNEL_TOKEN에 넣고
   #   docker compose --profile tunnel up -d
+  #
+  # SSH 도 같은 터널로 내보낸다. 대시보드 Public Hostname 에
+  #   ssh.<도메인>  →  ssh://host.docker.internal:22
+  # 를 추가하면 된다. host.docker.internal 이 라즈베리파이(호스트)의 sshd 를
+  # 가리키려면 아래 extra_hosts 가 필요하다(리눅스 도커는 기본으로 안 만든다).
+  # 클라이언트 쪽 설정은 README '외부 SSH 접속' 또는 대시보드 SSH 카드 참고.
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: server-tunnel
     restart: unless-stopped
     profiles: ["tunnel"]
     command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - frontend

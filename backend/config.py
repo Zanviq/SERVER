@@ -114,6 +114,12 @@ class Settings:
             if a.strip()
         ]
 
+        # ── 외부 SSH (Cloudflare Tunnel Public Hostname) ──
+        # 대시보드에 접속 설정을 보여 주기 위한 것. 비어 있으면 안내만 뜬다.
+        # 터널 라우팅 자체는 Cloudflare 대시보드에서 ssh://host.docker.internal:22 로 잡는다.
+        self.ssh_public_hostname: str = os.getenv("SSH_PUBLIC_HOSTNAME", "").strip()
+        self.ssh_user: str = os.getenv("SSH_USER", "").strip()
+
         # ── 운영/보안 ──
         self.debug: bool = os.getenv("DEBUG", "false").lower() in ("1", "true", "yes")
         self.max_upload_bytes: int = int(

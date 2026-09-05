@@ -5,12 +5,14 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import type { DateClickArg } from "@fullcalendar/interaction";
-import type { DatesSetArg, EventClickArg } from "@fullcalendar/core";
-import { Loader2, Bot } from "lucide-react";
+import type { DatesSetArg, DayCellContentArg, EventClickArg, EventContentArg } from "@fullcalendar/core";
+import { Loader2, Bot, NotebookPen } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { EventDialog, GCAL_COLORS, GCAL_COLOR_NAMES } from "../components/calendar/EventDialog";
+import { DiaryPanel } from "../components/calendar/DiaryPanel";
+import { DiaryCell } from "../components/calendar/DiaryShapes";
 import { ChatPanel } from "../components/ai/ChatPanel";
-import { api, CalEvent, Todo, TodoCategory } from "../lib/api";
+import { api, CalEvent, DiaryDay, DiaryShape, Todo, TodoCategory } from "../lib/api";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -45,16 +47,28 @@ function localISO(d: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
+const localDay = (d: Date) => localISO(d).slice(0, 10);
+
+/** 기록 보기의 달력 칸 — 도형 세 개만. FC 의 eventContent 는 JSX 를 그대로 받는다. */
+function renderDiaryCell(arg: EventContentArg) {
+  const p = arg.event.extendedProps as { body: DiaryShape; heart: DiaryShape; mind: DiaryShape; hasText: boolean };
+  return <DiaryCell body={p.body} heart={p.heart} mind={p.mind} hasText={p.hasText} />;
+}
 
 export function Calendar() {
   const s = useSettings((st) => st.settings);
   const navigate = useNavigate();
+  const calRef = useRef<FullCalendar>(null);
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [todoCats, setTodoCats] = useState<TodoCategory[]>([]);
   const [mode, setMode] = useState<CalMode>("events");
   // 기본은 '완료도 보임'. 지운 게 아니라 끝낸 것이라 흔적이 남아야 한다.
   const [showDone, setShowDone] = useState(true);
+  // '기록' 보기: 달력은 상태 도형만 그리고, 오른쪽은 AI 대신 상태·일기 패널이 된다.
+  const [diary, setDiary] = useState(false);
+  const [diaryDays, setDiaryDays] = useState<Record<string, DiaryDay>>({});
+  const [selectedDay, setSelectedDay] = useState(() => localDay(new Date()));
   const [dialog, setDialog] = useState<Partial<CalEvent> | null>(null);
   const [source, setSource] = useState("internal");
   const [loading, setLoading] = useState(false);
@@ -72,8 +86,10 @@ export function Calendar() {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      // 두 갈래를 함께 받아 둔다 — 토글할 때마다 왕복하면 화면이 깜빡인다.
-      const [evs, tds, cts] = await Promise.all([
+      // 세 갈래를 함께 받아 둔다 — 토글할 때마다 왕복하면 화면이 깜빡인다.
+      const from = range.current.from?.slice(0, 10) ?? localDay(new Date());
+      const to = range.current.to?.slice(0, 10) ?? from;
+      const [evs, tds, cts, dys] = await Promise.all([
         api.calEvents(range.current.from, range.current.to),
         api.todoList({
           from: range.current.from,
@@ -81,10 +97,12 @@ export function Calendar() {
           include_undated: false, // 기한 없는 할 일은 달력에 놓을 자리가 없다
         }),
         api.todoCategories(),
+        api.diaryRange(from, to),
       ]);
       setEvents(evs);
       setTodos(tds);
       setTodoCats(cts);
+      setDiaryDays(Object.fromEntries(dys.map((d) => [d.date, d])));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "이벤트 로드 실패");
     } finally {
@@ -103,6 +121,11 @@ export function Calendar() {
   };
 
   const onDateClick = (arg: DateClickArg) => {
+    // 기록 보기에서 칸을 누르면 그날을 고른다(오른쪽 패널이 그날로 바뀐다).
+    if (diary) {
+      setSelectedDay(arg.dateStr.slice(0, 10));
+      return;
+    }
     // 할 일 보기에서 빈 칸을 누르면 '일정'이 만들어져 엉뚱한 곳에 쌓인다.
     // 할 일은 할 일 화면에서 만든다.
     if (mode === "todos") return;
@@ -116,6 +139,10 @@ export function Calendar() {
 
   const onEventClick = (arg: EventClickArg) => {
     const id = arg.event.id;
+    if (id.startsWith("diary:")) {
+      setSelectedDay(id.slice("diary:".length));
+      return;
+    }
     if (id.startsWith("todo:")) {
       // 할 일 편집은 할 일 화면이 담당한다(상세 폼이 거기 있다)
       navigate("/todo");
@@ -214,9 +241,40 @@ export function Calendar() {
       };
     });
 
-  const fcEvents = mode === "events" ? eventItems : todoItems;
+  // 기록 보기: 기록이 있는 날마다 투명한 종일 이벤트 하나 — 칸에는 도형만 보인다.
+  const diaryItems = Object.values(diaryDays).map((d) => ({
+    id: `diary:${d.date}`,
+    start: d.date,
+    allDay: true,
+    backgroundColor: "transparent",
+    borderColor: "transparent",
+    classNames: ["fc-diary"],
+    extendedProps: { body: d.body, heart: d.heart, mind: d.mind, hasText: !!d.text.trim() },
+  }));
+
+  const fcEvents = diary ? diaryItems : mode === "events" ? eventItems : todoItems;
 
   const doneCount = todos.filter((t) => t.done).length;
+
+  // 기록은 달(月) 단위로만 본다 — 주·일 보기에서는 도형을 놓을 자리가 없다.
+  useEffect(() => {
+    if (diary) calRef.current?.getApi().changeView("dayGridMonth");
+  }, [diary]);
+
+  const diaryCellClass = useCallback(
+    (arg: DayCellContentArg) => (localDay(arg.date) === selectedDay ? ["fc-diary-selected"] : []),
+    [selectedDay],
+  );
+
+  const onDiaryChange = useCallback((entry: DiaryDay) => {
+    setDiaryDays((prev) => {
+      const next = { ...prev };
+      // 도형도 글도 없으면 서버가 그날을 지운다 — 달력에서도 뺀다
+      if (!entry.body && !entry.heart && !entry.mind && !entry.text.trim()) delete next[entry.date];
+      else next[entry.date] = entry;
+      return next;
+    });
+  }, []);
 
   // customButtons가 만든 버튼에 눈 아이콘을 심는다(FC는 text/icon만 받는다).
   useEffect(() => {
@@ -227,6 +285,13 @@ export function Calendar() {
     btn.setAttribute("title", showDone ? "완료한 할 일 숨기기" : "완료한 할 일 보기");
     btn.setAttribute("aria-pressed", String(!showDone));
   });
+  // '기록' 토글은 켜져 있을 때 보기 버튼처럼 칠한다(FC는 view 버튼에만 active 를 준다).
+  useEffect(() => {
+    const btn = document.querySelector<HTMLButtonElement>(".fc-diaryToggle-button");
+    if (!btn) return;
+    btn.classList.toggle("fc-button-active", diary);
+    btn.setAttribute("aria-pressed", String(diary));
+  });
 
   return (
     <Shell
@@ -234,7 +299,9 @@ export function Calendar() {
       actions={
         <div className="flex items-center gap-2">
           {loading && <Loader2 size={14} className="animate-spin text-fg-muted" />}
-          {mode === "todos" ? (
+          {diary ? (
+            <span className="badge">기록 {Object.keys(diaryDays).length}일</span>
+          ) : mode === "todos" ? (
             <span className="badge">
               할 일 {todos.length}개{showDone ? "" : ` (완료 ${doneCount}개 숨김)`}
             </span>
@@ -251,6 +318,7 @@ export function Calendar() {
         <div className="card fc-server flex min-w-0 flex-col p-4 h-[70vh] lg:h-view-9 lg:flex-1">
           <div className="min-h-0 flex-1">
             <FullCalendar
+              ref={calRef}
               plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
               initialView={defaultView}
               firstDay={weekStart}
@@ -268,22 +336,28 @@ export function Calendar() {
                   hint: "완료한 할 일 표시",
                   click: () => setShowDone((v) => !v),
                 },
+                diaryToggle: {
+                  text: "기록",
+                  hint: "상태·일기 기록 보기",
+                  click: () => setDiary((v) => !v),
+                },
               }}
               // 토글은 '<> 오늘' 바로 옆에 둔다. 눈 아이콘은 할 일 보기일 때만 나온다.
+              // 기록 보기에서는 일정/할 일 전환과 주·일 보기를 감춘다(달만 본다).
               headerToolbar={
                 isNarrow
                   ? {
-                      left: `prev,next ${mode === "todos" ? "modeToggle,doneToggle" : "modeToggle"}`,
+                      left: `prev,next ${diary ? "diaryToggle" : mode === "todos" ? "modeToggle,doneToggle,diaryToggle" : "modeToggle,diaryToggle"}`,
                       center: "title",
                       right: "today",
                     }
                   : {
-                      left: `prev,next today ${mode === "todos" ? "modeToggle,doneToggle" : "modeToggle"}`,
+                      left: `prev,next today ${diary ? "diaryToggle" : mode === "todos" ? "modeToggle,doneToggle,diaryToggle" : "modeToggle,diaryToggle"}`,
                       center: "title",
-                      right: "dayGridMonth,timeGridWeek,timeGridDay",
+                      right: diary ? "" : "dayGridMonth,timeGridWeek,timeGridDay",
                     }
               }
-              footerToolbar={isNarrow ? { center: "dayGridMonth,timeGridWeek,timeGridDay" } : undefined}
+              footerToolbar={isNarrow && !diary ? { center: "dayGridMonth,timeGridWeek,timeGridDay" } : undefined}
               buttonText={{ today: "오늘", month: "월", week: "주", day: "일" }}
               // ko 로케일은 날짜를 "26일"로 낸다. 좁은 칸에서는 두 줄로 깨지므로
               // 숫자만 남긴다(요일은 열 머리글에 이미 있다).
@@ -291,6 +365,8 @@ export function Calendar() {
               // "+3 more"는 좁은 칸에서 "+3 mo"로 잘린다. 숫자만 보여준다.
               moreLinkContent={isNarrow ? (a) => `+${a.num}` : undefined}
               events={fcEvents}
+              eventContent={diary ? renderDiaryCell : undefined}
+              dayCellClassNames={diary ? diaryCellClass : undefined}
               datesSet={onDatesSet}
               dateClick={onDateClick}
               eventClick={onEventClick}
@@ -303,38 +379,54 @@ export function Calendar() {
           </div>
         </div>
         <div className="card flex h-[70vh] w-full flex-col p-4 lg:h-view-9 lg:w-[380px] lg:shrink-0">
-          <div className="mb-2 flex items-center gap-2 border-b border-line/50 pb-2 text-sm font-semibold">
-            <Bot size={16} className="text-accent" /> AI 일정 비서
-          </div>
-          <ChatPanel
-            className="flex-1"
-            suggestions={CAL_SUGGESTIONS}
-            onToolSuccess={reload}
-            transformMessage={(t) =>
-              chatColor ? `${t}\n(이 일정의 색상은 '${GCAL_COLOR_NAMES[chatColor]}'으로 설정해줘)` : t
-            }
-            composerTop={
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button
-                  onClick={() => setChatColor(null)}
-                  title="자동(규칙/기본색)"
-                  className={`rounded-full border px-2 py-0.5 text-[11px] ${chatColor === null ? "border-accent bg-accent-muted text-accent-fg" : "border-line text-fg-muted"}`}
-                >
-                  자동
-                </button>
-                {Object.entries(GCAL_COLORS).map(([id, hex]) => (
-                  <button
-                    key={id}
-                    onClick={() => setChatColor(id)}
-                    aria-label={GCAL_COLOR_NAMES[id]}
-                    title={GCAL_COLOR_NAMES[id]}
-                    className={`h-5 w-5 rounded-full border-2 ${chatColor === id ? "border-fg" : "border-transparent"}`}
-                    style={{ background: hex }}
-                  />
-                ))}
+          {diary ? (
+            <>
+              <div className="mb-3 flex items-center gap-2 border-b border-line/50 pb-2 text-sm font-semibold">
+                <NotebookPen size={16} className="text-accent" /> 상태 기록
               </div>
-            }
-          />
+              <DiaryPanel
+                date={selectedDay}
+                entry={diaryDays[selectedDay]}
+                events={events}
+                onChange={onDiaryChange}
+              />
+            </>
+          ) : (
+            <>
+              <div className="mb-2 flex items-center gap-2 border-b border-line/50 pb-2 text-sm font-semibold">
+                <Bot size={16} className="text-accent" /> AI 일정 비서
+              </div>
+              <ChatPanel
+                className="flex-1"
+                suggestions={CAL_SUGGESTIONS}
+                onToolSuccess={reload}
+                transformMessage={(t) =>
+                  chatColor ? `${t}\n(이 일정의 색상은 '${GCAL_COLOR_NAMES[chatColor]}'으로 설정해줘)` : t
+                }
+                composerTop={
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      onClick={() => setChatColor(null)}
+                      title="자동(규칙/기본색)"
+                      className={`rounded-full border px-2 py-0.5 text-[11px] ${chatColor === null ? "border-accent bg-accent-muted text-accent-fg" : "border-line text-fg-muted"}`}
+                    >
+                      자동
+                    </button>
+                    {Object.entries(GCAL_COLORS).map(([id, hex]) => (
+                      <button
+                        key={id}
+                        onClick={() => setChatColor(id)}
+                        aria-label={GCAL_COLOR_NAMES[id]}
+                        title={GCAL_COLOR_NAMES[id]}
+                        className={`h-5 w-5 rounded-full border-2 ${chatColor === id ? "border-fg" : "border-transparent"}`}
+                        style={{ background: hex }}
+                      />
+                    ))}
+                  </div>
+                }
+              />
+            </>
+          )}
         </div>
       </div>
       <EventDialog

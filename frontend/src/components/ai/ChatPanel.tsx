@@ -75,6 +75,16 @@ const SKILL_LABEL: Record<string, string> = {
   read_paper_text: "논문 본문 읽기",
   search_paper_chats: "지난 대화 검색",
   set_paper_notes: "논문 메모",
+  // 회의
+  list_meetings: "회의 목록",
+  get_meeting_info: "회의 정보",
+  read_meeting_transcript: "받아쓰기 읽기",
+  list_meeting_docs: "회의 문서 목록",
+  read_meeting_doc: "회의 문서 읽기",
+  write_meeting_doc: "회의 문서 작성",
+  append_meeting_doc: "회의 문서 덧붙이기",
+  delete_meeting_doc: "회의 문서 삭제",
+  update_meeting_info: "회의 정보 수정",
   // 폴더·휴지통
   list_folders: "폴더 목록",
   list_trash: "휴지통 목록",
@@ -125,10 +135,11 @@ interface ChatPanelProps {
   composerTop?: ReactNode;
   /** 전송 전 메시지 변환 (예: 색상 힌트 추가) */
   transformMessage?: (text: string) => string;
-  /** 비서("") · 영어 학습 · 논문. 모드가 있으면 서버가 대화를 들고 있다. */
-  mode?: "" | "english" | "paper";
+  /** 비서("") · 영어 학습 · 논문 · 회의. 모드가 있으면 서버가 대화를 들고 있다. */
+  mode?: "" | "english" | "paper" | "meeting";
   paperId?: string;
-  /** 서버 대화 공간("english" | "paper:<id>"). 바뀌면 그 공간의 기록을 다시 받는다. */
+  meetingId?: string;
+  /** 서버 대화 공간("english" | "paper:<id>" | "meeting:<id>"). 바뀌면 그 공간의 기록을 다시 받는다. */
   space?: string;
   attachments?: ChatAttachment[];
   selections?: ChatSelection[];
@@ -161,6 +172,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   transformMessage,
   mode = "",
   paperId = "",
+  meetingId = "",
   space,
   attachments = [],
   selections = [],
@@ -266,7 +278,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
         } else if (e.type === "error") {
           patchLast((m) => ({ ...m, text: `오류: ${e.message}` }));
         }
-      }, { mode, paper_id: paperId, ...sent });
+      }, { mode, paper_id: paperId, meeting_id: meetingId, ...sent });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "AI 오류");
       patchLast((m) => ({ ...m, text: "요청 처리 중 오류가 발생했습니다." }));
@@ -274,7 +286,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
       patchLast((m) => ({ ...m, pending: false }));
       setBusy(false);
     }
-  }, [attachments, busy, hasContext, messages, mode, onClearContext, onToolSuccess, paperId, selections, transformMessage]);
+  }, [attachments, busy, hasContext, messages, meetingId, mode, onClearContext, onToolSuccess, paperId, selections, transformMessage]);
 
   const clear = useCallback(async () => {
     if (space) await api.aiSpaceClear(space);

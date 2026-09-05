@@ -1,0 +1,194 @@
+import { useEffect, useRef, useState } from "react";
+import { Loader2, Mic, Square, Upload } from "lucide-react";
+import { Modal } from "../ui/Modal";
+import { toast } from "../../store/toast";
+
+interface Props {
+  open: boolean;
+  onClose: () => void;
+  /** 이미 있는 카테고리(자동완성) */
+  categories: string[];
+  /** 녹음 파일과 함께 제목·카테고리·날짜를 넘긴다. 올리기가 끝날 때까지 기다린다. */
+  onSave: (file: File, meta: { title: string; category: string; day: string }) => Promise<void>;
+}
+
+const today = () => {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
+/** 브라우저가 낼 수 있는 형식 중 서버가 받는 것. 크롬·파이어폭스는 webm/opus, 사파리는 mp4. */
+function pickMime(): { mime: string; ext: string } {
+  const cands: [string, string][] = [
+    ["audio/webm;codecs=opus", "webm"],
+    ["audio/webm", "webm"],
+    ["audio/mp4", "m4a"],
+    ["audio/ogg;codecs=opus", "ogg"],
+  ];
+  for (const [mime, ext] of cands) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(mime)) return { mime, ext };
+  }
+  return { mime: "", ext: "webm" };
+}
+
+const fmt = (sec: number) => {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+};
+
+type Phase = "idle" | "recording" | "done";
+
+/**
+ * 마이크로 회의를 녹음해 올린다. 멈추면 들어 본 뒤 저장할 수 있고,
+ * 저장하면 서버가 뒤에서 받아쓰기·요약을 만든다.
+ */
+export function Recorder({ open, onClose, categories, onSave }: Props) {
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState("");
+  const [day, setDay] = useState(today);
+  const [elapsed, setElapsed] = useState(0);
+  const [blob, setBlob] = useState<Blob | null>(null);
+  const [saving, setSaving] = useState(false);
+  const rec = useRef<MediaRecorder | null>(null);
+  const stream = useRef<MediaStream | null>(null);
+  const chunks = useRef<Blob[]>([]);
+  const timer = useRef(0);
+  const extRef = useRef("webm");
+  const previewUrl = useRef("");
+
+  const stopStream = () => {
+    stream.current?.getTracks().forEach((t) => t.stop());
+    stream.current = null;
+  };
+
+  // 닫히면 모두 되돌린다 — 마이크는 반드시 놓아야 한다(브라우저 탭에 빨간 점이 남는다)
+  useEffect(() => {
+    if (open) return;
+    window.clearInterval(timer.current);
+    if (rec.current && rec.current.state !== "inactive") rec.current.stop();
+    rec.current = null;
+    stopStream();
+    if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
+    previewUrl.current = "";
+    setPhase("idle");
+    setBlob(null);
+    setElapsed(0);
+    setTitle("");
+    setSaving(false);
+  }, [open]);
+  useEffect(() => () => { stopStream(); window.clearInterval(timer.current); }, []);
+
+  const start = async () => {
+    if (typeof MediaRecorder === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      toast.error("이 브라우저는 녹음을 지원하지 않습니다. 파일 올리기를 쓰세요.");
+      return;
+    }
+    try {
+      stream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      toast.error("마이크를 쓸 수 없습니다. 권한을 확인하세요.");
+      return;
+    }
+    const { mime, ext } = pickMime();
+    extRef.current = ext;
+    const r = new MediaRecorder(stream.current, mime ? { mimeType: mime } : undefined);
+    chunks.current = [];
+    r.ondataavailable = (e) => { if (e.data.size > 0) chunks.current.push(e.data); };
+    r.onstop = () => {
+      const b = new Blob(chunks.current, { type: r.mimeType || mime || "audio/webm" });
+      if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
+      previewUrl.current = URL.createObjectURL(b);
+      setBlob(b);
+      setPhase("done");
+      stopStream();
+    };
+    rec.current = r;
+    r.start(1000); // 1초마다 조각을 받아 둔다 — 탭이 죽어도 그때까지는 남는다
+    setElapsed(0);
+    setPhase("recording");
+    const t0 = Date.now();
+    timer.current = window.setInterval(() => setElapsed((Date.now() - t0) / 1000), 500);
+  };
+
+  const stop = () => {
+    window.clearInterval(timer.current);
+    if (rec.current && rec.current.state !== "inactive") rec.current.stop();
+  };
+
+  const save = async () => {
+    if (!blob) return;
+    setSaving(true);
+    try {
+      const file = new File([blob], `recording.${extRef.current}`, { type: blob.type });
+      await onSave(file, { title: title.trim(), category: category.trim(), day });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="회의 녹음" width="max-w-md">
+      <div className="space-y-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <label className="block sm:col-span-2">
+            <span className="label">제목</span>
+            <input className="input mt-1" value={title} onChange={(e) => setTitle(e.target.value)}
+              placeholder={`${day} 회의`} />
+          </label>
+          <label className="block">
+            <span className="label">카테고리</span>
+            <input className="input mt-1" value={category} onChange={(e) => setCategory(e.target.value)}
+              placeholder="예: 팀 회의" list="meeting-categories" />
+            <datalist id="meeting-categories">
+              {categories.map((c) => <option key={c} value={c} />)}
+            </datalist>
+          </label>
+          <label className="block">
+            <span className="label">날짜</span>
+            <input type="date" className="input mt-1" value={day} onChange={(e) => setDay(e.target.value)} />
+          </label>
+        </div>
+
+        <div className="flex flex-col items-center gap-3 rounded-lg border border-line bg-subtle p-4">
+          <div className={`font-mono text-2xl tabular-nums ${phase === "recording" ? "text-danger" : "text-fg"}`}>
+            {fmt(elapsed)}
+          </div>
+          {phase === "idle" && (
+            <button type="button" onClick={start} className="btn btn-primary gap-2">
+              <Mic size={16} /> 녹음 시작
+            </button>
+          )}
+          {phase === "recording" && (
+            <button type="button" onClick={stop} className="btn btn-danger gap-2">
+              <Square size={14} /> 멈추기
+            </button>
+          )}
+          {phase === "done" && blob && (
+            <>
+              <audio controls src={previewUrl.current} className="w-full" />
+              <div className="flex gap-2">
+                <button type="button" onClick={() => { setBlob(null); setPhase("idle"); setElapsed(0); }}
+                  className="btn btn-secondary" disabled={saving}>
+                  다시 녹음
+                </button>
+                <button type="button" onClick={save} className="btn btn-primary gap-2" disabled={saving}>
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                  {saving ? "올리는 중…" : "저장하고 받아쓰기"}
+                </button>
+              </div>
+            </>
+          )}
+          <p className="text-center text-[11.5px] text-fg-subtle">
+            {phase === "recording"
+              ? "녹음 중입니다. 멈추면 들어 본 뒤 저장할 수 있습니다."
+              : "저장하면 AI가 화자를 나눠 받아쓰고 요약합니다."}
+          </p>
+        </div>
+      </div>
+    </Modal>
+  );
+}

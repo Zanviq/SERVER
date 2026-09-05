@@ -12,6 +12,7 @@ kind 는 휴지통을 갈래별로 보기 위한 것이다.
   - "todo"     : 할 일. data/<id>/todo.json 에 내용을 적어 둔다(원래 id 되살림).
   - "vocab"    : 단어장 항목. data/<id>/vocab.json.
   - "paper"    : 논문. data/<id>/ 아래에 pdf·메타·대화가 폴더째 들어 있다.
+  - "meeting"  : 회의 녹음. data/<id>/meeting 아래에 녹음·받아쓰기·문서·대화가 폴더째.
 kind 가 없는 예전 엔트리는 문서로 본다(기존 휴지통이 비지 않도록).
 
 .trash 는 개인 루트 바로 아래(data/ 형제)에 있으므로
@@ -40,10 +41,12 @@ KIND_EVENT = "event"
 KIND_TODO = "todo"
 KIND_VOCAB = "vocab"
 KIND_PAPER = "paper"
+KIND_MEETING = "meeting"
 EVENT_FILE = "event.json"
 TODO_FILE = "todo.json"
 VOCAB_FILE = "vocab.json"
 PAPER_DIRNAME = "paper"
+MEETING_DIRNAME = "meeting"
 
 
 def entry_kind(entry: dict) -> str:
@@ -185,11 +188,36 @@ def move_vocab_to_trash(word: dict, user: SessionUser, settings: Settings) -> st
     return entry["id"]
 
 
-def move_paper_to_trash(paper_dir: Path, meta: dict, user: SessionUser, settings: Settings) -> str:
-    """논문 폴더(pdf·메타·대화)를 통째로 휴지통에 옮긴다.
+def _move_folder_to_trash(src_dir: Path, entry: dict, dirname: str,
+                          user: SessionUser, settings: Settings) -> str:
+    """id 폴더를 통째로 휴지통에 옮긴다(논문·회의).
 
     문서와 같은 이유로 이동과 인덱스 기록을 한 락 안에서 한다.
     """
+    entry["is_dir"] = True
+    root = _trash_root(user, settings)
+    idx_path = _index_path(user, settings)
+    with lock_for(idx_path):
+        dest_dir = root / "data" / entry["id"]
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / dirname
+        shutil.move(str(src_dir), str(dest))
+        try:
+            entries = read_json(idx_path, [])
+            entries.append(entry)
+            write_atomic(idx_path, entries)
+        except BaseException:
+            try:
+                shutil.move(str(dest), str(src_dir))
+                shutil.rmtree(dest_dir, ignore_errors=True)
+            except OSError:
+                pass
+            raise
+    return entry["id"]
+
+
+def move_paper_to_trash(paper_dir: Path, meta: dict, user: SessionUser, settings: Settings) -> str:
+    """논문 폴더(pdf·메타·대화)를 통째로 휴지통에 옮긴다."""
     if not paper_dir.is_dir():
         raise HTTPException(status_code=404, detail="논문을 찾을 수 없습니다.")
     entry = _entry(
@@ -197,26 +225,20 @@ def move_paper_to_trash(paper_dir: Path, meta: dict, user: SessionUser, settings
         paper_id=str(meta.get("id") or paper_dir.name),
         paper_filename=str(meta.get("filename") or ""),
     )
-    entry["is_dir"] = True
-    root = _trash_root(user, settings)
-    idx_path = _index_path(user, settings)
-    with lock_for(idx_path):
-        dest_dir = root / "data" / entry["id"]
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / PAPER_DIRNAME
-        shutil.move(str(paper_dir), str(dest))
-        try:
-            entries = read_json(idx_path, [])
-            entries.append(entry)
-            write_atomic(idx_path, entries)
-        except BaseException:
-            try:
-                shutil.move(str(dest), str(paper_dir))
-                shutil.rmtree(dest_dir, ignore_errors=True)
-            except OSError:
-                pass
-            raise
-    return entry["id"]
+    return _move_folder_to_trash(paper_dir, entry, PAPER_DIRNAME, user, settings)
+
+
+def move_meeting_to_trash(meeting_dir: Path, meta: dict, user: SessionUser, settings: Settings) -> str:
+    """회의 폴더(녹음·받아쓰기·문서·대화)를 통째로 휴지통에 옮긴다."""
+    if not meeting_dir.is_dir():
+        raise HTTPException(status_code=404, detail="회의를 찾을 수 없습니다.")
+    entry = _entry(
+        KIND_MEETING, str(meta.get("title") or meta.get("filename") or "(제목 없음)"),
+        meeting_id=str(meta.get("id") or meeting_dir.name),
+        meeting_date=str(meta.get("date") or ""),
+        meeting_category=str(meta.get("category") or ""),
+    )
+    return _move_folder_to_trash(meeting_dir, entry, MEETING_DIRNAME, user, settings)
 
 
 def list_trash(user: SessionUser, settings: Settings, kind: str = "") -> list[dict]:
@@ -232,7 +254,7 @@ def list_trash(user: SessionUser, settings: Settings, kind: str = "") -> list[di
 def counts_by_kind(user: SessionUser, settings: Settings) -> dict:
     """갈래별 개수 — 휴지통 탭에 숫자를 띄우기 위한 것."""
     entries = read_json(_index_path(user, settings), [])
-    out = {KIND_DOCUMENT: 0, KIND_EVENT: 0, KIND_TODO: 0, KIND_VOCAB: 0, KIND_PAPER: 0}
+    out = {KIND_DOCUMENT: 0, KIND_EVENT: 0, KIND_TODO: 0, KIND_VOCAB: 0, KIND_PAPER: 0, KIND_MEETING: 0}
     for e in entries:
         k = entry_kind(e)
         out[k] = out.get(k, 0) + 1
@@ -292,6 +314,21 @@ def restore(entry_id: str, user: SessionUser, settings: Settings) -> dict:
             write_atomic(idx_path, entries)
             return {"ok": True, "kind": KIND_PAPER, "paper": restored,
                     "paper_id": restored.get("id", ""), "restored_to": restored.get("title", "")}
+
+        if entry_kind(entry) == KIND_MEETING:
+            from . import meeting_store
+
+            src = _trash_root(user, settings) / "data" / entry_id / MEETING_DIRNAME
+            if not src.is_dir():
+                entries = [e for e in entries if e.get("id") != entry_id]
+                write_atomic(idx_path, entries)
+                raise HTTPException(status_code=410, detail="복원할 회의 파일이 없습니다.")
+            restored = meeting_store.restore_dir(user, settings, src, str(entry.get("meeting_id") or ""))
+            shutil.rmtree(src.parent, ignore_errors=True)
+            entries = [e for e in entries if e.get("id") != entry_id]
+            write_atomic(idx_path, entries)
+            return {"ok": True, "kind": KIND_MEETING, "meeting": restored,
+                    "meeting_id": restored.get("id", ""), "restored_to": restored.get("title", "")}
 
         if entry_kind(entry) == KIND_VOCAB:
             src = _trash_root(user, settings) / "data" / entry_id / VOCAB_FILE

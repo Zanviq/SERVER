@@ -69,3 +69,32 @@ def system_stats():
         uptime_seconds=time.time() - psutil.boot_time(),
         load_avg=load_avg,
     )
+
+
+@router.get("/ssh")
+def ssh_access():
+    """외부 SSH 접속 안내(주인 전용). Cloudflare Tunnel Public Hostname 으로 22번을 내보낸다.
+
+    서버는 cloudflared 가 밖으로 연결만 하고 포트를 열지 않는다. 클라이언트는
+    `cloudflared access ssh` 를 ProxyCommand 로 써서 터널을 통해 들어온다.
+    """
+    settings = get_settings()
+    host = settings.ssh_public_hostname
+    user = settings.ssh_user or "<계정>"
+    config = ""
+    if host:
+        config = (
+            f"Host {host}\n"
+            f"    ProxyCommand cloudflared access ssh --hostname %h\n"
+            f"    User {user}\n"
+            f"    IdentityFile ~/.ssh/id_ed25519\n"
+            f"    IdentitiesOnly yes\n"
+        )
+    return {
+        "configured": bool(host),
+        "hostname": host,
+        "user": settings.ssh_user,
+        "service": "ssh://host.docker.internal:22",
+        "ssh_config": config,
+        "command": f"ssh {host}" if host else "",
+    }

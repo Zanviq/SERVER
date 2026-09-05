@@ -8,6 +8,7 @@
   - "english" 영어 학습 화면. 대화가 서버(chats/english.json)에 남고 history 는 무시한다.
   - "paper"   논문 화면. paper_id 가 필요하고 대화는 그 논문 폴더에 남는다.
               드래그한 영역 이미지(attachments)와 선택한 글(selections)이 함께 온다.
+  - "meeting" 회의 화면. meeting_id 가 필요하고 대화는 그 회의 폴더에 남는다.
 """
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from .. import chat_store, paper_store, vocab_store
+from .. import chat_store, meeting_store, paper_store, vocab_store
 from ..ai import models as ai_models
 from ..ai import modes, orchestrator
 from ..auth import SessionUser, require_session
@@ -68,6 +69,7 @@ class ChatRequest(BaseModel):
     history: list[ChatTurn] = []
     mode: str = ""
     paper_id: str = ""
+    meeting_id: str = ""
     attachments: list[Attachment] = []
     selections: list[Selection] = []
 
@@ -88,13 +90,17 @@ def models(
 
 
 def _space_path(space: str, user: SessionUser, settings: Settings) -> Path:
-    """대화 공간 이름 → 파일. 'english' 또는 'paper:<id>'."""
+    """대화 공간 이름 → 파일. 'english' · 'paper:<id>' · 'meeting:<id>'."""
     if space == "english":
         return chat_store.english_path(user, settings)
     if space.startswith("paper:"):
         pid = space[len("paper:"):]
         paper_store.get_paper(user, settings, pid)  # 없으면 404
         return paper_store.chat_path(user, settings, pid)
+    if space.startswith("meeting:"):
+        mid = space[len("meeting:"):]
+        meeting_store.get_meeting(user, settings, mid)  # 없으면 404
+        return meeting_store.chat_path(user, settings, mid)
     raise HTTPException(status_code=404, detail="없는 대화 공간입니다.")
 
 
@@ -197,6 +203,7 @@ def chat(
     system = ""
     persist_path: Path | None = None
     paper_id = ""
+    meeting_id = ""
     vocab_tags: list[str] = []
     prefs = orchestrator._user_ai_prefs(user, settings)
 
@@ -220,6 +227,15 @@ def chat(
         system = modes.paper_system(user, prefs["tone"], today, paper, others, note)
         if paper and paper.get("title"):
             vocab_tags = [str(paper["title"])[:200]]
+    elif spec and spec.name == "meeting":
+        meeting_id = (body.meeting_id or "").strip()
+        meeting = meeting_store.get_meeting(user, settings, meeting_id) if meeting_id else None
+        persist_path = meeting_store.chat_path(user, settings, meeting_id) if meeting_id else None
+        docs = [d["name"] for d in meeting_store.list_docs(user, settings, meeting_id)] if meeting_id else []
+        others = [meeting_store.brief(m) for m in meeting_store.list_meetings(user, settings)
+                  if m.get("id") != meeting_id]
+        system = modes.meeting_system(user, prefs["tone"], today, meeting, docs, others)
+        attachments = []
     else:
         # 논문 화면 밖에서는 이미지가 올 이유가 없다(비서 프롬프트는 이미지를 모른다)
         attachments = []
@@ -255,7 +271,7 @@ def chat(
             for ev in orchestrator.run(
                 user, settings, full_message, today, history=history,
                 mode=mode, system=system, attachments=attachments,
-                paper_id=paper_id, vocab_tags=vocab_tags,
+                paper_id=paper_id, vocab_tags=vocab_tags, meeting_id=meeting_id,
             ):
                 if ev.get("type") == "text":
                     final_text = str(ev.get("text") or "")

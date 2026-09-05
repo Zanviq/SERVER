@@ -268,6 +268,34 @@
     text-decoration: line-through;
   }
 
+  /* 기록 보기: 날마다 투명한 종일 이벤트 하나에 도형 세 개(육체·마음·정신)만.
+     고른 도형은 보라(accent), 안 고른 축은 짧은 선. 누른 날은 테두리로 표시. */
+  .fc-server .fc-diary {
+    box-shadow: none;
+    cursor: pointer;
+  }
+  .fc-server .fc-diary .fc-event-main {
+    display: flex;
+    justify-content: center;
+    padding: 2px 0;
+  }
+  .fc-server .fc-diary-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: rgb(var(--accent));
+  }
+  .fc-server .fc-diary-dot {
+    display: block;
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background: rgb(var(--fg-subtle));
+  }
+  .fc-server .fc-diary-selected {
+    box-shadow: inset 0 0 0 2px rgb(var(--accent));
+  }
+
   /* 좁은 화면: 320px에서 한 칸이 40px 남짓이라 기본 여백·글자로는
      "26일"이 두 줄로 깨지고 +N 칩이 날짜 숫자를 덮는다. */
   @media (max-width: 639px) {
@@ -309,6 +337,14 @@
     .fc-server .fc-daygrid-more-link {
       font-size: 10px;
       padding: 1px 2px;
+    }
+    /* 기록 도형은 40px 칸에 셋이 들어가야 한다 */
+    .fc-server .fc-diary-row {
+      gap: 1px;
+    }
+    .fc-server .fc-diary-row svg {
+      width: 11px;
+      height: 11px;
     }
 
     /* '+N' 팝오버는 좁은 화면에서 제목을 읽고 고르는 **유일한** 곳이다.

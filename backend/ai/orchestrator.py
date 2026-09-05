@@ -101,6 +101,7 @@ def run(
     attachments: list[dict] | None = None,
     paper_id: str = "",
     vocab_tags: list[str] | None = None,
+    meeting_id: str = "",
 ) -> Iterator[dict]:
     """ReAct 루프 실행. 이벤트 dict를 순차적으로 yield.
 
@@ -114,7 +115,8 @@ def run(
 
     registry = registry or default_registry()
     ctx = SkillContext(user=user, settings=settings, today=today,
-                       mode=mode, paper_id=paper_id, vocab_tags=list(vocab_tags or []))
+                       mode=mode, paper_id=paper_id, vocab_tags=list(vocab_tags or []),
+                       meeting_id=meeting_id)
     spec = get_mode(mode) if mode else None
     catalog = [s for s in registry.build_catalog() if spec is None or spec.allows(s["name"])]
 

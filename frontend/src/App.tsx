@@ -19,6 +19,7 @@ const loaders = {
   assistant: () => import("./pages/Assistant"),
   english: () => import("./pages/English"),
   papers: () => import("./pages/Papers"),
+  meetings: () => import("./pages/Meetings"),
   settings: () => import("./pages/Settings"),
   profile: () => import("./pages/Profile"),
   trash: () => import("./pages/Trash"),
@@ -32,6 +33,7 @@ const Todo = lazyChunk(() => loaders.todo().then((m) => ({ default: m.Todo })));
 const Assistant = lazyChunk(() => loaders.assistant().then((m) => ({ default: m.Assistant })));
 const English = lazyChunk(() => loaders.english().then((m) => ({ default: m.English })));
 const Papers = lazyChunk(() => loaders.papers().then((m) => ({ default: m.Papers })));
+const Meetings = lazyChunk(() => loaders.meetings().then((m) => ({ default: m.Meetings })));
 const Settings = lazyChunk(() => loaders.settings().then((m) => ({ default: m.Settings })));
 const Profile = lazyChunk(() => loaders.profile().then((m) => ({ default: m.Profile })));
 const Trash = lazyChunk(() => loaders.trash().then((m) => ({ default: m.Trash })));
@@ -69,6 +71,7 @@ function AuthedRoutes() {
         <Route path="/assistant" element={<Assistant />} />
         <Route path="/english" element={<English />} />
         <Route path="/papers" element={<Papers />} />
+        <Route path="/meetings" element={<Meetings />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/trash" element={<Trash />} />

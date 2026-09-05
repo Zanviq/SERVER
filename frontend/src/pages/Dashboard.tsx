@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { SystemMonitor } from "../components/system/SystemMonitor";
+import { SshCard } from "../components/system/SshCard";
 import { api, NoteSummary, CalEvent } from "../lib/api";
 import { useAuth } from "../store/auth";
 
@@ -121,6 +122,9 @@ export function Dashboard() {
             </ul>
           </section>
         </div>
+
+        {/* 외부 SSH 접속 — 대시보드는 주인 전용이라 여기에만 둔다 */}
+        <SshCard />
       </div>
     </Shell>
   );
