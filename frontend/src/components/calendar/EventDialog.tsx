@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { CalEvent } from "../../lib/api";
@@ -53,6 +53,8 @@ export function EventDialog({
   const [interval, setInterval] = useState(1);
   const [until, setUntil] = useState("");
   const [remind, setRemind] = useState(0);
+  /** 열 때 채운 값. 닫을 때 "고친 것이 있는가"를 이것과 비교한다. */
+  const seedRef = useRef("");
 
   useEffect(() => {
     if (!initial) return;
@@ -68,9 +70,23 @@ export function EventDialog({
     setInterval(initial.interval ?? 1);
     setUntil(initial.recur_until ?? "");
     setRemind(initial.remind_minutes ?? 0);
+    seedRef.current = JSON.stringify([
+      initial.title ?? "", initial.description ?? "", initial.allDay ?? false,
+      toLocal(initial.start ?? ""), toLocal(initial.end ?? initial.start ?? ""),
+      initial.color || "2", initial.recurrence ?? "none", initial.interval ?? 1,
+      initial.recur_until ?? "", initial.remind_minutes ?? 0,
+    ]);
   }, [initial]);
 
   const isEdit = !!initial?.id;
+
+  /** 적다 만 일정을 Esc 한 번으로 잃지 않게. 손댄 것이 없으면 그냥 닫는다. */
+  const guardedClose = () => {
+    const now = JSON.stringify([title, desc, allDay, start, end, color,
+                                recurrence, interval, until, remind]);
+    if (now !== seedRef.current && !confirm("적은 내용이 사라집니다. 닫을까요?")) return;
+    onClose();
+  };
 
   const submit = () => {
     if (!title.trim() || !start) return;
@@ -90,7 +106,7 @@ export function EventDialog({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={isEdit ? "일정 수정" : "새 일정"} width="max-w-md">
+    <Modal open={open} onClose={guardedClose} title={isEdit ? "일정 수정" : "새 일정"} width="max-w-md">
       <div className="space-y-3">
         <div>
           <label className="label mb-1 block">제목</label>
@@ -194,7 +210,7 @@ export function EventDialog({
             </button>
           ) : <span />}
           <div className="flex gap-2">
-            <button onClick={onClose} disabled={busy} className="btn btn-ghost">취소</button>
+            <button onClick={guardedClose} disabled={busy} className="btn btn-ghost">취소</button>
             {/* 왕복이 끝날 때까지 아무 표시가 없으면 멈춘 것처럼 보이고,
                 연타하면 같은 일정이 두 번 만들어진다 — 잠그고 진행을 보여준다. */}
             <button onClick={submit} disabled={busy} className="btn btn-primary">

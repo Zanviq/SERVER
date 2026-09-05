@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { api, VocabExample, VocabInput, VocabKind, VocabWord } from "../../lib/api";
@@ -38,22 +38,46 @@ export function WordEditModal({ open, onClose, word, defaultTags = [], onSaved }
   // 태그 기본값은 **내용**으로 비교한다 — 배열 정체성으로 두면 부모가 다시 그릴
   // 때마다(백그라운드 정리가 끝났을 때 등) 입력 중인 폼이 초기화된다.
   const tagSeed = defaultTags.join(", ");
+  /** 열 때 채워 넣는 값들. 닫을 때 "고친 것이 있는가"를 이것과 비교해 판단한다. */
+  const seedOf = () => [
+    word?.word ?? "", word?.kind ?? "", word?.pos ?? "", word?.pronunciation ?? "",
+    (word?.meanings ?? []).join("\n"), (word?.synonyms ?? []).join(", "),
+    (word?.antonyms ?? []).join(", "), word?.english_def ?? "", word?.examples ?? [],
+    word?.forms ?? "", word?.notes ?? "", word ? word.tags.join(", ") : tagSeed,
+    word?.context ?? "",
+  ] as const;
+  const seedRef = useRef("");
+
   useEffect(() => {
     if (!open) return;
-    setW(word?.word ?? "");
-    setKind(word?.kind ?? "");
-    setPos(word?.pos ?? "");
-    setPron(word?.pronunciation ?? "");
-    setMeanings((word?.meanings ?? []).join("\n"));
-    setSyn((word?.synonyms ?? []).join(", "));
-    setAnt((word?.antonyms ?? []).join(", "));
-    setDef(word?.english_def ?? "");
-    setExamples(word?.examples ?? []);
-    setForms(word?.forms ?? "");
-    setNotes(word?.notes ?? "");
-    setTags(word ? word.tags.join(", ") : tagSeed);
-    setContext(word?.context ?? "");
+    const s = seedOf();
+    setW(s[0] as string);
+    setKind(s[1] as VocabKind);
+    setPos(s[2] as string);
+    setPron(s[3] as string);
+    setMeanings(s[4] as string);
+    setSyn(s[5] as string);
+    setAnt(s[6] as string);
+    setDef(s[7] as string);
+    setExamples(s[8] as VocabExample[]);
+    setForms(s[9] as string);
+    setNotes(s[10] as string);
+    setTags(s[11] as string);
+    setContext(s[12] as string);
+    seedRef.current = JSON.stringify(s);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, word, tagSeed]);
+
+  /** 손댄 것이 있으면 되묻고 닫는다.
+   *
+   *  이 창은 Esc·바깥 클릭으로도 닫힌다. 뜻·예문·문법을 한참 손으로 적어 넣다가
+   *  그렇게 닫히면 전부 사라진다(밑글도 없다 — 이건 문서가 아니라 폼이다). */
+  const guardedClose = () => {
+    const now = JSON.stringify([w, kind, pos, pron, meanings, syn, ant, def, examples,
+                                forms, notes, tags, context]);
+    if (now !== seedRef.current && !confirm("적은 내용이 사라집니다. 닫을까요?")) return;
+    onClose();
+  };
 
   const save = async () => {
     if (!w.trim()) { toast.error("단어를 입력하세요"); return; }
@@ -85,7 +109,7 @@ export function WordEditModal({ open, onClose, word, defaultTags = [], onSaved }
     setExamples((arr) => arr.map((e, j) => (j === i ? { ...e, ...patch } : e)));
 
   return (
-    <Modal open={open} onClose={onClose} title={word ? `${word.word} 수정` : "단어 추가"} width="max-w-xl">
+    <Modal open={open} onClose={guardedClose} title={word ? `${word.word} 수정` : "단어 추가"} width="max-w-xl">
       <div className="space-y-3">
         <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2">
           <div>
@@ -168,7 +192,7 @@ export function WordEditModal({ open, onClose, word, defaultTags = [], onSaved }
           <input className="input" value={context} onChange={(e) => setContext(e.target.value)} placeholder="이 단어가 나온 원문 문장" />
         </div>
         <div className="flex justify-end gap-2 pt-1">
-          <button type="button" className="btn btn-secondary" onClick={onClose}>취소</button>
+          <button type="button" className="btn btn-secondary" onClick={guardedClose}>취소</button>
           <button type="button" className="btn btn-primary" onClick={save} disabled={busy}>{word ? "저장" : "추가"}</button>
         </div>
       </div>
