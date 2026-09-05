@@ -6483,6 +6483,35 @@ def test_every_mode_can_search_outside_its_own_screen():
         assert mode.allows("search_everything"), name
 
 
+def test_paper_search_reaches_into_the_body_text():
+    """논문을 찾는 사람은 대개 "그 논문에서 읽은 그 말"을 기억한다.
+
+    제목·요약만 보면 정작 본문에 있는 낱말로는 못 찾는다 — 어느 논문이었는지
+    이미 아는 경우에만 쓸모가 있었다.
+    """
+    from backend import paper_store, search_all
+
+    u, _ctx, st = _todo_ctx("papertext")
+    meta = paper_store.register(u, st, filename="body.pdf", size=100)
+    pid = meta["id"]
+    paper_store.update_meta(u, st, pid, {"title": "완전히 다른 제목", "summary": "요약에도 없다"})
+    tp = paper_store.text_path(u, st, pid)
+    tp.parent.mkdir(parents=True, exist_ok=True)
+    tp.write_text(
+        "[[page 1]]\n앞부분입니다.\n\n[[page 7]]\n여기에 초임계이산화탄소 라는 말이 나온다.",
+        encoding="utf-8")
+
+    hits = [h for h in search_all.search(u, st, "초임계이산화탄소") if h["kind"] == "paper"]
+    assert hits, "본문에 있는 말을 못 찾았다"
+    assert hits[0]["title"] == "완전히 다른 제목", hits[0]
+    assert "7쪽" in hits[0]["where"], hits[0]        # 몇 쪽인지도 알려 준다
+    assert "초임계이산화탄소" in hits[0]["snippet"], hits[0]
+
+    # 제목이 맞는 논문은 본문을 읽지 않고도 위에 온다
+    top = search_all.search(u, st, "완전히 다른 제목")
+    assert top and top[0]["kind"] == "paper" and top[0]["score"] >= 60, top[:1]
+
+
 def test_meeting_docs_use_the_same_conflict_rule_as_notes():
     """회의 문서는 사람과 AI 가 함께 쓰는 자리다 — 말없이 덮이면 안 된다."""
     import time as _time

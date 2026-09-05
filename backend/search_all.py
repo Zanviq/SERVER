@@ -92,11 +92,23 @@ def _notes(user: SessionUser, settings: Settings, q: str) -> list[dict]:
     return out
 
 
+#: 본문까지 뒤질 때 한 번에 읽을 총량. 논문 본문은 편당 수십~수백 KB 라
+#: 제한이 없으면 검색 한 번이 수십 MB 를 읽는다.
+_PAPER_TEXT_BUDGET = 4_000_000
+
+
 def _papers(user: SessionUser, settings: Settings, q: str) -> list[dict]:
+    """제목·요약에 없으면 **본문까지** 뒤진다.
+
+    논문을 찾는 사람은 대개 "그 논문에서 읽은 그 말"을 기억한다. 제목과 요약만
+    보면 정작 본문에 있는 낱말로는 못 찾아서, 어느 논문이었는지 아는 경우에만
+    쓸모가 있었다. 쪽 표식([[page n]])이 있으면 몇 쪽인지도 함께 준다.
+    """
     from backend import paper_store
 
     ql = q.lower()
     out = []
+    unmatched = []
     for p in paper_store.list_papers(user, settings):
         title = str(p.get("title") or "")
         body = _flat(p, ("summary", "abstract", "authors", "keywords", "venue",
@@ -106,7 +118,37 @@ def _papers(user: SessionUser, settings: Settings, q: str) -> list[dict]:
                             _snippet(str(p.get("summary") or ""), q),
                             str(p.get("year") or ""), str(p.get("category") or "논문"),
                             _score(q, title, body)))
+        else:
+            unmatched.append(p)
+
+    budget = _PAPER_TEXT_BUDGET
+    for p in unmatched:
+        if budget <= 0:
+            break
+        text = paper_store.read_text(user, settings, str(p.get("id") or ""))
+        budget -= len(text)
+        i = text.lower().find(ql)
+        if i < 0:
+            continue
+        page = _page_at(text, i)
+        out.append(_hit(
+            "paper", str(p.get("id") or ""), str(p.get("title") or ""),
+            _snippet(text[max(0, i - 200): i + 200], q),
+            str(p.get("year") or ""),
+            f"본문 {page}쪽" if page else "본문",
+            15.0,   # 본문 일치는 제목·요약 일치보다 아래
+        ))
     return out
+
+
+def _page_at(text: str, index: int) -> int:
+    """추출 본문의 `[[page n]]` 표식으로 그 위치의 쪽수를 찾는다. 없으면 0."""
+    import re
+
+    last = 0
+    for m in re.finditer(r"\[\[page (\d+)\]\]", text[:index]):
+        last = int(m.group(1))
+    return last
 
 
 def _meetings(user: SessionUser, settings: Settings, q: str) -> list[dict]:
