@@ -293,6 +293,7 @@ export const api = {
 
   // ── 논문 ──
   paperList: () => req<Paper[]>("/api/papers"),
+  paperCategories: () => req<{ categories: string[] }>("/api/papers/categories"),
   paperGet: (id: string) => req<Paper>(`/api/papers/${encodeURIComponent(id)}`),
   paperUpload: (file: File) => {
     const fd = new FormData();
@@ -714,6 +715,8 @@ export interface Paper {
   error: string;
   extracted_at: number;
   title: string;
+  /** 폴더처럼 쓰는 분류. 빈 문자열이면 '분류 없음'으로 묶인다. */
+  category: string;
   authors: string[];
   year: string;
   venue: string;

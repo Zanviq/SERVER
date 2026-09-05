@@ -22,6 +22,7 @@ export function ThreePane({
   storageKey,
   showDetail = false,
   side = "left",
+  collapsed = false,
 }: {
   children: ReactNode;
   storageKey: string;
@@ -29,6 +30,11 @@ export function ThreePane({
   showDetail?: boolean;
   /** 폭이 고정된 첫 자식(목록)을 어느 쪽에 둘지. 영어 학습은 단어장이 오른쪽이다. */
   side?: "left" | "right";
+  /**
+   * 고정 패널(목록)을 접는다 — 가운데가 그만큼 넓어진다. 데스크톱에서만 뜻이 있다
+   * (모바일은 원래 한 번에 하나만 보여 준다). 접는 버튼은 화면이 갖는다.
+   */
+  collapsed?: boolean;
 }) {
   const [left, center, right] = Children.toArray(children);
   const [treeW, setTreeW] = useState<number>(() => load(storageKey).treeW ?? 260);
@@ -112,8 +118,10 @@ export function ThreePane({
 
   // 자식이 2개면 트리 + 메인(단일 패널), 3개면 트리 + 에디터 + 미리보기.
   const twoPane = right == null;
+  // 접을 때 언마운트하지 않고 감추기만 한다 — 목록의 검색어·펼친 폴더가 날아가면 안 된다.
   const fixed = (
-    <div className="flex min-w-0 shrink-0 flex-col [&>*]:min-h-0 [&>*]:flex-1" style={{ width: treeW }}>
+    <div className={`flex min-w-0 shrink-0 flex-col [&>*]:min-h-0 [&>*]:flex-1 ${collapsed ? "hidden" : ""}`}
+      style={collapsed ? undefined : { width: treeW }}>
       {left}
     </div>
   );
@@ -121,7 +129,7 @@ export function ThreePane({
     <div ref={wrapRef} className={`flex h-view-9 items-stretch ${side === "right" ? "flex-row-reverse" : ""}`}>
       {/* 각 래퍼를 flex-col로 만들고 자식 카드를 flex-1/min-h-0로 강제 → 카드가 패널 높이를 꽉 채움 */}
       {fixed}
-      <Handle onPointerDown={treeDown} />
+      {!collapsed && <Handle onPointerDown={treeDown} />}
       {twoPane ? (
         <div className="flex min-w-0 flex-1 flex-col [&>*]:min-h-0 [&>*]:flex-1">
           {center}

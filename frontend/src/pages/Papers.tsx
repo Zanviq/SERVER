@@ -1,7 +1,10 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { BookMarked, FileText, Info, List, MessageSquare, Trash2 } from "lucide-react";
+import {
+  BookMarked, FileText, Info, List, MessageSquare, PanelLeftClose, PanelLeftOpen, Trash2,
+} from "lucide-react";
 import { Shell } from "../components/layout/Shell";
+import { Modal } from "../components/ui/Modal";
 import { ThreePane } from "../components/notes/ThreePane";
 import { ChatPanel, ChatPanelHandle, ChatAttachment, ChatSelection } from "../components/ai/ChatPanel";
 import { PaperList, paperTitle } from "../components/papers/PaperList";
@@ -20,6 +23,8 @@ const SUGGESTIONS = [
 
 type Tab = "chat" | "info" | "vocab";
 const uid = () => Math.random().toString(36).slice(2, 10);
+/** 목록을 접어 둔 상태는 화면을 나갔다 와도 유지한다(PDF 를 넓게 보려고 접는다). */
+const COLLAPSE_KEY = "papers.listCollapsed.v1";
 
 /**
  * 논문 리뷰: 왼쪽 목록 · 가운데 PDF · 오른쪽 AI(대화 / 정보 / 단어장).
@@ -27,6 +32,11 @@ const uid = () => Math.random().toString(36).slice(2, 10);
  */
 export function Papers() {
   const [papers, setPapers] = useState<Paper[] | null>(null);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSE_KEY) === "1");
+  // "새 폴더…" — 이름을 받아 그 논문을 옮긴다(폴더는 이름일 뿐이라 논문이 있어야 남는다)
+  const [newFolderFor, setNewFolderFor] = useState<Paper | null>(null);
+  const [newFolder, setNewFolder] = useState("");
   const [params, setParams] = useSearchParams();
   const selectedId = params.get("p") ?? "";
   const selected = papers?.find((p) => p.id === selectedId) ?? null;
@@ -50,13 +60,22 @@ export function Papers() {
 
   const load = useCallback(async () => {
     try {
-      setPapers(await api.paperList());
+      const [list, cats] = await Promise.all([api.paperList(), api.paperCategories()]);
+      setPapers(list);
+      setCategories(cats.categories);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "논문 목록을 못 받았습니다");
       setPapers([]);
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
+
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((v) => {
+      localStorage.setItem(COLLAPSE_KEY, v ? "0" : "1");
+      return !v;
+    });
+  }, []);
 
   // 추출 중인 논문이 있으면 잠깐씩 다시 받는다(끝나면 제목·요약이 채워진다)
   const anyPending = !!papers?.some((p) => p.status === "pending");
@@ -94,9 +113,26 @@ export function Papers() {
     try {
       const next = await api.paperUpdate(p.id, body);
       patch(p.id, next);
+      // 폴더가 바뀌면 목록의 폴더 목록도 달라진다(빈 폴더는 사라진다)
+      if (body.category !== undefined) {
+        api.paperCategories().then((c) => setCategories(c.categories)).catch(() => {});
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "저장 실패");
     }
+  };
+
+  const move = (p: Paper, category: string) => {
+    void update(p, { category });
+    toast.ok(category ? `"${category}" 폴더로 옮겼습니다` : "폴더에서 뺐습니다");
+  };
+
+  const createFolder = () => {
+    const name = newFolder.trim();
+    const target = newFolderFor;
+    setNewFolderFor(null);
+    setNewFolder("");
+    if (name && target) move(target, name);
   };
 
   const remove = async (p: Paper) => {
@@ -184,6 +220,11 @@ export function Papers() {
           <List size={14} /> 목록
         </button>
       )}
+      <button onClick={toggleCollapsed} className="btn btn-ghost hidden h-8 px-2 lg:inline-flex"
+        title={collapsed ? "논문 목록 펼치기" : "논문 목록 접기 (PDF를 넓게)"}
+        aria-label={collapsed ? "논문 목록 펼치기" : "논문 목록 접기"} aria-pressed={collapsed}>
+        {collapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
+      </button>
       {selected && (
         <button onClick={clearChat} className="btn btn-ghost h-8 px-2" title="이 논문의 대화 비우기" aria-label="대화 비우기">
           <Trash2 size={15} />
@@ -194,9 +235,10 @@ export function Papers() {
 
   return (
     <Shell title="논문" actions={actions}>
-      <ThreePane storageKey="papers.panes.v1" showDetail={!!selected}>
-        <PaperList papers={papers ?? []} selectedId={selectedId} onSelect={select} onUpload={upload}
+      <ThreePane storageKey="papers.panes.v1" showDetail={!!selected} collapsed={collapsed}>
+        <PaperList papers={papers ?? []} categories={categories} selectedId={selectedId} onSelect={select} onUpload={upload}
           onStar={(p) => update(p, { starred: !p.starred })} onDelete={remove} onRetry={retry}
+          onMove={move} onNewCategory={(p) => { setNewFolderFor(p); setNewFolder(p.category); }}
           uploading={uploading} className="h-view-11 lg:h-auto" />
 
         {selected ? (
@@ -239,7 +281,7 @@ export function Papers() {
           </div>
           {tab === "info" && (
             selected ? (
-              <PaperInfo paper={selected} onUpdate={(b) => update(selected, b)} onAsk={ask} onRetry={() => retry(selected)} />
+              <PaperInfo paper={selected} categories={categories} onUpdate={(b) => update(selected, b)} onAsk={ask} onRetry={() => retry(selected)} />
             ) : <div className="flex flex-1 items-center justify-center text-[12.5px] text-fg-muted">논문을 고르세요</div>
           )}
           {tab === "vocab" && (
@@ -249,6 +291,21 @@ export function Papers() {
           )}
         </div>
       </ThreePane>
+
+      <Modal open={!!newFolderFor} onClose={() => setNewFolderFor(null)} title="새 폴더로 옮기기" width="max-w-sm">
+        <div className="space-y-3">
+          <input className="input" value={newFolder} autoFocus placeholder="예: 강화학습, 세미나, 2026-1학기"
+            onChange={(e) => setNewFolder(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") createFolder(); }} />
+          <p className="text-[12px] text-fg-muted">
+            폴더는 이름일 뿐입니다 — 논문이 하나도 없는 폴더는 목록에서 저절로 사라집니다.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn btn-secondary" onClick={() => setNewFolderFor(null)}>취소</button>
+            <button type="button" className="btn btn-primary" onClick={createFolder} disabled={!newFolder.trim()}>옮기기</button>
+          </div>
+        </div>
+      </Modal>
     </Shell>
   );
 }

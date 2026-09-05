@@ -5510,6 +5510,38 @@ def test_paper_title_change_follows_into_vocab_tags():
     assert vocab_store.find_by_word(u, s, "transformer")["tags"] == ["Attention Is All You Need"]
 
 
+def test_paper_category_folders_and_filename_rename():
+    """분류(폴더)는 논문에서 모으고, 파일 이름은 고칠 수 있되 경로가 되면 안 된다."""
+    from backend import paper_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="papercat", display_name="PC", expires_at=0, remaining=0)
+    a = paper_store.register(u, s, "attention.pdf", 10)
+    b = paper_store.register(u, s, "bert.pdf", 10)
+    assert a["category"] == ""
+
+    paper_store.update_meta(u, s, a["id"], {"category": " 트랜스포머 "})
+    paper_store.update_meta(u, s, b["id"], {"category": "트랜스포머"})
+    assert paper_store.get_paper(u, s, a["id"])["category"] == "트랜스포머"
+    # 폴더 목록은 따로 저장하지 않는다 — 논문에서 모으므로 빈 폴더가 남지 않는다
+    assert paper_store.categories(u, s) == ["트랜스포머"]
+    paper_store.update_meta(u, s, b["id"], {"category": ""})
+    assert paper_store.get_paper(u, s, b["id"])["category"] == ""
+    assert paper_store.brief(paper_store.get_paper(u, s, a["id"]))["category"] == "트랜스포머"
+    assert [p["id"] for p in paper_store.search(u, s, "트랜스포머")] == [a["id"]]
+
+    # 파일 이름: 확장자를 지키고, 경로 조각으로 폴더를 벗어날 수 없다
+    paper_store.update_meta(u, s, a["id"], {"filename": "어텐션 논문"})
+    assert paper_store.get_paper(u, s, a["id"])["filename"] == "어텐션 논문.pdf"
+    paper_store.update_meta(u, s, a["id"], {"filename": "../../etc/passwd.pdf"})
+    got = paper_store.get_paper(u, s, a["id"])["filename"]
+    assert "/" not in got and "\\" not in got and ".." not in got, got
+    paper_store.update_meta(u, s, a["id"], {"filename": ""})  # 빈 이름은 무시
+    assert paper_store.get_paper(u, s, a["id"])["filename"] == got
+
+
 # ── 논문 ────────────────────────────────────────────────────────────
 
 def _tiny_pdf(text: str = "Hello paper") -> bytes:

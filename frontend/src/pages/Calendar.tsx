@@ -24,8 +24,19 @@ const CAL_SUGGESTIONS = [
   "이번 달 할 일 뭐 남았어?",
 ];
 
-/** 달력에 무엇을 그릴지. 일정과 할 일은 저장소가 달라 섞어 보면 헷갈린다. */
-type CalMode = "events" | "todos";
+/**
+ * 달력에 무엇을 그릴지. 일정·할 일·기록은 저장소가 달라 섞어 보면 헷갈린다.
+ * 셋을 한 덩어리 버튼으로 늘어놓고 그중 하나를 고른다.
+ */
+type CalView = "events" | "todos" | "diary";
+
+const VIEW_BUTTONS: { key: CalView; button: string; text: string; hint: string }[] = [
+  { key: "events", button: "viewEvents", text: "일정", hint: "일정 보기" },
+  { key: "todos", button: "viewTodos", text: "할 일", hint: "마감이 있는 할 일 보기" },
+  { key: "diary", button: "viewDiary", text: "기록", hint: "상태·일기 기록 보기" },
+];
+/** FullCalendar 툴바 문법: ','로 이으면 한 덩어리, 공백이면 떨어진 버튼. */
+const VIEW_GROUP = VIEW_BUTTONS.map((b) => b.button).join(",");
 
 // FullCalendar의 customButtons는 text/icon만 받는다(임의 DOM 불가). 눈 아이콘은
 // 버튼이 붙은 뒤 DOM에 직접 넣는다 — 매 렌더 다시 넣으므로 FC가 다시 그려도 남는다.
@@ -62,11 +73,11 @@ export function Calendar() {
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [todoCats, setTodoCats] = useState<TodoCategory[]>([]);
-  const [mode, setMode] = useState<CalMode>("events");
+  const [view, setView] = useState<CalView>("events");
   // 기본은 '완료도 보임'. 지운 게 아니라 끝낸 것이라 흔적이 남아야 한다.
   const [showDone, setShowDone] = useState(true);
   // '기록' 보기: 달력은 상태 도형만 그리고, 오른쪽은 AI 대신 상태·일기 패널이 된다.
-  const [diary, setDiary] = useState(false);
+  const diary = view === "diary";
   const [diaryDays, setDiaryDays] = useState<Record<string, DiaryDay>>({});
   const [selectedDay, setSelectedDay] = useState(() => localDay(new Date()));
   const [dialog, setDialog] = useState<Partial<CalEvent> | null>(null);
@@ -128,7 +139,7 @@ export function Calendar() {
     }
     // 할 일 보기에서 빈 칸을 누르면 '일정'이 만들어져 엉뚱한 곳에 쌓인다.
     // 할 일은 할 일 화면에서 만든다.
-    if (mode === "todos") return;
+    if (view === "todos") return;
     setDialog({
       start: `${arg.dateStr}T09:00:00`,
       end: `${arg.dateStr}T10:00:00`,
@@ -252,7 +263,7 @@ export function Calendar() {
     extendedProps: { body: d.body, heart: d.heart, mind: d.mind, hasText: !!d.text.trim() },
   }));
 
-  const fcEvents = diary ? diaryItems : mode === "events" ? eventItems : todoItems;
+  const fcEvents = view === "diary" ? diaryItems : view === "events" ? eventItems : todoItems;
 
   const doneCount = todos.filter((t) => t.done).length;
 
@@ -285,12 +296,14 @@ export function Calendar() {
     btn.setAttribute("title", showDone ? "완료한 할 일 숨기기" : "완료한 할 일 보기");
     btn.setAttribute("aria-pressed", String(!showDone));
   });
-  // '기록' 토글은 켜져 있을 때 보기 버튼처럼 칠한다(FC는 view 버튼에만 active 를 준다).
+  // 셋 중 지금 보고 있는 것을 보기 버튼처럼 칠한다(FC는 view 버튼에만 active 를 준다).
   useEffect(() => {
-    const btn = document.querySelector<HTMLButtonElement>(".fc-diaryToggle-button");
-    if (!btn) return;
-    btn.classList.toggle("fc-button-active", diary);
-    btn.setAttribute("aria-pressed", String(diary));
+    for (const b of VIEW_BUTTONS) {
+      const btn = document.querySelector<HTMLButtonElement>(`.fc-${b.button}-button`);
+      if (!btn) continue;
+      btn.classList.toggle("fc-button-active", view === b.key);
+      btn.setAttribute("aria-pressed", String(view === b.key));
+    }
   });
 
   return (
@@ -301,7 +314,7 @@ export function Calendar() {
           {loading && <Loader2 size={14} className="animate-spin text-fg-muted" />}
           {diary ? (
             <span className="badge">기록 {Object.keys(diaryDays).length}일</span>
-          ) : mode === "todos" ? (
+          ) : view === "todos" ? (
             <span className="badge">
               할 일 {todos.length}개{showDone ? "" : ` (완료 ${doneCount}개 숨김)`}
             </span>
@@ -326,38 +339,43 @@ export function Calendar() {
               // 좁은 화면에서 한 줄에 7개를 밀어넣으면 제목과 버튼이 서로 뭉갠다.
               // 모바일은 두 줄로 나눈다(위: 이동+제목, 아래: 보기 전환).
               customButtons={{
-                modeToggle: {
-                  text: mode === "events" ? "일정" : "할 일",
-                  hint: "일정 / 할 일 전환",
-                  click: () => setMode((m) => (m === "events" ? "todos" : "events")),
-                },
+                // 셋을 한 덩어리로 늘어놓고 하나를 고른다(FC 는 ','로 이으면 한 그룹이 된다).
+                ...Object.fromEntries(VIEW_BUTTONS.map((b) => [b.button, {
+                  text: b.text,
+                  hint: b.hint,
+                  click: () => setView(b.key),
+                }])),
                 doneToggle: {
                   text: "완료",
                   hint: "완료한 할 일 표시",
                   click: () => setShowDone((v) => !v),
                 },
-                diaryToggle: {
-                  text: "기록",
-                  hint: "상태·일기 기록 보기",
-                  click: () => setDiary((v) => !v),
-                },
               }}
-              // 토글은 '<> 오늘' 바로 옆에 둔다. 눈 아이콘은 할 일 보기일 때만 나온다.
-              // 기록 보기에서는 일정/할 일 전환과 주·일 보기를 감춘다(달만 본다).
+              // 보기 세 개는 '<> 오늘' 옆에 한 덩어리로, 눈 아이콘은 그 오른쪽에
+              // **떨어진 독립 버튼**으로 둔다(공백이 그룹을 나눈다). 눈은 할 일 보기에서만.
+              // 기록 보기에서는 주·일 보기를 감춘다(도형을 놓을 자리가 없다).
               headerToolbar={
                 isNarrow
                   ? {
-                      left: `prev,next ${diary ? "diaryToggle" : mode === "todos" ? "modeToggle,doneToggle,diaryToggle" : "modeToggle,diaryToggle"}`,
+                      // 좁은 화면은 위 줄에 이동·제목만 — 보기 버튼까지 넣으면 서로 뭉갠다
+                      left: "prev,next",
                       center: "title",
                       right: "today",
                     }
                   : {
-                      left: `prev,next today ${diary ? "diaryToggle" : mode === "todos" ? "modeToggle,doneToggle,diaryToggle" : "modeToggle,diaryToggle"}`,
+                      left: `prev,next today ${VIEW_GROUP}${view === "todos" ? " doneToggle" : ""}`,
                       center: "title",
                       right: diary ? "" : "dayGridMonth,timeGridWeek,timeGridDay",
                     }
               }
-              footerToolbar={isNarrow && !diary ? { center: "dayGridMonth,timeGridWeek,timeGridDay" } : undefined}
+              footerToolbar={
+                isNarrow
+                  ? {
+                      left: `${VIEW_GROUP}${view === "todos" ? " doneToggle" : ""}`,
+                      right: diary ? "" : "dayGridMonth,timeGridWeek,timeGridDay",
+                    }
+                  : undefined
+              }
               buttonText={{ today: "오늘", month: "월", week: "주", day: "일" }}
               // ko 로케일은 날짜를 "26일"로 낸다. 좁은 칸에서는 두 줄로 깨지므로
               // 숫자만 남긴다(요일은 열 머리글에 이미 있다).

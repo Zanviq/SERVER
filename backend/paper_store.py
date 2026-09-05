@@ -146,7 +146,17 @@ def _new_meta(filename: str, size: int) -> dict:
         "notes": "",
         "read_page": 1,
         "tags": [],
+        # 폴더처럼 쓰는 분류. 빈 문자열이면 '분류 없음'으로 묶인다.
+        "category": "",
     }
+
+
+def pdf_filename(name: str) -> str:
+    """사용자가 고친 파일 이름. 확장자는 .pdf 로 지킨다(내려받을 때 열려야 한다)."""
+    base = sanitize_filename(name)
+    if not base.lower().endswith(".pdf"):
+        base = f"{base}.pdf"
+    return base[:200]
 
 
 # ── 조회 ─────────────────────────────────────────────────────────────
@@ -156,6 +166,16 @@ def list_papers(user: SessionUser, settings: Settings) -> list[dict]:
     # 별표 → 최근 순
     papers.sort(key=lambda p: (not p.get("starred"), -float(p.get("updated_at") or 0)))
     return papers
+
+
+def categories(user: SessionUser, settings: Settings) -> list[str]:
+    """쓰이고 있는 분류 이름. 따로 저장하지 않고 논문에서 모은다(어긋날 일이 없다)."""
+    out: list[str] = []
+    for p in _load(user, settings):
+        c = _s(p.get("category"), MAX_SHORT)
+        if c and c.lower() not in {o.lower() for o in out}:
+            out.append(c)
+    return sorted(out, key=str.lower)
 
 
 def get_paper(user: SessionUser, settings: Settings, pid: str) -> dict:
@@ -211,9 +231,12 @@ def update_meta(user: SessionUser, settings: Settings, pid: str, patch: dict) ->
             raise HTTPException(status_code=404, detail="논문을 찾을 수 없습니다.")
         p = dict(papers[i])
         old_title = str(p.get("title") or "")
-        for k in ("title", "year", "venue"):
+        for k in ("title", "year", "venue", "category"):
             if k in patch and patch[k] is not None:
                 p[k] = _s(patch[k], MAX_SHORT)
+        # 파일 이름은 메타일 뿐이다(실물은 언제나 paper.pdf) — 내려받을 때 쓰인다
+        if patch.get("filename"):
+            p["filename"] = pdf_filename(patch["filename"])
         for k in ("abstract", "summary", "methods", "limitations", "notes", "error"):
             if k in patch and patch[k] is not None:
                 p[k] = _s(patch[k], MAX_TEXT * 2 if k == "notes" else MAX_TEXT)
@@ -326,6 +349,7 @@ def search(user: SessionUser, settings: Settings, query: str, limit: int = 20) -
             str(p.get("title", "")), " ".join(p.get("authors") or []), str(p.get("abstract", "")),
             str(p.get("summary", "")), " ".join(p.get("keywords") or []),
             " ".join(p.get("key_findings") or []), str(p.get("notes", "")),
+            str(p.get("category", "")),
         ]).lower()
         if q in hay:
             out.append(p)
@@ -339,6 +363,7 @@ def brief(p: dict) -> dict:
     return {
         "id": p.get("id", ""),
         "title": p.get("title", ""),
+        "category": p.get("category", ""),
         "authors": list(p.get("authors") or [])[:6],
         "year": p.get("year", ""),
         "venue": p.get("venue", ""),

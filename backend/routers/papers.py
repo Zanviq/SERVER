@@ -20,6 +20,10 @@ MAX_PDF_BYTES = 100 * 1024 * 1024
 
 class PaperPatch(BaseModel):
     title: str | None = None
+    #: 폴더처럼 쓰는 분류. 빈 문자열이면 '분류 없음'으로 돌아간다.
+    category: str | None = None
+    #: 내려받을 때 쓰는 파일 이름(실물은 언제나 paper.pdf)
+    filename: str | None = None
     authors: list[str] | None = None
     year: str | None = None
     venue: str | None = None
@@ -51,6 +55,15 @@ def list_papers(
     papers = paper_store.list_papers(user, settings)
     _requeue_stale(user, settings, papers)
     return papers
+
+
+@router.get("/categories")
+def list_categories(
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """쓰이고 있는 분류 이름(자동완성용). '/{pid}' 보다 먼저 잡혀야 한다."""
+    return {"categories": paper_store.categories(user, settings)}
 
 
 @router.post("/upload")

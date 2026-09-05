@@ -1,11 +1,13 @@
 import { ReactNode, useEffect, useState } from "react";
-import { AlertCircle, ChevronDown, ChevronRight, Loader2, Pencil, RefreshCw, Sparkles, Star } from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronRight, FolderClosed, Loader2, Pencil, RefreshCw, Sparkles, Star } from "lucide-react";
 import { Paper } from "../../lib/api";
 import { formatBytes } from "../../lib/format";
 import { paperTitle } from "./PaperList";
 
 interface Props {
   paper: Paper;
+  /** 쓰이고 있는 폴더 이름(자동완성) */
+  categories?: string[];
   onUpdate: (patch: Partial<Paper>) => Promise<void> | void;
   /** 정보 화면에서 바로 묻기(키워드·섹션 클릭) */
   onAsk: (text: string) => void;
@@ -21,15 +23,26 @@ const QUICK = [
 ];
 
 /** 오른쪽 "정보" 탭 — AI가 뽑아 둔 메타데이터·요약, 그리고 내 메모. */
-export function PaperInfo({ paper: p, onUpdate, onAsk, onRetry }: Props) {
+export function PaperInfo({ paper: p, categories = [], onUpdate, onAsk, onRetry }: Props) {
   const [notes, setNotes] = useState(p.notes);
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(p.title);
+  const [category, setCategory] = useState(p.category);
+  const [filename, setFilename] = useState(p.filename);
   useEffect(() => { setNotes(p.notes); setTitle(p.title); setEditingTitle(false); }, [p.id, p.notes, p.title]);
+  useEffect(() => { setCategory(p.category); setFilename(p.filename); }, [p.id, p.category, p.filename]);
 
   const saveTitle = () => {
     setEditingTitle(false);
     if (title.trim() && title.trim() !== p.title) void onUpdate({ title: title.trim() });
+  };
+  const saveCategory = () => {
+    if (category.trim() !== p.category) void onUpdate({ category: category.trim() });
+  };
+  const saveFilename = () => {
+    const next = filename.trim();
+    if (!next) { setFilename(p.filename); return; }
+    if (next !== p.filename) void onUpdate({ filename: next });
   };
 
   return (
@@ -53,7 +66,33 @@ export function PaperInfo({ paper: p, onUpdate, onAsk, onRetry }: Props) {
             {p.authors.join(", ")}{p.authors.length > 0 && (p.year || p.venue) ? " · " : ""}{[p.year, p.venue].filter(Boolean).join(", ")}
           </p>
         )}
-        <p className="mt-0.5 text-[11px] text-fg-subtle">{p.filename} · {formatBytes(p.size)}{p.pages ? ` · ${p.pages}쪽` : ""}</p>
+        <p className="mt-0.5 text-[11px] text-fg-subtle">{formatBytes(p.size)}{p.pages ? ` · ${p.pages}쪽` : ""}</p>
+      </div>
+
+      {/* 폴더와 파일 이름 — 목록에서 어디에 놓일지, 내려받을 때 무엇으로 저장될지 */}
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="block">
+          <span className="label mb-1 flex items-center gap-1"><FolderClosed size={11} /> 폴더</span>
+          <input className="input h-8 text-[12.5px]" value={category} list="paper-categories"
+            placeholder="분류 없음" aria-label="폴더"
+            onChange={(e) => setCategory(e.target.value)} onBlur={saveCategory}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key === "Escape") { setCategory(p.category); e.currentTarget.blur(); }
+            }} />
+          <datalist id="paper-categories">
+            {categories.map((c) => <option key={c} value={c} />)}
+          </datalist>
+        </label>
+        <label className="block">
+          <span className="label mb-1 block">파일 이름</span>
+          <input className="input h-8 font-mono text-[12px]" value={filename} aria-label="파일 이름"
+            onChange={(e) => setFilename(e.target.value)} onBlur={saveFilename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key === "Escape") { setFilename(p.filename); e.currentTarget.blur(); }
+            }} />
+        </label>
       </div>
 
       {p.status === "pending" && (
