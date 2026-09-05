@@ -6338,6 +6338,36 @@ def test_global_search_finds_the_same_word_across_every_screen():
         assert any(h["kind"] == "paper" for h in search_all.search(u, st, seed))
 
 
+def test_a_paper_with_no_text_keeps_its_fields_empty():
+    """글자가 없는 PDF(빈 문서·스캔본)에서 논문을 지어내면 안 된다.
+
+    8차에 **깨진 녹음에서 회의를 통째로 지어낸** 적이 있다. 논문도 같은 자리다.
+    모델이 빈 값을 주면 그대로 비워 둔다 — 파일 이름만 제목으로 남는다.
+    """
+    from backend import paper_extract, paper_store
+
+    _login()
+    r = client.post("/api/papers/upload",
+                    files={"file": ("빈논문.pdf", _tiny_pdf(), "application/pdf")})
+    assert r.status_code == 200, r.text
+    pid = r.json()["id"]
+    try:
+        from backend.auth import SessionUser
+
+        me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+        st = get_settings()
+        # 글자를 못 뽑은 상황을 흉내 낸다 — 모델도 빈 값을 돌려준다
+        paper_extract.run_sync(me, st, pid, asker=lambda *a, **k: {
+            "title": "", "authors": [], "year": "", "summary": "", "abstract": ""})
+        p = paper_store.find_paper(me, st, pid)
+        assert p["status"] == paper_store.STATUS_READY, p
+        assert not str(p.get("summary") or "").strip(), p["summary"]
+        assert not p.get("authors"), p["authors"]
+        assert p["title"], p                       # 제목은 파일 이름으로라도 남는다
+    finally:
+        client.delete("/api/papers/" + pid)
+
+
 def test_list_vocab_does_not_scold_a_limit_it_was_given():
     """모델이 스스로 limit 을 주면 잘린 게 아니라 시킨 대로 낸 것이다.
 
