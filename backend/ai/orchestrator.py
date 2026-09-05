@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Iterator
 
@@ -32,6 +33,32 @@ def _clip(value) -> str:
     except (TypeError, ValueError):
         s = str(value)
     return s if len(s) <= MAX_AUDIT_CHARS else s[:MAX_AUDIT_CHARS] + f"… (총 {len(s)}자)"
+
+
+#: 모델이 "했습니다" 라고 끝맺는 말들. 실제로 바꾼 것이 없는데 이렇게 말하면
+#: 사용자는 다 된 줄 안다 — 이 시스템에서 가장 사람을 속이는 실패다.
+#: 능동("삭제했습니다")뿐 아니라 **피동**("삭제되었습니다")도 잡는다 — 모델은 둘을
+#: 섞어 쓰는데, 능동만 막았더니 피동으로 새어 나갔다(실측).
+_DID_IT = re.compile(
+    r"(삭제|생성|추가|저장|수정|변경|이동|등록|기록|반영|완료)"
+    r"(했|하였|되었|됐|시켰)(습니다|어요|다)"
+    r"|(지웠|만들었|넣었|옮겼|바꿨|적었|올렸|끝냈)(습니다|어요|다)"
+)
+
+
+def _claims_without_doing(text: str, mutated: bool) -> bool:
+    """바꾼 것이 없는데 '했습니다' 라고 끝맺었는가.
+
+    프롬프트로 막아 봤지만 여전히 샜다 — list_todos 만 부르고 "삭제했습니다"라고
+    답했다(실측). 말과 실제를 **서버가** 맞춰 본다: 조용한 거짓말을 눈에 보이는
+    어긋남으로 바꾼다. 묻는 말("삭제할까요?")은 주장이 아니므로 넘어간다.
+    """
+    if mutated:
+        return False
+    tail = (text or "").strip()
+    if not tail or tail.endswith(("?", "까요", "까요.", "나요", "나요.")):
+        return False
+    return bool(_DID_IT.search(tail))
 
 
 @dataclass
@@ -164,6 +191,7 @@ def run(
 
     final_text = ""
     executed: list[tuple[str, bool]] = []  # 한도 초과 시 요약용
+    mutated = False                        # 이번 차례에 실제로 바꾼 것이 있는가
 
     for step in range(max_steps):
         result = llm.chat(contents, catalog, system)
@@ -196,6 +224,8 @@ def run(
                 skill_result = registry.dispatch(name, args, ctx)
                 executed.append((name, skill_result.ok))
                 skill_obj = registry.get(name)
+                if skill_result.ok and (skill_result.mutates or getattr(skill_obj, "mutates", "")):
+                    mutated = True
                 ev = {
                     "type": "tool_result",
                     "name": name,
@@ -268,6 +298,16 @@ def run(
             final_text = " / ".join(parts)
         else:
             final_text = "응답을 생성하지 못했습니다. 다시 말씀해 주세요."
+
+    # 말과 실제를 맞춰 본다. "삭제했습니다"라고 해 놓고 아무것도 안 바꾼 적이 있다
+    # (list_todos 만 부르고 그렇게 답했다). 사용자는 다 된 줄 알고 넘어간다 —
+    # 이 시스템에서 가장 사람을 속이는 실패라, 프롬프트에만 맡기지 않고 여기서 잡는다.
+    if _claims_without_doing(final_text, mutated):
+        logger.warning("바꾼 것 없이 완료를 주장했다: %s", final_text[:120])
+        final_text += (
+            "\n\n⚠️ **실제로는 아무것도 바뀌지 않았습니다.** 위 말과 달리 이번 차례에 "
+            "저장·삭제·수정을 한 것이 없습니다. 다시 한 번 시켜 주세요."
+        )
     yield {"type": "text", "text": final_text}
     yield {"type": "done"}
 

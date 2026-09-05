@@ -5697,6 +5697,32 @@ def test_assistant_and_calendar_modes_persist_conversations():
         assert spec.allows("read_context"), name
 
 
+def test_completion_claims_are_checked_against_what_actually_changed():
+    """바꾼 것이 없는데 "삭제했습니다" 라고 하면 서버가 표시한다.
+
+    가장 사람을 속이는 실패다 — 사용자는 다 된 줄 알고 넘어간다. 프롬프트로 막아
+    봤지만 5회 중 1회는 여전히 샜다(list_todos 만 부르고 "삭제되었습니다").
+    말과 실제를 서버가 맞춰 본다. 묻는 말과 인용은 주장이 아니므로 넘어간다.
+    """
+    from backend.ai.orchestrator import _claims_without_doing as claims
+
+    # 능동·피동 둘 다 잡는다(모델이 섞어 쓴다 — 능동만 막았더니 피동으로 샜다)
+    assert claims("할 일을 삭제했습니다.", False)
+    assert claims("할 일이 삭제되었습니다.", False)
+    assert claims("일정이 생성됐습니다.", False)
+    assert claims("문서를 만들었습니다.", False)
+    assert claims("받아쓰기가 완료되었습니다.", False)
+
+    # 실제로 바꿨으면 아무 말도 붙이지 않는다
+    assert not claims("할 일이 삭제되었습니다.", True)
+
+    # 묻는 말·조회 결과·인용은 주장이 아니다(잘못 경고하면 더 나쁘다)
+    assert not claims("이 할 일을 삭제할까요?", False)
+    assert not claims("어떤 것을 지워드릴까요", False)
+    assert not claims("논문 목록입니다. 3편이 있습니다.", False)
+    assert not claims("메모에 삭제하라고 적혀 있습니다.", False)
+    assert not claims("", False)
+
 def test_unexpected_skill_errors_do_not_leak_internals():
     """예상 못 한 예외의 문자열이 그대로 나가면 안 된다.
 
