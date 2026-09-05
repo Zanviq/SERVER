@@ -5651,6 +5651,58 @@ def test_assistant_and_calendar_modes_persist_conversations():
         assert spec.allows("read_context"), name
 
 
+def test_context_is_isolated_per_user_and_survives_concurrent_writes():
+    """컨텍스트는 사용자별로 갇혀 있고, 동시에 써도 잃어버리지 않는다.
+
+    대화 기록은 가장 사적인 자료다. 검색이 공간을 가로지르므로(search_context)
+    **다른 사용자 것이 섞이면 안 된다.** 공간 이름으로 경로를 벗어나려는 시도도 막는다.
+    """
+    import threading
+
+    from fastapi import HTTPException
+
+    from backend import chat_store, context_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    a = SessionUser(username="ctxalice", display_name="A", expires_at=0, remaining=0)
+    b = SessionUser(username="ctxbob", display_name="B", expires_at=0, remaining=0)
+
+    chat_store.append(context_store.space_path(a, s, "assistant"),
+                      chat_store.message("user", "앨리스의 비밀 alpha-secret"))
+    chat_store.append(context_store.space_path(b, s, "assistant"),
+                      chat_store.message("user", "밥의 일정"))
+    assert context_store.search(b, s, "alpha-secret") == []
+    assert len(context_store.search(a, s, "alpha-secret")) == 1
+    assert [r["messages"] for r in context_store.space_rows(b, s) if r["space"] == "assistant"] == [1]
+
+    # 공간 이름으로 남의 폴더에 닿을 수 없다. resolve_space 가 **스스로** 막아야 한다
+    # (뒤의 경로 검사에만 기대면, 이 값을 그대로 믿는 코드가 생겼을 때 뚫린다).
+    for evil in ("../ctxalice/chats/assistant", "paper:../../ctxalice", "assistant/../../ctxbob", ".."):
+        try:
+            context_store.resolve_space(b, s, evil)
+        except HTTPException:
+            continue
+        raise AssertionError(f"막히지 않았다: {evil}")
+
+    # 같은 공간에 여러 스레드가 써도 한 건도 잃지 않는다(원자적 쓰기 + 락)
+    path = context_store.space_path(a, s, "calendar")
+
+    def writer(n):
+        for i in range(20):
+            chat_store.append(path, chat_store.message("user", f"w{n}-{i}"))
+
+    threads = [threading.Thread(target=writer, args=(n,)) for n in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    got = chat_store.load(path)
+    assert len(got) == 80, len(got)
+    assert len({m["text"] for m in got}) == 80
+
+
 def test_transcription_never_stores_an_invented_meeting():
     """못 들었으면 **지어낸 회의록을 저장하지 않는다.**
 

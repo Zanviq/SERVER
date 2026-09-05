@@ -60,7 +60,16 @@ def resolve_space(user: SessionUser, settings: Settings, space: str) -> str:
     s = str(space or "").strip()
     if not s:
         raise HTTPException(status_code=404, detail="대화 공간을 지정하세요.")
-    if s in FIXED_SPACES or s.startswith(("paper:", "meeting:")):
+    if s in FIXED_SPACES:
+        return s
+    # 접두사가 붙었으면 **여기서 실재를 확인한다.** 지금은 뒤의 paper_dir 가 id 모양을
+    # 다시 보므로 안전하지만, 이 함수가 검증 없이 문자열을 돌려주면 앞으로 이 값을
+    # 그대로 믿고 경로를 만드는 코드가 생겼을 때 뚫린다("paper:../../alice").
+    if s.startswith("paper:"):
+        paper_store.get_paper(user, settings, s[len("paper:"):])  # 없거나 모양이 틀리면 404
+        return s
+    if s.startswith("meeting:"):
+        meeting_store.get_meeting(user, settings, s[len("meeting:"):])
         return s
     low = s.lower()
     # 한국어 이름 — "영어 학습", "영어학습", "비서" 모두 받는다
