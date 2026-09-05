@@ -137,7 +137,12 @@ class ListVocab(SkillBase):
         rows = [(_full if args.get("full") else _row)(w) for w in words[:limit]]
         msg = f"단어 {total}개"
         if total > limit:
-            msg += f" (앞 {limit}개만 표시 — tag/query 로 좁히세요)"
+            # 모델이 스스로 limit 을 줬다면 잘린 게 아니라 **시킨 대로** 낸 것이다.
+            # 그때까지 "tag/query 로 좁히세요"라고 하면, 이미 좁혀 놓고 세 개만
+            # 달라고 한 모델에게 엉뚱한 훈수를 두는 셈이다(47차에서 실제로 봤다).
+            asked = args.get("limit")
+            msg += (f" (요청한 {limit}개만 냈습니다)" if asked
+                    else f" (앞 {limit}개만 표시 — tag/query 로 좁히세요)")
         return SkillResult(ok=True, message=msg, data={"items": rows, "total": total})
 
 

@@ -6338,6 +6338,35 @@ def test_global_search_finds_the_same_word_across_every_screen():
         assert any(h["kind"] == "paper" for h in search_all.search(u, st, seed))
 
 
+def test_list_vocab_does_not_scold_a_limit_it_was_given():
+    """모델이 스스로 limit 을 주면 잘린 게 아니라 시킨 대로 낸 것이다.
+
+    그때까지 "tag/query 로 좁히세요"라고 하면, 이미 태그로 좁혀 놓고 세 개만
+    달라고 한 모델에게 엉뚱한 훈수를 두는 셈이다(47차에서 실제로 봤다).
+    """
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _todo_ctx("vocablimit")
+    reg.dispatch("add_vocab_words", {"words": [
+        {"word": f"w{i}", "meanings": ["뜻"]} for i in range(6)]}, ctx)
+
+    asked = reg.dispatch("list_vocab", {"limit": 3}, ctx)
+    assert "요청한 3개만" in asked.message, asked.message
+    assert "좁히세요" not in asked.message, asked.message
+    assert len(asked.data["items"]) == 3 and asked.data["total"] == 6
+
+    # 스스로 정하지 않았는데 상한에 닿았으면 그때는 좁히라고 알려 준다
+    import backend.ai.skills.vocab as vsk
+    old = vsk._MAX_ROWS
+    try:
+        vsk._MAX_ROWS = 2
+        auto = reg.dispatch("list_vocab", {}, ctx)
+        assert "좁히세요" in auto.message, auto.message
+    finally:
+        vsk._MAX_ROWS = old
+
+
 def test_adding_many_words_touches_the_file_once():
     """단어를 묶음으로 넣을 때 단어장 전체를 개수만큼 다시 쓰면 안 된다.
 
