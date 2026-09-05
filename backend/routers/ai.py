@@ -3,8 +3,13 @@
 스킬은 모두 세션 사용자 스코프(common | 본인 me)로만 동작하므로,
 다른 사용자의 파일/노트/일정에는 접근할 수 없다.
 
-모드(mode):
-  - ""        비서 화면. 대화는 브라우저가 들고 다니며 history 로 보낸다.
+모드(mode). 모드가 있으면 대화는 **서버에 남고** 브라우저가 보낸 history 는 무시한다.
+모델에 들어가는 것은 그중 최근 하루치이고(context_store.RECENT_WINDOW_SEC), 그보다
+옛날은 모델이 컨텍스트 스킬로 직접 꺼낸다.
+
+  - ""          하위호환. 대화를 남기지 않고 브라우저의 history 를 그대로 쓴다.
+  - "assistant" 비서 화면 (chats/assistant.json)
+  - "calendar"  캘린더 오른쪽 패널 (chats/calendar.json)
   - "english" 영어 학습 화면. 대화가 서버(chats/english.json)에 남고 history 는 무시한다.
   - "paper"   논문 화면. paper_id 가 필요하고 대화는 그 논문 폴더에 남는다.
               드래그한 영역 이미지(attachments)와 선택한 글(selections)이 함께 온다.
@@ -22,7 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from .. import chat_store, meeting_store, paper_store, vocab_store
+from .. import chat_store, context_store, meeting_store, paper_store, vocab_store
 from ..ai import models as ai_models
 from ..ai import modes, orchestrator
 from ..auth import SessionUser, require_session
@@ -90,18 +95,8 @@ def models(
 
 
 def _space_path(space: str, user: SessionUser, settings: Settings) -> Path:
-    """대화 공간 이름 → 파일. 'english' · 'paper:<id>' · 'meeting:<id>'."""
-    if space == "english":
-        return chat_store.english_path(user, settings)
-    if space.startswith("paper:"):
-        pid = space[len("paper:"):]
-        paper_store.get_paper(user, settings, pid)  # 없으면 404
-        return paper_store.chat_path(user, settings, pid)
-    if space.startswith("meeting:"):
-        mid = space[len("meeting:"):]
-        meeting_store.get_meeting(user, settings, mid)  # 없으면 404
-        return meeting_store.chat_path(user, settings, mid)
-    raise HTTPException(status_code=404, detail="없는 대화 공간입니다.")
+    """대화 공간 이름 → 파일. 공간 목록은 context_store 가 한 곳에서 정한다."""
+    return context_store.space_path(user, settings, space)
 
 
 @router.get("/space/{space}")
@@ -207,7 +202,10 @@ def chat(
     vocab_tags: list[str] = []
     prefs = orchestrator._user_ai_prefs(user, settings)
 
-    if spec and spec.name == "english":
+    if spec and spec.name in ("assistant", "calendar"):
+        # 시스템 프롬프트는 기본(build_system) 그대로 두고 대화만 남긴다.
+        persist_path = context_store.space_path(user, settings, spec.name)
+    elif spec and spec.name == "english":
         persist_path = chat_store.english_path(user, settings)
         try:
             board = vocab_store.board(user, settings)
@@ -245,8 +243,12 @@ def chat(
 
     # 대화 기록: 모드가 있으면 서버에 남은 것을, 아니면 브라우저가 보낸 것을 쓴다
     if persist_path is not None:
-        history = chat_store.history_for_llm(
-            chat_store.load(persist_path), max_turns=MAX_HISTORY_TURNS, max_chars=MAX_HISTORY_CHARS,
+        # 기본은 '최근 하루'. 그보다 옛날 이야기는 모델이 컨텍스트 스킬로 직접 꺼낸다
+        # (전부 넣으면 요금·지연이 늘고 관계없는 옛 대화가 답을 흐린다).
+        history = context_store.recent_for_llm(
+            chat_store.load(persist_path),
+            window_sec=context_store.RECENT_WINDOW_SEC,
+            max_turns=MAX_HISTORY_TURNS, max_chars=MAX_HISTORY_CHARS,
         )
     else:
         # 최근 것부터 담되 총량도 제한한다. 턴 수만 자르면 장문 몇 개로 뚫린다.
@@ -279,8 +281,12 @@ def chat(
                 if ev.get("type") == "text":
                     final_text = str(ev.get("text") or "")
                 elif ev.get("type") == "tool_result":
+                    # 인자·결과까지 남긴다 — 나중에 "AI 가 뭘 했지"를 되짚으려면
+                    # 이름과 한 줄 요약만으로는 알 수 없다(컨텍스트 화면이 이걸 보여준다).
                     note = {"name": ev.get("name"), "ok": ev.get("ok"),
-                            "message": str(ev.get("message") or "")[:300]}
+                            "message": str(ev.get("message") or "")[:300],
+                            "args": str(ev.get("args") or ""),
+                            "result": str(ev.get("result") or "")}
                     # 단어 후보는 다시 열었을 때도 고를 수 있게 함께 남긴다
                     if ev.get("name") == "propose_vocab_words" and isinstance(ev.get("data"), dict):
                         note["data"] = ev["data"]

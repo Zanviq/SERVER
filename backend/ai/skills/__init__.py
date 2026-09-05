@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from .context import CONTEXT_SKILLS
 from .calendar import (
     BulkCreateCalendarEvents,
     BulkDeleteCalendarEvents,
@@ -86,6 +87,8 @@ ALL_SKILLS = [
     *PAPER_SKILLS,
     # 회의 녹음
     *MEETING_SKILLS,
+    # 지난 대화(컨텍스트) — 어디의 언제 대화를 꺼낼지 모델이 고른다
+    *CONTEXT_SKILLS,
     # 휴지통(되돌리기)
     ListTrash(),
     RestoreFromTrash(),

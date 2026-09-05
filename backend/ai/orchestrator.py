@@ -18,6 +18,21 @@ from .skill_registry import SkillRegistry, default_registry
 
 logger = logging.getLogger("server.ai")
 
+#: 감사 기록(스킬 인자·결과)을 남길 때의 길이 상한. 스트림과 대화 파일 둘 다에
+#: 실리므로 무한정 둘 수 없다. 잘리면 뒤에 표시를 붙여 원문으로 오해하지 않게 한다.
+MAX_AUDIT_CHARS = 2000
+
+
+def _clip(value) -> str:
+    """스킬 인자·결과를 사람이 읽을 수 있는 한 덩어리로. 길면 자른다."""
+    if value in (None, {}, []):
+        return ""
+    try:
+        s = json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        s = str(value)
+    return s if len(s) <= MAX_AUDIT_CHARS else s[:MAX_AUDIT_CHARS] + f"… (총 {len(s)}자)"
+
 
 @dataclass
 class LLMResult:
@@ -183,6 +198,10 @@ def run(
                     # 무엇이 바뀌었는지 스킬이 직접 알려준다 → 프런트가 해당 화면만 새로고침
                     # 결과가 직접 알린 값이 우선(휴지통 복원처럼 실행 후에야 갈래를 안다)
                     "mutates": skill_result.mutates or getattr(skill_obj, "mutates", "") or "",
+                    # 감사 기록용. 나중에 "AI 가 뭘 했지"를 되짚으려면 인자와 결과가
+                    # 남아야 한다. 스트림에 통째로 실으면 커지므로 잘라서 보낸다.
+                    "args": _clip(args),
+                    "result": _clip(skill_result.data),
                 }
                 if skill_result.ok and getattr(skill_obj, "expose_data", False):
                     ev["data"] = skill_result.data

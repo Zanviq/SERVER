@@ -85,6 +85,10 @@ const SKILL_LABEL: Record<string, string> = {
   append_meeting_doc: "회의 문서 덧붙이기",
   delete_meeting_doc: "회의 문서 삭제",
   update_meeting_info: "회의 정보 수정",
+  // 지난 대화(컨텍스트)
+  list_context_spaces: "대화 공간 목록",
+  search_context: "지난 대화 검색",
+  read_context: "지난 대화 읽기",
   // 폴더·휴지통
   list_folders: "폴더 목록",
   list_trash: "휴지통 목록",
@@ -136,7 +140,7 @@ interface ChatPanelProps {
   /** 전송 전 메시지 변환 (예: 색상 힌트 추가) */
   transformMessage?: (text: string) => string;
   /** 비서("") · 영어 학습 · 논문 · 회의. 모드가 있으면 서버가 대화를 들고 있다. */
-  mode?: "" | "english" | "paper" | "meeting";
+  mode?: "" | "assistant" | "calendar" | "english" | "paper" | "meeting";
   paperId?: string;
   meetingId?: string;
   /** 단어 후보를 넣을 때 붙일 태그(논문 제목 등). 누르는 시점의 값이 쓰인다. */

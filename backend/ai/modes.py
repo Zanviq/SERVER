@@ -16,7 +16,9 @@ from .prompt_builder import _TONE
 #: 영어 학습 화면에서 넣는 항목의 기본 출처 태그. 화면·프롬프트가 같은 값을 써야 한다.
 ENGLISH_TAG = "영어 학습"
 
-_COMMON_SKILLS = {"think"}
+#: 어느 모드에서나 지난 대화를 꺼낼 수 있어야 한다 — "전에 말한 그거" 는 화면을 가리지 않는다.
+_CONTEXT_SKILLS = {"list_context_spaces", "search_context", "read_context"}
+_COMMON_SKILLS = {"think"} | _CONTEXT_SKILLS
 _VOCAB_SKILLS = {
     "list_vocab", "list_vocab_tags", "add_vocab_words", "propose_vocab_words",
     "update_vocab_word", "delete_vocab_word",
@@ -43,6 +45,11 @@ class ModeSpec:
 
 
 MODES: dict[str, ModeSpec] = {
+    # 비서·캘린더는 스킬을 가리지 않는다(빈 집합 = 전부 허용). 모드를 두는 것은
+    # 대화를 어느 공간에 남길지 정하기 위해서다 — 예전에는 둘 다 브라우저에만
+    # 있어서 새로고침하면 사라졌고, 다음 날 "어제 말한 그거"가 닿지 않았다.
+    "assistant": ModeSpec("assistant"),
+    "calendar": ModeSpec("calendar"),
     "english": ModeSpec(
         "english",
         frozenset(_COMMON_SKILLS | _VOCAB_SKILLS | _DOC_SKILLS | _TODO_SKILLS | _TRASH_SKILLS | {"list_papers"}),
@@ -74,6 +81,10 @@ def _head(user: SessionUser, today: str) -> str:
 - 스킬이 실패하면 error_code 가 옵니다. not_found=먼저 조회해 정확한 id 확보, invalid=인자 형식을
   고쳐 재시도, gone=대상이 사라짐(재시도 말고 안내).
 - **id 를 지어내지 마세요.** 이전 차례의 도구 결과는 남아 있지 않으니 필요하면 다시 조회하세요.
+- **"아까·방금·어제 그거" 는 먼저 위 대화에서 찾으세요.** 최근 하루치 대화는 이미 위에 들어
+  있습니다. 거기 있으면 스킬을 부르지 말고 그대로 답합니다. 없을 때만 search_context/
+  read_context 로 옛 대화나 다른 화면을 꺼냅니다. **검색이 0건이라고 해서 "그런 이야기가
+  없다"고 단정하지 마세요** — 위 대화를 다시 보고, 낱말을 바꿔 한 번 더 찾아본 뒤에 말합니다.
 - 결과에 truncated=true 가 있으면 그게 전부가 아닙니다.
 - 답은 한국어로, 마크다운으로 보기 쉽게. 표·굵게·목록을 아끼지 마세요."""
 

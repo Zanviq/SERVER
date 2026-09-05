@@ -5542,6 +5542,115 @@ def test_paper_category_folders_and_filename_rename():
     assert paper_store.get_paper(u, s, a["id"])["filename"] == got
 
 
+def test_context_sessions_split_by_gap_and_recent_window():
+    """세션은 시간 간격으로 나뉘고, 모델에 들어가는 '최근'은 하루로 잘린다."""
+    import time as _t
+
+    from backend import chat_store, context_store
+
+    now = _t.time()
+    day = 86400
+    msgs = [
+        {"id": "1", "role": "user", "text": "어제 아침", "ts": now - day - 3600, "meta": {}},
+        {"id": "2", "role": "assistant", "text": "네", "ts": now - day - 3500, "meta": {}},
+        # 30분 넘게 비었다 → 새 세션
+        {"id": "3", "role": "user", "text": "오늘 낮", "ts": now - 3600, "meta": {}},
+        {"id": "4", "role": "assistant", "text": "좋아요", "ts": now - 3500, "meta": {}},
+    ]
+    sessions = context_store.split_sessions(msgs)
+    assert len(sessions) == 2, [len(s) for s in sessions]
+    assert context_store.session_id(sessions[0]) == f"s-{int(now - day - 3600)}"
+
+    rows = context_store.session_rows(msgs)
+    assert len(rows) == 2 and rows[0]["started_at"] > rows[1]["started_at"]  # 최근 순
+    assert rows[0]["preview"] == "오늘 낮"
+
+    # 최근 창: 하루 밖의 메시지는 빠진다
+    recent = context_store.recent_for_llm(msgs, window_sec=day, max_turns=20, max_chars=9999, now=now)
+    assert [m["text"] for m in recent] == ["오늘 낮", "좋아요"]
+    # 창을 넓히면 전부 들어온다
+    wide = context_store.recent_for_llm(msgs, window_sec=3 * day, max_turns=20, max_chars=9999, now=now)
+    assert len(wide) == 4
+    # 시각이 없는 옛 기록은 잘라 내지 않는다(통째로 사라지면 안 된다)
+    old = [{"id": "x", "role": "user", "text": "시각 없음", "meta": {}}]
+    assert len(context_store.recent_for_llm(old, window_sec=day, max_turns=20, max_chars=999, now=now)) == 1
+
+    # chat_store 의 턴 제한도 그대로 걸린다
+    assert len(chat_store.history_for_llm(msgs, max_turns=2, max_chars=9999)) == 2
+
+
+def test_context_search_across_spaces_and_skills():
+    """공간을 가로질러 지난 대화를 찾고, 스킬로도 같은 것을 꺼낼 수 있다."""
+    from backend import chat_store, context_store
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="ctxuser", display_name="CX", expires_at=0, remaining=0)
+    reg = default_registry()
+    ctx = SkillContext(user=u, settings=s, today="2026-09-06")
+
+    a = context_store.space_path(u, s, "assistant")
+    c = context_store.space_path(u, s, "calendar")
+    chat_store.append(a, chat_store.message("user", "트랜스포머 논문 정리해 줘"),
+                      chat_store.message("assistant", "정리했습니다", {"tools": [
+                          {"name": "write_document", "ok": True, "message": "만듦",
+                           "args": '{"path": "a.md"}', "result": '{"ok": true}'}]}))
+    chat_store.append(c, chat_store.message("user", "내일 발표 일정 잡아 줘"))
+
+    # 공간 목록: 대화가 있는 곳이 보인다
+    r = reg.dispatch("list_context_spaces", {}, ctx)
+    assert r.ok, r.message
+    got = {x["space"] for x in r.data["spaces"]}
+    assert {"assistant", "calendar"} <= got, got
+
+    # 검색: 공간을 가로지른다
+    hits = context_store.search(u, s, "트랜스포머")
+    assert len(hits) == 1 and hits[0]["space"] == "assistant"
+    # 낱말 하나만 걸려도 후보로 두되, 많이 걸린 쪽이 위로 온다
+    # (모두 있어야 한다고 하면 모델이 문장으로 검색할 때 0건이 되어 "없다"고 단정한다)
+    part = context_store.search(u, s, "트랜스포머 없는말")
+    assert len(part) == 1 and part[0]["space"] == "assistant"
+
+    r = reg.dispatch("search_context", {"query": "발표"}, ctx)
+    assert r.ok and len(r.data["hits"]) == 1
+    assert r.data["hits"][0]["space"] == "calendar"
+
+    # 읽기: 스킬 기록도 함께 나온다(감사용)
+    sid = r.data["hits"][0]["session"]
+    r2 = reg.dispatch("read_context", {"space": "assistant"}, ctx)
+    assert r2.ok and len(r2.data["messages"]) == 2
+    assert r2.data["messages"][1]["tools"][0]["name"] == "write_document"
+    # 세션 id 로 좁힐 수 있다
+    r3 = reg.dispatch("read_context", {"space": "calendar", "session": sid}, ctx)
+    assert r3.ok and len(r3.data["messages"]) == 1
+
+    # 없는 공간은 404 가 아니라 스킬 실패로 온다(모델이 재시도할 수 있게)
+    assert not reg.dispatch("read_context", {"space": "nope"}, ctx).ok
+
+    # 많이 걸린 대화가 위로 온다(부분 일치라 0건 절벽이 없다)
+    chat_store.append(a, chat_store.message("user", "트랜스포머 논문 구조"))
+    ranked = context_store.search(u, s, "트랜스포머 논문")
+    assert len(ranked) >= 2 and ranked[0]["score"] >= ranked[-1]["score"]
+
+
+def test_assistant_and_calendar_modes_persist_conversations():
+    """비서·캘린더 대화도 서버에 남는다 — 예전에는 브라우저에만 있었다."""
+    from backend.ai import modes
+
+    assert modes.get_mode("assistant") is not None
+    assert modes.get_mode("calendar") is not None
+    # 두 모드는 스킬을 가리지 않는다(빈 집합 = 전부 허용)
+    assert modes.get_mode("assistant").allows("create_calendar_event")
+    # 컨텍스트 스킬은 어느 모드에서나 쓸 수 있어야 한다
+    for name in ("english", "paper", "meeting", "assistant", "calendar"):
+        spec = modes.get_mode(name)
+        assert spec.allows("search_context"), name
+        assert spec.allows("read_context"), name
+
+
 # ── 논문 ────────────────────────────────────────────────────────────
 
 def _tiny_pdf(text: str = "Hello paper") -> bytes:

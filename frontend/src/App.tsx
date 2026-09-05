@@ -23,6 +23,7 @@ const loaders = {
   settings: () => import("./pages/Settings"),
   profile: () => import("./pages/Profile"),
   trash: () => import("./pages/Trash"),
+  context: () => import("./pages/Context"),
   terminal: () => import("./pages/Terminal"),
 };
 
@@ -37,6 +38,7 @@ const Meetings = lazyChunk(() => loaders.meetings().then((m) => ({ default: m.Me
 const Settings = lazyChunk(() => loaders.settings().then((m) => ({ default: m.Settings })));
 const Profile = lazyChunk(() => loaders.profile().then((m) => ({ default: m.Profile })));
 const Trash = lazyChunk(() => loaders.trash().then((m) => ({ default: m.Trash })));
+const ContextPage = lazyChunk(() => loaders.context().then((m) => ({ default: m.Context })));
 const TerminalPage = lazyChunk(() => loaders.terminal().then((m) => ({ default: m.TerminalPage })));
 
 /** 로그인 후 유휴 시간에 모든 라우트 청크를 미리 로드 → 페이지 이동 지연 제거 */
@@ -75,6 +77,7 @@ function AuthedRoutes() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/trash" element={<Trash />} />
+        <Route path="/context" element={<ContextPage />} />
         <Route path="/terminal" element={isOwner ? <TerminalPage /> : <Navigate to="/notes" replace />} />
         <Route path="*" element={<Navigate to={isOwner ? "/" : "/notes"} replace />} />
       </Routes>

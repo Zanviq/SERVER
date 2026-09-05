@@ -56,7 +56,7 @@ export function English() {
 
   return (
     <Shell title="영어 학습" actions={actions}>
-      <ThreePane storageKey="english.panes.v1" side="right" showDetail={mobileView === "chat"}>
+      <ThreePane storageKey="english.panes.v1" side="right" showDetail={mobileView === "chat"} fixedLabel="단어장">
         <VocabPanel refreshKey={vocabKey} defaultTags={ENGLISH_TAG} className="h-view-11 lg:h-auto" />
         <div className="card flex h-view-11 flex-col overflow-hidden p-3 lg:h-auto">
           <ChatPanel

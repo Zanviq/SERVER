@@ -8,6 +8,7 @@ import type { DateClickArg } from "@fullcalendar/interaction";
 import type { DatesSetArg, DayCellContentArg, EventClickArg, EventContentArg } from "@fullcalendar/core";
 import { Loader2, Bot, NotebookPen } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
+import { ThreePane } from "../components/notes/ThreePane";
 import { EventDialog, GCAL_COLORS, GCAL_COLOR_NAMES } from "../components/calendar/EventDialog";
 import { DiaryPanel } from "../components/calendar/DiaryPanel";
 import { DiaryCell } from "../components/calendar/DiaryShapes";
@@ -324,11 +325,65 @@ export function Calendar() {
         </div>
       }
     >
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
-        {/* flex-1을 lg에서만 준다. 세로로 쌓이는 모바일에서 flex-1은 basis 0이라
-            h-[70vh]를 눌러 버리고, 옆의 AI 패널이 높이를 다 가져가 달력이
-            130px로 찌부러졌다(주 몇 줄만 보였다). */}
-        <div className="card fc-server flex min-w-0 flex-col p-4 h-[70vh] lg:h-view-9 lg:flex-1">
+      {/* 오른쪽 패널은 끌어서 넓히고, 최소 폭보다 더 끌면 접힌다(얇은 세로 버튼으로 복귀).
+          모바일은 stack — 달력과 패널을 함께 봐야 한다. */}
+      <ThreePane storageKey="calendar.panes.v1" side="right" defaultWidth={380} mobile="stack" fixedLabel="AI 패널">
+        <div className="card flex h-[70vh] w-full flex-col p-4 lg:h-auto">
+          {diary ? (
+            <>
+              <div className="mb-3 flex items-center gap-2 border-b border-line/50 pb-2 text-sm font-semibold">
+                <NotebookPen size={16} className="text-accent" /> 상태 기록
+              </div>
+              <DiaryPanel
+                date={selectedDay}
+                entry={diaryDays[selectedDay]}
+                events={events}
+                onChange={onDiaryChange}
+              />
+            </>
+          ) : (
+            <>
+              <div className="mb-2 flex items-center gap-2 border-b border-line/50 pb-2 text-sm font-semibold">
+                <Bot size={16} className="text-accent" /> AI 일정 비서
+              </div>
+              <ChatPanel
+                className="flex-1"
+                // 대화를 서버에 남긴다(chats/calendar.json) — "어제 잡은 그 일정"이
+                // 다음 대화의 맥락이어야 한다. 모델에는 최근 하루치가 들어간다.
+                mode="calendar"
+                space="calendar"
+                suggestions={CAL_SUGGESTIONS}
+                onToolSuccess={reload}
+                transformMessage={(t) =>
+                  chatColor ? `${t}\n(이 일정의 색상은 '${GCAL_COLOR_NAMES[chatColor]}'으로 설정해줘)` : t
+                }
+                composerTop={
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      onClick={() => setChatColor(null)}
+                      title="자동(규칙/기본색)"
+                      className={`rounded-full border px-2 py-0.5 text-[11px] ${chatColor === null ? "border-accent bg-accent-muted text-accent-fg" : "border-line text-fg-muted"}`}
+                    >
+                      자동
+                    </button>
+                    {Object.entries(GCAL_COLORS).map(([id, hex]) => (
+                      <button
+                        key={id}
+                        onClick={() => setChatColor(id)}
+                        aria-label={GCAL_COLOR_NAMES[id]}
+                        title={GCAL_COLOR_NAMES[id]}
+                        className={`h-5 w-5 rounded-full border-2 ${chatColor === id ? "border-fg" : "border-transparent"}`}
+                        style={{ background: hex }}
+                      />
+                    ))}
+                  </div>
+                }
+              />
+            </>
+          )}
+        </div>
+
+        <div className="card fc-server flex min-w-0 flex-col p-4 h-[70vh] lg:h-auto">
           <div className="min-h-0 flex-1">
             <FullCalendar
               ref={calRef}
@@ -396,57 +451,7 @@ export function Calendar() {
             />
           </div>
         </div>
-        <div className="card flex h-[70vh] w-full flex-col p-4 lg:h-view-9 lg:w-[380px] lg:shrink-0">
-          {diary ? (
-            <>
-              <div className="mb-3 flex items-center gap-2 border-b border-line/50 pb-2 text-sm font-semibold">
-                <NotebookPen size={16} className="text-accent" /> 상태 기록
-              </div>
-              <DiaryPanel
-                date={selectedDay}
-                entry={diaryDays[selectedDay]}
-                events={events}
-                onChange={onDiaryChange}
-              />
-            </>
-          ) : (
-            <>
-              <div className="mb-2 flex items-center gap-2 border-b border-line/50 pb-2 text-sm font-semibold">
-                <Bot size={16} className="text-accent" /> AI 일정 비서
-              </div>
-              <ChatPanel
-                className="flex-1"
-                suggestions={CAL_SUGGESTIONS}
-                onToolSuccess={reload}
-                transformMessage={(t) =>
-                  chatColor ? `${t}\n(이 일정의 색상은 '${GCAL_COLOR_NAMES[chatColor]}'으로 설정해줘)` : t
-                }
-                composerTop={
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <button
-                      onClick={() => setChatColor(null)}
-                      title="자동(규칙/기본색)"
-                      className={`rounded-full border px-2 py-0.5 text-[11px] ${chatColor === null ? "border-accent bg-accent-muted text-accent-fg" : "border-line text-fg-muted"}`}
-                    >
-                      자동
-                    </button>
-                    {Object.entries(GCAL_COLORS).map(([id, hex]) => (
-                      <button
-                        key={id}
-                        onClick={() => setChatColor(id)}
-                        aria-label={GCAL_COLOR_NAMES[id]}
-                        title={GCAL_COLOR_NAMES[id]}
-                        className={`h-5 w-5 rounded-full border-2 ${chatColor === id ? "border-fg" : "border-transparent"}`}
-                        style={{ background: hex }}
-                      />
-                    ))}
-                  </div>
-                }
-              />
-            </>
-          )}
-        </div>
-      </div>
+      </ThreePane>
       <EventDialog
         busy={busy}
         open={!!dialog}

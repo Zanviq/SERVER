@@ -12,6 +12,7 @@ import {
   Languages,
   GraduationCap,
   AudioLines,
+  History,
   Trash2,
   TerminalSquare,
   MoreHorizontal,
@@ -46,6 +47,7 @@ const NAV = [
   { to: "/papers", icon: GraduationCap, label: "논문" },
   { to: "/meetings", icon: AudioLines, label: "회의" },
   { to: "/graph", icon: Share2, label: "그래프" },
+  { to: "/context", icon: History, label: "컨텍스트" },
   { to: "/trash", icon: Trash2, label: "휴지통" },
 ];
 

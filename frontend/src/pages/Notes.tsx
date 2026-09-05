@@ -662,7 +662,7 @@ export function Notes() {
 
   return (
     <Shell title="문서" actions={actions}>
-      <ThreePane storageKey="notes.panes.v1" showDetail={!!current}>
+      <ThreePane storageKey="notes.panes.v1" showDetail={!!current} fixedLabel="문서 트리" sideLabel="미리보기">
         {/* 트리 */}
         {/* 모바일은 목록/문서를 번갈아 보여주므로 화면 높이를 다 쓴다.
             (max-h-80이면 목록만 띄운 화면에서 아래 절반이 빈다) */}

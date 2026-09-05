@@ -254,7 +254,7 @@ export const api = {
   aiSpaceDelete: (space: string, mid: string) =>
     req(`/api/ai/space/${encodeURIComponent(space)}/${encodeURIComponent(mid)}`, { method: "DELETE" }),
 
-  // ── 단어장 ──
+// ── 단어장 ──
   vocabBoard: () => req<VocabBoard>("/api/vocab/board"),
   vocabWords: (p: { tag?: string; q?: string; due?: boolean; limit?: number } = {}) => {
     const s: Record<string, string> = {};
@@ -350,6 +350,17 @@ export const api = {
 
   // ── 외부 SSH(주인 전용) ──
   sshAccess: () => req<SshAccess>("/api/system/ssh"),
+
+  // ── 컨텍스트(지난 대화) ──
+  contextSpaces: () => req<{ spaces: ContextSpace[] }>("/api/context/spaces"),
+  contextSessions: (space: string) =>
+    req<{ space: string; label: string; sessions: ContextSession[] }>(
+      `/api/context/sessions?${q({ space })}`),
+  contextMessages: (space: string, session = "") =>
+    req<{ space: string; label: string; messages: ChatMessage[] }>(
+      `/api/context/messages?${q({ space, session })}`),
+  contextSearch: (query: string, space = "") =>
+    req<{ hits: ContextHit[]; query: string }>(`/api/context/search?${q({ q: query, space })}`),
 };
 
 export interface AiEvent {
@@ -379,7 +390,12 @@ export interface ChatMessage {
   meta: {
     selections?: { text: string; page: number }[];
     attachments?: { label: string; mime: string }[];
-    tools?: { name: string; ok: boolean; message: string; data?: Record<string, unknown> }[];
+    /** 스킬 호출 기록. args·result 는 감사용 원문(길면 서버가 자른다). */
+    tools?: {
+      name: string; ok: boolean; message: string;
+      args?: string; result?: string;
+      data?: Record<string, unknown>;
+    }[];
   };
 }
 
@@ -394,7 +410,7 @@ export interface AiSelection {
   page?: number;
 }
 export interface AiChatOptions {
-  mode?: "" | "english" | "paper" | "meeting";
+  mode?: "" | "assistant" | "calendar" | "english" | "paper" | "meeting";
   paper_id?: string;
   meeting_id?: string;
   attachments?: AiAttachment[];
@@ -619,6 +635,35 @@ export interface SshAccess {
   service: string;
   ssh_config: string;
   command: string;
+}
+
+/** 컨텍스트 화면의 왼쪽 폴더 하나 = 화면 하나. */
+export interface ContextSpace {
+  space: string;
+  kind: string;
+  label: string;
+  messages: number;
+  sessions: number;
+  last_at: number;
+}
+/** 30분 이상 말이 없으면 다음 메시지부터 새 세션이다(서버가 읽을 때 나눈다). */
+export interface ContextSession {
+  id: string;
+  started_at: number;
+  ended_at: number;
+  messages: number;
+  tools: number;
+  preview: string;
+}
+export interface ContextHit {
+  space: string;
+  label: string;
+  session: string;
+  id: string;
+  role: string;
+  ts: number;
+  score: number;
+  snippet: string;
 }
 
 // ── 단어장 ──

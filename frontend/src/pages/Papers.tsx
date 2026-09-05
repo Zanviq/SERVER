@@ -1,8 +1,6 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import {
-  BookMarked, FileText, Info, List, MessageSquare, PanelLeftClose, PanelLeftOpen, Trash2,
-} from "lucide-react";
+import { BookMarked, FileText, Info, List, MessageSquare, Trash2 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { Modal } from "../components/ui/Modal";
 import { ThreePane } from "../components/notes/ThreePane";
@@ -23,8 +21,6 @@ const SUGGESTIONS = [
 
 type Tab = "chat" | "info" | "vocab";
 const uid = () => Math.random().toString(36).slice(2, 10);
-/** 목록을 접어 둔 상태는 화면을 나갔다 와도 유지한다(PDF 를 넓게 보려고 접는다). */
-const COLLAPSE_KEY = "papers.listCollapsed.v1";
 
 /**
  * 논문 리뷰: 왼쪽 목록 · 가운데 PDF · 오른쪽 AI(대화 / 정보 / 단어장).
@@ -33,7 +29,6 @@ const COLLAPSE_KEY = "papers.listCollapsed.v1";
 export function Papers() {
   const [papers, setPapers] = useState<Paper[] | null>(null);
   const [categories, setCategories] = useState<string[]>([]);
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSE_KEY) === "1");
   // "새 폴더…" — 이름을 받아 그 논문을 옮긴다(폴더는 이름일 뿐이라 논문이 있어야 남는다)
   const [newFolderFor, setNewFolderFor] = useState<Paper | null>(null);
   const [newFolder, setNewFolder] = useState("");
@@ -69,13 +64,6 @@ export function Papers() {
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
-
-  const toggleCollapsed = useCallback(() => {
-    setCollapsed((v) => {
-      localStorage.setItem(COLLAPSE_KEY, v ? "0" : "1");
-      return !v;
-    });
-  }, []);
 
   // 추출 중인 논문이 있으면 잠깐씩 다시 받는다(끝나면 제목·요약이 채워진다)
   const anyPending = !!papers?.some((p) => p.status === "pending");
@@ -220,11 +208,6 @@ export function Papers() {
           <List size={14} /> 목록
         </button>
       )}
-      <button onClick={toggleCollapsed} className="btn btn-ghost hidden h-8 px-2 lg:inline-flex"
-        title={collapsed ? "논문 목록 펼치기" : "논문 목록 접기 (PDF를 넓게)"}
-        aria-label={collapsed ? "논문 목록 펼치기" : "논문 목록 접기"} aria-pressed={collapsed}>
-        {collapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
-      </button>
       {selected && (
         <button onClick={clearChat} className="btn btn-ghost h-8 px-2" title="이 논문의 대화 비우기" aria-label="대화 비우기">
           <Trash2 size={15} />
@@ -235,7 +218,7 @@ export function Papers() {
 
   return (
     <Shell title="논문" actions={actions}>
-      <ThreePane storageKey="papers.panes.v1" showDetail={!!selected} collapsed={collapsed}>
+      <ThreePane storageKey="papers.panes.v1" showDetail={!!selected} fixedLabel="논문 목록" sideLabel="AI 패널">
         <PaperList papers={papers ?? []} categories={categories} selectedId={selectedId} onSelect={select} onUpload={upload}
           onStar={(p) => update(p, { starred: !p.starred })} onDelete={remove} onRetry={retry}
           onMove={move} onNewCategory={(p) => { setNewFolderFor(p); setNewFolder(p.category); }}
