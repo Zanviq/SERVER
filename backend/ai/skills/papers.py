@@ -152,7 +152,10 @@ class ReadPaperText(SkillBase):
                     break
             if not hits:
                 return SkillResult(ok=True, message=f"'{q}' 이(가) 본문에 없습니다.", data={"hits": []})
-            return SkillResult(ok=True, message=f"'{q}' {len(hits)}곳", data={"hits": hits})
+            # 8곳에서 끊는다는 것을 알리지 않으면 모델이 "본문에 여덟 번 나온다"고 답한다
+            capped = len(hits) >= 8
+            msg = f"'{q}' {len(hits)}곳" + (" (상한 8곳에 도달 — 더 있을 수 있습니다)" if capped else "")
+            return SkillResult(ok=True, message=msg, data={"hits": hits, "truncated": capped})
 
         total = max(pages) if pages else 0
         try:

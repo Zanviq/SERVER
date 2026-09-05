@@ -87,16 +87,22 @@ _WORD_PROPS = {
 
 
 def _row(w: dict) -> dict:
-    return {
+    meanings = list(w.get("meanings") or [])
+    row = {
         "id": w.get("id", ""),
         "word": w.get("word", ""),
         "kind": w.get("kind", ""),
         "pos": w.get("pos", ""),
-        "meanings": list(w.get("meanings") or [])[:4],
+        "meanings": meanings[:4],
         "tags": list(w.get("tags") or []),
         "level": int(w.get("level") or 0),
         "next_review": w.get("next_review", ""),
     }
+    # 뜻을 넷에서 끊는 것을 알리지 않으면 "이 단어 뜻 다 알려줘"에 넷만 말한다
+    if len(meanings) > 4:
+        row["meanings_total"] = len(meanings)
+        row["more"] = "뜻이 더 있습니다 — full=true 로 다시 조회하세요"
+    return row
 
 
 def _full(w: dict) -> dict:

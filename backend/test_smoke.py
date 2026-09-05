@@ -6483,6 +6483,25 @@ def test_every_mode_can_search_outside_its_own_screen():
         assert mode.allows("search_everything"), name
 
 
+def test_a_word_with_many_meanings_says_there_are_more():
+    """뜻을 넷에서 끊는 것을 알리지 않으면 "뜻 다 알려줘"에 넷만 말한다."""
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    _u, ctx, _st = _todo_ctx("manymeanings")
+    reg.dispatch("add_vocab_words", {"words": [{
+        "word": "set", "meanings": [f"뜻{i}" for i in range(7)]}]}, ctx)
+
+    brief = reg.dispatch("list_vocab", {"query": "set"}, ctx).data["items"][0]
+    assert len(brief["meanings"]) == 4, brief["meanings"]
+    assert brief["meanings_total"] == 7, brief
+    assert "full=true" in brief["more"], brief
+
+    full = reg.dispatch("list_vocab", {"query": "set", "full": True}, ctx).data["items"][0]
+    assert len(full["meanings"]) == 7, full["meanings"]
+    assert "more" not in full, full          # 다 줬으면 군더더기를 안 붙인다
+
+
 def test_lists_never_report_the_shown_count_as_the_total():
     """상한에서 끊은 목록이 그 수를 전체처럼 말하면, 모델이 그대로 답한다.
 
