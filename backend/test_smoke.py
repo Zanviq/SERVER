@@ -6483,6 +6483,45 @@ def test_every_mode_can_search_outside_its_own_screen():
         assert mode.allows("search_everything"), name
 
 
+def test_saving_a_note_changed_elsewhere_stops_instead_of_overwriting():
+    """두 기기에서 같은 문서를 열어 두면 나중에 저장한 쪽이 앞의 편집을 조용히 지운다.
+
+    열 때 받은 수정시각을 되돌려 받아 그 사이 바뀌었으면 409 로 멈춘다. 기준을
+    주지 않는 쓰기(AI 스킬·스크립트)는 예전처럼 그냥 저장된다.
+    """
+    import time as _time
+
+    _login()
+    path = "충돌시험.md"
+    assert client.put("/api/notes/save", json={"path": path, "content": "처음"}).status_code == 200
+    try:
+        got = client.get("/api/notes/get", params={"path": path}).json()
+        base = got["modified"]
+        assert base > 0, got
+
+        # 기준을 그대로 주면 저장된다
+        ok = client.put("/api/notes/save",
+                        json={"path": path, "content": "내 편집", "base_modified": base})
+        assert ok.status_code == 200, ok.text
+        newer = ok.json()["modified"]
+
+        # 다른 곳(다른 기기·AI)이 먼저 고쳤다 — 옛 기준으로 저장하면 멈춘다
+        _time.sleep(1.1)     # mtime 여유(1초)를 넘겨야 '바뀐 것'으로 본다
+        client.put("/api/notes/save", json={"path": path, "content": "저쪽 편집"})
+        stale = client.put("/api/notes/save",
+                           json={"path": path, "content": "덮어쓰기", "base_modified": newer})
+        assert stale.status_code == 409, stale.status_code
+        assert "다른 곳에서 바뀌었습니다" in stale.json()["detail"], stale.text
+        assert client.get("/api/notes/get", params={"path": path}).json()["content"] == "저쪽 편집"
+
+        # 기준 없이 보내면(사용자가 '덮어쓰기'를 고른 경우) 그대로 저장된다
+        forced = client.put("/api/notes/save", json={"path": path, "content": "덮어쓰기"})
+        assert forced.status_code == 200, forced.text
+        assert client.get("/api/notes/get", params={"path": path}).json()["content"] == "덮어쓰기"
+    finally:
+        client.delete("/api/notes/delete", params={"path": path})
+
+
 def test_a_word_with_many_meanings_says_there_are_more():
     """뜻을 넷에서 끊는 것을 알리지 않으면 "뜻 다 알려줘"에 넷만 말한다."""
     from backend.ai.skill_registry import default_registry

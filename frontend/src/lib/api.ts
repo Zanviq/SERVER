@@ -142,8 +142,10 @@ export const api = {
   // 저장 공간은 사용자당 하나뿐이라 scope/base 인자가 없다.
   noteList: () => req<NoteSummary[]>("/api/notes/list"),
   noteGet: (path: string) => req<NoteDetail>(`/api/notes/get?${q({ path })}`),
-  noteSave: (path: string, content: string) =>
-    req<NoteSummary>("/api/notes/save", jsonInit("PUT", { path, content })),
+  /** baseModified 를 주면 그 사이 다른 곳에서 바뀐 문서를 덮어쓰지 않고 409 로 멈춘다. */
+  noteSave: (path: string, content: string, baseModified = 0) =>
+    req<NoteSummary>("/api/notes/save",
+      jsonInit("PUT", { path, content, base_modified: baseModified })),
   noteDelete: (path: string) =>
     req(`/api/notes/delete?${q({ path })}`, { method: "DELETE" }),
   noteRename: (path: string, new_name: string) =>
@@ -564,6 +566,8 @@ export interface NoteDetail {
   links: string[];
   backlinks: string[];
   kind: DocKind;
+  /** 이 내용을 읽은 시점의 수정시각. 저장할 때 되돌려 보내 충돌을 잡는다. */
+  modified: number;
 }
 export interface NotesGraph {
   nodes: { id: string; title: string; path: string; type?: string; count?: number }[];

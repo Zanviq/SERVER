@@ -61,11 +61,17 @@ class NoteDetail(BaseModel):
     links: list[str]
     backlinks: list[str]
     kind: str = "md"
+    #: 이 내용을 읽은 시점의 수정시각. 저장할 때 되돌려 보내면 그 사이 다른
+    #: 기기에서 바뀐 것을 알아챌 수 있다(0 이면 확인하지 않는다).
+    modified: float = 0.0
 
 
 class SaveNote(BaseModel):
     path: str
     content: str
+    #: 열 때 받은 modified. 그 사이 파일이 바뀌었으면 409 로 돌려보낸다.
+    #: 비우면(0) 검사하지 않는다 — AI 스킬·스크립트처럼 기준이 없는 쓰기.
+    base_modified: float = 0.0
 
 
 class RenameNote(BaseModel):
@@ -297,6 +303,7 @@ def get_note(
         links=parse_wikilinks(content),
         backlinks=backlinks_for(root, target.stem),
         kind=kind_of(target.name),
+        modified=target.stat().st_mtime,
     )
 
 
@@ -474,6 +481,16 @@ def save_note(
         raise HTTPException(status_code=409, detail="같은 이름의 폴더가 이미 있습니다.")
     if target.exists() and not is_editable(target.name):
         raise HTTPException(status_code=415, detail="텍스트 문서만 편집할 수 있습니다.")
+    # 두 기기에서 같은 문서를 열어 두면 나중에 저장한 쪽이 앞의 편집을 조용히
+    # 지운다. 열 때 받은 수정시각을 되돌려 받아, 그 사이 바뀌었으면 멈춘다.
+    # (파일시스템 mtime 은 소수 자리가 왕복하며 흔들려서 1초 여유를 둔다.)
+    if req.base_modified and target.exists():
+        current = target.stat().st_mtime
+        if abs(current - req.base_modified) > 1.0:
+            raise HTTPException(
+                status_code=409,
+                detail="이 문서가 다른 곳에서 바뀌었습니다. 새로 고쳐 확인한 뒤 저장하세요.",
+            )
     with _fs_errors_are_bad_requests("문서 저장"):
         target.parent.mkdir(parents=True, exist_ok=True)
         # AI 쓰기와 같은 락·원자성 규약을 쓴다(자동저장과 AI append가 서로 덮어썼다)

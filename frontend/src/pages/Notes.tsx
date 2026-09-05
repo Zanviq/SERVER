@@ -87,6 +87,10 @@ export function Notes() {
   const [dirty, setDirty] = useState(false);
   // 서버에 닿지 못한 편집(브라우저에만 남은 것). 있으면 편집기 위에 띠가 뜬다.
   const [draft, setDraft] = useState<Draft | null>(null);
+  // 다른 기기에서 같은 문서를 고쳤을 때. 경로를 담아 둔다.
+  const [conflict, setConflict] = useState<string | null>(null);
+  // 문서를 연 시점의 수정시각(경로별). 저장할 때 함께 보내 충돌을 잡는다.
+  const baseRef = useRef<Record<string, number>>({});
   const [newNoteOpen, setNewNoteOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -148,7 +152,10 @@ export function Notes() {
     async (path: string, text: string, quiet = false): Promise<boolean> => {
       setSaving(true);
       try {
-        await api.noteSave(path, text);
+        // 이 문서를 연 시점의 수정시각을 함께 보낸다. 그 사이 다른 기기에서
+        // 바뀌었으면 서버가 409 로 멈춰 세운다(조용히 덮어쓰지 않는다).
+        const r = await api.noteSave(path, text, baseRef.current[path] ?? 0);
+        baseRef.current[path] = r.modified;
         setDirty(false);
         // 서버에 닿았으니 밑글은 필요 없다. 이 한 줄이 "밑글이 남아 있다 ==
         // 저장되지 못한 편집이 있다"를 참으로 유지한다.
@@ -161,6 +168,12 @@ export function Notes() {
         }
         return true;
       } catch (e) {
+        // 409 = 다른 곳에서 바뀌었다. 자동저장이 1초마다 같은 토스트를 쏟지
+        // 않게 띠로 알리고, 덮어쓸지는 사용자가 고른다(밑글은 이미 남아 있다).
+        if (e instanceof ApiError && e.status === 409) {
+          setConflict(path);
+          return false;
+        }
         toast.error(e instanceof Error ? e.message : "저장 실패");
         return false;
       } finally {
@@ -246,6 +259,8 @@ export function Notes() {
         // 서버에 닿지 못한 편집이 남아 있으면 알린다. 몰래 덮어쓰지 않는다 —
         // 다른 기기에서 고쳤을 수도 있으니 되살릴지는 사용자가 고른다.
         setDraft(readDraft(d.path, d.content));
+        baseRef.current[d.path] = d.modified;
+        setConflict(null);
         // 열린 노트의 상위 폴더를 현재 폴더로
         const slash = d.path.lastIndexOf("/");
         setCurFolder(slash >= 0 ? d.path.slice(0, slash) : "");
@@ -845,6 +860,32 @@ export function Notes() {
               )}
             </div>
           </div>
+          {/* 다른 기기에서 같은 문서를 고쳤다. 어느 쪽을 남길지는 사용자가 고른다. */}
+          {conflict && conflict === current && (
+            <div className="flex flex-wrap items-center gap-2 border-b border-line bg-[rgb(var(--danger)/0.1)] px-3 py-2 text-[12.5px]">
+              <span className="min-w-0 flex-1">
+                이 문서가 <b>다른 곳에서도 바뀌었습니다.</b> 지금 화면의 글로 덮어쓰거나,
+                저쪽 내용을 불러올 수 있습니다.
+              </span>
+              <button
+                onClick={async () => {
+                  // 기준을 지우고 다시 저장하면 검사를 건너뛴다(사용자가 고른 것이다)
+                  baseRef.current[conflict] = 0;
+                  setConflict(null);
+                  await save(conflict, content);
+                }}
+                className="btn btn-danger h-7 px-2 text-[12px]"
+              >
+                내 글로 덮어쓰기
+              </button>
+              <button
+                onClick={() => { setConflict(null); openNote(conflict); }}
+                className="btn btn-ghost h-7 px-2 text-[12px]"
+              >
+                저쪽 내용 불러오기
+              </button>
+            </div>
+          )}
           {/* 서버에 닿지 못한 편집. 자동으로 되살리지 않는다 — 다른 기기에서 고친
               글을 조용히 덮어쓰는 편이 잃는 것보다 나쁘다. */}
           {draft && current && (
