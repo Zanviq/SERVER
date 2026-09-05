@@ -49,6 +49,10 @@ export function SearchPalette() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setOpen((v) => !v);
+      } else if (e.key === "Escape") {
+        // 창 단위로 받는다. 입력칸의 onKeyDown 에만 걸어 두면 포커스가 결과 줄로
+        // 옮겨간 뒤에는 Esc 가 먹지 않는다.
+        setOpen(false);
       }
     };
     // 단축키가 없는 기기(휴대폰)에서는 사이드바 버튼이 이 신호를 보낸다.
@@ -62,8 +66,15 @@ export function SearchPalette() {
   }, []);
 
   useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 0);
-    else { setQuery(""); setHits([]); setCursor(0); }
+    if (!open) { setQuery(""); setHits([]); setCursor(0); return; }
+    // 닫으면 열기 전 자리로 포커스를 돌려준다(키보드만 쓰는 경우 다음 Tab 이
+    // 페이지 맨 위에서 다시 시작하지 않게).
+    const opener = document.activeElement as HTMLElement | null;
+    const t = setTimeout(() => inputRef.current?.focus(), 0);
+    return () => {
+      clearTimeout(t);
+      if (opener && document.contains(opener)) opener.focus();
+    };
   }, [open]);
 
   // 타자마다 서버를 두드리지 않는다. 마지막 응답만 반영한다(늦게 온 옛 답이
@@ -89,6 +100,9 @@ export function SearchPalette() {
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") { setOpen(false); return; }
+    // 여기서는 Tab 으로 갈 곳이 없다(↑↓ 로 고른다). 막지 않으면 포커스가 뒤
+    // 화면으로 빠져나가 보이지 않는 버튼에 가 있게 된다.
+    if (e.key === "Tab") { e.preventDefault(); return; }
     if (e.key === "ArrowDown" || (e.key === "n" && e.ctrlKey)) {
       e.preventDefault();
       setCursor((c) => Math.min(c + 1, hits.length - 1));
@@ -121,7 +135,8 @@ export function SearchPalette() {
       className="fixed inset-0 z-[60] flex items-start justify-center bg-black/40 px-4 pt-[10vh]"
       onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
     >
-      <div className="card w-full max-w-2xl overflow-hidden p-0 shadow-2xl">
+      <div role="dialog" aria-modal="true" aria-label="전체 검색"
+        className="card w-full max-w-2xl overflow-hidden p-0 shadow-2xl">
         <div className="flex items-center gap-2 border-b border-line px-4">
           {busy ? <Loader2 size={16} className="animate-spin text-fg-muted" />
                 : <Search size={16} className="text-fg-muted" />}
@@ -132,7 +147,9 @@ export function SearchPalette() {
             onKeyDown={onKeyDown}
             placeholder="노트·논문·회의·단어·할 일·일정·대화에서 찾기…"
             className="h-12 flex-1 bg-transparent text-[15px] outline-none placeholder:text-fg-muted"
-            aria-label="전체 검색"
+            // 대화상자 자체가 '전체 검색'이라 입력칸까지 같은 이름이면 낭독기가
+            // 같은 말을 두 번 읽는다.
+            aria-label="검색어"
           />
           <kbd className="hidden rounded border border-line px-1.5 py-0.5 text-[11px] text-fg-muted sm:block">Esc</kbd>
         </div>
