@@ -6196,6 +6196,126 @@ def test_english_mode_persists_chat_and_limits_skills(monkeypatch):
     assert client.get("/api/ai/space/english").json()["messages"] == []
 
 
+def test_answers_stream_out_word_by_word(monkeypatch):
+    """답이 다 만들어질 때까지 기다리지 않고 조각으로 흘러야 한다.
+
+    함께 확인하는 것: (1) 조각의 합이 최종본과 같다, (2) 저장되는 것은 조각이
+    아니라 완성본 하나다, (3) 도구를 쓴 뒤 다시 쓰는 답도 흘러나온다,
+    (4) `stream()` 이 없는 모델도 예전처럼 동작한다.
+    """
+    from backend.ai import orchestrator
+    from backend.ai.orchestrator import LLMResult
+
+    _login()
+
+    class StreamingLLM:
+        def __init__(self):
+            self.n = 0
+
+        def stream(self, contents, catalog, system):
+            self.n += 1
+            if self.n == 1:  # 도구를 부르는 차례 — 흘릴 글이 없다
+                return LLMResult(text="", tool_uses=[{"name": "list_todos", "args": {}}])
+                yield  # noqa: W0101 - 생성기로 만들기 위한 표시
+            for piece in ("오늘 ", "할 일은 ", "없습니다."):
+                yield piece
+            return LLMResult(text="오늘 할 일은 없습니다.", tool_uses=[])
+
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": StreamingLLM())
+    client.delete("/api/ai/space/assistant")
+    r = client.post("/api/ai/chat", json={"message": "오늘 할 일 알려줘", "mode": "assistant"})
+    assert r.status_code == 200, r.text
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+    kinds = [e["type"] for e in events]
+    assert kinds.count("text_delta") == 3, kinds
+    assert kinds.index("tool_call") < kinds.index("text_delta"), kinds
+    joined = "".join(e["text"] for e in events if e["type"] == "text_delta")
+    final = next(e for e in events if e["type"] == "text")
+    assert joined == final["text"] == "오늘 할 일은 없습니다.", (joined, final["text"])
+
+    msgs = client.get("/api/ai/space/assistant").json()["messages"]
+    assert [m["role"] for m in msgs] == ["user", "assistant"], msgs
+    assert msgs[1]["text"] == "오늘 할 일은 없습니다.", msgs[1]
+
+    # stream() 이 없는 모델(옛 경로)도 그대로 답한다 — 조각은 없고 최종본만 온다
+    class PlainLLM:
+        def chat(self, contents, catalog, system):
+            return LLMResult(text="예전 방식 답변입니다.", tool_use=None)
+
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": PlainLLM())
+    client.delete("/api/ai/space/assistant")
+    r = client.post("/api/ai/chat", json={"message": "안녕", "mode": "assistant"})
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+    assert not [e for e in events if e["type"] == "text_delta"]
+    assert next(e for e in events if e["type"] == "text")["text"] == "예전 방식 답변입니다."
+
+
+def test_stream_chunks_stop_flowing_once_a_tool_call_appears():
+    """모델이 말하다가 도구를 부르면, 그 뒤 글은 화면으로 흘리지 않는다.
+
+    흘려 보내면 사용자는 답이 시작된 줄 알았다가 지워지는 것을 본다. 그 말은
+    버리지 않고 LLMResult 에는 담아 둔다(단계 한도에 걸렸을 때 쓴다).
+    """
+    from backend.ai.orchestrator import consume_stream
+
+    class Part:
+        def __init__(self, text="", call=None):
+            self.text = text
+            self.function_call = call
+
+    class Call:
+        def __init__(self, name, args):
+            self.name, self.args = name, args
+
+    def chunk(*parts):
+        return type("C", (), {"candidates": [type("X", (), {
+            "content": type("Y", (), {"parts": list(parts)})()})()]})()
+
+    chunks = [chunk(Part("생각해 ")), chunk(Part("볼게요. ")),
+              chunk(Part(call=Call("list_todos", {}))), chunk(Part("잠시만요."))]
+    gen = consume_stream(chunks)
+    flowed = []
+    while True:
+        try:
+            flowed.append(next(gen))
+        except StopIteration as stop:
+            res = stop.value
+            break
+    assert flowed == ["생각해 ", "볼게요. "], flowed  # 호출 뒤의 "잠시만요."는 안 흘린다
+    assert res.text == "생각해 볼게요. 잠시만요.", res.text
+    assert [c["name"] for c in res.calls()] == ["list_todos"], res.calls()
+
+
+def test_streaming_failure_does_not_become_an_answer(monkeypatch):
+    """스트림 도중 끊기면 '오류'로 알린다 — 반쯤 온 글을 답으로 저장하면 안 된다."""
+    from backend.ai import orchestrator
+
+    _login()
+
+    from backend.ai.orchestrator import LLMResult
+
+    class BrokenLLM:
+        """진짜 GeminiLLM 처럼, 끊긴 스트림은 예외가 아니라 error 로 돌려준다."""
+
+        def stream(self, contents, catalog, system):
+            yield "여기까지 쓰다가"
+            return LLMResult(text="", tool_use=None,
+                             error="upstream 503 /srv/key-AIzaSyDEADBEEF")
+
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": BrokenLLM())
+    monkeypatch.setattr(get_settings(), "debug", False, raising=False)
+    client.delete("/api/ai/space/assistant")
+    r = client.post("/api/ai/chat", json={"message": "길게 설명해줘", "mode": "assistant"})
+    assert r.status_code == 200, r.text
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+    err = next(e for e in events if e["type"] == "error")
+    assert "AIzaSy" not in err["message"] and "/srv/" not in err["message"], err
+    assert not [e for e in events if e["type"] == "text"]
+    # 반쯤 온 글은 저장하지 않는다(다음 차례의 맥락으로 들어가면 안 된다)
+    msgs = client.get("/api/ai/space/assistant").json()["messages"]
+    assert [m["role"] for m in msgs] == ["user"], msgs
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"

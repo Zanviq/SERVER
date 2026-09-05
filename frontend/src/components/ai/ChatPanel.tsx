@@ -271,7 +271,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     try {
       await aiChatStream(text, history, (e: AiEvent) => {
         if (e.type === "tool_call") {
-          patchLast((m) => ({ ...m, steps: [...m.steps, { name: e.name! }] }));
+          // 스킬을 부르기 직전에 흘러나온 말은 답이 아니라 머리말이다. 도구를 쓰고
+          // 나면 모델이 답을 처음부터 다시 쓰므로, 여기서 비워 두지 않으면
+          // 머리말 뒤에 진짜 답이 이어 붙어 잠깐 두 번 말한 것처럼 보인다.
+          patchLast((m) => ({ ...m, text: "", steps: [...m.steps, { name: e.name! }] }));
+        } else if (e.type === "text_delta") {
+          patchLast((m) => ({ ...m, text: m.text + (e.text ?? "") }));
         } else if (e.type === "tool_result") {
           patchLast((m) => {
             const steps = [...m.steps];
@@ -397,6 +402,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
                 {m.text ? (
                   <div className="card px-4 py-2.5">
                     <MarkdownView content={m.text} onWikiClick={() => {}} />
+                    {/* 아직 쓰는 중이면 커서를 남겨 둔다 — 없으면 잘린 답을
+                        다 쓴 답으로 착각한다. */}
+                    {m.pending && (
+                      <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-[2px] animate-pulse bg-fg-muted" />
+                    )}
                   </div>
                 ) : m.pending && m.steps.length === 0 ? (
                   <div className="inline-flex items-center gap-2 text-[13px] text-fg-muted">

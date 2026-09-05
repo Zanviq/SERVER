@@ -94,6 +94,26 @@ def parse_candidate(cand) -> tuple[str, list[dict]]:
     return text, tool_uses
 
 
+def consume_stream(chunks):
+    """스트림 청크를 훑으며 **흘려보낼 조각**을 yield 하고, 끝나면 LLMResult 를 return.
+
+    도구 호출이 한 번이라도 보이면 그 뒤의 글은 흘리지 않는다. 그 차례의 발화는
+    최종 답이 아니라 머리말이고, 도구를 쓴 뒤 모델이 답을 처음부터 다시 쓰기
+    때문에 화면에 썼다 지우는 깜빡임이 생긴다.
+    """
+    text, tool_uses = "", []
+    for chunk in chunks:
+        cand = chunk.candidates[0] if chunk.candidates else None
+        piece, calls = parse_candidate(cand)
+        if calls:
+            tool_uses.extend(calls)
+        if piece:
+            text += piece
+            if not tool_uses:
+                yield piece
+    return LLMResult(text=text, tool_uses=tool_uses)
+
+
 class GeminiLLM:
     """google-genai(신 SDK) 기반 function-calling LLM."""
 
@@ -128,6 +148,35 @@ class GeminiLLM:
         cand = resp.candidates[0] if resp.candidates else None
         text, tool_uses = parse_candidate(cand)
         return LLMResult(text=text, tool_uses=tool_uses)
+
+    def stream(self, contents: list[dict], catalog: list[dict], system: str):
+        """한 번 호출하되 **글자가 오는 대로** yield 한다. 끝나면 LLMResult 를 return.
+
+        호출하는 쪽은 `yield from` 하지 말고 next()/StopIteration.value 로 결과를
+        받는다(오케스트레이터가 조각을 SSE 이벤트로 감싸야 하기 때문).
+
+        예전에는 답이 다 만들어진 뒤에야 한꺼번에 도착해서, 사용자는 5~10초 동안
+        "생각 중…"만 봤다. 스킬 호출이 섞여 오면 그건 모아서 평소처럼 처리한다
+        (도구를 부르는 차례의 중간 발화는 최종 답이 아니므로 흘리지 않는다).
+        """
+        from google import genai
+        from google.genai import types
+
+        if not self._settings.gemini_api_key:
+            return LLMResult(text="GEMINI_API_KEY가 설정되지 않았습니다 (.env 확인).", tool_use=None)
+
+        client = genai.Client(api_key=self._settings.gemini_api_key)
+        config = types.GenerateContentConfig(
+            system_instruction=system,
+            tools=[types.Tool(function_declarations=catalog)] if catalog else None,
+        )
+        try:
+            return (yield from consume_stream(client.models.generate_content_stream(
+                model=self._model, contents=contents, config=config
+            )))
+        except Exception as e:  # noqa: BLE001
+            logger.exception("Gemini 스트림 실패")
+            return LLMResult(text="", tool_use=None, error=str(e))
 
 
 def run(
@@ -194,7 +243,20 @@ def run(
     mutated = False                        # 이번 차례에 실제로 바꾼 것이 있는가
 
     for step in range(max_steps):
-        result = llm.chat(contents, catalog, system)
+        # 글자가 오는 대로 흘려보낸다. 스트림을 못 쓰는 LLM(테스트의 가짜 모델)은
+        # 예전처럼 한 번에 받는다. `stream()` 은 조각을 yield 하다가 마지막에
+        # LLMResult 를 return 하므로 StopIteration.value 로 결과를 받는다.
+        if hasattr(llm, "stream"):
+            gen = llm.stream(contents, catalog, system)
+            while True:
+                try:
+                    piece = next(gen)
+                except StopIteration as stop:
+                    result = stop.value
+                    break
+                yield {"type": "text_delta", "text": piece}
+        else:
+            result = llm.chat(contents, catalog, system)
         if result.error:
             # 상류(Gemini SDK)의 예외 문자열에는 경로·키·요청 본문이 섞일 수 있다.
             # 라우터는 예외를 DEBUG 일 때만 흘리는데, 이 경로는 예외가 아니라

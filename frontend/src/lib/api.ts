@@ -364,7 +364,9 @@ export const api = {
 };
 
 export interface AiEvent {
-  type: "tool_call" | "tool_result" | "text" | "done" | "error";
+  /** `text_delta` 는 만들어지는 중인 답의 조각이다. 마지막에 오는 `text` 가
+   *  최종본이며(경고 문구가 덧붙기도 한다) 화면은 그것으로 갈아끼운다. */
+  type: "tool_call" | "tool_result" | "text_delta" | "text" | "done" | "error";
   name?: string;
   args?: Record<string, unknown>;
   ok?: boolean;
