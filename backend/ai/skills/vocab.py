@@ -24,9 +24,13 @@ propose_vocab_words 는 **저장하지 않는다.** 논문을 읽다 사용자�
 """
 from __future__ import annotations
 
+import logging
+
 from ... import vocab_store
 from ..skill_base import SkillBase, SkillResult
 from .todo import _fail
+
+logger = logging.getLogger("server.ai.vocab")
 
 _MAX_ROWS = 200
 
@@ -159,6 +163,28 @@ class ListVocabTags(SkillBase):
         return SkillResult(ok=True, message=f"태그 {len(tags)}개", data={"tags": tags})
 
 
+def _is_thin(w: dict) -> bool:
+    """사전 내용이 덜 찬 항목인가. 뜻만 있고 나머지가 비면 카드가 반쪽이다."""
+    return not (w.get("english_def") and w.get("examples") and w.get("synonyms"))
+
+
+def _fill_thin(ctx, saved: list[dict], tags: list[str]) -> None:
+    """덜 찬 항목만 백그라운드로 채운다. 실패해도 저장은 이미 끝났으니 조용히 넘긴다."""
+    if not getattr(ctx.settings, "gemini_api_key", ""):
+        return          # 키가 없으면 채울 방법이 없다. 넣은 것은 그대로 둔다.
+    thin = [{"word": w.get("word", ""), "kind": w.get("kind", ""),
+             "meaning": (w.get("meanings") or [""])[0]}
+            for w in saved if _is_thin(w) and w.get("word")]
+    if not thin:
+        return
+    try:
+        from ... import vocab_fill
+
+        vocab_fill.start_fill(ctx.user, ctx.settings, thin, list(tags))
+    except Exception:  # noqa: BLE001
+        logger.exception("단어장 보강 시작 실패")
+
+
 class AddVocabWords(SkillBase):
     mutates = "vocab"
     expose_data = True  # 화면이 "추가됨: …" 칩을 보여 준다
@@ -202,6 +228,10 @@ class AddVocabWords(SkillBase):
         added = [w["word"] for w in out["added"]]
         merged = [w["word"] for w in out["merged"]]
         failed = out["failed"]
+        # 모델이 사전 내용을 덜 채워 보내는 일이 있다(실측: 답에는 비슷한 단어를
+        # 적어 놓고 저장할 때는 synonyms 를 비워 보냈다). 화면의 단어 카드가
+        # 반쪽으로 남으므로, 후보에서 고른 항목과 **같은 경로**로 뒤에서 채운다.
+        _fill_thin(ctx, out["added"] + out["merged"], tags)
         bits = []
         if added:
             bits.append(f"추가 {len(added)}개: " + ", ".join(added))

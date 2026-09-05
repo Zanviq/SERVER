@@ -6397,6 +6397,45 @@ def test_list_vocab_does_not_scold_a_limit_it_was_given():
         vsk._MAX_ROWS = old
 
 
+def test_a_thin_word_gets_filled_in_the_background(monkeypatch):
+    """모델이 사전 내용을 덜 채워 저장하면 카드가 반쪽으로 남는다.
+
+    실측(50차): 답에는 비슷한 단어를 적어 놓고 add_vocab_words 에는 synonyms 를
+    비워 보냈다. 후보에서 고른 항목과 같은 경로로 뒤에서 채운다.
+    """
+    from backend import vocab_fill
+    from backend.ai.skill_registry import default_registry
+    from backend.ai.skills import vocab as vsk
+
+    reg = default_registry()
+    _u, ctx, st = _todo_ctx("thinfill")
+    monkeypatch.setattr(st, "gemini_api_key", "test-key", raising=False)
+
+    started: list[list[str]] = []
+    monkeypatch.setattr(vocab_fill, "start_fill",
+                        lambda user, settings, items, tags, context="":
+                        started.append([i["word"] for i in items]) or {"id": "j"})
+
+    # 사전 내용이 다 찬 것은 건드리지 않는다
+    reg.dispatch("add_vocab_words", {"words": [{
+        "word": "complete", "meanings": ["완전한"], "english_def": "Whole.",
+        "synonyms": ["whole(전체의)"],
+        "examples": [{"en": "It is complete.", "ko": "그것은 완전하다.", "grammar": ""}],
+    }]}, ctx)
+    assert started == [], started
+
+    # 뜻만 있는 것은 뒤에서 채운다
+    reg.dispatch("add_vocab_words", {"words": [{"word": "thin", "meanings": ["얇은"]}]}, ctx)
+    assert started == [["thin"]], started
+
+    # 키가 없으면 채울 방법이 없으니 부르지 않는다(넣은 것은 그대로 남는다)
+    started.clear()
+    monkeypatch.setattr(st, "gemini_api_key", "", raising=False)
+    r = reg.dispatch("add_vocab_words", {"words": [{"word": "nokey", "meanings": ["열쇠없음"]}]}, ctx)
+    assert r.ok and started == [], (r.message, started)
+    assert any(w["word"] == "nokey" for w in vsk.vocab_store.list_words(_u, st))
+
+
 def test_adding_many_words_touches_the_file_once():
     """단어를 묶음으로 넣을 때 단어장 전체를 개수만큼 다시 쓰면 안 된다.
 
