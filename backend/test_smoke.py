@@ -6483,6 +6483,38 @@ def test_every_mode_can_search_outside_its_own_screen():
         assert mode.allows("search_everything"), name
 
 
+def test_meeting_docs_use_the_same_conflict_rule_as_notes():
+    """회의 문서는 사람과 AI 가 함께 쓰는 자리다 — 말없이 덮이면 안 된다."""
+    import time as _time
+
+    from backend import meeting_store
+    from fastapi import HTTPException
+
+    u, _ctx, st = _todo_ctx("meetdoc")
+    mid = meeting_store.register(u, st, filename="a.wav", mime="audio/wav", size=10,
+                                 ext="wav", day="2026-09-06", title="회의")["id"]
+    meeting_store.write_doc(u, st, mid, "요약", "처음")
+    base = meeting_store.read_doc(u, st, mid, "요약")["updated_at"]
+
+    # 기준을 그대로 주면 저장된다
+    ok = meeting_store.write_doc(u, st, mid, "요약", "내 편집", base_modified=base)
+    assert ok["content"] == "내 편집"
+
+    # 다른 곳(AI 등)이 먼저 고치면 옛 기준으로는 못 덮는다
+    _time.sleep(1.1)
+    meeting_store.write_doc(u, st, mid, "요약", "AI 가 다시 쓴 글")
+    try:
+        meeting_store.write_doc(u, st, mid, "요약", "덮어쓰기", base_modified=ok["updated_at"])
+        raise AssertionError("충돌을 잡지 못했다")
+    except HTTPException as e:
+        assert e.status_code == 409, e.status_code
+    assert meeting_store.read_doc(u, st, mid, "요약")["content"] == "AI 가 다시 쓴 글"
+
+    # 기준 없이 쓰면(사용자가 덮어쓰기를 골랐거나 AI 스킬) 그대로 저장된다
+    meeting_store.write_doc(u, st, mid, "요약", "덮어쓰기")
+    assert meeting_store.read_doc(u, st, mid, "요약")["content"] == "덮어쓰기"
+
+
 def test_saving_a_note_changed_elsewhere_stops_instead_of_overwriting():
     """두 기기에서 같은 문서를 열어 두면 나중에 저장한 쪽이 앞의 편집을 조용히 지운다.
 

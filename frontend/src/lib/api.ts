@@ -343,8 +343,10 @@ export const api = {
   meetingDocs: (id: string) => req<MeetingDocSummary[]>(`/api/meetings/${encodeURIComponent(id)}/docs`),
   meetingDocRead: (id: string, name: string) =>
     req<MeetingDoc>(`/api/meetings/${encodeURIComponent(id)}/docs/${encodeURIComponent(name)}`),
-  meetingDocWrite: (id: string, name: string, content: string) =>
-    req<MeetingDoc>(`/api/meetings/${encodeURIComponent(id)}/docs/${encodeURIComponent(name)}`, jsonInit("PUT", { content })),
+  /** baseModified 를 주면 그 사이 바뀐 문서를 덮어쓰지 않고 409 로 멈춘다. */
+  meetingDocWrite: (id: string, name: string, content: string, baseModified = 0) =>
+    req<MeetingDoc>(`/api/meetings/${encodeURIComponent(id)}/docs/${encodeURIComponent(name)}`,
+      jsonInit("PUT", { content, base_modified: baseModified })),
   meetingDocRename: (id: string, name: string, next: string) =>
     req<{ name: string }>(`/api/meetings/${encodeURIComponent(id)}/docs/${encodeURIComponent(name)}/rename`, jsonInit("POST", { name: next })),
   meetingDocDelete: (id: string, name: string) =>
@@ -652,12 +654,13 @@ export interface Transcript {
 export interface MeetingDocSummary {
   name: string;
   size: number;
-  updated_at: string;
+  /** 파일 수정시각(unix 초). 서버는 st_mtime 을 그대로 준다. */
+  updated_at: number;
 }
 export interface MeetingDoc {
   name: string;
   content: string;
-  updated_at: string;
+  updated_at: number;
   created?: boolean;
 }
 

@@ -30,6 +30,8 @@ class MeetingPatch(BaseModel):
 
 class DocBody(BaseModel):
     content: str = ""
+    #: 열 때 받은 updated_at. 그 사이 바뀌었으면 409(0 이면 확인하지 않는다).
+    base_modified: float = 0.0
 
 
 class DocRename(BaseModel):
@@ -219,7 +221,8 @@ def write_doc(
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    return meeting_store.write_doc(user, settings, mid, name, body.content)
+    return meeting_store.write_doc(user, settings, mid, name, body.content,
+                                   base_modified=body.base_modified)
 
 
 @router.post("/{mid}/docs/{name}/rename")

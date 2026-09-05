@@ -385,11 +385,24 @@ def read_doc(user: SessionUser, settings: Settings, mid: str, name: str) -> dict
 
 
 def write_doc(user: SessionUser, settings: Settings, mid: str, name: str, content: str,
-              *, append: bool = False) -> dict:
+              *, append: bool = False, base_modified: float = 0.0) -> dict:
+    """회의 문서를 쓴다.
+
+    base_modified 를 주면 그 사이 바뀐 문서를 덮어쓰지 않고 409 로 멈춘다. 이
+    문서는 사람과 AI 가 함께 쓰는 자리라(사용자가 열어 둔 채 "요약 다시 만들어줘"),
+    말없이 덮이면 어느 쪽 글이 사라졌는지도 모른다. AI 스킬은 기준을 주지 않으므로
+    예전처럼 그냥 쓴다 — 사용자가 시킨 일이기 때문이다.
+    """
     get_meeting(user, settings, mid)
     p = _doc_path(user, settings, mid, name)
     p.parent.mkdir(parents=True, exist_ok=True)
     existed = p.exists()
+    # mtime 은 소수 자리가 왕복하며 흔들려서 1초 여유를 둔다(노트와 같은 규칙).
+    if base_modified and existed and abs(p.stat().st_mtime - base_modified) > 1.0:
+        raise HTTPException(
+            status_code=409,
+            detail="이 문서가 다른 곳에서 바뀌었습니다. 새로 고쳐 확인한 뒤 저장하세요.",
+        )
     if not existed and len(list_docs(user, settings, mid)) >= MAX_DOCS:
         raise HTTPException(status_code=409, detail=f"문서는 회의당 {MAX_DOCS}개까지입니다.")
     body = str(content or "")
