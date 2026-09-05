@@ -6483,6 +6483,53 @@ def test_every_mode_can_search_outside_its_own_screen():
         assert mode.allows("search_everything"), name
 
 
+def test_search_hit_ids_are_what_each_screen_needs():
+    """검색이 준 id 를 그 화면이 그대로 쓸 수 있어야 한다.
+
+    이 저장소가 반복해서 깨뜨린 자리다(조회가 준 식별자를 후속이 못 쓰는 결함).
+    갈래마다 뜻이 다르다 — 문서는 경로, 대화는 '<space>|<session>', 나머지는 id.
+    """
+    from backend import calendar_store, context_store, search_all, todo_store, vocab_store
+    from backend.storage import user_data_root
+
+    u, _ctx, st = _todo_ctx("searchids")
+    seed = "링크시험"
+    (user_data_root(u, st) / f"{seed}.md").write_text(f"# {seed}\n\n본문", encoding="utf-8")
+    todo = todo_store.create_todo(u, st, {"title": f"{seed} 할 일"})
+    vocab_store.add_words(u, st, [{"word": f"{seed}단어", "meanings": ["뜻"]}])
+    ev = calendar_store.create_event(u, st, {"title": f"{seed} 모임", "start": "2026-09-10",
+                                             "allDay": True})
+    path = context_store.space_path(u, st, "assistant")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    import json as _json
+    import time as _time
+    path.write_text(_json.dumps({"messages": [
+        {"id": "m1", "role": "user", "text": f"{seed} 이야기", "ts": _time.time()},
+    ]}, ensure_ascii=False), encoding="utf-8")
+    search_all._EVENT_CACHE.pop(u.username, None)
+
+    by_kind = {}
+    for h in search_all.search(u, st, seed):
+        by_kind.setdefault(h["kind"], h)
+
+    # 문서: id 는 문서 루트 기준 상대경로다(그대로 열 수 있어야 한다)
+    assert by_kind["note"]["id"] == f"{seed}.md", by_kind["note"]
+    assert (user_data_root(u, st) / by_kind["note"]["id"]).exists()
+
+    # 할 일·단어·일정: 저장소가 그 id 로 실제 항목을 찾을 수 있어야 한다
+    assert by_kind["todo"]["id"] == todo["id"], by_kind["todo"]
+    assert any(w["id"] == by_kind["vocab"]["id"] for w in vocab_store.list_words(u, st))
+    assert by_kind["event"]["id"].startswith(ev["id"]), (by_kind["event"], ev["id"])
+    # 일정은 날짜로 이동한다 — when 이 YYYY-MM-DD 여야 캘린더가 그 날로 간다
+    assert by_kind["event"]["when"] == "2026-09-10", by_kind["event"]
+
+    # 대화: '<space>|<session>' 이고 그 둘로 메시지를 꺼낼 수 있어야 한다
+    space, sep, session = by_kind["chat"]["id"].partition("|")
+    assert sep and space == "assistant" and session.startswith("s-"), by_kind["chat"]
+    rows = context_store.read(u, st, space, session=session)
+    assert rows and seed in rows[0]["text"], rows
+
+
 def test_recurring_events_appear_once_in_search():
     """매년 오는 생일이 스무 줄로 나오면 검색 결과가 그것만으로 찬다."""
     from backend import calendar_store, search_all
