@@ -174,6 +174,33 @@ def _compose_message(message: str, selections: list[Selection], attachments: lis
     return f"{quoted}\n\n[질문]\n{message}" if quoted else message
 
 
+def _stopped_note(streamed: str, tool_notes: list[dict]) -> str:
+    """중단된 차례를 기록에 남길 문장. 남길 것이 없으면 빈 문자열.
+
+    조각만 남기면 안 된다. 스킬이 이미 돌아간 뒤에 끊겼는데 기록에 답이 없으면,
+    다음 차례에 모델은 **아직 안 한 일로 보고 그대로 다시 한다** — 할 일이 두 벌
+    생긴다. 무엇을 이미 끝냈는지 함께 적어 둔다.
+    """
+    done: list[str] = []
+    for n in tool_notes:
+        if not n.get("ok"):
+            continue
+        name = str(n.get("name") or "")
+        if name:
+            done.append(name)
+    if not streamed and not done:
+        return ""
+    counted = []
+    for name in dict.fromkeys(done):          # 순서는 지키고 중복만 묶는다
+        c = done.count(name)
+        counted.append(f"{name}×{c}" if c > 1 else name)
+    note = "_(여기서 멈췄습니다."
+    if counted:
+        note += f" 이 차례에 이미 끝낸 일: {', '.join(counted)} — 다시 하지 마세요."
+    note += ")_"
+    return f"{streamed}\n\n{note}" if streamed else note
+
+
 @router.post("/chat")
 def chat(
     body: ChatRequest,
@@ -288,6 +315,8 @@ def chat(
 
     def gen():
         final_text = ""
+        streamed = ""     # 흘려보낸 조각들 — 중간에 멈췄을 때 화면과 기록을 맞춘다
+        errored = False
         tool_notes: list[dict] = []
         try:
             for ev in orchestrator.run(
@@ -298,6 +327,12 @@ def chat(
             ):
                 if ev.get("type") == "text":
                     final_text = str(ev.get("text") or "")
+                elif ev.get("type") == "text_delta":
+                    streamed += str(ev.get("text") or "")
+                elif ev.get("type") == "tool_call":
+                    streamed = ""   # 도구를 쓰면 모델이 답을 처음부터 다시 쓴다
+                elif ev.get("type") == "error":
+                    errored = True
                 elif ev.get("type") == "tool_result":
                     # 인자·결과까지 남긴다 — 나중에 "AI 가 뭘 했지"를 되짚으려면
                     # 이름과 한 줄 요약만으로는 알 수 없다(컨텍스트 화면이 이걸 보여준다).
@@ -316,12 +351,18 @@ def chat(
             detail = str(e) if settings.debug else "처리 중 오류가 발생했습니다."
             yield orchestrator.sse_format({"type": "error", "message": detail})
         finally:
-            # 화면을 닫아도(스트림이 끊겨도) 사용자 메시지와 받은 데까지는 남긴다
+            # 화면을 닫아도(스트림이 끊겨도) 사용자 메시지와 받은 데까지는 남긴다.
+            # 중단 버튼을 눌렀거나 화면을 닫았으면 최종본은 없고 흘려보낸 조각만
+            # 있다 — 사용자가 읽은 그대로를 남기되, 잘렸다는 표시를 붙인다.
+            # 다만 오류로 끊긴 것은 남기지 않는다(반쪽 답을 다음 차례가 흉내 낸다).
+            body = final_text.strip()
+            if not body and not errored:
+                body = _stopped_note(streamed.strip(), tool_notes)
             if persist_path is not None:
                 try:
                     msgs = [chat_store.message("user", message, user_meta)]
-                    if final_text.strip():
-                        msgs.append(chat_store.message("assistant", final_text, {"tools": tool_notes}))
+                    if body:
+                        msgs.append(chat_store.message("assistant", body, {"tools": tool_notes}))
                     chat_store.append(persist_path, *msgs)
                 except Exception:  # noqa: BLE001
                     logger.exception("대화 저장 실패")

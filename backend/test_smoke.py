@@ -6286,6 +6286,24 @@ def test_stream_chunks_stop_flowing_once_a_tool_call_appears():
     assert [c["name"] for c in res.calls()] == ["list_todos"], res.calls()
 
 
+def test_a_stopped_turn_records_what_it_already_did():
+    """중단된 차례는 '무엇까지 했는지'를 남겨야 다음 차례가 두 번 하지 않는다."""
+    from backend.routers.ai import _stopped_note
+
+    assert _stopped_note("", []) == ""              # 남길 것이 없으면 안 남긴다
+    assert _stopped_note("", [{"name": "list_todos", "ok": False}]) == ""
+    only_text = _stopped_note("조선 전기는", [])
+    assert only_text.startswith("조선 전기는") and "멈췄습니다" in only_text
+
+    did = _stopped_note("", [{"name": "create_todo", "ok": True},
+                             {"name": "create_todo", "ok": True},
+                             {"name": "list_todos", "ok": True},
+                             {"name": "delete_todo", "ok": False}])
+    assert "create_todo×2" in did and "list_todos" in did, did
+    assert "delete_todo" not in did, did       # 실패한 것은 '끝낸 일'이 아니다
+    assert "다시 하지 마세요" in did, did
+
+
 def test_streaming_failure_does_not_become_an_answer(monkeypatch):
     """스트림 도중 끊기면 '오류'로 알린다 — 반쯤 온 글을 답으로 저장하면 안 된다."""
     from backend.ai import orchestrator

@@ -417,6 +417,8 @@ export interface AiChatOptions {
   meeting_id?: string;
   attachments?: AiAttachment[];
   selections?: AiSelection[];
+  /** 중단 버튼용. 끊으면 서버도 스트림을 닫고, 여기까지 흘러온 답을 기록에 남긴다. */
+  signal?: AbortSignal;
 }
 
 /** AI 채팅 SSE 스트림. history로 이전 대화(멀티턴) 전달.
@@ -427,11 +429,13 @@ export async function aiChatStream(
   onEvent: (e: AiEvent) => void,
   opts: AiChatOptions = {},
 ): Promise<void> {
+  const { signal, ...payload } = opts;
   const res = await fetch(`${BASE}/api/ai/chat`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history, ...opts }),
+    body: JSON.stringify({ message, history, ...payload }),
+    signal,
   });
   if (!res.ok || !res.body) {
     // 415(이미지 형식)·413(크기)·400(모드) 같은 거절은 이유를 그대로 보여 준다
@@ -447,21 +451,28 @@ export async function aiChatStream(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const parts = buf.split("\n\n");
-    buf = parts.pop() ?? "";
-    for (const part of parts) {
-      const line = part.split("\n").find((l) => l.startsWith("data:"));
-      if (!line) continue;
-      try {
-        onEvent(JSON.parse(line.slice(5).trim()));
-      } catch {
-        /* ignore */
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split("\n\n");
+      buf = parts.pop() ?? "";
+      for (const part of parts) {
+        const line = part.split("\n").find((l) => l.startsWith("data:"));
+        if (!line) continue;
+        try {
+          onEvent(JSON.parse(line.slice(5).trim()));
+        } catch {
+          /* ignore */
+        }
       }
     }
+  } catch (e) {
+    // 중단 버튼을 눌렀으면 오류가 아니다 — 여기까지 받은 것으로 끝낸다.
+    if (!signal?.aborted) throw e;
+  } finally {
+    void reader.cancel().catch(() => {});
   }
 }
 

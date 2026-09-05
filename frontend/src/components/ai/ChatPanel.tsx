@@ -2,7 +2,7 @@ import {
   ReactNode, forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState,
 } from "react";
 import {
-  Bot, Send, Loader2, CheckCircle2, XCircle, Sparkles, X, Quote, ImageIcon, Eraser,
+  Bot, Send, Square, Loader2, CheckCircle2, XCircle, Sparkles, X, Quote, ImageIcon, Eraser,
 } from "lucide-react";
 import { MarkdownView } from "../notes/LazyMarkdownView";
 import { aiChatStream, api, AiEvent, ChatMessage } from "../../lib/api";
@@ -201,6 +201,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   const [loadingSpace, setLoadingSpace] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);   // 중단 버튼
   // 화면 폭이 아니라 입력 방식으로 판단한다 — 태블릿 가로처럼 넓어도 소프트 키보드다.
   const touch = useMediaQuery("(pointer: coarse)");
   const hasContext = attachments.length > 0 || selections.length > 0;
@@ -268,6 +269,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     const patchLast = (fn: (m: Msg) => Msg) =>
       setMessages((arr) => arr.map((m, i) => (i === arr.length - 1 ? fn(m) : m)));
 
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     try {
       await aiChatStream(text, history, (e: AiEvent) => {
         if (e.type === "tool_call") {
@@ -294,15 +297,28 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
         } else if (e.type === "error") {
           patchLast((m) => ({ ...m, text: `오류: ${e.message}` }));
         }
-      }, { mode, paper_id: paperId, meeting_id: meetingId, ...sent });
+      }, { mode, paper_id: paperId, meeting_id: meetingId, ...sent, signal: ctrl.signal });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "AI 오류");
-      patchLast((m) => ({ ...m, text: "요청 처리 중 오류가 발생했습니다." }));
+      if (!ctrl.signal.aborted) {   // 중단은 오류가 아니다
+        toast.error(err instanceof Error ? err.message : "AI 오류");
+        patchLast((m) => ({ ...m, text: "요청 처리 중 오류가 발생했습니다." }));
+      }
     } finally {
-      patchLast((m) => ({ ...m, pending: false }));
+      if (abortRef.current === ctrl) abortRef.current = null;
+      // 중단했으면 흘러온 데까지 그대로 두고 표시만 붙인다(서버도 같은 것을 남긴다).
+      // 끊긴 자리가 보이지 않으면 다 쓴 답으로 착각한다.
+      patchLast((m) => ({
+        ...m,
+        pending: false,
+        text: ctrl.signal.aborted
+          ? (m.text ? `${m.text}\n\n_(여기서 멈췄습니다.)_` : "중단했습니다.")
+          : m.text,
+      }));
       setBusy(false);
     }
   }, [attachments, busy, hasContext, messages, meetingId, mode, onClearContext, onToolSuccess, paperId, selections, transformMessage]);
+
+  const stop = useCallback(() => abortRef.current?.abort(), []);
 
   const clear = useCallback(async () => {
     if (space) await api.aiSpaceClear(space);
@@ -473,16 +489,30 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
               e.preventDefault();
               send(input);
             }
+            // 답이 흐르는 중 Esc 로도 끊는다(버튼까지 가지 않아도 되게)
+            if (e.key === "Escape" && busy) {
+              e.preventDefault();
+              stop();
+            }
           }}
           placeholder={placeholder ?? (touch ? "메시지를 입력하세요…" : "메시지를 입력하세요… (Shift+Enter 줄바꿈)")}
-          disabled={busy}
+          // 답을 기다리는 동안에도 다음 말을 적어 둘 수 있어야 한다(보내기만 막힌다).
+          // 잠가 두면 Esc 로 중단할 방법도 함께 사라진다.
           rows={1}
           className="input flex-1 resize-none !h-auto min-h-[2.25rem] py-2 leading-relaxed [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           style={{ maxHeight: 160, overflowY: "auto" }}
         />
-        <button onClick={() => send(input)} disabled={!canSend} className="btn btn-primary h-9 px-4" aria-label="보내기">
-          {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-        </button>
+        {busy ? (
+          // 답이 길거나 엉뚱하게 흘러갈 때 끊을 수 있어야 한다. 여기까지 온 답은
+          // 지우지 않고 남긴다(서버도 같은 것을 기록에 넣는다).
+          <button onClick={stop} className="btn btn-ghost h-9 px-4" aria-label="중단">
+            <Square size={14} fill="currentColor" />
+          </button>
+        ) : (
+          <button onClick={() => send(input)} disabled={!canSend} className="btn btn-primary h-9 px-4" aria-label="보내기">
+            <Send size={16} />
+          </button>
+        )}
       </div>
     </div>
   );
