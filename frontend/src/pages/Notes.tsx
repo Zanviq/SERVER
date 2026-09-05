@@ -15,6 +15,7 @@ import { Modal } from "../components/ui/Modal";
 import { api, ApiError, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
 import { looksLikeExtension } from "../lib/names";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
+import { Draft, draftAgeText, dropDraft, keepDraft, moveDraft, readDraft } from "../lib/draftBackup";
 import { embedMarkdownFor, makeResolver } from "../lib/embeds";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
@@ -84,6 +85,8 @@ export function Notes() {
   const [detail, setDetail] = useState<NoteDetail | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  // 서버에 닿지 못한 편집(브라우저에만 남은 것). 있으면 편집기 위에 띠가 뜬다.
+  const [draft, setDraft] = useState<Draft | null>(null);
   const [newNoteOpen, setNewNoteOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -147,6 +150,10 @@ export function Notes() {
       try {
         await api.noteSave(path, text);
         setDirty(false);
+        // 서버에 닿았으니 밑글은 필요 없다. 이 한 줄이 "밑글이 남아 있다 ==
+        // 저장되지 못한 편집이 있다"를 참으로 유지한다.
+        dropDraft(path);
+        setDraft(null);
         if (!quiet) {
           const d = await api.noteGet(path);
           setDetail(d);
@@ -162,6 +169,15 @@ export function Notes() {
     },
     [reloadTree],
   );
+
+  // 아직 저장되지 않은 편집이 있는 채로 창을 닫으려 하면 브라우저가 되묻는다.
+  // 밑글이 남아 있어도 다른 브라우저에서는 못 되살리니, 묻는 편이 낫다.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   /** 대기 중인 자동저장을 지금 흘려보낸다.
    *
@@ -227,6 +243,9 @@ export function Notes() {
         setContent(d.content);
         setDetail(d);
         setDirty(false);
+        // 서버에 닿지 못한 편집이 남아 있으면 알린다. 몰래 덮어쓰지 않는다 —
+        // 다른 기기에서 고쳤을 수도 있으니 되살릴지는 사용자가 고른다.
+        setDraft(readDraft(d.path, d.content));
         // 열린 노트의 상위 폴더를 현재 폴더로
         const slash = d.path.lastIndexOf("/");
         setCurFolder(slash >= 0 ? d.path.slice(0, slash) : "");
@@ -256,6 +275,8 @@ export function Notes() {
     setContent(text);
     setDirty(true);
     if (!current) return;
+    // 자동저장이 뜨기 전에 창이 닫히거나 서버가 끊겨도 글이 남게 한다.
+    keepDraft(current, text);
     // 예약은 경로·본문을 **그때 값으로 붙잡는다**. 이래야 흘려보내기가
     // 지금 화면 상태가 아니라 '예약한 그 저장'을 그대로 실행한다.
     pending.schedule(autosaveMs, () => save(current, text, true));
@@ -429,6 +450,7 @@ export function Notes() {
         return;
       }
       const r = await api.noteRename(renameFor.path, renameName.trim());
+      moveDraft(renameFor.path, r.path);   // 밑글도 따라간다(옛 경로에 고아로 남지 않게)
       toast.ok("이름을 변경했습니다");
       const wasOpen = current === renameFor.path;
       setRenameFor(null);
@@ -447,6 +469,7 @@ export function Notes() {
         return;
       }
       const r = await api.noteMove(path, folder);
+      moveDraft(path, r.path);
       toast.ok("이동했습니다");
       const wasOpen = current === path;
       setMoveFor(null);
@@ -463,7 +486,8 @@ export function Notes() {
     try {
       if (current === path) cancelPendingSave();
       await api.noteDelete(path);
-      if (current === path) { setCurrent(null); setDetail(null); setContent(""); }
+      dropDraft(path);   // 지운 문서의 밑글이 남아 되살아나면 안 된다
+      if (current === path) { setCurrent(null); setDetail(null); setContent(""); setDraft(null); }
       setDelNotePath(null);
       await reloadTree();
       toast.ok("휴지통으로 옮겼습니다");
@@ -811,6 +835,32 @@ export function Notes() {
               )}
             </div>
           </div>
+          {/* 서버에 닿지 못한 편집. 자동으로 되살리지 않는다 — 다른 기기에서 고친
+              글을 조용히 덮어쓰는 편이 잃는 것보다 나쁘다. */}
+          {draft && current && (
+            <div className="flex flex-wrap items-center gap-2 border-b border-line bg-[rgb(var(--warning)/0.12)] px-3 py-2 text-[12.5px]">
+              <span className="min-w-0 flex-1">
+                저장되지 못한 편집이 이 브라우저에 남아 있습니다({draftAgeText(draft.at)}).
+              </span>
+              <button
+                onClick={() => {
+                  setContent(draft.text);
+                  setDirty(true);
+                  setDraft(null);
+                  void save(current, draft.text);
+                }}
+                className="btn btn-primary h-7 px-2 text-[12px]"
+              >
+                되살리기
+              </button>
+              <button
+                onClick={() => { dropDraft(current); setDraft(null); }}
+                className="btn btn-ghost h-7 px-2 text-[12px]"
+              >
+                버리기
+              </button>
+            </div>
+          )}
           {!current ? (
             <div className="flex flex-1 items-center justify-center px-4 text-center text-[13px] text-fg-muted">
               {/* 모바일에서는 목록이 왼쪽이 아니라 위에 쌓인다 */}
