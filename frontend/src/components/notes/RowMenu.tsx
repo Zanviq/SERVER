@@ -72,7 +72,7 @@ export function RowMenu({ onRename, onMove, onTrash }: {
         // 넓은 화면에서도 `hidden` 은 쓰지 않는다. display:none 은 탭 순서에서
         // 통째로 빠지는데, 이름 변경·이동·삭제는 다른 진입점이 없어서 키보드만
         // 쓰는 사람은 그 기능에 영영 닿지 못한다. 투명하게만 두고 포커스로도 켠다.
-        className={`block rounded p-1.5 text-fg-muted transition-opacity hover:text-fg ${
+        className={`grid h-7 w-7 place-items-center rounded text-fg-muted transition-opacity hover:text-fg ${
           open ? "" : "sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
         }`}
       >

@@ -372,7 +372,7 @@ export function Calendar() {
                     <button
                       onClick={() => setChatColor(null)}
                       title="자동(규칙/기본색)"
-                      className={`rounded-full border px-2 py-0.5 text-[11px] ${chatColor === null ? "border-accent bg-accent-muted text-accent-fg" : "border-line text-fg-muted"}`}
+                      className={`h-7 rounded-full border px-2.5 text-[11px] ${chatColor === null ? "border-accent bg-accent-muted text-accent-fg" : "border-line text-fg-muted"}`}
                     >
                       자동
                     </button>
@@ -382,7 +382,10 @@ export function Calendar() {
                         onClick={() => setChatColor(id)}
                         aria-label={GCAL_COLOR_NAMES[id]}
                         title={GCAL_COLOR_NAMES[id]}
-                        className={`h-5 w-5 rounded-full border-2 ${chatColor === id ? "border-fg" : "border-transparent"}`}
+                        // 점은 그대로 작게 두고 **누를 자리만** 넓힌다(안쪽 여백에는
+                        // 색을 칠하지 않는다). 20px 짜리 원 열한 개를 휴대폰에서
+                        // 정확히 누르기는 어렵다.
+                        className={`h-7 w-7 rounded-full border-2 bg-clip-content p-[3px] ${chatColor === id ? "border-fg" : "border-transparent"}`}
                         style={{ background: hex }}
                       />
                     ))}

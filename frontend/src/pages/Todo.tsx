@@ -580,7 +580,7 @@ export function Todo() {
             type="button"
             onClick={() => patchDetail({ color: "" })}
             title="카테고리 색 따르기"
-            className={`rounded-full border px-2 py-0.5 text-[11px] ${
+            className={`h-7 rounded-full border px-2.5 text-[11px] ${
               detail.color === "" ? "border-accent bg-accent-muted text-accent-fg" : "border-line text-fg-muted"
             }`}
           >
@@ -593,7 +593,8 @@ export function Todo() {
               onClick={() => patchDetail({ color: id })}
               aria-label={GCAL_COLOR_NAMES[id]}
               title={GCAL_COLOR_NAMES[id]}
-              className={`h-5 w-5 rounded-full border-2 ${
+              // 캘린더의 색 고르개와 같다 — 점은 작게, 누를 자리는 넓게.
+              className={`h-7 w-7 rounded-full border-2 bg-clip-content p-[3px] ${
                 detail.color === id ? "border-fg" : "border-transparent"
               }`}
               style={{ background: hex }}

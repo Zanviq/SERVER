@@ -532,16 +532,18 @@ export function Notes() {
                 폴더 다운로드·삭제를 영영 못 누른다. 좁은 화면은 항상 표시.
                 넓은 화면에서도 hidden(=display:none)은 쓰지 않는다 — 탭 순서에서
                 빠져 키보드만 쓰는 사람은 폴더 삭제에 닿을 길이 없어진다. */}
+            {/* 아이콘은 작게 두되 누를 자리는 28px 로 벌린다 — 20px 두 개가 붙어
+                있으면 휴대폰에서 '받기'를 누르려다 '삭제'가 눌린다. */}
             <a href={api.noteArchiveUrl(child.path)} download
               onClick={(e) => e.stopPropagation()}
-              className="block shrink-0 rounded p-1 text-fg-muted transition-opacity hover:text-accent sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded text-fg-muted transition-opacity hover:text-accent sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
               title="폴더를 zip으로 내려받기" aria-label="폴더 다운로드">
-              <Download size={12} />
+              <Download size={13} />
             </a>
             <button onClick={() => setDelFolder(child.path)}
-              className="block shrink-0 rounded p-1 text-fg-muted transition-opacity hover:text-danger sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded text-fg-muted transition-opacity hover:text-danger sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
               title="폴더 삭제" aria-label="폴더 삭제">
-              <Trash2 size={12} />
+              <Trash2 size={13} />
             </button>
           </div>
         </li>,

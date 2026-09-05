@@ -80,7 +80,11 @@ export function Dashboard() {
               <span className="flex items-center gap-1.5 text-sm font-semibold">
                 <NotebookPen size={15} className="text-accent" /> 최근 노트
               </span>
-              <Link to="/notes" className="text-fg-muted hover:text-accent"><ChevronRight size={16} /></Link>
+              {/* 화살표는 작아도 누를 자리는 28px — 휴대폰에서 16px 은 못 맞춘다 */}
+              <Link to="/notes" aria-label="노트 전체 보기"
+                className="-mr-1 grid h-7 w-7 place-items-center text-fg-muted hover:text-accent">
+                <ChevronRight size={16} />
+              </Link>
             </header>
             <ul className="divide-y divide-line">
               {notes.map((n) => (
@@ -104,7 +108,10 @@ export function Dashboard() {
               <span className="flex items-center gap-1.5 text-sm font-semibold">
                 <CalendarDays size={15} className="text-accent" /> 다가오는 일정
               </span>
-              <Link to="/calendar" className="text-fg-muted hover:text-accent"><ChevronRight size={16} /></Link>
+              <Link to="/calendar" aria-label="캘린더 전체 보기"
+                className="-mr-1 grid h-7 w-7 place-items-center text-fg-muted hover:text-accent">
+                <ChevronRight size={16} />
+              </Link>
             </header>
             <ul className="divide-y divide-line">
               {events.map((e) => (
