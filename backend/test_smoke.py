@@ -6483,6 +6483,39 @@ def test_every_mode_can_search_outside_its_own_screen():
         assert mode.allows("search_everything"), name
 
 
+def test_short_turns_are_not_cut_before_the_char_budget_is_spent():
+    """자르는 일은 글자 수가 맡는다. 턴 수는 안전망일 뿐이다.
+
+    턴 상한이 20 이던 때, 짧은 말 34개를 주고받은 대화가 글자 예산의 1%
+    (251/24000자)만 쓰고도 잘렸다. 밀려난 사실을 물으면 모델은 꺼내 보지 않고
+    지어냈다 — "좋아하는 음식"에 말한 적 없는 '피자'라고 답했다(60차 실측).
+    """
+    import time as _time
+
+    from backend import context_store
+    from backend.routers.ai import MAX_HISTORY_CHARS, MAX_HISTORY_TURNS
+
+    now = _time.time()
+    msgs = [{"id": f"m{i}", "role": "user" if i % 2 == 0 else "assistant",
+             "text": f"짧은 말 {i}", "ts": now - (40 - i)}
+            for i in range(34)]
+    kept = context_store.recent_for_llm(
+        msgs, max_turns=MAX_HISTORY_TURNS, max_chars=MAX_HISTORY_CHARS, now=now)
+    assert len(kept) == 34, len(kept)              # 짧으면 통째로 들어간다
+    assert kept[0]["text"] == "짧은 말 0", kept[0]  # 맨 앞 사실이 살아 있다
+    assert not context_store.truncation_note(len(msgs), len(kept), "assistant", "비서")
+
+    # 길면 여전히 글자 수로 잘린다(예산은 그대로다)
+    long_msgs = [{"id": f"L{i}", "role": "user", "text": "가" * 3000, "ts": now - (40 - i)}
+                 for i in range(20)]
+    cut = context_store.recent_for_llm(
+        long_msgs, max_turns=MAX_HISTORY_TURNS, max_chars=MAX_HISTORY_CHARS, now=now)
+    assert 0 < len(cut) < 20, len(cut)
+    assert sum(len(m["text"]) for m in cut) <= MAX_HISTORY_CHARS
+    note = context_store.truncation_note(len(long_msgs), len(cut), "assistant", "비서")
+    assert "read_context" in note and "지어내지 마세요" in note, note
+
+
 def test_trash_reports_how_much_disk_it_holds():
     """휴지통은 자동으로 비워지지 않는다 — 얼마나 쌓였는지 보이지 않으면
     사용자는 비워야 한다는 것조차 모른다(회의 녹음·논문 PDF 가 그대로 남는다)."""

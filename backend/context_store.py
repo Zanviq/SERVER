@@ -257,13 +257,18 @@ def read(user: SessionUser, settings: Settings, space: str, *,
 
 
 def recent_for_llm(msgs: list[dict], *, window_sec: float = RECENT_WINDOW_SEC,
-                   max_turns: int = 20, max_chars: int = 24000,
+                   max_turns: int = 80, max_chars: int = 24000,
                    now: float | None = None) -> list[dict]:
     """모델에 늘 들어가는 '최근'.
 
     시간·턴 수·글자 수 **셋 다**로 자른다. 하루 안에 장문 대화를 몰아서 하면
     시간만으로는 프롬프트가 터지고, 턴 수만으로는 어제 이야기가 통째로 사라진다.
     시각이 없는 옛 메시지는 창 안으로 본다(잘라 내면 기록이 통째로 없어진다).
+
+    **자르는 일은 글자 수가 맡는다.** 턴 수 상한이 20 이던 때, 짧은 말 34개를
+    주고받은 대화가 글자 예산의 1%(251/24000자)만 쓰고도 잘렸다. 밀려난 사실을
+    물으면 모델은 꺼내 보지 않고 지어냈다("좋아하는 음식"에 말한 적 없는 '피자').
+    턴 수는 이제 안전망일 뿐이고, 실제 한계는 글자 수다.
     """
     t0 = (now if now is not None else time.time()) - window_sec
     fresh = [m for m in msgs if not m.get("ts") or float(m["ts"]) >= t0]
@@ -284,7 +289,13 @@ def truncation_note(total: int, shown: int, space: str, label: str) -> str:
         f"[대화 기록 안내] 아래 대화는 이 화면('{label}')의 **최근 {shown}턴뿐**이고, "
         f"그 앞에 {dropped}턴이 더 있습니다. 아래 첫 줄은 **대화의 시작이 아닙니다.** "
         f"'처음에', '아까', '지난번에' 같은 물음에는 아래만 보고 답하지 말고 "
-        f"read_context(space=\"{space}\") 로 앞부분을 꺼내 확인한 뒤 답하세요."
+        f"read_context(space=\"{space}\") 로 앞부분을 꺼내 확인한 뒤 답하세요.\n"
+        f"**앞에서 한 말을 묻는데 아래 창에 없으면 지어내지 마세요.** "
+        f"'내가 …라고 했지?', '…가 뭐였지?', '내가 뭘 …한다고 했지?' 같은 물음은 "
+        f"낱말이 '처음에·아까'가 아니어도 모두 지난 대화를 묻는 것입니다. "
+        f"반드시 read_context(space=\"{space}\") 로 찾아본 뒤 답하고, 찾지 못하면 "
+        f"그럴듯한 답을 만들지 말고 \"기록에서 찾지 못했습니다\"라고 말하세요. "
+        f"(실제로 '좋아하는 음식'을 묻자 말한 적 없는 '피자'라고 답한 적이 있습니다.)"
     )
 
 
