@@ -33,6 +33,16 @@ _MEETING_SKILLS = {
 _DOC_SKILLS = {"search_documents", "read_document", "write_document", "append_document", "list_documents"}
 _TODO_SKILLS = {"list_todos", "create_todo", "list_todo_categories"}
 _CAL_SKILLS = {"list_calendar_events", "create_calendar_event", "find_free_slots"}
+#: 캘린더 화면에서 실제로 쓰는 것 — 일정을 고치고 지우는 것까지 필요하다.
+_CAL_FULL = _CAL_SKILLS | {
+    "update_calendar_event", "delete_calendar_event",
+    "bulk_create_calendar_events", "bulk_update_calendar_events", "bulk_delete_calendar_events",
+}
+_DIARY_SKILLS = {"get_diary", "set_diary"}
+_TODO_FULL = {
+    "list_todos", "list_todo_categories", "create_todo", "update_todo", "complete_todo",
+    "delete_todo", "bulk_complete_todos", "bulk_delete_todos", "create_todo_category",
+}
 _TRASH_SKILLS = {"list_trash", "restore_from_trash"}
 
 
@@ -50,7 +60,15 @@ MODES: dict[str, ModeSpec] = {
     # 대화를 어느 공간에 남길지 정하기 위해서다 — 예전에는 둘 다 브라우저에만
     # 있어서 새로고침하면 사라졌고, 다음 날 "어제 말한 그거"가 닿지 않았다.
     "assistant": ModeSpec("assistant"),
-    "calendar": ModeSpec("calendar"),
+    # 캘린더 패널은 일정·할 일·기록을 다룬다. 논문·회의·단어장 스킬까지 다 주면
+    # 도구 설명만 1만 4천 토큰이 매 요청에 실리고(실측), 스킬이 많을수록 모델이
+    # 엉뚱한 것을 고른다. 이 화면에서 쓰는 것만 준다.
+    "calendar": ModeSpec(
+        "calendar",
+        # 논문·회의는 **조회만** 넣는다("논문 읽을 시간 잡아줘" 가 막다른 길이 되지 않게).
+        frozenset(_COMMON_SKILLS | _CAL_FULL | _TODO_FULL | _DIARY_SKILLS | _DOC_SKILLS
+                  | _TRASH_SKILLS | {"list_papers", "list_meetings"}),
+    ),
     "english": ModeSpec(
         "english",
         frozenset(_COMMON_SKILLS | _VOCAB_SKILLS | _DOC_SKILLS | _TODO_SKILLS | _TRASH_SKILLS | {"list_papers"}),

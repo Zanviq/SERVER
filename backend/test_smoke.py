@@ -5636,6 +5636,27 @@ def test_context_search_across_spaces_and_skills():
     assert len(ranked) >= 2 and ranked[0]["score"] >= ranked[-1]["score"]
 
 
+def test_calendar_mode_carries_only_what_that_screen_needs():
+    """캘린더 패널에 스킬 58개를 다 주면 도구 설명만 매 요청 1만 4천 토큰이다(실측).
+
+    스킬이 많을수록 모델이 엉뚱한 것을 고르기도 한다. 그 화면에서 쓰는 것만 준다 —
+    다만 "논문 읽을 시간 잡아줘"가 막다른 길이 되지 않게 조회 스킬은 남긴다.
+    """
+    from backend.ai import modes
+
+    cal = modes.get_mode("calendar")
+    for name in ("create_calendar_event", "update_calendar_event", "delete_calendar_event",
+                 "bulk_update_calendar_events", "find_free_slots",
+                 "create_todo", "complete_todo", "get_diary", "set_diary",
+                 "write_document", "search_context", "list_papers", "list_meetings"):
+        assert cal.allows(name), name
+    # 이 화면에서 할 일이 아닌 것은 뺀다
+    for name in ("read_paper_text", "update_paper_info", "write_meeting_doc",
+                 "add_vocab_words", "propose_vocab_words", "get_system_status"):
+        assert not cal.allows(name), name
+    # 비서는 여전히 전부 쓴다(범용 화면)
+    assert modes.get_mode("assistant").allows("read_paper_text")
+
 def test_assistant_and_calendar_modes_persist_conversations():
     """비서·캘린더 대화도 서버에 남는다 — 예전에는 브라우저에만 있었다."""
     from backend.ai import modes
