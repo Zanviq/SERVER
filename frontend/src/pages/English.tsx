@@ -29,7 +29,11 @@ export function English() {
   // 전역 검색(Ctrl+K)에서 단어를 고르면 `?w=<id>` 로 들어온다
   const [params] = useSearchParams();
   const focusWord = params.get("w") ?? "";
-  useEffect(() => { if (focusWord) setMobileView("vocab"); }, [focusWord]);
+  // 대시보드의 '복습하러 가기'는 `?review=1` 로 온다
+  const autoReview = params.get("review") === "1";
+  useEffect(() => {
+    if (focusWord || autoReview) setMobileView("vocab");
+  }, [focusWord, autoReview]);
 
   const clearChat = async () => {
     if (!confirm("영어 학습 대화를 모두 지울까요? 단어장은 그대로 남습니다.")) return;
@@ -63,7 +67,7 @@ export function English() {
     <Shell title="영어 학습" actions={actions}>
       <ThreePane storageKey="english.panes.v1" side="right" showDetail={mobileView === "chat"} fixedLabel="단어장">
         <VocabPanel refreshKey={vocabKey} defaultTags={ENGLISH_TAG} focusId={focusWord}
-          className="h-view-11 lg:h-auto" />
+          autoReview={autoReview} className="h-view-11 lg:h-auto" />
         <div className="card flex h-view-11 flex-col overflow-hidden p-3 lg:h-auto">
           <ChatPanel
             ref={chat}

@@ -190,7 +190,7 @@ export function Dashboard() {
               ) : (
                 <>
                   <p className="text-2xl font-bold tracking-tight">{due}<span className="ml-1 text-sm font-normal text-fg-muted">개</span></p>
-                  <button onClick={() => navigate("/english")}
+                  <button onClick={() => navigate("/english?review=1")}
                     className="btn btn-primary mt-3 h-8 px-3 text-[12.5px]">복습하러 가기</button>
                 </>
               )}
