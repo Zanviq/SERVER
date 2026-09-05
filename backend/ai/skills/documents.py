@@ -365,6 +365,13 @@ class WriteDocument(SkillBase):
             return SkillResult(ok=False, message=what, error_code="unsupported")
         target.parent.mkdir(parents=True, exist_ok=True)
 
+        # 빈 문서를 만들지 않는다. 모델이 "먼저 빈 파일을 만들고 나중에 채우겠다"
+        # 하고 내용 없이 부르는 일이 있는데(실측), 그러면 목록에 0바이트 문서가
+        # 남는다. 위키링크로 만들어지는 문서와 같은 규칙으로 제목 한 줄을 넣는다.
+        if not str(args.get("content") or "").strip() and not target.exists():
+            args = dict(args)
+            args["content"] = f"# {target.stem}\n"
+
         # 덮어쓰기는 이 시스템에서 가장 되돌리기 어려운 동작이었다 — 삭제는 휴지통을
         # 거치는데 덮어쓰기만 아무 흔적도 안 남겼다. 이전 내용을 휴지통에 넣어
         # restore_from_trash로 되돌릴 수 있게 한다.

@@ -5636,6 +5636,31 @@ def test_context_search_across_spaces_and_skills():
     assert len(ranked) >= 2 and ranked[0]["score"] >= ranked[-1]["score"]
 
 
+def test_write_document_never_leaves_an_empty_file():
+    """모델이 "일단 빈 파일만 만들고 나중에 채우겠다" 하고 부르는 일이 있다(실측).
+
+    그러면 문서 목록에 0바이트 문서가 남는다. 위키링크로 만들어지는 문서와 같은
+    규칙으로 제목 한 줄을 넣어 준다.
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    from backend.storage import user_data_root
+
+    s = get_settings()
+    u = SessionUser(username="emptydoc", display_name="ED", expires_at=0, remaining=0)
+    reg = default_registry()
+    ctx = SkillContext(user=u, settings=s, today="2026-09-06")
+
+    assert reg.dispatch("write_document", {"path": "검증/빈문서", "content": ""}, ctx).ok
+    body = (user_data_root(u, s) / "검증" / "빈문서.md").read_text(encoding="utf-8")
+    assert body.strip() == "# 빈문서", repr(body)
+
+    # 이미 있는 문서를 빈 내용으로 덮는 것은 사용자의 뜻일 수 있으므로 건드리지 않는다
+    assert reg.dispatch("write_document", {"path": "검증/빈문서", "content": ""}, ctx).ok
+    assert (user_data_root(u, s) / "검증" / "빈문서.md").read_text(encoding="utf-8") == ""
+
 def test_calendar_mode_carries_only_what_that_screen_needs():
     """캘린더 패널에 스킬 58개를 다 주면 도구 설명만 매 요청 1만 4천 토큰이다(실측).
 
