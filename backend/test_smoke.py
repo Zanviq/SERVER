@@ -5651,6 +5651,67 @@ def test_assistant_and_calendar_modes_persist_conversations():
         assert spec.allows("read_context"), name
 
 
+def test_transcription_never_stores_an_invented_meeting():
+    """못 들었으면 **지어낸 회의록을 저장하지 않는다.**
+
+    깨진 WAV 를 넣었더니 모델이 그럴듯한 회의(AI 스피커 이야기)를 통째로 만들어
+    내고 status=ready 로 저장됐다(실측). 회의록은 사용자가 그대로 믿는 기록이라,
+    없는 것보다 지어낸 것이 훨씬 나쁘다. 무음 녹음(마이크를 잘못 잡은 경우)에서도
+    같은 일이 난다.
+    """
+    from backend import meeting_store, meeting_transcribe
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="mtguard", display_name="MG", expires_at=0, remaining=0)
+    mid = meeting_store.new_id()
+    d = meeting_store.meeting_dir(u, s, mid)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "audio.wav").write_bytes(b"RIFF____WAVEfmt ")  # 내용은 상관없다(가짜 모델을 쓴다)
+    meeting_store.register(u, s, filename="x.wav", mime="audio/wav", size=16, ext="wav",
+                           day="2026-09-06", mid=mid)
+
+    # 모델이 "못 들었다"고 하면 실패로 남고 받아쓰기 파일이 생기지 않아야 한다
+    meeting_transcribe.run_sync(u, s, mid,
+                                asker=lambda *a, **k: {"inaudible": True, "reason": "silent"})
+    m = meeting_store.get_meeting(u, s, mid)
+    assert m["status"] == meeting_store.STATUS_FAILED, m
+    assert "알아듣지 못했" in m["error"], m["error"]
+    assert not meeting_store.transcript_path(u, s, mid).exists(), "지어낸 받아쓰기가 저장되면 안 된다"
+    assert not m.get("summary"), m.get("summary")
+
+    # 제대로 들었을 때는 그대로 저장된다
+    meeting_transcribe.run_sync(u, s, mid, asker=lambda *a, **k: {
+        "summary": "검색 성능 개선을 논의했다",
+        "segments": [{"start": "00:00", "end": "00:05", "speaker": "화자 1", "text": "회의 시작합니다"},
+                     {"start": "00:05", "end": "00:10", "speaker": "화자 2", "text": "네 좋습니다"}],
+    })
+    m = meeting_store.get_meeting(u, s, mid)
+    assert m["status"] == meeting_store.STATUS_READY and m["segments"] == 2, m
+    assert "검색 성능" in m["summary"]
+
+
+def test_prompts_anchor_today_with_a_weekday():
+    """상대 날짜를 옮길 때 요일을 함께 준다.
+
+    회의록에 "이번 주 금요일(2026-09-12)" 이라 적었는데 그날은 토요일이었다(실측).
+    기준 요일을 프롬프트에 넣고 답에도 요일을 적게 하면 사람 눈에 바로 띈다.
+    """
+    from backend.ai import modes
+    from backend.ai.prompt_builder import build_system, today_with_weekday
+    from backend.auth import SessionUser
+
+    assert today_with_weekday("2026-09-06") == "2026-09-06(일요일)"
+    assert today_with_weekday("망가진 값") == "망가진 값"  # 실패해도 프롬프트는 만들어져야 한다
+
+    u = SessionUser(username="x", display_name="X", expires_at=0, remaining=0)
+    for text in (build_system(u, "assistant", "2026-09-06"), modes._head(u, "2026-09-06")):
+        assert "2026-09-06(일요일)" in text
+        assert "요일을 함께 적으세요" in text
+        assert "하지 않은 일을 했다고 말하지 마세요" in text
+
+
 def test_diary_and_paper_skills_cover_the_new_screens():
     """새 화면(기록·논문 폴더)을 AI 도 다룰 수 있어야 한다.
 

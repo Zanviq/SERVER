@@ -40,6 +40,11 @@ Listen to the whole audio and answer with a single JSON object (no prose, no cod
     {"start": "00:12", "end": "00:31", "speaker": "화자 2", "text": "..."}
   ]
 }
+If you cannot actually hear speech — the file is silent, corrupted, undecodable, or contains
+no intelligible voice — answer with exactly {"inaudible": true, "reason": "<short reason>"}
+and nothing else. **Never invent a plausible meeting.** A fabricated record is worse than none:
+the participant will trust it.
+
 Rules:
 - Transcribe verbatim in the spoken language (do not translate). Fix obvious filler words only.
 - Split into segments whenever the speaker changes or roughly every 20~40 seconds.
@@ -158,6 +163,15 @@ def run_sync(user: SessionUser, settings: Settings, mid: str, *, asker=None) -> 
         return meeting_store.update_meta(user, settings, mid, {
             "status": meeting_store.STATUS_FAILED,
             "error": (str(e) if settings.debug else "AI 호출에 실패했습니다.")[:300],
+        })
+    # 못 들었으면 **지어낸 것을 저장하지 않는다.** 깨진 WAV 를 넣었더니 모델이
+    # 그럴듯한 회의를 통째로 만들어 내고 ready 로 저장된 적이 있다(실측). 회의록은
+    # 사용자가 그대로 믿는 기록이라, 없는 것보다 지어낸 것이 훨씬 나쁘다.
+    if isinstance(info, dict) and info.get("inaudible"):
+        reason = str(info.get("reason") or "").strip()[:200]
+        return meeting_store.update_meta(user, settings, mid, {
+            "status": meeting_store.STATUS_FAILED,
+            "error": "녹음에서 말소리를 알아듣지 못했습니다." + (f" ({reason})" if reason else ""),
         })
     segments = _clean_segments((info or {}).get("segments"))
     if not segments:

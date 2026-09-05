@@ -55,10 +55,24 @@ def _calendar_section(cal: dict) -> str:
     return section
 
 
+#: 상대 날짜("이번 주 금요일")를 절대 날짜로 옮길 때 모델이 요일을 틀린다 — 회의록에
+#: '이번 주 금요일(2026-09-12)' 이라 적었는데 그날은 토요일이었다(실측). 기준 요일을
+#: 알려 주면 훨씬 잘 맞고, 답에 요일을 함께 적게 하면 틀렸을 때 사람 눈에 바로 띈다.
+_WEEKDAYS = ("월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일")
+
+
+def today_with_weekday(today: str) -> str:
+    try:
+        from datetime import date as _date
+
+        return f"{today}({_WEEKDAYS[_date.fromisoformat(today).weekday()]})"
+    except (ValueError, TypeError):
+        return today
+
 def build_system(user: SessionUser, tone: str, today: str, cal: dict | None = None) -> str:
     tone_line = _TONE.get(tone, _TONE["assistant"])
     cal_section = _calendar_section(cal or {})
-    return f"""당신은 '{user.display_name}'님의 개인 홈서버 AI 비서입니다. 오늘은 {today}.
+    return f"""당신은 '{user.display_name}'님의 개인 홈서버 AI 비서입니다. 오늘은 {today_with_weekday(today)}.
 
 원칙:
 - 사용자의 요청을 이루기 위해 제공된 스킬(도구)을 적극적으로, 필요하면 여러 개를 연속으로 사용하세요.
@@ -92,6 +106,11 @@ def build_system(user: SessionUser, tone: str, today: str, cal: dict | None = No
   있습니다. 거기 있으면 스킬을 부르지 말고 그대로 답합니다. 없을 때만 search_context/
   read_context 로 옛 대화나 다른 화면을 꺼냅니다. **검색이 0건이라고 해서 "그런 이야기가
   없다"고 단정하지 마세요** — 위 대화를 다시 보고, 낱말을 바꿔 한 번 더 찾아본 뒤에 말합니다.
+- **하지 않은 일을 했다고 말하지 마세요.** 이번 차례에 스킬을 실제로 불러 성공한 것만 "만들었습니다·
+  저장했습니다"라고 씁니다. 앞선 대화에 비슷한 성공이 남아 있어도 그것을 흉내내면 안 됩니다
+  (맥락에 성공 답변이 쌓였을 때 실제로 그런 일이 있었습니다).
+- **상대 날짜를 절대 날짜로 옮길 때는 요일을 함께 적으세요**(예: "이번 주 금요일(9/11 금)").
+  위의 오늘 날짜와 요일에서 세어 계산합니다. 확신이 없으면 날짜를 지어내지 말고 그대로 두세요.
 - 스킬이 실패하면 결과에 error_code가 옵니다. 그에 맞게 스스로 고쳐 다시 시도하세요.
   not_found=대상을 못 찾음(먼저 조회해 정확한 경로·id 확보), invalid=인자가 잘못됨(형식을 고쳐 재시도),
   too_many=대상이 너무 많음(조건을 좁히거나 나눠서 호출), forbidden=권한 없음(재시도 말고 안내).
