@@ -604,6 +604,19 @@ Service Token을 만들어 `--service-token-id`/`--service-token-secret`으로 �
 Access를 걸어도 파이의 sshd 인증은 그대로 남는다. **키만 받도록**
 (`PasswordAuthentication no`) 해 두면 두 겹이 된다.
 
+제대로 막혔는지는 **토큰이 없는 쪽에서** 확인해야 한다. 내 PC는 로그인 토큰이 캐시돼
+있어서(`~/.cloudflared/ssh.<도메인>-<aud>-token`) 걸렸는지 안 걸렸는지 구분이 안 된다.
+파이 안의 cloudflared는 토큰이 없으니 그쪽에서 찔러 본다.
+
+```bash
+ssh -o ProxyCommand="docker exec -i server-tunnel cloudflared access tcp --hostname ssh.<도메인>" \
+    -o BatchMode=yes zanviq@ssh.<도메인> true
+```
+
+- 로그인 URL을 뱉고 **배너 교환에서 끊기면** Access가 막고 있는 것이다(정상).
+- `Permission denied (publickey,password)`가 나오면 sshd까지 뚫린 것 — Access가 안 걸렸다.
+  호스트 이름이 터널의 Public Hostname과 정확히 같은지 확인한다.
+
 ---
 
 ## 저장 구조
