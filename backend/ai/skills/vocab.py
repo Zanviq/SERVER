@@ -25,6 +25,7 @@ propose_vocab_words 는 **저장하지 않는다.** 논문을 읽다 사용자�
 from __future__ import annotations
 
 import logging
+import re
 
 from ... import vocab_store
 from ..skill_base import SkillBase, SkillResult
@@ -169,6 +170,66 @@ class ListVocabTags(SkillBase):
         return SkillResult(ok=True, message=f"태그 {len(tags)}개", data={"tags": tags})
 
 
+#: "단어장에 넣어 달라"고 실제로 말했는가. 낱말 하나만 쳐도 모델이 제멋대로
+#: 넣어 버리는 일이 잦아서(3번 중 2번, 71차 실측) 서버가 직접 확인한다.
+#: 프롬프트로는 여러 번 막아 봤지만 계속 샜다 — 30·47·60차와 같은 교훈이다.
+_ASK_TO_ADD = re.compile(
+    r"단어장|외울|외워|저장|넣어|넣자|넣을|넣고|추가|담아|담자|등록|모아"
+    r"|\badd\b|\bsave\b|\bstore\b"
+)
+
+
+def _user_asked_to_add(ctx) -> bool:
+    """이번 차례에 사람이 '넣어 달라'고 했는가.
+
+    안 했으면 넣지 않고 **후보로만** 올린다. 잘못 판단해도 손해가 다르다 —
+    잘못 넣으면 고르지도 않은 단어가 복습 대기열에 영영 남고(사용자가 처음
+    보고한 문제가 이것이다), 잘못 안 넣으면 체크 목록에서 한 번 누르면 된다.
+    """
+    return bool(_ASK_TO_ADD.search(str(getattr(ctx, "user_message", "") or "")))
+
+
+def _as_proposal(words: list, ctx) -> SkillResult:
+    """저장 대신 후보 목록으로 돌려준다(add_vocab_words 가 허락 없이 불렸을 때).
+
+    화면은 propose_vocab_words 와 같은 모양의 data 를 보고 체크 목록을 그린다.
+    사용자가 고르면 /api/vocab/fill 로 바로 가므로, 여기서 아무것도 저장하지
+    않아도 한 번 누르는 것으로 끝난다.
+    """
+    clean = []
+    seen: set[str] = set()
+    for w in words:
+        if not isinstance(w, dict):
+            continue
+        hw = str(w.get("word") or "").strip()
+        if not hw or hw.lower() in seen:
+            continue
+        seen.add(hw.lower())
+        kind = str(w.get("kind") or "").strip().lower()
+        clean.append({
+            "word": hw[:vocab_store.MAX_WORD],
+            "kind": kind if kind in vocab_store.KINDS else vocab_store.guess_kind(hw),
+            "pos": str(w.get("pos") or "")[:60],
+            "meaning": ", ".join(str(m) for m in (w.get("meanings") or []) if m)[:200],
+        })
+    if not clean:
+        return SkillResult(ok=False, message="넣을 단어가 없습니다.", error_code="invalid")
+    try:
+        existing = {vocab_store.headword(x.get("word")) for x in
+                    vocab_store.list_words(ctx.user, ctx.settings)}
+    except Exception:  # noqa: BLE001
+        existing = set()
+    for c in clean:
+        c["exists"] = c["word"].lower() in existing
+    return SkillResult(
+        ok=True,
+        message=(f"사용자가 넣어 달라고 하지 않아 **저장하지 않았습니다.** 대신 후보 "
+                 f"{len(clean)}개를 화면에 띄웠습니다. 고른 것만 저장되니 너는 더 넣지 말고 "
+                 "'넣을 것을 골라 주세요' 정도만 짧게 말해라."),
+        data={"proposal": clean, "context": "", "tags": list(ctx.vocab_tags or [])},
+    )
+
+
 def _is_thin(w: dict) -> bool:
     """사전 내용이 덜 찬 항목인가. 뜻만 있고 나머지가 비면 카드가 반쪽이다."""
     return not (w.get("english_def") and w.get("examples") and w.get("synonyms"))
@@ -222,6 +283,11 @@ class AddVocabWords(SkillBase):
         words = args.get("words")
         if not isinstance(words, list) or not words:
             return SkillResult(ok=False, message="넣을 단어가 없습니다.", error_code="invalid")
+        # 사용자가 넣어 달라고 하지 않았으면 **넣지 않고 후보로 돌린다.**
+        # 낱말 하나만 쳐도 모델이 제멋대로 저장하는 일이 잦았다 — 고르지도 않은
+        # 단어가 복습 대기열에 쌓인다. 화면은 이 결과를 체크 목록으로 그린다.
+        if not _user_asked_to_add(ctx):
+            return _as_proposal(words, ctx)
         tags = args.get("tags") or []
         if isinstance(tags, str):
             tags = [tags]

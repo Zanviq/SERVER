@@ -38,6 +38,10 @@ class SkillContext:
     meeting_id: str = ""
     #: 이 화면에서 단어장에 넣는 단어에 무조건 붙는 태그(논문 제목 등).
     vocab_tags: list[str] = field(default_factory=list)
+    #: 이번 차례에 사용자가 실제로 친 말. 스킬이 "사용자가 이걸 시켰나"를 스스로
+    #: 확인해야 할 때 쓴다(단어장 자동 추가처럼, 프롬프트만으로는 새는 자리).
+    #: 모델의 말이 아니라 **사람의 말**이다.
+    user_message: str = ""
 
 
 class SkillBase(ABC):

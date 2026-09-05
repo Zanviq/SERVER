@@ -443,9 +443,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
                     <Loader2 size={14} className="animate-spin" /> 생각 중…
                   </div>
                 ) : null}
-                {/* 단어 후보: 고른 것만 서버로 바로 가고 백그라운드에서 채워진다 */}
+                {/* 단어 후보: 고른 것만 서버로 바로 가고 백그라운드에서 채워진다.
+                    스킬 이름이 아니라 **후보가 들어 있는지**로 본다 — 허락 없이
+                    불린 add_vocab_words 도 저장 대신 후보로 돌아온다. */}
                 {m.steps.map((s, j) =>
-                  s.name === "propose_vocab_words" && s.ok && s.data && Array.isArray(s.data.proposal) ? (
+                  s.ok && s.data && Array.isArray(s.data.proposal) ? (
                     <VocabProposal
                       key={`p${j}`}
                       data={s.data as unknown as VocabProposalData}

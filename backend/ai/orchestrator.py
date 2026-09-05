@@ -234,7 +234,7 @@ def run(
     registry = registry or default_registry()
     ctx = SkillContext(user=user, settings=settings, today=today,
                        mode=mode, paper_id=paper_id, vocab_tags=list(vocab_tags or []),
-                       meeting_id=meeting_id)
+                       meeting_id=meeting_id, user_message=message)
     spec = get_mode(mode) if mode else None
     catalog = [s for s in registry.build_catalog() if spec is None or spec.allows(s["name"])]
 

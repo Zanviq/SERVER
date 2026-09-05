@@ -344,9 +344,12 @@ def chat(
                             "message": str(ev.get("message") or "")[:300],
                             "args": str(ev.get("args") or ""),
                             "result": str(ev.get("result") or "")}
-                    # 단어 후보는 다시 열었을 때도 고를 수 있게 함께 남긴다
-                    if ev.get("name") == "propose_vocab_words" and isinstance(ev.get("data"), dict):
-                        note["data"] = ev["data"]
+                    # 단어 후보는 다시 열었을 때도 고를 수 있게 함께 남긴다.
+                    # 스킬 이름이 아니라 **후보가 들어 있는지**로 본다 —
+                    # add_vocab_words 도 허락 없이 불리면 후보로 돌려준다.
+                    data = ev.get("data")
+                    if isinstance(data, dict) and isinstance(data.get("proposal"), list):
+                        note["data"] = data
                     tool_notes.append(note)
                 yield orchestrator.sse_format(ev)
         except Exception as e:  # noqa: BLE001

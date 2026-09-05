@@ -5388,6 +5388,8 @@ def test_vocab_skills_add_and_propose_with_context_tags():
     # 화면이 그리도록 data 를 SSE 로 내보내는 스킬이다
     assert reg.get("propose_vocab_words").expose_data is True
 
+    # 넣는 스킬은 **사용자가 넣어 달라고 했을 때만** 실제로 저장한다(71차).
+    ctx.user_message = "attend 단어장에 넣어줘"
     r = reg.dispatch("add_vocab_words", {
         "words": [{"word": "attend", "meanings": ["주목하다", "참석하다"], "pos": "동사",
                    "examples": [{"en": "It attends to all positions.", "ko": "모든 위치에 주목한다."}]}],
@@ -6378,6 +6380,7 @@ def test_list_vocab_does_not_scold_a_limit_it_was_given():
 
     reg = default_registry()
     _u, ctx, _st = _todo_ctx("vocablimit")
+    ctx.user_message = "단어장에 넣어줘"      # 넣기는 사용자가 시켰을 때만 된다
     reg.dispatch("add_vocab_words", {"words": [
         {"word": f"w{i}", "meanings": ["뜻"]} for i in range(6)]}, ctx)
 
@@ -6411,6 +6414,7 @@ def test_a_thin_word_gets_filled_in_the_background(monkeypatch):
     _u, ctx, st = _todo_ctx("thinfill")
     monkeypatch.setattr(st, "gemini_api_key", "test-key", raising=False)
 
+    ctx.user_message = "단어장에 넣어줘"      # 넣기는 사용자가 시켰을 때만 된다
     started: list[list[str]] = []
     monkeypatch.setattr(vocab_fill, "start_fill",
                         lambda user, settings, items, tags, context="":
@@ -6612,12 +6616,46 @@ def test_saving_a_note_changed_elsewhere_stops_instead_of_overwriting():
         client.delete("/api/notes/delete", params={"path": path})
 
 
+def test_words_are_not_added_unless_the_user_asked():
+    """낱말 하나만 쳤는데 모델이 제멋대로 단어장에 넣던 것(71차: 3번 중 2번).
+
+    고르지도 않은 단어가 복습 대기열에 영영 남는다 — 사용자가 처음 보고한 문제가
+    이것이다. 프롬프트로는 여러 번 막아 봤지만 계속 샜다. 서버가 사람의 말을 보고
+    직접 판단하고, 시키지 않았으면 저장 대신 **후보로 돌린다.**
+    """
+    from backend import vocab_store
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    u, ctx, st = _todo_ctx("askedadd")
+    payload = {"words": [{"word": "perfunctory", "meanings": ["형식적인"]}]}
+
+    ctx.user_message = "perfunctory"          # 그냥 낱말만 쳤다
+    r = reg.dispatch("add_vocab_words", payload, ctx)
+    assert r.ok, r.message
+    assert vocab_store.list_words(u, st) == [], "시키지도 않았는데 넣었다"
+    assert r.data["proposal"][0]["word"] == "perfunctory", r.data
+    assert "저장하지 않았습니다" in r.message, r.message
+
+    # 넣어 달라고 하면 넣는다
+    ctx.user_message = "perfunctory 단어장에 넣어줘"
+    r2 = reg.dispatch("add_vocab_words", payload, ctx)
+    assert r2.ok and [w["word"] for w in vocab_store.list_words(u, st)] == ["perfunctory"]
+
+    # 영어로 말해도 알아듣는다
+    u2, ctx2, st2 = _todo_ctx("askedadd2")
+    ctx2.user_message = "add this to my wordbook"
+    reg.dispatch("add_vocab_words", payload, ctx2)
+    assert [w["word"] for w in vocab_store.list_words(u2, st2)] == ["perfunctory"]
+
+
 def test_a_word_with_many_meanings_says_there_are_more():
     """뜻을 넷에서 끊는 것을 알리지 않으면 "뜻 다 알려줘"에 넷만 말한다."""
     from backend.ai.skill_registry import default_registry
 
     reg = default_registry()
     _u, ctx, _st = _todo_ctx("manymeanings")
+    ctx.user_message = "단어장에 넣어줘"
     reg.dispatch("add_vocab_words", {"words": [{
         "word": "set", "meanings": [f"뜻{i}" for i in range(7)]}]}, ctx)
 
