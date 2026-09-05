@@ -236,6 +236,55 @@ class SetPaperNotes(SkillBase):
         return SkillResult(ok=True, message=f"'{p.get('title', '')}' 메모 저장", data={"paper_id": pid})
 
 
+class UpdatePaperInfo(SkillBase):
+    mutates = "papers"
+    name = "update_paper_info"
+    description = (
+        "논문의 **폴더(분류)·제목·별표·파일 이름**을 고친다. "
+        "'이 논문 강화학습 폴더로 옮겨 줘', '제목이 잘못됐어', '별표 달아 줘' 같은 말에 쓴다. "
+        "폴더는 미리 만들 필요가 없다 — 이름을 적으면 그 폴더가 생기고, 마지막 논문이 나가면 사라진다. "
+        "category 를 빈 문자열로 주면 '분류 없음'으로 뺀다. "
+        "**제목을 바꾸면 그 논문으로 넣은 단어장 태그도 함께 따라간다.**"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "paper_id": {"type": "string", "description": "생략하면 지금 논문. 모르면 list_papers 로 찾는다."},
+            "category": {"type": "string", "description": "폴더 이름. 빈 문자열이면 폴더에서 뺀다."},
+            "title": {"type": "string", "description": "제목"},
+            "starred": {"type": "boolean", "description": "별표"},
+            "filename": {"type": "string", "description": "내려받을 때 쓰는 파일 이름(.pdf 는 서버가 붙인다)."},
+        },
+    }
+
+    def run(self, args, ctx):
+        pid = _pid(args, ctx)
+        if not pid:
+            return SkillResult(ok=False, message="paper_id 가 필요합니다. list_papers 로 찾으세요.",
+                               error_code="invalid")
+        patch = {k: args[k] for k in ("category", "title", "starred", "filename")
+                 if args.get(k) is not None}
+        if not patch:
+            return SkillResult(ok=False, message="바꿀 내용이 없습니다.", error_code="invalid")
+        try:
+            p = paper_store.update_meta(ctx.user, ctx.settings, pid, patch)
+        except Exception as e:  # noqa: BLE001
+            return _fail(e)
+        bits = []
+        if "category" in patch:
+            bits.append(f"폴더 '{p.get('category') or '분류 없음'}'")
+        if "title" in patch:
+            bits.append(f"제목 '{p.get('title', '')}'")
+        if "starred" in patch:
+            bits.append("별표 " + ("켬" if p.get("starred") else "끔"))
+        if "filename" in patch:
+            bits.append(f"파일 이름 '{p.get('filename', '')}'")
+        return SkillResult(ok=True, message=" / ".join(bits) or "수정됨",
+                           data={"paper_id": pid, "title": p.get("title", ""),
+                                 "category": p.get("category", "")})
+
+
 PAPER_SKILLS: list[SkillBase] = [
     ListPapers(), GetPaperInfo(), ReadPaperText(), SearchPaperChats(), SetPaperNotes(),
+    UpdatePaperInfo(),
 ]

@@ -75,6 +75,7 @@ const SKILL_LABEL: Record<string, string> = {
   read_paper_text: "논문 본문 읽기",
   search_paper_chats: "지난 대화 검색",
   set_paper_notes: "논문 메모",
+  update_paper_info: "논문 정보 수정",
   // 회의
   list_meetings: "회의 목록",
   get_meeting_info: "회의 정보",
@@ -85,6 +86,9 @@ const SKILL_LABEL: Record<string, string> = {
   append_meeting_doc: "회의 문서 덧붙이기",
   delete_meeting_doc: "회의 문서 삭제",
   update_meeting_info: "회의 정보 수정",
+  // 기록(상태·일기)
+  get_diary: "기록 조회",
+  set_diary: "기록 저장",
   // 지난 대화(컨텍스트)
   list_context_spaces: "대화 공간 목록",
   search_context: "지난 대화 검색",

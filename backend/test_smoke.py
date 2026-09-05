@@ -5651,6 +5651,54 @@ def test_assistant_and_calendar_modes_persist_conversations():
         assert spec.allows("read_context"), name
 
 
+def test_diary_and_paper_skills_cover_the_new_screens():
+    """새 화면(기록·논문 폴더)을 AI 도 다룰 수 있어야 한다.
+
+    없을 때는 모델이 "오늘 힘들었다고 기록해 줘"를 문서 만들기로 처리했고(실측),
+    논문을 폴더로 옮겨 달라면 문서를 뒤지다 포기했다.
+    """
+    from backend import diary_store, paper_store
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="newscreens", display_name="NS", expires_at=0, remaining=0)
+    reg = default_registry()
+    ctx = SkillContext(user=u, settings=s, today="2026-09-06")
+
+    # 기록: 사람 말("힘듦")도 도형 이름("square")도 받는다
+    r = reg.dispatch("set_diary", {"date": "2026-09-06", "body": "힘듦", "heart": "좋음",
+                                   "text": "하루 종일 코딩했다"}, ctx)
+    assert r.ok, r.message
+    e = diary_store.get_day(u, s, "2026-09-06")
+    assert e["body"] == "square" and e["heart"] == "circle"
+    assert e["mind"] == "", "말하지 않은 축은 비어 있어야 한다(화면에 - 로 나온다)"
+    assert e["text"] == "하루 종일 코딩했다"
+
+    r = reg.dispatch("set_diary", {"date": "2026-09-06", "mind": "star",
+                                   "text": "저녁엔 산책", "append": True}, ctx)
+    assert r.ok and diary_store.get_day(u, s, "2026-09-06")["mind"] == "star"
+    assert "산책" in diary_store.get_day(u, s, "2026-09-06")["text"]
+    assert "코딩" in diary_store.get_day(u, s, "2026-09-06")["text"], "append 는 덧붙여야 한다"
+
+    r = reg.dispatch("get_diary", {"date": "2026-09-06"}, ctx)
+    assert r.ok and r.data["육체"].startswith("힘듦")
+
+    # 논문 폴더·제목: 폴더는 미리 만들지 않는다
+    meta = paper_store.register(u, s, "x.pdf", 10)
+    r = reg.dispatch("update_paper_info", {"paper_id": meta["id"], "category": "강화학습"}, ctx)
+    assert r.ok, r.message
+    assert paper_store.get_paper(u, s, meta["id"])["category"] == "강화학습"
+    assert paper_store.categories(u, s) == ["강화학습"]
+    # 빈 문자열이면 폴더에서 뺀다 → 빈 폴더는 저절로 사라진다
+    assert reg.dispatch("update_paper_info", {"paper_id": meta["id"], "category": ""}, ctx).ok
+    assert paper_store.categories(u, s) == []
+    # 바꿀 내용이 없으면 실패로 알린다(모델이 되풀이하지 않게)
+    assert not reg.dispatch("update_paper_info", {"paper_id": meta["id"]}, ctx).ok
+
+
 # ── 논문 ────────────────────────────────────────────────────────────
 
 def _tiny_pdf(text: str = "Hello paper") -> bytes:

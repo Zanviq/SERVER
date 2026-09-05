@@ -23,7 +23,8 @@ _VOCAB_SKILLS = {
     "list_vocab", "list_vocab_tags", "add_vocab_words", "propose_vocab_words",
     "update_vocab_word", "delete_vocab_word",
 }
-_PAPER_SKILLS = {"list_papers", "get_paper_info", "read_paper_text", "search_paper_chats", "set_paper_notes"}
+_PAPER_SKILLS = {"list_papers", "get_paper_info", "read_paper_text", "search_paper_chats",
+                 "set_paper_notes", "update_paper_info"}
 _MEETING_SKILLS = {
     "list_meetings", "get_meeting_info", "read_meeting_transcript", "list_meeting_docs",
     "read_meeting_doc", "write_meeting_doc", "append_meeting_doc", "delete_meeting_doc",
@@ -107,6 +108,11 @@ _VOCAB_FORMAT = """
 - 어려운 표현·숙어가 있으면 추가 설명
 
 **과거형·변화형**을 보내면 원형을 먼저 밝히고 원형 기준으로 설명합니다.
+
+**전문 용어로도 쓰이는 낱말**(ablation, attention, embedding, prompt, token, robust …)은
+사용자가 AI·머신러닝 논문을 읽는 사람이라는 것을 잊지 마세요. 일반 뜻만 적으면 논문을 읽을 때
+쓸모가 없습니다(ablation 을 '수술로 제거'라고만 적는 식). **그 분야에서 쓰이는 뜻을 먼저**
+놓고 일반 뜻을 뒤에 붙이며, 논문 제목이 태그로 붙는 항목이면 그 논문에서 쓰이는 의미로 적습니다.
 
 생략 규칙:
 - 이미 단어장에 있거나 이 대화에서 설명한 단어는 다시 설명하지 않습니다(필요하면 "앞에서 나온 단어"라고만).
