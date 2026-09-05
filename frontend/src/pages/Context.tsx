@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Bot, CalendarDays, ChevronDown, ChevronRight, GraduationCap, History, Languages,
-  Loader2, MessageSquare, Search, Terminal, User, X, AudioLines,
+  List, Loader2, MessageSquare, Search, Terminal, User, X, AudioLines,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { ThreePane } from "../components/notes/ThreePane";
@@ -132,9 +132,17 @@ export function Context() {
     <Shell
       title="컨텍스트"
       actions={
-        <span className="badge" title="AI 가 늘 보는 것은 최근 하루치입니다. 그보다 옛날은 AI 가 스킬로 직접 꺼냅니다.">
-          최근 1일 자동 · 그 이전은 AI가 검색
-        </span>
+        <>
+          {/* 좁은 화면은 목록과 대화를 번갈아 보여 준다 — 돌아갈 길이 없으면 갇힌다 */}
+          {space && (
+            <button onClick={() => select("", "")} className="btn btn-ghost h-8 gap-1 px-2 text-[12px] lg:hidden" title="목록으로">
+              <List size={14} /> 목록
+            </button>
+          )}
+          <span className="badge" title="AI 가 늘 보는 것은 최근 하루치입니다. 그보다 옛날은 AI 가 스킬로 직접 꺼냅니다.">
+            최근 1일 자동 · 그 이전은 AI가 검색
+          </span>
+        </>
       }
     >
       <ThreePane storageKey="context.panes.v1" showDetail={!!space} defaultWidth={300} fixedLabel="세션 목록">

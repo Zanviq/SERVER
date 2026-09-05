@@ -431,7 +431,13 @@ function PageView({ pdf, pdfjs, num, scale, size, visible, top, left, tool, onRe
       end.className = "endOfContent";
       textDiv.append(end);
     })().catch((e) => {
-      if (!(e instanceof pdfjs.RenderingCancelledException)) console.error(e);
+      // 우리가 **일부러** 끊은 것들은 오류가 아니다. 폭을 바꾸거나 패널을 접으면
+      // 보이던 쪽이 다시 그려지면서 매번 난다 — 콘솔에 쌓이면 진짜 오류가 묻힌다.
+      // 렌더는 RenderingCancelledException, 글 레이어는 AbortException 으로 온다.
+      const name = (e as { name?: string })?.name ?? "";
+      if (e instanceof pdfjs.RenderingCancelledException
+          || name === "RenderingCancelledException" || name === "AbortException") return;
+      console.error(e);
     });
     return () => {
       cancelled = true;
