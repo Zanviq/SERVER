@@ -270,6 +270,24 @@ def recent_for_llm(msgs: list[dict], *, window_sec: float = RECENT_WINDOW_SEC,
     return chat_store.history_for_llm(fresh, max_turns=max_turns, max_chars=max_chars)
 
 
+def truncation_note(total: int, shown: int, space: str, label: str) -> str:
+    """잘린 만큼을 모델에게 알리는 한 줄.
+
+    모르면 모델은 보이는 앞부분을 "대화의 시작"으로 단정한다 — 34턴 중 20턴만
+    보이는데 "맨 처음에 …라고 하셨습니다" 하고 엉뚱한 말을 골랐다(실측).
+    어떻게 꺼내는지까지 적어야 실제로 꺼내 본다.
+    """
+    dropped = max(0, total - shown)
+    if dropped <= 0:
+        return ""
+    return (
+        f"[대화 기록 안내] 아래 대화는 이 화면('{label}')의 **최근 {shown}턴뿐**이고, "
+        f"그 앞에 {dropped}턴이 더 있습니다. 아래 첫 줄은 **대화의 시작이 아닙니다.** "
+        f"'처음에', '아까', '지난번에' 같은 물음에는 아래만 보고 답하지 말고 "
+        f"read_context(space=\"{space}\") 로 앞부분을 꺼내 확인한 뒤 답하세요."
+    )
+
+
 # ── 검색 ─────────────────────────────────────────────────────────────
 
 def _tokens(q: str) -> list[str]:

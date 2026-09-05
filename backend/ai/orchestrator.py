@@ -117,6 +117,7 @@ def run(
     paper_id: str = "",
     vocab_tags: list[str] | None = None,
     meeting_id: str = "",
+    history_note: str = "",
 ) -> Iterator[dict]:
     """ReAct 루프 실행. 이벤트 dict를 순차적으로 yield.
 
@@ -139,6 +140,11 @@ def run(
     # 모델은 사용자 설정을 따르므로 prefs를 읽은 뒤에 만든다
     llm = llm or GeminiLLM(settings, prefs.get("model", ""))
     system = system or build_system(user, prefs["tone"], today, prefs.get("calendar"))
+    # 대화가 잘렸으면 **그 사실을 알린다.** 모르면 모델은 보이는 앞부분을 "대화의
+    # 시작"으로 단정한다 — 34턴 중 20턴만 보이는데 "맨 처음에 …라고 하셨습니다"
+    # 하고 엉뚱한 말을 골랐다(실측). 어떻게 꺼내는지도 함께 적는다.
+    if history_note:
+        system = f"{system}\n\n{history_note}"
     max_steps = max(1, min(16, int(prefs["max_steps"])))
 
     # 이전 대화(멀티턴): [{role: user|assistant, text}] → genai 형식

@@ -242,14 +242,31 @@ def chat(
         attachments = []
 
     # 대화 기록: 모드가 있으면 서버에 남은 것을, 아니면 브라우저가 보낸 것을 쓴다
+    history_note = ""
     if persist_path is not None:
         # 기본은 '최근 하루'. 그보다 옛날 이야기는 모델이 컨텍스트 스킬로 직접 꺼낸다
         # (전부 넣으면 요금·지연이 늘고 관계없는 옛 대화가 답을 흐린다).
+        stored = chat_store.load(persist_path)
         history = context_store.recent_for_llm(
-            chat_store.load(persist_path),
+            stored,
             window_sec=context_store.RECENT_WINDOW_SEC,
             max_turns=MAX_HISTORY_TURNS, max_chars=MAX_HISTORY_CHARS,
         )
+        # 잘렸으면 그 사실과 꺼내는 법을 알려 준다 — 모르면 보이는 앞부분을
+        # "대화의 시작"으로 단정한다.
+        space_name = spec.name if spec.name in context_store.FIXED_SPACES else (
+            f"paper:{paper_id}" if paper_id else f"meeting:{meeting_id}" if meeting_id else "")
+        if space_name:
+            history_note = context_store.truncation_note(
+                len([m for m in stored if str(m.get("text") or "").strip()]),
+                len(history), space_name,
+                context_store.space_label(user, settings, space_name),
+            )
+            # 시스템 프롬프트 끝에만 두면 모델이 "위 대화에 있으면 그대로 답하라"는
+            # 앞선 규칙을 따라 잘린 앞부분을 대화의 시작으로 단정한다(실측).
+            # 대화 맨 앞에도 같은 표식을 세워, 모델이 '시작'을 찾는 그 자리에서 보게 한다.
+            if history_note and history:
+                history = [{"role": "user", "text": history_note}] + history
     else:
         # 최근 것부터 담되 총량도 제한한다. 턴 수만 자르면 장문 몇 개로 뚫린다.
         history = []
@@ -277,6 +294,7 @@ def chat(
                 user, settings, full_message, today, history=history,
                 mode=mode, system=system, attachments=attachments,
                 paper_id=paper_id, vocab_tags=vocab_tags, meeting_id=meeting_id,
+                history_note=history_note,
             ):
                 if ev.get("type") == "text":
                     final_text = str(ev.get("text") or "")

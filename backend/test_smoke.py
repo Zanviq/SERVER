@@ -5762,6 +5762,24 @@ def test_unexpected_skill_errors_do_not_leak_internals():
     # 없는 스킬도 스트림을 죽이지 않고 실패로만 돌아온다
     assert reg.dispatch("없는스킬", {}, ctx).error_code == "not_found"
 
+def test_truncated_history_tells_the_model_there_is_more():
+    """창 밖으로 밀려난 대화가 있으면 **그 사실을 알린다.**
+
+    모르면 모델은 보이는 앞부분을 "대화의 시작"으로 단정한다 — 32턴 중 20턴만
+    보이는데 "맨 처음에 …라고 하셨습니다" 하고 엉뚱한 말을 골랐다(실측).
+    안내를 넣은 뒤에는 스스로 search_context/read_context 로 꺼내 3회 중 3회 맞혔다.
+    """
+    from backend import context_store
+
+    # 잘린 게 없으면 군더더기를 붙이지 않는다
+    assert context_store.truncation_note(20, 20, "assistant", "비서") == ""
+    assert context_store.truncation_note(5, 20, "assistant", "비서") == ""
+
+    note = context_store.truncation_note(32, 20, "assistant", "비서")
+    assert "최근 20턴" in note and "12턴" in note, note
+    assert "대화의 시작이 아닙니다" in note, note
+    assert 'read_context(space="assistant")' in note, note  # 꺼내는 법까지 적는다
+
 def test_context_is_isolated_per_user_and_survives_concurrent_writes():
     """컨텍스트는 사용자별로 갇혀 있고, 동시에 써도 잃어버리지 않는다.
 

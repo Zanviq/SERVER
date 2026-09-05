@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Bot, CalendarDays, ChevronDown, ChevronRight, GraduationCap, History, Languages,
-  List, Loader2, MessageSquare, Search, Terminal, User, X, AudioLines,
+  List, Loader2, MessageSquare, Search, Terminal, Trash2, User, X, AudioLines,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { ThreePane } from "../components/notes/ThreePane";
@@ -104,6 +104,18 @@ export function Context() {
       .finally(() => { if (alive) setLoadingMsgs(false); });
     return () => { alive = false; };
   }, [space, session]);
+
+  /** 틀린 답을 지운다 — 그대로 두면 다음 대화의 맥락이 되어 모델이 흉내 낸다. */
+  const removeTurn = async (m: ChatMessage) => {
+    if (!space) return;
+    try {
+      await api.aiSpaceDelete(space, m.id);
+      setMessages((arr) => (arr ? arr.filter((x) => x.id !== m.id) : arr));
+      toast.ok("지웠습니다");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "지우지 못했습니다");
+    }
+  };
 
   const runSearch = async () => {
     const query = q.trim();
@@ -274,7 +286,7 @@ export function Context() {
                 {!loadingMsgs && messages?.length === 0 && (
                   <p className="py-8 text-center text-[12.5px] text-fg-muted">이 세션에 남은 대화가 없습니다.</p>
                 )}
-                {messages?.map((m) => <Turn key={m.id} msg={m} />)}
+                {messages?.map((m) => <Turn key={m.id} msg={m} onDelete={() => void removeTurn(m)} />)}
               </div>
             </>
           )}
@@ -285,7 +297,7 @@ export function Context() {
 }
 
 /** 대화 한 턴. 사용자는 오른쪽 말풍선, AI 는 왼쪽 카드(대화 화면과 같은 규칙). */
-function Turn({ msg }: { msg: ChatMessage }) {
+function Turn({ msg, onDelete }: { msg: ChatMessage; onDelete: () => void }) {
   const tools = msg.meta?.tools ?? [];
   if (msg.role === "user") {
     return (
@@ -308,7 +320,7 @@ function Turn({ msg }: { msg: ChatMessage }) {
         <div className="max-w-[80%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-accent px-3.5 py-2 text-[13px] text-accent-contrast">
           {msg.text}
         </div>
-        <span className="text-[10.5px] text-fg-subtle">{fmtTime(msg.ts)}</span>
+        <TurnFoot ts={msg.ts} onDelete={onDelete} />
       </div>
     );
   }
@@ -324,9 +336,27 @@ function Turn({ msg }: { msg: ChatMessage }) {
             <MarkdownView content={msg.text} onWikiClick={() => {}} />
           </div>
         )}
-        <span className="text-[10.5px] text-fg-subtle">{fmtTime(msg.ts)}</span>
+        <TurnFoot ts={msg.ts} onDelete={onDelete} />
       </div>
     </div>
+  );
+}
+
+/**
+ * 시각 + 지우기. 틀린 답을 지울 수 있어야 한다 — 대화 기록은 다음 차례의 맥락이라
+ * **틀린 답도 맥락이 된다.** 모델이 자기 오답을 흉내 내는 것을 실제로 봤다
+ * (창 밖 사실을 "찾을 수 없다"고 한 답이 쌓이자 계속 그렇게 답했다).
+ */
+function TurnFoot({ ts, onDelete }: { ts: number; onDelete: () => void }) {
+  return (
+    <span className="group/foot flex items-center gap-1.5">
+      <span className="text-[10.5px] text-fg-subtle">{fmtTime(ts)}</span>
+      <button type="button" onClick={onDelete} title="이 말 지우기 (다음 대화의 맥락에서 뺀다)"
+        aria-label="이 말 지우기"
+        className="opacity-0 transition-opacity hover:text-danger group-hover/foot:opacity-100 focus:opacity-100">
+        <Trash2 size={11} className="text-fg-subtle hover:text-danger" />
+      </button>
+    </span>
   );
 }
 
