@@ -264,19 +264,35 @@ def search(user: SessionUser, settings: Settings, query: str,
     q = (query or "").strip()
     if not q:
         return []
-    hits: list[dict] = []
-    for kind in kinds:
+
+    def one(kind: str) -> list[dict]:
         fn = _SOURCES.get(kind)
         if fn is None:
-            continue
+            return []
         try:
             found = fn(user, settings, q)
         except Exception:  # noqa: BLE001 - 한 갈래의 사고가 검색 전체를 막지 않는다
             import logging
 
             logging.getLogger("server.search").exception("검색 실패: %s", kind)
-            continue
+            return []
         found.sort(key=lambda h: -h["score"])
-        hits.extend(found[:PER_KIND])
+        return found[:PER_KIND]
+
+    # 갈래를 나란히 훑는다. 대부분은 JSON 한 덩이라 수십 ms 인데 문서만 벌트 전체를
+    # 읽어서 훨씬 오래 걸린다(1.8MB·800건에 490ms). 차례로 하면 그 시간이 그대로
+    # 더해진다 — 나란히 하면 가장 느린 하나만큼만 걸린다. 파일 읽기는 GIL 을 놓아서
+    # 스레드로도 실제로 겹쳐진다.
+    picked = [k for k in kinds if k in _SOURCES]
+    hits: list[dict] = []
+    if len(picked) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=len(picked)) as pool:
+            for found in pool.map(one, picked):
+                hits.extend(found)
+    else:
+        for kind in picked:
+            hits.extend(one(kind))
     hits.sort(key=lambda h: -h["score"])
     return hits[:limit]

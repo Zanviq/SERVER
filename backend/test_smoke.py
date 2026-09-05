@@ -6338,6 +6338,44 @@ def test_global_search_finds_the_same_word_across_every_screen():
         assert any(h["kind"] == "paper" for h in search_all.search(u, st, seed))
 
 
+def test_adding_many_words_touches_the_file_once():
+    """단어를 묶음으로 넣을 때 단어장 전체를 개수만큼 다시 쓰면 안 된다.
+
+    예전에는 낱개 add_word 를 반복해서 넣는 개수 × 단어 수만큼 일했다
+    (2000건에 191초). 지금은 한 번 읽고 한 번 쓴다.
+    한 묶음 안의 중복·병합 결과는 낱개로 넣던 때와 같아야 한다.
+    """
+    from backend import json_store, vocab_store
+
+    u, _ctx, st = _todo_ctx("vocabbatch")
+    writes = {"n": 0}
+    real = json_store.write_atomic
+
+    def counting(path, data, **kw):
+        writes["n"] += 1
+        return real(path, data, **kw)
+
+    import unittest.mock as _mock
+    with _mock.patch.object(json_store, "write_atomic", counting):
+        res = vocab_store.add_words(u, st, [
+            {"word": "alpha", "meanings": ["처음"]},
+            {"word": "beta", "meanings": ["둘째"]},
+            {"word": "alpha", "meanings": ["처음", "첫째"]},   # 같은 묶음 안의 중복
+            "잘못된 형식",
+        ], extra_tags=["묶음"])
+
+    assert writes["n"] == 1, f"파일을 {writes['n']}번 썼다"
+    assert [w["word"] for w in res["added"]] == ["alpha", "beta"], res["added"]
+    assert [w["word"] for w in res["merged"]] == ["alpha"], res["merged"]
+    assert res["failed"] and res["failed"][0]["reason"], res["failed"]
+
+    words = vocab_store.list_words(u, st)
+    assert len(words) == 2, [w["word"] for w in words]
+    alpha = next(w for w in words if w["word"] == "alpha")
+    assert "첫째" in alpha["meanings"], alpha        # 뒤엣것이 합쳐졌다
+    assert "묶음" in alpha["tags"], alpha            # extra_tags 도 그대로
+
+
 def test_every_mode_can_search_outside_its_own_screen():
     """모드마다 스킬을 줄이는 이유는 엉뚱한 도구를 막으려는 것이지만,
     전체 검색만은 예외다 — 화면 밖을 찾는 유일한 길이라 모든 모드에 있어야 한다."""
