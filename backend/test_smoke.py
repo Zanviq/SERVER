@@ -5697,6 +5697,38 @@ def test_assistant_and_calendar_modes_persist_conversations():
         assert spec.allows("read_context"), name
 
 
+def test_a_made_up_id_falls_back_to_the_screen_you_are_looking_at():
+    """모델이 id 를 지어내면 화면이 알려 준 id 로 돌아간다.
+
+    회의 화면에서 모델이 없는 meeting_id 를 넘겨 "회의를 찾을 수 없습니다"로 끝난
+    적이 있다(실측). 화면이 준 id 가 모델이 타이핑한 id 보다 믿을 만하다.
+    실제로 있는 다른 id 를 준 경우는 그대로 존중한다 — 사용자가 다른 것을 물었을 수 있다.
+    """
+    from backend import meeting_store, paper_store
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skills.meetings import _mid
+    from backend.ai.skills.papers import _pid
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="fallbackid", display_name="FB", expires_at=0, remaining=0)
+    here = paper_store.register(u, s, "here.pdf", 10)
+    other = paper_store.register(u, s, "other.pdf", 10)
+    ctx = SkillContext(user=u, settings=s, today="2026-09-06", paper_id=here["id"])
+
+    assert _pid({}, ctx) == here["id"]                       # 생략하면 지금 논문
+    assert _pid({"paper_id": other["id"]}, ctx) == other["id"]  # 있는 것은 존중
+    assert _pid({"paper_id": "f" * 32}, ctx) == here["id"]      # 없는 것이면 되돌아온다
+
+    mid = meeting_store.new_id()
+    meeting_store.meeting_dir(u, s, mid).mkdir(parents=True, exist_ok=True)
+    meeting_store.register(u, s, filename="a.wav", mime="audio/wav", size=1, ext="wav",
+                           day="2026-09-06", mid=mid)
+    mctx = SkillContext(user=u, settings=s, today="2026-09-06", meeting_id=mid)
+    assert _mid({}, mctx) == mid
+    assert _mid({"meeting_id": "e" * 32}, mctx) == mid
+
 def test_completion_claims_are_checked_against_what_actually_changed():
     """바꾼 것이 없는데 "삭제했습니다" 라고 하면 서버가 표시한다.
 

@@ -22,7 +22,18 @@ _PAGE_RE = re.compile(r"\[\[page (\d+)\]\]")
 
 
 def _pid(args: dict, ctx) -> str:
-    return str(args.get("paper_id") or ctx.paper_id or "").strip()
+    """어느 논문인지 고른다.
+
+    모델이 준 id 를 먼저 쓰되, **그 id 가 없는 논문이면 지금 보고 있는 논문으로**
+    돌아간다. 회의 쪽에서 모델이 id 를 지어내 "찾을 수 없습니다"로 끝난 적이 있다 —
+    화면이 알려 준 id 가 모델이 타이핑한 id 보다 믿을 만하다.
+    """
+    given = str(args.get("paper_id") or "").strip()
+    here = str(ctx.paper_id or "").strip()
+    if given and here and given != here:
+        if paper_store.find_paper(ctx.user, ctx.settings, given) is None:
+            return here
+    return given or here
 
 
 def _split_pages(text: str) -> dict[int, str]:

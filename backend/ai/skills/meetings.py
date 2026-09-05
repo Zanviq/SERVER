@@ -20,7 +20,20 @@ _MAX_CHUNK = 14000
 
 
 def _mid(args: dict, ctx) -> str:
-    return str(args.get("meeting_id") or ctx.meeting_id or "").strip()
+    """어느 회의인지 고른다.
+
+    모델이 준 id 를 먼저 쓰되, **그 id 가 없는 회의면 지금 보고 있는 회의로 돌아간다.**
+    모델이 id 를 지어내 "회의를 찾을 수 없습니다"로 끝난 적이 있다(실측) — 화면이
+    알려 준 id 가 모델이 타이핑한 id 보다 믿을 만하다.
+    """
+    given = str(args.get("meeting_id") or "").strip()
+    here = str(ctx.meeting_id or "").strip()
+    if given and here and given != here:
+        from ... import meeting_store as _ms
+
+        if _ms.find_meeting(ctx.user, ctx.settings, given) is None:
+            return here
+    return given or here
 
 
 class ListMeetings(SkillBase):
