@@ -3,7 +3,6 @@ import {
   ChevronRight,
   Circle,
   CheckCircle2,
-  Plus,
   Trash2,
   FolderPlus,
   Loader2,
@@ -12,6 +11,7 @@ import {
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { GCAL_COLORS, GCAL_COLOR_NAMES } from "../components/calendar/EventDialog";
+import { TodoComposer, TodoDraft, draftToBody } from "../components/todo/TodoComposer";
 import { api, Todo as TodoItem, TodoCategory, TodoCounts } from "../lib/api";
 import { toast } from "../store/toast";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -181,7 +181,6 @@ export function Todo() {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [draft, setDraft] = useState("");
   const isNarrow = useMediaQuery("(max-width: 1023px)");
 
   const reload = useCallback(async () => {
@@ -286,19 +285,11 @@ export function Todo() {
     }
   };
 
-  const addTodo = async () => {
-    const title = draft.trim();
-    if (!title) return;
-    setDraft("");
-    const ran = await guard(() =>
-      api.todoCreate({
-        title,
-        category_id: selectedCat ?? UNCATEGORIZED,
-      }),
-    );
-    // 만들어지지 않았으면(바빴거나 서버가 거절했거나) 적은 내용을 돌려준다.
-    // 예전에는 입력칸만 비워져서 방금 적은 할 일이 흔적 없이 사라졌다.
-    if (!ran) setDraft(title);
+  /** 입력칸의 초안으로 할 일을 만든다. 실패하면 false 를 돌려주고 입력칸은
+   *  그대로 남는다(예전에는 입력칸만 비워져서 적은 내용이 흔적 없이 사라졌다). */
+  const addTodo = (draft: TodoDraft): Promise<boolean> => {
+    if (!draft.title.trim()) return Promise.resolve(false);
+    return guard(() => api.todoCreate(draftToBody(draft)));
   };
 
   const addCategory = () => {
@@ -640,26 +631,12 @@ export function Todo() {
       {detail ? detailPane : timeline}
 
       {!detail && (
-        <div className="mt-2 flex items-center gap-2 border-t border-line/50 pt-2">
-          <input
-            className="input flex-1"
-            placeholder="할 일 추가 후 Enter"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") addTodo();
-            }}
-          />
-          <button
-            type="button"
-            onClick={addTodo}
-            disabled={busy || !draft.trim()}
-            className="btn-primary grid h-9 w-9 place-items-center p-0 disabled:opacity-50"
-            title="추가"
-          >
-            <Plus size={16} />
-          </button>
-        </div>
+        <TodoComposer
+          cats={cats}
+          selectedCat={selectedCat}
+          busy={busy}
+          onSubmit={addTodo}
+        />
       )}
     </div>
   );
