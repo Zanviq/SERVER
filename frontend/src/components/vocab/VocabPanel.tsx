@@ -11,6 +11,7 @@ import { WordEditModal } from "./WordEditModal";
 import { ReviewModal } from "./ReviewModal";
 import { VocabCollectModal } from "./VocabCollectModal";
 import { KIND_LABEL, KINDS, kindOf } from "./kinds";
+import { PAGE, shownForFocus, windowOf } from "./window";
 
 type Sort = "recent" | "alpha" | "due";
 
@@ -51,6 +52,7 @@ export function VocabPanel({ refreshKey = 0, initialTag = "", defaultTags = [], 
   const [reviewOpen, setReviewOpen] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameTo, setRenameTo] = useState("");
+  const [shown, setShown] = useState(PAGE);   // 지금까지 그린 개수
   // 백그라운드 정리 — 진행 중이면 표시하고, 끝나면(version) 다시 받는다
   const pendingJobs = useVocabJobs((s) => s.jobs.length);
   const jobVersion = useVocabJobs((s) => s.version);
@@ -105,6 +107,19 @@ export function VocabPanel({ refreshKey = 0, initialTag = "", defaultTags = [], 
     else list = [...list].sort((a, b) => b.created_at - a.created_at);
     return list;
   }, [board, q, tag, kind, dueOnly, sort, today]);
+
+  const { visible, hidden } = useMemo(() => windowOf(words, shown), [words, shown]);
+
+  // 전역 검색으로 찾아온 단어가 창 밖(1500번째)이면 DOM 에 없어서 열리지도,
+  // 스크롤되지도 않는다 — 찾아서 왔는데 아무 일도 안 일어난다.
+  useEffect(() => {
+    if (!focusId) return;
+    setShown((n) => shownForFocus(words.findIndex((w) => w.id === focusId), n));
+  }, [focusId, words, shown]);
+
+  // 거르개를 바꾸면 처음부터 다시 본다. 3000개까지 펼쳐 둔 채로 검색어를 지우면
+  // 다시 3000개를 그리게 된다.
+  useEffect(() => { setShown(PAGE); }, [q, tag, kind, dueOnly, sort]);
 
   /** 갈래 칩은 지금 태그로 거른 범위 안에서만 센다(빈 갈래를 보여 주지 않는다) */
   const kindCounts = useMemo(() => {
@@ -244,13 +259,28 @@ export function VocabPanel({ refreshKey = 0, initialTag = "", defaultTags = [], 
             </ListState>
           </li>
         ) : (
-          words.map((w) => (
-            <WordCard key={w.id} word={w} open={openId === w.id} activeTag={tag} anchorId={w.id}
-              onToggle={() => setOpenId((v) => (v === w.id ? null : w.id))}
-              onEdit={() => setEditing(w)}
-              onDelete={() => remove(w)}
-              onTag={(t) => setTag(t)} />
-          ))
+          <>
+            {visible.map((w) => (
+              <WordCard key={w.id} word={w} open={openId === w.id} activeTag={tag} anchorId={w.id}
+                onToggle={() => setOpenId((v) => (v === w.id ? null : w.id))}
+                onEdit={() => setEditing(w)}
+                onDelete={() => remove(w)}
+                onTag={(t) => setTag(t)} />
+            ))}
+            {hidden > 0 && (
+              // 몇 개를 감췄는지 **말한다.** 말없이 자르면 사용자는 넣은 단어가
+              // 사라진 줄 안다(이 저장소가 여러 번 데인 자리다).
+              <li className="flex flex-col items-center gap-1.5 py-3">
+                <span className="text-[12px] text-fg-muted">
+                  {visible.length} / {words.length}개 표시 중
+                </span>
+                <button type="button" className="btn btn-secondary h-8"
+                  onClick={() => setShown((n) => n + PAGE)}>
+                  {Math.min(PAGE, hidden)}개 더 보기
+                </button>
+              </li>
+            )}
+          </>
         )}
       </ul>
 
