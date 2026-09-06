@@ -5,9 +5,14 @@ import {
 } from "lucide-react";
 import { Paper } from "../../lib/api";
 import { Dropdown, DropdownItem } from "../ui/Dropdown";
+import { ListState } from "../ui/ListState";
 
 interface Props {
   papers: Paper[];
+  /** 목록을 못 받아왔는가. 비어 있는 것과 다르게 말해야 한다. */
+  failed?: boolean;
+  /** 다시 받기 */
+  onReload?: () => void;
   /** 쓰이고 있는 분류 이름(다른 논문으로 옮길 때 고른다) */
   categories: string[];
   selectedId: string;
@@ -39,7 +44,7 @@ const NONE_LABEL = "분류 없음";
  * (찾는 중에 접힌 폴더 안에 답이 숨어 있으면 안 된다).
  */
 export function PaperList({
-  papers, categories, selectedId, onSelect, onUpload, onStar, onDelete, onRetry,
+  papers, failed, onReload, categories, selectedId, onSelect, onUpload, onStar, onDelete, onRetry,
   onMove, onNewCategory, uploading, className = "",
 }: Props) {
   const [q, setQ] = useState("");
@@ -205,14 +210,18 @@ export function PaperList({
 
       <ul className="flex-1 overflow-auto p-1">
         {list.length === 0 && (
-          <li className="px-3 py-10 text-center text-[12.5px] text-fg-muted">
-            {papers.length === 0 ? (
-              <>
-                <FileText size={22} className="mx-auto mb-2 text-fg-subtle" />
-                PDF를 여기로 끌어다 놓으세요.
-                <p className="mt-1 text-[11.5px] text-fg-subtle">올리면 AI가 제목·요약·핵심 발견을 뽑아 둡니다.</p>
-              </>
-            ) : "검색 결과가 없습니다."}
+          <li>
+            {/* 못 불러온 것을 "PDF를 끌어다 놓으세요"로 보여 주면, 논문이 다
+                날아간 것처럼 보인다. 실패는 실패라고 말한다. */}
+            <ListState failed={failed} onRetry={onReload}>
+              {papers.length === 0 ? (
+                <>
+                  <FileText size={22} className="mx-auto mb-2 text-fg-subtle" />
+                  PDF를 여기로 끌어다 놓으세요.
+                  <span className="mt-1 block text-[11.5px] text-fg-subtle">올리면 AI가 제목·요약·핵심 발견을 뽑아 둡니다.</span>
+                </>
+              ) : "검색 결과가 없습니다."}
+            </ListState>
           </li>
         )}
         {flat

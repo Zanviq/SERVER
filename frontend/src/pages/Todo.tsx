@@ -13,6 +13,7 @@ import {
 import { Shell } from "../components/layout/Shell";
 import { GCAL_COLORS, GCAL_COLOR_NAMES } from "../components/calendar/EventDialog";
 import { TodoComposer, TodoDraft, draftToBody } from "../components/todo/TodoComposer";
+import { ListState } from "../components/ui/ListState";
 import { api, Todo as TodoItem, TodoCategory, TodoCounts } from "../lib/api";
 import { toast } from "../store/toast";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -185,6 +186,7 @@ export function Todo() {
   const focusTodo = params.get("t") ?? "";
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);   // 목록을 못 받아왔는가
   const [busy, setBusy] = useState(false);
   const isNarrow = useMediaQuery("(max-width: 1023px)");
 
@@ -196,8 +198,12 @@ export function Todo() {
       setCats(b.categories);
       setTodos(b.todos);
       setCounts(b.counts);
+      setLoadFailed(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "할 일 로드 실패");
+      // 토스트가 사라지면 "할 일이 없습니다"만 남는다 — 못 불러온 것뿐인데
+      // 다 지워진 것처럼 보인다.
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -435,7 +441,9 @@ export function Todo() {
   const timeline = (
     <div className="min-h-0 flex-1 overflow-auto pr-1">
       {visible.length === 0 ? (
-        <p className="px-1 py-6 text-sm text-fg-subtle">할 일이 없습니다. 아래에서 추가하세요.</p>
+        <ListState failed={loadFailed} onRetry={() => void reload()}>
+          할 일이 없습니다. 아래에서 추가하세요.
+        </ListState>
       ) : (
         <ol className="relative ml-2 border-l border-line pl-4">
           {visible.map((t) => {

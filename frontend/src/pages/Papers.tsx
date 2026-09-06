@@ -29,6 +29,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
  */
 export function Papers() {
   const [papers, setPapers] = useState<Paper[] | null>(null);
+  const [failed, setFailed] = useState(false);   // 목록을 못 받아왔는가
   const [categories, setCategories] = useState<string[]>([]);
   // "새 폴더…" — 이름을 받아 그 논문을 옮긴다(폴더는 이름일 뿐이라 논문이 있어야 남는다)
   const [newFolderFor, setNewFolderFor] = useState<Paper | null>(null);
@@ -59,9 +60,13 @@ export function Papers() {
       const [list, cats] = await Promise.all([api.paperList(), api.paperCategories()]);
       setPapers(list);
       setCategories(cats.categories);
+      setFailed(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "논문 목록을 못 받았습니다");
+      // 빈 목록으로 두면 토스트가 사라진 뒤 "PDF를 끌어다 놓으세요"만 남아
+      // 논문이 다 날아간 것처럼 보인다. 실패했다는 사실을 화면에 남긴다.
       setPapers([]);
+      setFailed(true);
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -220,7 +225,8 @@ export function Papers() {
   return (
     <Shell title="논문" actions={actions}>
       <ThreePane storageKey="papers.panes.v1" showDetail={!!selected} fixedLabel="논문 목록" sideLabel="AI 패널">
-        <PaperList papers={papers ?? []} categories={categories} selectedId={selectedId} onSelect={select} onUpload={upload}
+        <PaperList papers={papers ?? []} failed={failed} onReload={() => void load()}
+          categories={categories} selectedId={selectedId} onSelect={select} onUpload={upload}
           onStar={(p) => update(p, { starred: !p.starred })} onDelete={remove} onRetry={retry}
           onMove={move} onNewCategory={(p) => { setNewFolderFor(p); setNewFolder(p.category); }}
           uploading={uploading} className="h-view-11 lg:h-auto" />

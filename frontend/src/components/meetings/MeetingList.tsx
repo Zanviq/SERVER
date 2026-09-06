@@ -2,9 +2,13 @@ import { DragEvent, useMemo, useRef, useState } from "react";
 import { AlertCircle, AudioLines, Loader2, Mic, MoreHorizontal, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 import { Meeting } from "../../lib/api";
 import { Dropdown, DropdownItem } from "../ui/Dropdown";
+import { ListState } from "../ui/ListState";
 
 interface Props {
   meetings: Meeting[];
+  /** 목록을 못 받아왔는가. 비어 있는 것과 다르게 말해야 한다. */
+  failed?: boolean;
+  onReload?: () => void;
   categories: string[];
   selectedId: string;
   onSelect: (id: string) => void;
@@ -33,7 +37,8 @@ export function dayLabel(day: string): string {
 
 /** 왼쪽 회의 목록 — 날짜별로 묶고 카테고리로 거른다. 녹음 파일을 끌어다 놓으면 올라간다. */
 export function MeetingList({
-  meetings, categories, selectedId, onSelect, onRecord, onUpload, onDelete, onRetry, uploading, className = "",
+  meetings, failed, onReload, categories, selectedId, onSelect, onRecord, onUpload,
+  onDelete, onRetry, uploading, className = "",
 }: Props) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
@@ -122,15 +127,17 @@ export function MeetingList({
 
       <div className="flex-1 overflow-auto p-1">
         {groups.length === 0 && (
-          <div className="px-3 py-10 text-center text-[12.5px] text-fg-muted">
+          // 못 불러온 것을 "녹음 파일을 끌어다 놓으세요"로 보여 주면 회의가 다
+          // 사라진 것처럼 보인다.
+          <ListState failed={failed} onRetry={onReload}>
             {meetings.length === 0 ? (
               <>
                 <AudioLines size={22} className="mx-auto mb-2 text-fg-subtle" />
                 녹음 버튼을 누르거나 녹음 파일을 여기로 끌어다 놓으세요.
-                <p className="mt-1 text-[11.5px] text-fg-subtle">올리면 AI가 화자를 나눠 받아쓰고 요약합니다.</p>
+                <span className="mt-1 block text-[11.5px] text-fg-subtle">올리면 AI가 화자를 나눠 받아쓰고 요약합니다.</span>
               </>
             ) : "검색 결과가 없습니다."}
-          </div>
+          </ListState>
         )}
         {groups.map((g) => (
           <div key={g.day} className="mb-1">
