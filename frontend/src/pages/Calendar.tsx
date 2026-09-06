@@ -301,22 +301,48 @@ export function Calendar() {
     });
   }, []);
 
-  // 일기 잠금. 자물쇠는 화면 하나가 아니라 이 페이지 전체에 걸린다 — 한 번 풀면
-  // 다른 날로 옮겨도 다시 묻지 않는다(같은 사람이 같은 자리에서 보는 중이다).
-  const [diaryUnlocked, setDiaryUnlocked] = useState(false);
+  // 일기 잠금은 **하루 단위**다. 한 번 푼 것이 페이지 전체에 걸리면, 옆에 있는
+  // 사람에게 하루를 보여 주려고 비밀번호를 넣은 뒤로는 달력의 아무 날이나 눌러
+  // 그대로 읽힌다 — 가리는 뜻이 없어진다. 그래서 **누른 날마다 다시 묻는다.**
+  //
+  // 지금 열려 있는 하루. ""(빈 문자열)이면 아무 날도 열려 있지 않다.
+  const [unlockedDay, setUnlockedDay] = useState("");
+
+  // 그 날에서 벗어나면(다른 날을 누르거나 기록 보기를 떠나면) 곧바로 다시 잠근다.
+  useEffect(() => {
+    if (!unlockedDay || (unlockedDay === selectedDay && diary)) return;
+    const day = unlockedDay;
+    api.diaryRelock();
+    setUnlockedDay("");
+    // 표만 버려서는 부족하다 — 이미 받아 둔 글이 화면 상태에 남아 있으면
+    // 다른 날을 눌렀다 돌아왔을 때 묻지도 않고 그대로 보인다.
+    setDiaryDays((prev) => {
+      const was = prev[day];
+      if (!was?.text) return prev;
+      return { ...prev, [day]: { ...was, text: "" } };
+    });
+  }, [selectedDay, unlockedDay, diary]);
+
   const onDiaryUnlock = useCallback(async () => {
-    setDiaryUnlocked(true);
-    // 표를 얻었으니 이번 달치를 글까지 포함해 다시 받는다
-    const api2 = calRef.current?.getApi();
-    const from = localDay(api2?.view.activeStart ?? new Date());
-    const to = localDay(api2?.view.activeEnd ?? new Date());
+    const day = selectedDay;
+    setUnlockedDay(day);
     try {
-      const dys = await api.diaryRange(from, to);
-      setDiaryDays(Object.fromEntries(dys.map((d) => [d.date, d])));
+      // **그 하루만** 받는다. 달치를 통째로 다시 받으면 다른 날의 글까지 브라우저에
+      // 와 버려서, 하루 단위로 묻는 뜻이 사라진다.
+      const entry = await api.diaryGet(day);
+      setDiaryDays((prev) => ({ ...prev, [day]: entry }));
     } catch {
-      /* 실패해도 잠금은 풀린 상태 — 날짜를 옮기면 다시 받아진다 */
+      /* 글을 못 받아도 잠금은 풀린 상태 — 다시 누르면 받아진다 */
+    } finally {
+      // 표는 이 한 번의 조회에만 쓴다. 남겨 두면 달을 넘길 때 받는 목록
+      // (diaryRange)에 다른 날의 글이 딸려 온다.
+      api.diaryRelock();
     }
-  }, []);
+  }, [selectedDay]);
+
+  // 아직 글이 없던 날에 **처음 쓰는 중**이면 잠글 이유가 없다. 자동 저장 응답에
+  // has_text 가 켜져 돌아오는 순간 자기가 치고 있던 글 위로 자물쇠가 내려왔다.
+  const onDiaryEdit = useCallback((day: string) => setUnlockedDay(day), []);
 
   // customButtons가 만든 버튼에 눈 아이콘을 심는다(FC는 text/icon만 받는다).
   useEffect(() => {
@@ -369,8 +395,9 @@ export function Calendar() {
                 entry={diaryDays[selectedDay]}
                 events={events}
                 onChange={onDiaryChange}
-                locked={!diaryUnlocked && !!diaryDays[selectedDay]?.has_text}
+                locked={unlockedDay !== selectedDay && !!diaryDays[selectedDay]?.has_text}
                 onUnlock={onDiaryUnlock}
+                onEdit={onDiaryEdit}
               />
             </>
           ) : (

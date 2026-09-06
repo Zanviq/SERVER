@@ -106,7 +106,11 @@ const jsonInit = (method: string, body: unknown): RequestInit => ({
 const q = (o: Record<string, string>) => new URLSearchParams(o).toString();
 
 /** 일기 잠금을 푼 표. **메모리에만 둔다** — 새 탭·새로고침이면 다시 잠긴다.
- *  localStorage 에 두면 브라우저를 열어 둔 사람 누구나 계속 볼 수 있다. */
+ *  localStorage 에 두면 브라우저를 열어 둔 사람 누구나 계속 볼 수 있다.
+ *
+ *  잠금은 **하루 단위**다(화면 쪽 규칙). 표를 계속 들고 있으면 그 사이에 받는
+ *  목록 응답에 다른 날의 글까지 딸려 오므로, 캘린더는 비밀번호로 연 그 하루를
+ *  받아 오자마자 `diaryRelock()` 으로 표를 버린다. */
 let diaryUnlockToken = "";
 const unlockHeader = (): Record<string, string> =>
   (diaryUnlockToken ? { "X-Diary-Unlock": diaryUnlockToken } : {});
