@@ -6092,6 +6092,63 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
     return buf.getvalue()
 
 
+def test_file_paths_cannot_escape_your_own_storage():
+    """파일을 내주고 받는 자리에서 사용자 밖으로 나가지 못한다.
+
+    논문 PDF·회의 오디오·노트 원본은 파일을 그대로 흘려보낸다. 그 자리에서 경로가
+    한 번만 새면 남의 자료가 통째로 나간다. 인코딩을 바꾼 것들도 함께 본다 —
+    `../` 만 막고 `%2e%2e%2f` 를 놓치는 것이 흔한 실수다.
+    """
+    import urllib.parse
+
+    from backend import accounts
+    from backend.config import get_settings
+
+    s = get_settings()
+    SECRET = "파일비밀ZZZ"
+    _login()
+    client.put("/api/notes/save", json={"path": "비밀노트.md", "content": f"{SECRET} 노트"})
+
+    spy = TestClient(app)
+    spy.post("/api/auth/signup",
+             json={"username": "filespy", "password": "longenough1", "display_name": "F"})
+    accounts.set_status("filespy", accounts.STATUS_ACTIVE, "tester", s)
+    assert spy.post("/api/auth/login",
+                    json={"username": "filespy", "password": "longenough1"}).status_code == 200
+    q = lambda t: urllib.parse.quote(t, safe="")  # noqa: E731
+    try:
+        traversals = [
+            "../tester/data/비밀노트.md",
+            "..%2ftester%2fdata%2f비밀노트.md",
+            "....//tester/data/비밀노트.md",
+            "/srv/server/users/tester/data/비밀노트.md",
+            "\\tester\\data\\비밀노트.md",
+            "%2e%2e%2ftester%2fdata%2f비밀노트.md",
+            "../../../../etc/passwd",
+        ]
+        for t in traversals:
+            for ep in ("/api/notes/raw?path=", "/api/notes/get?path="):
+                r = spy.get(ep + q(t))
+                assert r.status_code in (400, 403, 404, 422), f"{ep}{t} -> {r.status_code}"
+                assert SECRET not in r.text, f"{ep}{t} 로 남의 글이 나왔다"
+
+            # 올리는 쪽도 — 남의 자리에 쓸 수 있으면 읽는 것보다 나쁘다
+            up = spy.post(f"/api/notes/upload?path={q(t)}",
+                          files={"file": ("x.md", b"intruded", "text/markdown")})
+            spy.put("/api/notes/save", json={"path": t, "content": "intruded"})
+            assert up.status_code in (200, 400, 403, 404, 409, 422), up.status_code
+
+        # 내 노트는 그대로다(침입도, 덮어쓰기도 없었다)
+        mine = client.get("/api/notes/get", params={"path": "비밀노트.md"})
+        assert mine.status_code == 200 and mine.json()["content"].startswith(SECRET), mine.text
+        # 침입 파일이 내 쪽에 생기지도 않았다
+        listed = [n["path"] for n in client.get("/api/notes/list").json()]
+        assert not [p for p in listed if "침입" in p or "intruded" in p], listed
+    finally:
+        client.delete("/api/notes/delete?path=비밀노트.md")
+        client.delete("/api/admin/users/filespy")
+
+
 def test_context_of_another_user_is_never_readable():
     """지난 대화는 사용자마다 따로다 — 이름을 알아도 남의 것은 못 읽는다.
 
