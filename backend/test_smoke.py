@@ -6092,6 +6092,65 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
     return buf.getvalue()
 
 
+def test_broken_pdf_text_does_not_kill_extraction(monkeypatch):
+    """UTF-8 로 못 쓰는 글자가 섞여 와도 논문 한 편이 통째로 못 쓰게 되면 안 된다.
+
+    실제로 있었던 일: 어떤 논문의 본문에 **짝 없는 서로게이트**가 들어 있어
+    `text.txt` 를 쓰는 순간 UnicodeEncodeError 가 났다. 그 자리의 except 가
+    OSError 만 잡고 있어서 추출이 통째로 실패했고, 다시 눌러도 같은 곳에서
+    죽어 "추출이 안 된다"로 끝났다(가입 사용자가 올린 논문에서 실측).
+    """
+    from backend import paper_extract, paper_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="tester", display_name="Tester", expires_at=0, remaining=0)
+
+    # 글꼴 매핑이 깨진 PDF 가 내놓는 모양 그대로
+    dirty = "정상 앞부분 😀 사이 \udca9 끝"
+    # 이게 예전에 스레드를 죽였다(pytest 없이도 돌아야 해서 raises 를 안 쓴다)
+    try:
+        dirty.encode("utf-8")
+        raise AssertionError("이 문자열은 UTF-8 로 인코딩되면 안 된다 — 시험이 무의미해진다")
+    except UnicodeEncodeError:
+        pass
+    # 깨진 글자만 빠지고 멀쩡한 것은(이모지 포함) 그대로 남는다
+    assert paper_extract._encodable(dirty) == "정상 앞부분 😀 사이  끝"
+    paper_extract._encodable(dirty).encode("utf-8")   # 이제 나가도 안전하다
+    assert paper_extract._encodable("") == ""
+    assert paper_extract._encodable("멀쩡한 글 abc") == "멀쩡한 글 abc"
+
+    _login()
+    # 올릴 때 도는 진짜 추출 스레드를 막는다 — 뒤늦게 끝나면서 우리가 쓴 본문을
+    # 덮어써 시험이 엉뚱하게 깨진다(실제로 그렇게 한 번 깨졌다).
+    monkeypatch.setattr(paper_extract, "start", lambda *a, **k: True)
+    r = client.post("/api/papers/upload", files={"file": ("broken.pdf", _tiny_pdf("Broken"), "application/pdf")})
+    assert r.status_code == 200, r.text
+    pid = r.json()["id"]
+    try:
+        # 본문 추출이 깨진 글자를 돌려주는 상황을 그대로 만든다
+        monkeypatch.setattr(paper_extract, "extract_text", lambda pdf: (3, dirty))
+        seen = {}
+
+        def ask(settings, pdf, text):
+            seen["text"] = text
+            return {"title": "깨진 글자가 있어도 되는 논문", "summary": "그래도 끝까지 간다"}
+
+        out = paper_extract.run_sync(u, s, pid, asker=ask)
+        assert out["status"] == paper_store.STATUS_READY, out
+        assert out["title"] == "깨진 글자가 있어도 되는 논문", out
+        assert out["pages"] == 3
+
+        # 본문 사본도 남는다(예전에는 0바이트로 남았다)
+        body = paper_store.text_path(u, s, pid).read_text(encoding="utf-8")
+        assert "정상 앞부분" in body and "끝" in body, body
+        # 모델에게도 인코딩 가능한 것만 간다
+        seen["text"].encode("utf-8")
+    finally:
+        client.delete(f"/api/papers/{pid}")
+
+
 def test_paper_upload_extracts_in_background_and_ai_context(monkeypatch):
     """업로드하면 백그라운드 추출이 돌고, 논문 모드 대화는 서버에 남으며
     다른 논문의 대화도 검색된다."""

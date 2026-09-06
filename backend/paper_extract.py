@@ -56,6 +56,30 @@ user as the paper's own title and summary. An empty value is correct; a sentence
 "Unable to extract title" is not."""
 
 
+#: 파이썬 str 에는 담기지만 UTF-8 로는 **인코딩할 수 없는** 글자들(짝 없는 서로게이트).
+#: 글꼴 매핑이 깨진 PDF 에서 pypdf 가 이런 값을 그대로 내놓는다.
+_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _encodable(text: str) -> str:
+    """UTF-8 로 내보낼 수 있는 글자만 남긴다.
+
+    실제로 있었던 일: 어떤 논문의 본문에 짝 없는 서로게이트가 섞여 들어와
+    `text.txt` 를 쓰는 순간 UnicodeEncodeError 가 났다. 그 자리의 except 는
+    OSError 만 잡고 있어서 **추출 스레드가 통째로 죽었고**, 상태를 바꿀 기회도
+    없어 화면에는 영영 "추출 중"만 남았다(text.txt 는 0바이트로 남았다).
+
+    깨진 글자는 우리가 살릴 방법이 없다. 그러나 그 몇 글자 때문에 논문 하나가
+    통째로 못 쓰게 되는 것은 막을 수 있다 — 지우고 나머지를 쓴다.
+    """
+    if not text:
+        return ""
+    cleaned = _LONE_SURROGATE.sub("", text)
+    # 서로게이트 말고도 인코딩이 안 되는 것이 남아 있을 수 있다. 한 번 왕복시켜
+    # **여기서** 확실히 걸러 둔다 — 이 값은 파일·모델 요청·검색으로 모두 흘러간다.
+    return cleaned.encode("utf-8", "ignore").decode("utf-8", "ignore")
+
+
 def extract_text(pdf: Path) -> tuple[int, str]:
     """pypdf 로 (쪽수, 본문). 실패하면 (0, '')."""
     try:
@@ -73,7 +97,7 @@ def extract_text(pdf: Path) -> tuple[int, str]:
                 t = page.extract_text() or ""
             except Exception:  # noqa: BLE001
                 t = ""
-            t = t.strip()
+            t = _encodable(t).strip()
             if t:
                 chunks.append(f"\n\n[[page {i + 1}]]\n{t}")
                 total += len(t)
@@ -177,10 +201,19 @@ def run_sync(user: SessionUser, settings: Settings, pid: str, *, asker=None) -> 
             "status": paper_store.STATUS_FAILED, "error": "PDF 파일이 없습니다.",
         })
     pages, text = extract_text(pdf)
+    # 뽑는 쪽에서도 거르지만 **쓰는 쪽에서 한 번 더** 거른다. 여기서부터 본문은
+    # 파일로도 나가고 모델 요청으로도 나가는데, 둘 다 UTF-8 로 인코딩된다.
+    # 거르는 자리가 생산자 한 곳뿐이면, 다른 경로로 들어온 본문 하나가 같은
+    # 자리를 다시 깨뜨린다(시험에서 실제로 그렇게 됐다).
+    text = _encodable(text)
     try:
         paper_store.text_path(user, settings, pid).write_text(text, encoding="utf-8")
-    except OSError:
-        logger.exception("본문 저장 실패: %s", pid)
+    except Exception:  # noqa: BLE001
+        # **여기서 나는 오류로 추출을 끝내면 안 된다.** 본문 파일은 나중에 다시
+        # 읽기 위한 사본일 뿐이고, 진짜 결과(제목·요약)는 아래에서 만든다.
+        # OSError 만 잡고 있던 탓에 UnicodeEncodeError 하나가 스레드를 죽여
+        # 상태가 영영 '추출 중'에 멈춰 있었다(실측: 신규 사용자의 논문 한 편).
+        logger.exception("본문 저장 실패(추출은 계속한다): %s", pid)
     meta = paper_store.find_paper(user, settings, pid) or {}
     patch: dict = {"pages": pages}
 
