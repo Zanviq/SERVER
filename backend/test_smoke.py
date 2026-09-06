@@ -6092,6 +6092,63 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
     return buf.getvalue()
 
 
+def test_picking_many_words_does_not_silently_drop_them():
+    """고른 단어를 조용히 버리지 않는다.
+
+    `/api/vocab/fill` 이 앞 40개만 남기고 나머지를 말없이 버렸다(실측: 60개를
+    보내면 작업에 40개만 담겼다). 40은 **모델 한 번 호출에 넣는 크기**지
+    사람이 고를 수 있는 개수가 아닌데, 그 값으로 선택 목록을 자르고 있었다.
+    이 파일은 "사용자가 고른 것은 무슨 일이 있어도 단어장에 있어야 한다"는
+    규칙을 이미 세워 두고 있었는데, 그 앞에서 목록이 잘리고 있었던 셈이다.
+    """
+    from backend import vocab_fill
+
+    _login()
+    assert vocab_fill.BATCH_ITEMS < vocab_fill.MAX_ITEMS, "묶음 크기가 상한이 되면 안 된다"
+
+    def pick(n: int) -> list[dict]:
+        return [{"word": f"dropcheck{i}", "kind": "word", "meaning": f"뜻{i}"} for i in range(n)]
+
+    # 묶음 크기를 넘겨도 고른 것이 전부 담긴다
+    n = vocab_fill.BATCH_ITEMS + 17
+    r = client.post("/api/vocab/fill", json={"words": pick(n), "tags": ["_drop"], "context": ""})
+    assert r.status_code == 200, r.text
+    assert len(r.json()["words"]) == n, f"{n}개를 골랐는데 {len(r.json()['words'])}개만 담겼다"
+
+    # 상한을 넘으면 조용히 자르지 않고 거절한다 — 고른 목록이 남아야 다시 넣는다
+    over = client.post("/api/vocab/fill",
+                       json={"words": pick(vocab_fill.MAX_ITEMS + 1), "tags": [], "context": ""})
+    assert over.status_code == 400, over.status_code
+    assert str(vocab_fill.MAX_ITEMS) in over.json()["detail"], over.text
+
+    # 나눠 부르는지 — 묶음 수만큼 모델이 불리고, 고른 것이 모두 들어간다
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="batchpick", display_name="B", expires_at=0, remaining=0)
+    items = [{"word": f"batchword{i}", "kind": "word", "meaning": f"뜻{i}"} for i in range(95)]
+    seen: list[int] = []
+
+    def fake_ask(settings, prompt, payload, model=""):
+        words = [ln.split()[1] for ln in payload.splitlines() if ln.startswith("- ")]
+        seen.append(len(words))
+        return {"entries": [{"word": w, "meanings": [f"{w} 뜻"]} for w in words]}
+
+    job = vocab_fill._new_job(u, "fill", [i["word"] for i in items], [])
+    vocab_fill.run_fill(u, s, job["id"], items, [], "", asker=fake_ask)
+    assert sum(seen) == 95, seen
+    assert len(seen) == 3 and max(seen) <= vocab_fill.BATCH_ITEMS, seen
+    saved = {w["word"] for w in vocab_store_list(u, s)}
+    assert all(i["word"] in saved for i in items), sorted(saved)[:5]
+
+
+def vocab_store_list(u, s):
+    from backend import vocab_store
+
+    return vocab_store.list_words(u, s)
+
+
 def test_usage_shows_numbers_and_never_content():
     """사용량 화면은 **수치만** 낸다. 남의 자료는 한 글자도 나가지 않는다.
 

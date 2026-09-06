@@ -161,7 +161,14 @@ def fill(
     """
     if not req.words:
         raise HTTPException(status_code=400, detail="넣을 항목이 없습니다.")
-    items = [w.model_dump() for w in req.words[:vocab_fill.MAX_ITEMS]]
+    # 조용히 자르지 않는다. 앞 40개만 남기고 아무 말도 안 하던 시절에는 60개를
+    # 고른 사용자가 40개만 저장된 것을 눈치채지 못했다(실측).
+    if len(req.words) > vocab_fill.MAX_ITEMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"한 번에 {vocab_fill.MAX_ITEMS}개까지 넣을 수 있습니다 "
+                   f"({len(req.words)}개를 고르셨습니다). 나눠서 넣어 주세요.")
+    items = [w.model_dump() for w in req.words]
     tags = [t for t in (vocab_store.normalize_tag(t) for t in req.tags) if t]
     return vocab_fill.start_fill(user, settings, items, tags, req.context[:2000])
 

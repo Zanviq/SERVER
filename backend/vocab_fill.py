@@ -32,8 +32,13 @@ from .config import Settings
 
 logger = logging.getLogger("server.vocab")
 
-#: 한 번에 채울 수 있는 항목 수. 모델 한 번 호출에 다 넣는다.
-MAX_ITEMS = 40
+#: 모델 **한 번 호출**에 넣는 항목 수. 프롬프트가 너무 길어지지 않게 하는 값이지
+#: 사용자가 고를 수 있는 개수가 아니다. 예전에는 이 값으로 고른 목록을 잘랐고,
+#: 60개를 골라도 40개만 저장되면서 **아무 말도 하지 않았다**(실측).
+BATCH_ITEMS = 40
+#: 한 작업이 받는 항목 수의 상한. 여기를 넘으면 조용히 자르지 않고 거절한다 —
+#: 고른 목록은 사용자에게 남아 있어야 나눠서 다시 넣을 수 있다.
+MAX_ITEMS = 200
 #: collect 에 붙여 넣을 수 있는 글 길이
 MAX_COLLECT_CHARS = 6000
 #: 사용자당 남겨 두는 작업 기록 수
@@ -112,7 +117,8 @@ def _new_job(user: SessionUser, kind: str, words: list[str], tags: list[str]) ->
         "id": uuid.uuid4().hex[:12],
         "kind": kind,
         "status": STATUS_PENDING,
-        "words": words[:MAX_ITEMS],
+        # 고른 것을 전부 담는다. 상한 검사는 라우터가 미리 하고 거절한다.
+        "words": list(words),
         "tags": list(tags),
         "added": [],
         "merged": [],
@@ -209,34 +215,48 @@ def run_fill(user: SessionUser, settings: Settings, job_id: str, items: list[dic
         _finish(user, job_id, {"status": STATUS_FAILED, "error": "넣을 항목이 없습니다."})
         return {"added": [], "merged": [], "failed": []}
 
-    lines = []
-    for i in items:
-        w = str(i.get("word") or "").strip()
-        if not w:
-            continue
-        hint = str(i.get("meaning") or "").strip()
-        kind = str(i.get("kind") or "").strip()
-        bits = [b for b in (kind, hint) if b]
-        lines.append(f"- {w}" + (f"  ({' / '.join(bits)})" if bits else ""))
-    payload = "항목:\n" + "\n".join(lines)
-    if context.strip():
-        payload += f"\n\n이 항목들이 나온 원문:\n{context.strip()[:2000]}"
-    if tags:
-        payload += f"\n\n출처(참고용, 태그로 붙는다): {', '.join(tags)}"
+    def payload_for(batch: list[dict]) -> str:
+        lines = []
+        for i in batch:
+            w = str(i.get("word") or "").strip()
+            if not w:
+                continue
+            hint = str(i.get("meaning") or "").strip()
+            kind = str(i.get("kind") or "").strip()
+            bits = [b for b in (kind, hint) if b]
+            lines.append(f"- {w}" + (f"  ({' / '.join(bits)})" if bits else ""))
+        out = "항목:\n" + "\n".join(lines)
+        if context.strip():
+            out += f"\n\n이 항목들이 나온 원문:\n{context.strip()[:2000]}"
+        if tags:
+            out += f"\n\n출처(참고용, 태그로 붙는다): {', '.join(tags)}"
+        return out
 
+    # 고른 것이 많으면 **나눠서 부른다.** 예전에는 앞 40개만 남기고 나머지를 조용히
+    # 버렸다 — 사용자는 60개를 골랐는데 40개만 들어가고 아무 말도 없었다.
+    # 이 파일이 이미 "사용자가 고른 것은 무슨 일이 있어도 단어장에 있어야 한다"는
+    # 규칙을 세워 두고 있는데, 그 앞에서 목록을 자르고 있었던 셈이다.
+    batches = [items[i:i + BATCH_ITEMS] for i in range(0, len(items), BATCH_ITEMS)]
     filled: dict[str, dict] = {}
-    try:
-        raw = (asker or _ask_gemini)(settings, _PROMPT_FILL, payload, _model_of(user, settings))
-        for e in _entries(raw):
-            hw = vocab_store.headword(e.get("word"))
-            # 모델이 표제어를 살짝 바꿔 오는 일이 있다(대소문자·원형화) — 요청한 것에만 맞춘다
-            if hw in wanted and hw not in filled:
-                filled[hw] = e
-    except Exception as e:  # noqa: BLE001
-        logger.exception("단어장 채우기 실패(모델)")
+    failures = 0
+    for batch in batches:
+        try:
+            raw = (asker or _ask_gemini)(settings, _PROMPT_FILL, payload_for(batch),
+                                         _model_of(user, settings))
+            for e in _entries(raw):
+                hw = vocab_store.headword(e.get("word"))
+                # 모델이 표제어를 살짝 바꿔 오는 일이 있다(대소문자·원형화) — 요청한 것에만 맞춘다
+                if hw in wanted and hw not in filled:
+                    filled[hw] = e
+        except Exception:  # noqa: BLE001
+            # 한 묶음이 실패해도 나머지는 채운다. 아래에서 못 채운 것도 결국
+            # 단어장에는 들어가므로(뜻만 빈 채로) 고른 것이 사라지지는 않는다.
+            logger.exception("단어장 채우기 실패(모델) — 묶음 %d/%d", failures + 1, len(batches))
+            failures += 1
+    if failures == len(batches):
         _finish(user, job_id, {
             "status": STATUS_FAILED,
-            "error": (str(e) if settings.debug else "AI 호출에 실패했습니다.")[:200],
+            "error": "AI 호출에 실패했습니다.",
         })
         return {"added": [], "merged": [], "failed": []}
 
@@ -280,7 +300,8 @@ def run_collect(user: SessionUser, settings: Settings, job_id: str, text: str,
         })
         return {"added": [], "merged": [], "failed": []}
 
-    entries = _entries(raw)[:MAX_ITEMS]
+    found = _entries(raw)
+    entries = found[:MAX_ITEMS]
     if not entries:
         _finish(user, job_id, {"status": STATUS_FAILED, "error": "정리할 항목을 찾지 못했습니다."})
         return {"added": [], "merged": [], "failed": []}
@@ -288,6 +309,11 @@ def run_collect(user: SessionUser, settings: Settings, job_id: str, text: str,
     out = vocab_store.add_words(user, settings, entries, extra_tags=tags)
     _finish(user, job_id, {
         "status": STATUS_DONE,
+        # 넘쳐서 못 넣은 것이 있으면 **말한다.** 붙여 넣은 글에서 250개를 찾아
+        # 200개만 넣고 아무 말도 안 하면, 빠진 50개를 사용자가 알 길이 없다.
+        "error": ("" if len(found) <= MAX_ITEMS else
+                  f"{len(found)}개를 찾았지만 한 번에 {MAX_ITEMS}개까지만 넣습니다 — "
+                  f"{len(found) - MAX_ITEMS}개는 빠졌습니다. 나눠서 다시 넣어 주세요."),
         "words": [str(e.get("word") or "") for e in entries],
         "added": [w.get("word", "") for w in out["added"]],
         "merged": [w.get("word", "") for w in out["merged"]],
@@ -310,7 +336,8 @@ def _spawn(fn, user: SessionUser, job_id: str) -> None:
 def start_fill(user: SessionUser, settings: Settings, items: list[dict],
                tags: list[str], context: str = "") -> dict:
     """고른 항목 채우기를 백그라운드로 시작한다."""
-    items = [i for i in items if isinstance(i, dict) and str(i.get("word") or "").strip()][:MAX_ITEMS]
+    # 라우터가 상한을 넘는 요청을 이미 거절한다. 여기서는 빈 항목만 걸러 낸다.
+    items = [i for i in items if isinstance(i, dict) and str(i.get("word") or "").strip()]
     job = _new_job(user, "fill", [str(i["word"]).strip() for i in items], tags)
     if not settings.gemini_api_key:
         # 키가 없어도 고른 것은 넣는다(뜻만 있는 항목으로) — 학습 흐름이 끊기지 않게
