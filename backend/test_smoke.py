@@ -6616,6 +6616,50 @@ def test_saving_a_note_changed_elsewhere_stops_instead_of_overwriting():
         client.delete("/api/notes/delete", params={"path": path})
 
 
+def test_prompts_only_promise_skills_and_arguments_that_exist():
+    """프롬프트가 없는 스킬·인자를 권하면 모델은 그대로 부르고 실패한다.
+
+    스킬을 고치거나 이름을 바꿀 때 프롬프트를 같이 안 고치면 조용히 어긋난다 —
+    사용자에게는 "왜 자꾸 못 하지"로만 보인다. 여기서 잡는다.
+    """
+    import re
+
+    from backend.ai import modes, prompt_builder
+    from backend.ai.skills import ALL_SKILLS
+    from backend.auth import SessionUser
+
+    u = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    today = "2026-09-06 (일)"
+    blob = "\n".join([
+        prompt_builder.build_system(u, "assistant", today, {"default_remind": 30, "ai_rules": ""}),
+        modes.english_system(u, "assistant", today),
+        modes.paper_system(u, "assistant", today, None, []),
+        modes.meeting_system(u, "assistant", today, None, [], []),
+    ])
+
+    names = {s.name for s in ALL_SKILLS}
+    # 스킬 이름처럼 생긴 낱말만 본다(동사_명사 꼴의 흔한 접미사)
+    suffixes = ("_events", "_event", "_todo", "_todos", "_document", "_documents", "_words",
+                "_context", "_paper", "_papers", "_meeting", "_meetings", "_diary", "_trash",
+                "_slots", "_vocab", "_chats", "_spaces", "_categories", "_tags", "_info",
+                "_note", "_doc", "_text", "_status", "_everything")
+    ghosts = sorted({w for w in re.findall(r"\b([a-z_]{4,})\b", blob)
+                     if w.endswith(suffixes) and w not in names})
+    assert ghosts == [], f"프롬프트가 말하는데 없는 스킬: {ghosts}"
+
+    # 프롬프트가 이름을 짚어 권하는 인자들
+    props = {s.name: set((s.parameters or {}).get("properties", {}).keys()) for s in ALL_SKILLS}
+    for skill, arg in [
+        ("find_free_slots", "to_date"), ("list_calendar_events", "from_date"),
+        ("list_trash", "within_hours"), ("list_vocab", "due_only"),
+        ("list_todos", "title_contains"), ("read_context", "space"),
+        ("search_context", "days_ago"), ("update_calendar_event", "event_id"),
+        ("read_paper_text", "from_page"), ("add_vocab_words", "tags"),
+        ("create_calendar_event", "remind_minutes"),
+    ]:
+        assert arg in props.get(skill, set()), f"{skill} 에 {arg} 인자가 없다"
+
+
 def test_a_reminder_request_has_a_real_mechanism_behind_it():
     """"1시간 뒤에 알려줘"를 이제 거절하지 않고 알림 있는 일정으로 만든다.
 
