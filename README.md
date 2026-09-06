@@ -89,9 +89,17 @@ sudo mount /mnt/server
 ### 테스트
 
 ```bash
-python -m pytest backend/test_smoke.py -q   # 백엔드
+python -m pytest backend/test_smoke.py -q   # 백엔드 (가짜 모델, 2분)
 cd frontend && npm test                     # 프런트 (표, 살균, 위키링크, 자동저장 등)
+python scripts/live_check.py                # 돌고 있는 서버에 **진짜 모델로** 물어본다
 ```
+
+위 두 가지는 가짜 모델로 계약을 지킨다. 그런데 이 저장소에서 가장 아프게 데인 것들은
+전부 **모델이 실제로 어떻게 행동하는가**였다 — 시키지도 않은 단어를 넣고, 못 읽은 PDF에
+변명을 제목으로 적고, 잘린 창의 앞을 지어내고, 도구가 없는 화면에서 "일정이 없습니다"라고
+답했다. `scripts/live_check.py` 는 그런 것만 골라 실제 서버에 물어본다(모델 호출 20회쯤,
+요금이 든다). **캘린더에 쓰는 점검은 기본으로 하지 않는다** — 구글에 연결된 계정이면 진짜
+달력에 일정이 생긴다. `--allow-calendar` 를 줘야 하고, 그때도 내부 캘린더일 때만 돈다.
 
 ---
 
