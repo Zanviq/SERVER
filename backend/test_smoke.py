@@ -9401,6 +9401,51 @@ def test_errors_survive_a_restart():
     assert "재시작에도 남아야 하는 줄" in path.read_text(encoding="utf-8")
 
 
+def test_every_tool_declaration_is_shaped_the_way_the_model_expects():
+    """도구 선언이 하나라도 어긋나면 **대화 전체가 조용히 죽는다.**
+
+    도구 목록은 매 요청에 통째로 실린다. 그래서 스킬 하나의 선언이 잘못되면
+    그 스킬을 안 쓰는 물음까지 빈 답이 온다 — 오류도, 로그도, 힌트도 없다
+    (실제로 겪었다: 인자 이름 하나 때문에 모든 대화가 죽었다).
+
+    그런 것은 진짜 모델을 불러 봐야만 드러나서, 시험이 없으면 배포한 뒤에야 안다.
+    모델이 받아들이는 모양을 여기서 지켜 준다.
+    """
+    import re
+
+    from backend.ai.skill_registry import default_registry
+
+    OK_TYPES = {"string", "number", "integer", "boolean", "array", "object"}
+    bad = []
+    for spec in default_registry().build_catalog():
+        who = spec["name"]
+        params = spec.get("parameters") or {}
+        if params.get("type") != "object":
+            bad.append(f"{who}: parameters.type 이 object 가 아니다")
+        props = params.get("properties")
+        if not isinstance(props, dict):
+            bad.append(f"{who}: properties 가 없다")
+            continue
+        for r in params.get("required") or []:
+            if r not in props:
+                bad.append(f"{who}: required 에 없는 인자 {r!r}")
+        for name, p in props.items():
+            if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", name):
+                bad.append(f"{who}.{name}: 인자 이름이 식별자 모양이 아니다")
+            t = p.get("type")
+            if t not in OK_TYPES:
+                bad.append(f"{who}.{name}: 낯선 type={t!r}")
+            if t == "array" and not (p.get("items") or {}).get("type"):
+                bad.append(f"{who}.{name}: 배열인데 items.type 이 없다")
+            if p.get("enum") and t != "string":
+                bad.append(f"{who}.{name}: enum 은 string 에만 붙는다(type={t})")
+            if len(str(p.get("description") or "")) > 1024:
+                bad.append(f"{who}.{name}: 인자 설명이 너무 길다")
+        if not str(spec.get("description") or "").strip():
+            bad.append(f"{who}: 설명이 없다 — 모델이 언제 쓸지 알 수 없다")
+    assert not bad, "도구 선언이 어긋났다(대화 전체가 빈 답이 된다):\n" + "\n".join(bad)
+
+
 def test_no_skill_uses_a_parameter_name_that_silences_the_model():
     """도구 인자 이름 하나가 대화를 통째로 죽일 수 있다.
 
