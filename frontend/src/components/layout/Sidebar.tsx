@@ -126,7 +126,12 @@ export function Sidebar() {
   return (
     <>
       {/* 데스크톱 사이드바 */}
-      <aside className="hidden w-16 shrink-0 flex-col items-center gap-1 border-r border-line/40 bg-sidebar py-3 sm:flex">
+      {/* h-screen: 화면보다 길어지면 **앱 전체가 문서처럼 밀려 내려간다.** 화면이
+          낮을 때(가로로 돌린 휴대폰, 키보드가 올라온 화면) 실제로 그랬다 —
+          실측 844×390 에서 이 줄이 524px 이라 문서가 671px 이 되고, 위쪽 머리글과
+          "대화/단어장" 전환이 화면 밖으로 밀려났다. 높이는 화면에 묶고,
+          넘치는 것은 안에서 굴린다. */}
+      <aside className="hidden h-screen w-16 shrink-0 flex-col items-center gap-1 overflow-hidden border-r border-line/40 bg-sidebar py-3 sm:flex">
         <div className="mb-2 grid h-9 w-9 place-items-center rounded-md bg-[var(--sidebar-icon-active)] font-mono text-xs font-bold text-sidebar-fg-active">
           SV
         </div>
@@ -142,7 +147,9 @@ export function Sidebar() {
             검색 (Ctrl+K)
           </span>
         </button>
-        <nav className="flex flex-1 flex-col items-center gap-1">
+        {/* min-h-0: flex 자식은 기본으로 제 내용보다 작아지지 않는다. 이게 없으면
+            overflow-y-auto 를 줘도 줄어들지 않아 그대로 넘친다. */}
+        <nav className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden">
           {nav.map((n) => (
             <DesktopItem key={n.to} {...n} />
           ))}
