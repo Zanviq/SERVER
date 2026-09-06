@@ -21,7 +21,9 @@ _CONTEXT_SKILLS = {"list_context_spaces", "search_context", "read_context"}
 # 전역 검색은 어느 화면에서 물어도 뜻이 통한다("그거 어디 있었지"). 모드마다 스킬을
 # 줄이는 이유는 엉뚱한 도구를 고르지 않게 하려는 것인데, 이건 반대로 **화면 밖을
 # 찾는 유일한 길**이라 모든 모드에 둔다.
-_COMMON_SKILLS = {"think", "search_everything"} | _CONTEXT_SKILLS
+#: 날짜 셈은 모든 화면에서 필요하다(회의 날짜·마감·"다음 주에 다시 보기").
+#: 모델이 직접 세면 자주 틀린다 — dates.py 참고.
+_COMMON_SKILLS = {"think", "search_everything", "shift_date"} | _CONTEXT_SKILLS
 _VOCAB_SKILLS = {
     "list_vocab", "list_vocab_tags", "add_vocab_words", "propose_vocab_words",
     "update_vocab_word", "delete_vocab_word",
@@ -105,6 +107,9 @@ def _head(user: SessionUser, today: str) -> str:
 - **id 를 지어내지 마세요.** 이전 차례의 도구 결과는 남아 있지 않으니 필요하면 다시 조회하세요.
 - 시각이 필요한 말("지금", "두 시간 뒤", "이따 오후")은 맨 윗줄의 '지금 HH:MM' 에서 계산하세요.
   거기 시각이 없으면 지어내지 말고 물어보세요.
+- **날짜 셈은 머리로 하지 말고 shift_date 로 확인하세요.** "100일 뒤", "3주 후", "다음 주 화요일",
+  "다음 달 오늘" 처럼 오늘이 아닌 날짜를 말하거나 저장할 때는 반드시 먼저 부릅니다. 뜻을 옮기는
+  것(며칠인지, 어느 요일인지)은 당신이 하고, 셈은 서버가 합니다 — 윤년·월말에서 틀리기 쉽습니다.
 - **이 화면에 없는 스킬로만 알 수 있는 것은 짐작해 답하지 마세요.** 화면마다 쓸 수 있는 도구가
   다릅니다. 도구 목록에 없는 갈래(일정·할 일·회의·논문·단어장 …)를 물으면, **사실을 지어내지 말고**
   "여기서는 볼 수 없습니다 — 그 화면에서 물어봐 주세요"라고 알려 주세요.

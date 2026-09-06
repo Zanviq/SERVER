@@ -9401,6 +9401,79 @@ def test_errors_survive_a_restart():
     assert "재시작에도 남아야 하는 줄" in path.read_text(encoding="utf-8")
 
 
+def test_no_skill_uses_a_parameter_name_that_silences_the_model():
+    """도구 인자 이름 하나가 대화를 통째로 죽일 수 있다.
+
+    날짜 스킬에 `from` 이라는 인자를 뒀더니 **모델이 아무 답도 하지 않았다** —
+    오류도 없이 빈 응답(finish_reason=STOP)만 왔고, 그 스킬을 쓰지 않는 물음까지
+    전부 그랬다. 도구 목록은 매 요청에 통째로 실리므로, 하나가 망가지면 그
+    대화 전체가 조용히 죽는다. 이름을 `base` 로 바꾸니 즉시 정상이 됐다.
+
+    증상이 "빈 답"이라 원인을 짚기가 아주 어렵다. 그래서 이름을 막아 둔다.
+    """
+    from backend.ai.skill_registry import default_registry
+
+    금지 = {"from", "import", "class", "return", "self"}
+    나쁜것 = []
+    for spec in default_registry().build_catalog():
+        for name in (spec.get("parameters") or {}).get("properties", {}):
+            if name.lower() in 금지:
+                나쁜것.append(f"{spec['name']}.{name}")
+    assert not 나쁜것, (
+        "이 이름을 쓰면 모델이 빈 응답만 준다(오류도 없이). 다른 이름으로:\n"
+        + "\n".join(나쁜것))
+
+
+def test_the_server_counts_days_so_the_model_does_not_have_to():
+    """날짜 셈은 서버가 한다.
+
+    모델은 "100일 뒤"가 무슨 뜻인지는 잘 알아듣는데 **세는 것은 자주 틀린다** —
+    실측(2026-09-07): 2027-01-15 라고 답했다(한 달 어긋남). 9차·86차에 프롬프트로
+    두 번 다잡았는데 또 어긋났으니 구조로 옮겼다. 여기서는 셈이 맞는지만 본다
+    (말을 옮기는 것은 모델 몫이고, 그건 live_check 가 본다).
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    reg = default_registry()
+    u = SessionUser(username="날짜", display_name="D", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=get_settings(), today="2026-09-07")   # 월요일
+    call = lambda **kw: reg.dispatch("shift_date", kw, ctx)  # noqa: E731
+
+    assert call(days=100).data["date"] == "2026-12-16"      # 모델이 틀렸던 바로 그 값
+    assert call(weeks=3).data["date"] == "2026-09-28"
+    assert call(days=-1).data["date"] == "2026-09-06"
+    assert call(months=1).data["date"] == "2026-10-07"
+    assert call(years=1).data["date"] == "2027-09-07"
+
+    # 월말·윤년 — 사람도 모델도 여기서 틀린다
+    assert call(months=1, base="2026-01-31").data["date"] == "2026-02-28"
+    assert call(years=1, base="2028-02-29").data["date"] == "2029-02-28"
+    assert call(days=1, base="2028-02-28").data["date"] == "2028-02-29"
+
+    # 요일 — "다음 주 화요일"은 오늘이 무슨 요일이든 같은 답이어야 한다
+    r = call(weeks=1, weekday="화")
+    assert r.data["date"] == "2026-09-15" and r.data["weekday"] == "화", r.data
+    for 오늘 in ("2026-09-07", "2026-09-09", "2026-09-12"):   # 월·수·토
+        c2 = SkillContext(user=u, settings=get_settings(), today=오늘)
+        got = reg.dispatch("shift_date", {"weeks": 1, "weekday": "화"}, c2)
+        assert got.data["weekday"] == "화", got.data
+
+    # 오늘로부터 며칠인지도 함께 준다(모델이 다시 세지 않게)
+    assert call(days=100).data["days_from_today"] == 100
+
+    # 모델은 "화요일"이라고 보내기도 한다 — 받아 준다(첫 글자로 읽는다)
+    assert call(weeks=1, weekday="화요일").data["date"] == "2026-09-15"
+
+    # 이상한 입력은 조용히 엉뚱한 날짜를 주지 않고 거절한다
+    assert not call(base="어제").ok
+    assert not call(weekday="언제든").ok
+    assert not call(years=100).ok
+    assert not reg.dispatch("shift_date", {"days": "백"}, ctx).ok
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from .context import CONTEXT_SKILLS
+from .dates import DATE_SKILLS
 from .diary import DIARY_SKILLS
 from .calendar import (
     BulkCreateCalendarEvents,
@@ -52,6 +53,8 @@ from .vocab import VOCAB_SKILLS
 # 등록 순서 = LLM에 노출되는 카탈로그 순서
 ALL_SKILLS = [
     ThinkSkill(),
+    # 날짜 셈 — 모델이 직접 세면 자주 틀린다(dates.py 참고)
+    *DATE_SKILLS,
     # 문서(파일·노트 통합)
     ListDocuments(),
     ListFolders(),
