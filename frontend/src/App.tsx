@@ -1,7 +1,7 @@
 import { lazyChunk } from "./lib/lazyChunk";
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { Loader2 } from "lucide-react";
+import { CloudOff, Loader2, RefreshCw } from "lucide-react";
 import { useAuth } from "./store/auth";
 import { useSettings } from "./store/settings";
 import { Login } from "./pages/Login";
@@ -99,8 +99,37 @@ function AuthedRoutes() {
   );
 }
 
+/**
+ * 서버에 닿지 못했을 때. **로그인 화면을 보여 주면 안 된다** — 쿠키는 멀쩡한데
+ * 사용자는 로그아웃된 줄 알고 비밀번호를 다시 치고, 그것도 실패하니 계정이
+ * 잘못된 줄 안다. 배포할 때마다 컨테이너가 재시작하므로 드문 일도 아니다.
+ */
+function Offline({ onRetry }: { onRetry: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const retry = async () => {
+    setBusy(true);
+    await onRetry();
+    setBusy(false);
+  };
+  return (
+    <div className="grid min-h-screen place-items-center bg-bg p-6">
+      <div className="card w-full max-w-sm space-y-3 p-6 text-center">
+        <CloudOff size={28} className="mx-auto text-fg-subtle" />
+        <p className="text-[14px] font-semibold">서버에 닿지 못했습니다</p>
+        <p className="text-[12.5px] leading-relaxed text-fg-muted">
+          로그아웃된 것이 아닙니다. 서버가 다시 켜지는 중이거나 네트워크가 끊겼을 수 있습니다.
+          잠시 뒤 다시 시도해 주세요.
+        </p>
+        <button type="button" onClick={retry} disabled={busy} className="btn btn-primary mx-auto gap-2">
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} 다시 시도
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
-  const { session, loading, init, tick, refresh } = useAuth();
+  const { session, loading, offline, init, tick, refresh, retryInit } = useAuth();
 
   useEffect(() => {
     init();
@@ -125,6 +154,7 @@ export default function App() {
   }, [session, tick, refresh]);
 
   if (loading) return <Spinner />;
+  if (offline) return <><Offline onRetry={retryInit} /><Toaster /></>;
 
   return (
     <>
