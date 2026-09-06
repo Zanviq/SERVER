@@ -6904,6 +6904,24 @@ def test_usage_shows_numbers_and_never_content():
         assert client.get("/api/usage/users").status_code == 200
         assert client.get("/api/usage/user/tester").status_code == 200
         assert client.get("/api/usage/user/없는사람").status_code == 404
+        # 이름을 비틀어도 남의 폴더로 못 간다. 주인이라도 **계정 목록에 있는
+        # 이름만** 받는다 — 경로를 이름으로 조립하는 자리라 여기가 새면 저장소
+        # 어디든 읽힌다. 대소문자만 다른 것도 막는다(윈도우는 같은 폴더가 된다).
+        known = {row["username"] for row in client.get("/api/usage/users").json()["users"]}
+        for bad in ("../tester", "tester/../tester", "..%2ftester", "tester ",
+                    "TESTER", "%2e%2e%2ftester", "."):
+            r = client.get(f"/api/usage/user/{bad}")
+            # 막히거나(400·403·404), 통과하더라도 **계정 목록에 있는 이름**이어야
+            # 한다. `tester/../tester` 처럼 HTTP 계층이 정규화해 버리는 것도 있어서
+            # "무엇이 돌아왔는가"로 봐야 뜻이 있다 — 경로가 이름 자리에 오면 안 된다.
+            assert r.status_code in (400, 403, 404, 200), f"{bad!r} -> {r.status_code}"
+            if r.status_code == 200:
+                assert r.json()["username"] in known, f"{bad!r} 가 계정 아닌 이름을 냈다"
+        # 달 이름도 마찬가지 — 이상하면 이번 달로 되돌린다(경로가 되기 때문이다)
+        for m in ("../..", "9999-99", "2026-13", "'; DROP", ""):
+            r = client.get(f"/api/usage/user/tester?month={m}")
+            assert r.status_code == 200, (m, r.status_code)
+            assert usage._YM.match(r.json()["month"]), r.json()["month"]
         rows = client.get("/api/usage/users").json()["users"]
         me = next(x for x in rows if x["username"] == "tester")
         # 위에서 화면별 집계를 확인하며 더 넣은 17 토큰이 함께 잡힌다
