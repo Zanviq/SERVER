@@ -6616,6 +6616,44 @@ def test_saving_a_note_changed_elsewhere_stops_instead_of_overwriting():
         client.delete("/api/notes/delete", params={"path": path})
 
 
+def test_a_reminder_request_has_a_real_mechanism_behind_it():
+    """"1시간 뒤에 알려줘"를 이제 거절하지 않고 알림 있는 일정으로 만든다.
+
+    프롬프트가 약속하는 것이므로 뒷받침이 실제로 도는지 확인한다 — 알림이 붙고,
+    그 시각이 되면 due_reminders 가 집어낸다. (알림은 앱을 열어 둔 동안에만 뜬다.
+    그 한계를 모델이 말하도록 프롬프트에 적어 두었다.)
+    """
+    from backend import calendar_service
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    u, ctx, st = _todo_ctx("remindme")
+    r = reg.dispatch("create_calendar_event", {
+        "title": "물 마시기", "start": "2026-09-06T11:00:00", "remind_minutes": 1}, ctx)
+    assert r.ok, r.message
+    assert r.data["event"]["remind_minutes"] == 1, r.data["event"]
+
+    due = calendar_service.due_reminders(u, st, "2026-09-06T10:50:00", 30)
+    assert any(e["title"] == "물 마시기" for e in due), due
+    early = calendar_service.due_reminders(u, st, "2026-09-06T08:00:00", 30)
+    assert not any(e["title"] == "물 마시기" for e in early), early
+
+    # **0 은 알림이 아니다.** 프롬프트가 0 을 권하면 사용자는 아무 알림도 못 받는다
+    # (처음에 그렇게 적었다가 여기서 걸렸다).
+    r0 = reg.dispatch("create_calendar_event", {
+        "title": "알림없음", "start": "2026-09-06T12:00:00", "remind_minutes": 0}, ctx)
+    assert r0.ok
+    assert not any(e["title"] == "알림없음"
+                   for e in calendar_service.due_reminders(u, st, "2026-09-06T11:50:00", 30))
+
+    # 프롬프트도 "알려 줘"를 할 수 있는 일로 안내하고, 0 의 뜻을 분명히 해야 한다
+    from backend.ai.prompt_builder import build_system
+
+    sysmsg = build_system(u, "assistant", "2026-09-06 (일)", {})
+    assert "remind_minutes" in sysmsg and "열어 둔 동안" in sysmsg, sysmsg[-900:]
+    assert "1 이상" in sysmsg, sysmsg[-900:]
+
+
 def test_account_backup_includes_everything_but_the_trash():
     """백업은 손이 닿는 곳에 있어야 실제로 한다.
 
