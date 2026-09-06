@@ -6092,6 +6092,74 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
     return buf.getvalue()
 
 
+def test_another_user_cannot_touch_your_papers_meetings_or_words():
+    """논문·회의·단어의 모든 입구가 남의 손을 막는다.
+
+    id 만 알면 되는 자리가 많다(논문 파일 내려받기, 회의 오디오, 받아쓰기,
+    회의 문서 읽기·쓰기). 화면에서 안 보이는 것과 서버가 막는 것은 다르다 —
+    id 는 주소창·공유 링크·로그로 새어 나갈 수 있다.
+
+    없는 것과 남의 것을 **똑같이 404** 로 답하는 것도 함께 본다. 403 으로
+    구분해 주면 "그 id 는 있다"는 사실이 새어 나간다.
+    """
+    from backend import accounts, meeting_store, paper_store, vocab_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    victim = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    _login()
+
+    paper = paper_store.register(victim, s, "남의논문.pdf", 1234)
+    pid = paper["id"]
+    mid = meeting_store.new_id()
+    meeting_store.meeting_dir(victim, s, mid).mkdir(parents=True, exist_ok=True)
+    meeting_store.register(victim, s, filename="남의회의.wav", mime="audio/wav", size=1,
+                           ext="wav", day="2026-09-07", mid=mid, title="남의 회의")
+    meeting_store.write_doc(victim, s, mid, "회의록", "아무도 보면 안 되는 회의록")
+    added = vocab_store.add_words(victim, s, [{"word": "secretword", "meanings": ["비밀 뜻"]}])
+    wid = (added["added"] or added["merged"])[0]["id"]
+
+    spy = TestClient(app)
+    spy.post("/api/auth/signup",
+             json={"username": "peeper2", "password": "longenough1", "display_name": "P"})
+    accounts.set_status("peeper2", accounts.STATUS_ACTIVE, "tester", s)
+    assert spy.post("/api/auth/login",
+                    json={"username": "peeper2", "password": "longenough1"}).status_code == 200
+    try:
+        doors = [
+            ("GET", f"/api/papers/{pid}"), ("GET", f"/api/papers/{pid}/file"),
+            ("GET", f"/api/papers/{pid}/text"), ("PUT", f"/api/papers/{pid}"),
+            ("DELETE", f"/api/papers/{pid}"), ("POST", f"/api/papers/{pid}/extract"),
+            ("GET", f"/api/meetings/{mid}"), ("GET", f"/api/meetings/{mid}/audio"),
+            ("GET", f"/api/meetings/{mid}/transcript"), ("GET", f"/api/meetings/{mid}/docs"),
+            ("GET", f"/api/meetings/{mid}/docs/회의록"),
+            ("PUT", f"/api/meetings/{mid}/docs/회의록"),
+            ("DELETE", f"/api/meetings/{mid}"),
+            ("PUT", f"/api/vocab/words/{wid}"), ("DELETE", f"/api/vocab/words/{wid}"),
+        ]
+        for method, path in doors:
+            body = {"title": "가로채기", "content": "덮어쓰기"} if method in ("PUT", "POST") else None
+            r = spy.request(method, path, json=body)
+            assert r.status_code in (403, 404), f"{method} {path} -> {r.status_code}"
+            assert "비밀" not in r.text and "남의" not in r.text, f"{path}: {r.text[:120]}"
+
+        # 경로 탈출도 막힌다
+        for path in (f"/api/meetings/{mid}/docs/..%2f..%2f..%2fsecret",
+                     "/api/meetings/..%2f..%2f/docs/x",
+                     f"/api/papers/{'a' * 32}/file"):
+            assert spy.get(path).status_code in (400, 403, 404, 422), path
+
+        # 피해자 쪽은 그대로 멀쩡하다(막느라 자기 것까지 막으면 안 된다)
+        assert client.get(f"/api/papers/{pid}").status_code == 200
+        assert client.get(f"/api/meetings/{mid}/docs/회의록").json()["content"].startswith("아무도")
+    finally:
+        client.delete(f"/api/papers/{pid}")
+        client.delete(f"/api/meetings/{mid}")
+        client.delete(f"/api/vocab/words/{wid}")
+        client.delete("/api/admin/users/peeper2")
+
+
 def test_context_search_does_not_reread_the_index_per_space(monkeypatch):
     """공간을 훑을 때 논문·회의 색인을 공간마다 다시 읽지 않는다.
 
