@@ -271,7 +271,8 @@ export function Calendar() {
     backgroundColor: "transparent",
     borderColor: "transparent",
     classNames: ["fc-diary"],
-    extendedProps: { body: d.body, heart: d.heart, mind: d.mind, hasText: !!d.text.trim() },
+    // 잠겨 있으면 text 는 빈 문자열로 오므로 has_text 로 봐야 한다
+    extendedProps: { body: d.body, heart: d.heart, mind: d.mind, hasText: d.has_text },
   }));
 
   const fcEvents = view === "diary" ? diaryItems : view === "events" ? eventItems : todoItems;
@@ -291,11 +292,30 @@ export function Calendar() {
   const onDiaryChange = useCallback((entry: DiaryDay) => {
     setDiaryDays((prev) => {
       const next = { ...prev };
-      // 도형도 글도 없으면 서버가 그날을 지운다 — 달력에서도 뺀다
-      if (!entry.body && !entry.heart && !entry.mind && !entry.text.trim()) delete next[entry.date];
+      // 도형도 글도 없으면 서버가 그날을 지운다 — 달력에서도 뺀다.
+      // **text 가 아니라 has_text 로 본다** — 잠겨 있으면 글이 있어도 text 는
+      // 빈 문자열이라, text 로 보면 도형을 지운 순간 그날이 달력에서 사라진다.
+      if (!entry.body && !entry.heart && !entry.mind && !entry.has_text) delete next[entry.date];
       else next[entry.date] = entry;
       return next;
     });
+  }, []);
+
+  // 일기 잠금. 자물쇠는 화면 하나가 아니라 이 페이지 전체에 걸린다 — 한 번 풀면
+  // 다른 날로 옮겨도 다시 묻지 않는다(같은 사람이 같은 자리에서 보는 중이다).
+  const [diaryUnlocked, setDiaryUnlocked] = useState(false);
+  const onDiaryUnlock = useCallback(async () => {
+    setDiaryUnlocked(true);
+    // 표를 얻었으니 이번 달치를 글까지 포함해 다시 받는다
+    const api2 = calRef.current?.getApi();
+    const from = localDay(api2?.view.activeStart ?? new Date());
+    const to = localDay(api2?.view.activeEnd ?? new Date());
+    try {
+      const dys = await api.diaryRange(from, to);
+      setDiaryDays(Object.fromEntries(dys.map((d) => [d.date, d])));
+    } catch {
+      /* 실패해도 잠금은 풀린 상태 — 날짜를 옮기면 다시 받아진다 */
+    }
   }, []);
 
   // customButtons가 만든 버튼에 눈 아이콘을 심는다(FC는 text/icon만 받는다).
@@ -349,6 +369,8 @@ export function Calendar() {
                 entry={diaryDays[selectedDay]}
                 events={events}
                 onChange={onDiaryChange}
+                locked={!diaryUnlocked && !!diaryDays[selectedDay]?.has_text}
+                onUnlock={onDiaryUnlock}
               />
             </>
           ) : (

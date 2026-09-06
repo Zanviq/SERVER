@@ -287,12 +287,16 @@
     gap: 4px;
     color: rgb(var(--fg-subtle));
   }
-  .fc-server .fc-diary-dot {
-    display: block;
-    width: 6px;
-    height: 6px;
-    border-radius: 9999px;
-    background: rgb(var(--fg-subtle));
+  /* 도형 줄 위, 체크 아래 — 가운데로 쌓는다. */
+  .fc-server .fc-diary-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+  }
+  .fc-server .fc-diary-check {
+    font-size: 11px;
+    line-height: 1;
   }
   .fc-server .fc-diary-selected {
     box-shadow: inset 0 0 0 2px rgb(var(--accent));
@@ -351,6 +355,9 @@
     .fc-server .fc-diary-row svg {
       width: 11px;
       height: 11px;
+    }
+    .fc-server .fc-diary-check {
+      font-size: 9px;
     }
 
     /* '+N' 팝오버는 좁은 화면에서 제목을 읽고 고르는 **유일한** 곳이다.

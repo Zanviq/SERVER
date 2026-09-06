@@ -105,6 +105,12 @@ const jsonInit = (method: string, body: unknown): RequestInit => ({
 
 const q = (o: Record<string, string>) => new URLSearchParams(o).toString();
 
+/** 일기 잠금을 푼 표. **메모리에만 둔다** — 새 탭·새로고침이면 다시 잠긴다.
+ *  localStorage 에 두면 브라우저를 열어 둔 사람 누구나 계속 볼 수 있다. */
+let diaryUnlockToken = "";
+const unlockHeader = (): Record<string, string> =>
+  (diaryUnlockToken ? { "X-Diary-Unlock": diaryUnlockToken } : {});
+
 export const api = {
   // ── auth ──
   login: (username: string, password: string) =>
@@ -318,10 +324,25 @@ export const api = {
       `/api/papers/${encodeURIComponent(id)}/extract`, { method: "POST" }),
 
   // ── 기록(상태·일기) ──
-  diaryRange: (from: string, to: string) => req<DiaryDay[]>(`/api/diary?${q({ from, to })}`),
-  diaryGet: (day: string) => req<DiaryDay>(`/api/diary/${day}`),
+  diaryRange: (from: string, to: string) =>
+    req<DiaryDay[]>(`/api/diary?${q({ from, to })}`, { headers: unlockHeader() }),
+  diaryGet: (day: string) => req<DiaryDay>(`/api/diary/${day}`, { headers: unlockHeader() }),
   diarySave: (day: string, body: Partial<Pick<DiaryDay, "body" | "heart" | "mind" | "text">>) =>
-    req<DiaryDay>(`/api/diary/${day}`, jsonInit("PUT", body)),
+    req<DiaryDay>(`/api/diary/${day}`, {
+      ...jsonInit("PUT", body),
+      headers: { "Content-Type": "application/json", ...unlockHeader() },
+    }),
+  /** 일기 잠금 풀기. 맞으면 표를 받아 두고, 그 뒤 기록 요청에 실어 보낸다. */
+  diaryUnlock: async (pin: string) => {
+    const r = await req<{ token: string; ttl: number }>("/api/diary/unlock", jsonInit("POST", { pin }));
+    diaryUnlockToken = r.token;
+    return r;
+  },
+  diaryLockState: () => req<{ is_default: boolean }>("/api/diary/lock"),
+  diaryChangePin: (current: string, next: string) =>
+    req<{ ok: boolean; is_default: boolean }>("/api/diary/pin", jsonInit("PUT", { current, next })),
+  diaryRelock: () => { diaryUnlockToken = ""; },
+  diaryIsUnlocked: () => !!diaryUnlockToken,
 
   // ── 회의 녹음 ──
   meetingList: () => req<Meeting[]>("/api/meetings"),
@@ -638,7 +659,12 @@ export interface DiaryDay {
   body: DiaryShape;
   heart: DiaryShape;
   mind: DiaryShape;
+  /** 잠겨 있으면 빈 문자열이다. "일기가 있는가"는 has_text 로 봐야 한다. */
   text: string;
+  /** 그날 일기가 있는가. 잠긴 동안에도 온다(달력 칸의 체크 표시). */
+  has_text: boolean;
+  /** 서버가 글을 빼고 보냈다는 표시. */
+  locked?: boolean;
   updated_at: string;
 }
 

@@ -7312,6 +7312,70 @@ def test_streaming_failure_does_not_become_an_answer(monkeypatch):
     assert [m["role"] for m in msgs] == ["user"], msgs
 
 
+def test_locked_diary_text_never_leaves_the_server():
+    """잠긴 일기는 **서버가 안 보낸다.**
+
+    화면에서만 회색으로 덮으면 개발자 도구로 그냥 읽힌다 — 가리는 시늉일 뿐이다.
+    도형과 "일기가 있다"는 사실은 잠겨 있어도 나가야 한다(달력 칸의 체크).
+    """
+    from backend import diary_store
+    from backend.auth import SessionUser
+
+    _login()
+    day = "2026-04-11"
+    secret = "아무에게도 안 보여줄 이야기"
+    try:
+        # 잠금을 풀고 쓴다(자물쇠가 걸린 채로는 글을 저장할 수 없다)
+        tok = client.post("/api/diary/unlock", json={"pin": "0000"}).json()["token"]
+        h = {"X-Diary-Unlock": tok}
+        r = client.put(f"/api/diary/{day}", json={"body": "star", "text": secret}, headers=h)
+        assert r.status_code == 200 and r.json()["text"] == secret, r.text
+
+        # 표 없이 보면 글이 없다. 도형과 has_text 는 그대로 온다.
+        one = client.get(f"/api/diary/{day}").json()
+        assert one["text"] == "" and one["has_text"] is True and one["locked"] is True, one
+        assert one["body"] == "star"
+        rng = client.get("/api/diary?from=2026-04-01&to=2026-04-30").json()
+        row = next(e for e in rng if e["date"] == day)
+        assert row["text"] == "" and row["has_text"] is True, row
+        assert secret not in client.get("/api/diary?from=2026-04-01&to=2026-04-30").text
+
+        # 틀린 비밀번호는 표를 주지 않는다
+        assert client.post("/api/diary/unlock", json={"pin": "1234"}).status_code == 403
+        assert client.post("/api/diary/unlock", json={"pin": "abcd"}).status_code == 403
+        # 남의 표는 안 통한다(서명이 사용자 이름을 담는다)
+        other = SessionUser(username="침입자", display_name="X", expires_at=0, remaining=0)
+        s = get_settings()
+        assert not diary_store.is_unlocked(diary_store.issue_unlock(other, s),
+                                           SessionUser(username="tester", display_name="T",
+                                                       expires_at=0, remaining=0), s)
+        assert not diary_store.is_unlocked("아무말", other, s)
+
+        # **잠긴 채로 도형만 눌러도 일기가 지워지면 안 된다.** 화면은 잠기면 글을
+        # 빈 문자열로 들고 있으므로 그대로 저장되면 그날 일기가 통째로 날아간다.
+        r = client.put(f"/api/diary/{day}", json={"heart": "circle", "text": ""})
+        assert r.status_code == 200 and r.json()["has_text"] is True, r.text
+        assert client.get(f"/api/diary/{day}", headers=h).json()["text"] == secret
+
+        # 비밀번호 바꾸기 — 지금 것을 맞혀야 한다
+        assert client.put("/api/diary/pin", json={"current": "9999", "next": "1111"}).status_code == 403
+        assert client.put("/api/diary/pin", json={"current": "0000", "next": "12"}).status_code == 400
+        assert client.put("/api/diary/pin", json={"current": "0000", "next": "1111"}).status_code == 200
+        assert client.get("/api/diary/lock").json()["is_default"] is False
+        assert client.post("/api/diary/unlock", json={"pin": "0000"}).status_code == 403
+        tok2 = client.post("/api/diary/unlock", json={"pin": "1111"}).json()["token"]
+        assert client.get(f"/api/diary/{day}", headers={"X-Diary-Unlock": tok2}).json()["text"] == secret
+        # 해시는 어디로도 새지 않는다
+        assert "$" not in json.dumps(client.get("/api/diary/lock").json())
+        assert "pin" not in json.dumps(client.get("/api/settings").json())
+    finally:
+        client.put(f"/api/diary/{day}", json={"body": "", "heart": "", "mind": "", "text": ""},
+                   headers={"X-Diary-Unlock": client.post(
+                       "/api/diary/unlock", json={"pin": "1111"}).json().get("token", "")})
+        diary_store.set_pin(SessionUser(username="tester", display_name="T", expires_at=0, remaining=0),
+                            get_settings(), "0000")
+
+
 def test_context_preview_shows_exactly_what_the_model_gets():
     """미리보기는 /chat 과 **같은 조립**을 써야 한다.
 

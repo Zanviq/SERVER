@@ -73,19 +73,26 @@ export function ShapeIcon({ shape, size = 14, className = "", plain = false }: I
   }
 }
 
-/** 캘린더 칸에 들어가는 한 줄: 육체 · 마음 · 정신. 고른 게 하나도 없으면 아무것도 안 그린다. */
+/** 캘린더 칸에 들어가는 것: 도형 한 줄(육체·마음·정신)과, 일기를 쓴 날이면
+ *  그 아래 가운데 체크. 도형도 일기도 없으면 아무것도 안 그린다.
+ *
+ *  체크는 잠금과 무관하게 나온다 — "그날 일기를 썼다"는 사실은 가리지 않고,
+ *  가리는 것은 글 내용뿐이다. */
 export function DiaryCell({
   body, heart, mind, hasText, size = 13,
 }: { body: DiaryShape; heart: DiaryShape; mind: DiaryShape; hasText: boolean; size?: number }) {
-  if (!body && !heart && !mind) {
-    // 도형은 없고 일기만 있는 날 — 있다는 것만 아주 작게 알린다.
-    return hasText ? <span className="fc-diary-dot" aria-label="일기 있음" /> : null;
-  }
+  const anyShape = !!(body || heart || mind);
+  if (!anyShape && !hasText) return null;
   return (
-    <span className="fc-diary-row" title={`육체 ${label(body)} · 마음 ${label(heart)} · 정신 ${label(mind)}`}>
-      <ShapeIcon shape={body} size={size} />
-      <ShapeIcon shape={heart} size={size} />
-      <ShapeIcon shape={mind} size={size} />
+    <span className="fc-diary-stack">
+      {anyShape && (
+        <span className="fc-diary-row" title={`육체 ${label(body)} · 마음 ${label(heart)} · 정신 ${label(mind)}`}>
+          <ShapeIcon shape={body} size={size} />
+          <ShapeIcon shape={heart} size={size} />
+          <ShapeIcon shape={mind} size={size} />
+        </span>
+      )}
+      {hasText && <span className="fc-diary-check" title="일기 있음" aria-label="일기 있음">✅</span>}
     </span>
   );
 }

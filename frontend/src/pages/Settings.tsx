@@ -35,6 +35,77 @@ function Row({ label, desc, children }: { label: string; desc?: string; children
   );
 }
 
+/** 일기 비밀번호(숫자 4자리). 캘린더 '기록'의 일기 본문을 가리는 자물쇠다.
+ *
+ *  처음 값은 0000 이고, 바꾸려면 지금 값을 맞혀야 한다 — 아니면 로그인된 화면
+ *  앞에 앉은 사람이 그냥 바꿔 열 수 있어서 잠가 둔 뜻이 없어진다.
+ *  서버는 해시만 들고 있고 화면으로는 "아직 기본값인가"만 내려온다. */
+function DiaryPin() {
+  const [isDefault, setIsDefault] = useState<boolean | null>(null);
+  const [open, setOpen] = useState(false);
+  const [cur, setCur] = useState("");
+  const [next, setNext] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.diaryLockState().then((r) => setIsDefault(r.is_default)).catch(() => setIsDefault(null));
+  }, []);
+
+  const only4 = (v: string) => v.replace(/\D/g, "").slice(0, 4);
+  const save = async () => {
+    setBusy(true);
+    try {
+      const r = await api.diaryChangePin(cur, next);
+      setIsDefault(r.is_default);
+      setOpen(false);
+      setCur("");
+      setNext("");
+      toast.ok("일기 비밀번호를 바꿨습니다");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "바꾸지 못했습니다");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="border-b border-line py-3">
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[13.5px] font-medium">일기 비밀번호</p>
+          <p className="text-[12px] text-fg-muted">
+            캘린더 기록의 일기를 가린다 · 숫자 4자리
+            {isDefault === true && " · 지금은 초기값(0000)"}
+          </p>
+        </div>
+        <button className="btn btn-secondary shrink-0" onClick={() => setOpen((v) => !v)}>
+          {open ? "닫기" : "변경"}
+        </button>
+      </div>
+      {open && (
+        <div className="mt-3 flex flex-wrap items-end gap-2">
+          <label className="text-[12px] text-fg-muted">
+            지금 비밀번호
+            <input value={cur} onChange={(e) => setCur(only4(e.target.value))}
+              type="password" inputMode="numeric" autoComplete="off" maxLength={4}
+              className="input mt-1 h-9 w-24 text-center tracking-[0.4em]" />
+          </label>
+          <label className="text-[12px] text-fg-muted">
+            새 비밀번호
+            <input value={next} onChange={(e) => setNext(only4(e.target.value))}
+              type="password" inputMode="numeric" autoComplete="off" maxLength={4}
+              className="input mt-1 h-9 w-24 text-center tracking-[0.4em]" />
+          </label>
+          <button className="btn btn-primary h-9" disabled={busy || cur.length !== 4 || next.length !== 4}
+            onClick={() => void save()}>
+            {busy ? <Loader2 size={14} className="animate-spin" /> : "저장"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** 숫자 설정 입력.
  *
  *  글자를 칠 때마다 범위로 다듬으면 원하는 값을 넣을 수 없다 — `900` 을 치려고
@@ -174,6 +245,7 @@ export function Settings() {
                   <option value={43200}>30일</option>
                 </select>
               </Row>
+              <DiaryPin />
               <Row label="세션" desc="지금 로그아웃">
                 <button onClick={logout} className="btn btn-danger">로그아웃</button>
               </Row>

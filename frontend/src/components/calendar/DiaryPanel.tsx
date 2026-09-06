@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Loader2, Lock } from "lucide-react";
 import { api, CalEvent, DiaryAxis, DiaryDay, DiaryShape } from "../../lib/api";
 import { toast } from "../../store/toast";
 import { useSettings } from "../../store/settings";
+import { isSubmitEnter } from "../../lib/keys";
 import { PendingSave } from "../../lib/pendingSave";
 import { AXES, AXIS_LABEL, SHAPES, SHAPE_LABEL, ShapeIcon } from "./DiaryShapes";
 
@@ -15,10 +16,14 @@ interface Props {
   events: CalEvent[];
   /** 저장이 끝나면 부모의 달력 표시를 갱신한다 */
   onChange: (entry: DiaryDay) => void;
+  /** 그날 일기가 있는데 아직 비밀번호를 안 넣었다 */
+  locked: boolean;
+  /** 비밀번호가 맞았을 때. 부모가 글까지 다시 받아 온다 */
+  onUnlock: () => void;
 }
 
 function emptyEntry(date: string): DiaryDay {
-  return { date, body: "", heart: "", mind: "", text: "", updated_at: "" };
+  return { date, body: "", heart: "", mind: "", text: "", has_text: false, updated_at: "" };
 }
 
 function koreanDate(day: string): string {
@@ -45,11 +50,80 @@ function timeOf(e: CalEvent): string {
   return e.start.slice(11, 16);
 }
 
+/** 잠긴 일기를 덮는 회색 판. 누르면 숫자 4자리를 묻는다.
+ *
+ *  틀렸다고 따로 말하지 않는다 — 자기 일기에 자기가 들어가는 자리라 꾸짖을
+ *  이유가 없고, 칸을 비워 다시 치게 하는 것으로 충분하다. */
+function DiaryLock({ onUnlock }: { onUnlock: () => void }) {
+  const [asking, setAsking] = useState(false);
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (asking) inputRef.current?.focus();
+  }, [asking]);
+
+  const submit = async (value: string) => {
+    setBusy(true);
+    try {
+      await api.diaryUnlock(value);
+      onUnlock();
+    } catch {
+      setPin("");            // 조용히 비우고 다시 받는다
+      inputRef.current?.focus();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onPin = (v: string) => {
+    const digits = v.replace(/\D/g, "").slice(0, 4);
+    setPin(digits);
+    // 네 자리를 채우면 바로 확인한다 — 따로 누를 단추가 필요 없다
+    if (digits.length === 4) void submit(digits);
+  };
+
+  return (
+    <div className="absolute inset-0 flex items-center justify-center rounded-md bg-muted">
+      {!asking ? (
+        <button
+          type="button"
+          onClick={() => setAsking(true)}
+          aria-label="일기 잠금 풀기"
+          className="flex h-full w-full items-center justify-center gap-1.5 rounded-md text-[12.5px] text-fg-muted hover:bg-hovered"
+        >
+          <Lock size={14} /> 잠긴 일기
+        </button>
+      ) : (
+        <div className="flex flex-col items-center gap-2">
+          <input
+            ref={inputRef}
+            value={pin}
+            onChange={(e) => onPin(e.target.value)}
+            onKeyDown={(e) => { if (isSubmitEnter(e) && pin.length === 4) void submit(pin); }}
+            type="password"
+            inputMode="numeric"
+            autoComplete="off"
+            maxLength={4}
+            disabled={busy}
+            aria-label="일기 비밀번호 4자리"
+            className="input h-10 w-28 text-center text-lg tracking-[0.5em]"
+          />
+          <span className="flex h-4 items-center text-[11px] text-fg-subtle">
+            {busy ? <Loader2 size={12} className="animate-spin" /> : "숫자 4자리"}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * 하루의 상태(육체·마음·정신)와 일기. 날짜와 일정은 달력이 채워 주고,
  * 사용자는 도형과 글만 고친다. 도형은 누르는 즉시, 글은 잠시 뒤 자동 저장.
  */
-export function DiaryPanel({ date, entry, events, onChange }: Props) {
+export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock }: Props) {
   const autosaveMs = useSettings((st) => st.settings?.notes.autosave_ms ?? 900);
   const cur = entry ?? emptyEntry(date);
   const [text, setText] = useState(cur.text);
@@ -79,6 +153,13 @@ export function DiaryPanel({ date, entry, events, onChange }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date]);
 
+  // 잠금이 풀리면 **날짜는 그대로인 채** 글이 뒤늦게 도착한다. 위 효과는 날짜로만
+  // 도므로 그때 다시 돌지 않아, 자물쇠를 풀었는데 칸이 비어 있었다(실측).
+  // 입력 중이거나 이미 뭔가 적혀 있으면 건드리지 않는다.
+  useEffect(() => {
+    if (!locked && !dirty && entry?.text && !text) setText(entry.text);
+  }, [locked, entry?.text, dirty, text]);
+
   const dayEvents = useMemo(
     () => events.filter((e) => onDay(e, date)).sort((a, b) => a.start.localeCompare(b.start)),
     [events, date],
@@ -98,6 +179,9 @@ export function DiaryPanel({ date, entry, events, onChange }: Props) {
     // 것이 도로 지워졌다. 저장은 뒤에서 하고, 실패하면 되돌린다.
     const before = cur;
     const optimistic: DiaryDay = { ...cur, ...patch };
+    // 글을 함께 보낼 때만 has_text 가 바뀐다. 잠긴 날은 text 가 빈 문자열로 와
+    // 있으므로 여기서 다시 계산하면 **글이 있는 날이 없는 날로 바뀐다**.
+    if (patch.text !== undefined) optimistic.has_text = !!patch.text.trim();
     onChangeRef.current(optimistic);
 
     const mine = ++picks.current;
@@ -208,7 +292,9 @@ export function DiaryPanel({ date, entry, events, onChange }: Props) {
         <div className="flex items-center justify-between">
           <span className="text-fg-muted">일기</span>
           <span className="flex items-center gap-1 text-[11px] text-fg-subtle">
-            {saving ? (
+            {locked ? (
+              <><Lock size={11} /> 잠김</>
+            ) : saving ? (
               <><Loader2 size={11} className="animate-spin" /> 저장 중</>
             ) : dirty ? (
               "입력 중"
@@ -217,12 +303,18 @@ export function DiaryPanel({ date, entry, events, onChange }: Props) {
             ) : null}
           </span>
         </div>
-        <textarea
-          value={text}
-          onChange={(e) => onText(e.target.value)}
-          placeholder="오늘 어땠는지 적어 두세요."
-          className="input min-h-[120px] flex-1 resize-none leading-relaxed"
-        />
+        {/* 잠긴 날은 입력칸 자리를 통째로 회색이 덮는다. 서버가 글을 아예 안
+            보내므로 덮개 뒤에는 볼 것도 없다(가리는 시늉이 아니다). */}
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <textarea
+            value={locked ? "" : text}
+            onChange={(e) => onText(e.target.value)}
+            readOnly={locked}
+            placeholder={locked ? "" : "오늘 어땠는지 적어 두세요."}
+            className="input min-h-[120px] flex-1 resize-none leading-relaxed"
+          />
+          {locked && <DiaryLock onUnlock={onUnlock} />}
+        </div>
       </div>
     </div>
   );
