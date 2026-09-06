@@ -4,6 +4,7 @@ import { api, VocabBoard, VocabKind, VocabWord } from "../../lib/api";
 import { isSubmitEnter } from "../../lib/keys";
 import { toast } from "../../store/toast";
 import { useVocabJobs } from "../../store/vocabJobs";
+import { ListState } from "../ui/ListState";
 import { Modal } from "../ui/Modal";
 import { WordCard, isDue } from "./WordCard";
 import { WordEditModal } from "./WordEditModal";
@@ -37,6 +38,7 @@ interface Props {
 export function VocabPanel({ refreshKey = 0, initialTag = "", defaultTags = [], focusId = "",
                              autoReview = false, className = "" }: Props) {
   const [board, setBoard] = useState<VocabBoard | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);   // 단어장을 못 받아왔는가
   const [tag, setTag] = useState(initialTag);
   const [tagQuery, setTagQuery] = useState("");
   const [q, setQ] = useState("");
@@ -56,8 +58,13 @@ export function VocabPanel({ refreshKey = 0, initialTag = "", defaultTags = [], 
   const load = useCallback(async () => {
     try {
       setBoard(await api.vocabBoard());
+      setLoadFailed(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "단어장을 못 받았습니다");
+      // board 를 null 로 두면 영영 "불러오는 중"이고, 빈 것으로 두면 "아직 비어
+      // 있습니다"라는 거짓말이 된다. 실패했다고 말하고 다시 받을 길을 준다.
+      setBoard({ words: [], tags: [], stats: { total: 0, due: 0, learned: 0, tags: 0 } });
+      setLoadFailed(true);
     }
   }, []);
   useEffect(() => { void load(); }, [load, refreshKey, jobVersion]);
@@ -229,10 +236,12 @@ export function VocabPanel({ refreshKey = 0, initialTag = "", defaultTags = [], 
         {board === null ? (
           <li className="flex justify-center py-8"><Loader2 size={18} className="animate-spin text-fg-muted" /></li>
         ) : words.length === 0 ? (
-          <li className="px-3 py-8 text-center text-[12.5px] text-fg-muted">
-            {board.words.length === 0
-              ? "아직 비어 있습니다. AI에게 물어보고 후보에서 고르거나, 위 + 로 단어·문장·문법을 나열해 넣으세요."
-              : "조건에 맞는 항목이 없습니다."}
+          <li>
+            <ListState failed={loadFailed} onRetry={() => void load()}>
+              {board.words.length === 0
+                ? "아직 비어 있습니다. AI에게 물어보고 후보에서 고르거나, 위 + 로 단어·문장·문법을 나열해 넣으세요."
+                : "조건에 맞는 항목이 없습니다."}
+            </ListState>
           </li>
         ) : (
           words.map((w) => (

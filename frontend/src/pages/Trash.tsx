@@ -4,6 +4,7 @@ import { Shell } from "../components/layout/Shell";
 import { Modal } from "../components/ui/Modal";
 import { api, TrashEntry } from "../lib/api";
 import { formatBytes } from "../lib/format";
+import { ListState } from "../components/ui/ListState";
 import { toast } from "../store/toast";
 
 function fmt(ts: number): string {
@@ -28,6 +29,7 @@ const TABS = [
 export function Trash() {
   const [items, setItems] = useState<TrashEntry[] | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [loadFailed, setLoadFailed] = useState(false);   // 목록을 못 받아왔는가
   const [tab, setTab] = useState<string>("");
   const [busy, setBusy] = useState<string | null>(null);
   const [emptyOpen, setEmptyOpen] = useState(false);
@@ -39,9 +41,13 @@ export function Trash() {
       const [list, c] = await Promise.all([api.trashList(tab), api.trashCounts()]);
       setItems(list);
       setCounts(c);
+      setLoadFailed(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "휴지통 로드 실패");
+      // 빈 목록만 두면 "휴지통이 비어 있습니다"가 된다 — 지운 것이 사라졌다고
+      // 오해하면 되살릴 생각조차 안 하게 된다.
       setItems([]);
+      setLoadFailed(true);
     }
   }, [tab]);
 
@@ -144,6 +150,8 @@ export function Trash() {
           <div className="flex h-40 items-center justify-center text-fg-muted">
             <Loader2 className="animate-spin" />
           </div>
+        ) : loadFailed ? (
+          <ListState failed onRetry={() => void reload()}>{null}</ListState>
         ) : items.length === 0 ? (
           <div className="flex h-48 flex-col items-center justify-center gap-2 text-fg-muted">
             <Trash2 size={28} className="text-fg-subtle" />
