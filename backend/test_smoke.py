@@ -6092,6 +6092,66 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
     return buf.getvalue()
 
 
+def test_asking_for_a_summary_does_not_create_a_meeting_document():
+    """"요약해 줘"는 말로 답하라는 뜻이지 문서를 만들라는 뜻이 아니다.
+
+    회의 프롬프트가 "정리한 결과는 문서로 남깁니다"라고 **무조건** 시키고 있어서,
+    그냥 "요약해 줘"에도 2번 중 2번 문서를 만들었다(실측). 사용자는 회의 공간에
+    자기가 만든 적 없는 문서가 쌓이는 것을 보게 되고, 같은 이름으로 다시 만들면
+    앞의 것이 덮인다.
+
+    문구를 고쳤더니 이번에는 반대로 **"'요약' 문서로 만들어줘"라는 분명한 요청을
+    2번 중 1번 무시**했다. 프롬프트로 양쪽에 실패했으므로 판단을 서버로 옮겼다
+    (단어장 71차와 같은 교훈). 옮긴 뒤 네 경우 모두 2/2 로 안정됐다.
+    """
+    from backend import meeting_store
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.ai.skills.meetings import _asked_to_save
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="meetsave", display_name="M", expires_at=0, remaining=0)
+    mid = meeting_store.new_id()
+    meeting_store.meeting_dir(u, s, mid).mkdir(parents=True, exist_ok=True)
+    meeting_store.register(u, s, filename="a.wav", mime="audio/wav", size=1, ext="wav",
+                           day="2026-09-07", mid=mid)
+    reg = default_registry()
+
+    def ctx_for(msg: str) -> SkillContext:
+        return SkillContext(user=u, settings=s, today="2026-09-07",
+                            mode="meeting", meeting_id=mid, user_message=msg)
+
+    # 남겨 달라고 하지 않은 말들 — 만들지 않는다
+    for msg in ("이 회의 내용을 요약해줘.", "무슨 얘기가 오갔는지 알려줘",
+                "핵심만 세 줄로", "액션 아이템 뭐 있어?"):
+        assert not _asked_to_save(ctx_for(msg)), msg
+        r = reg.dispatch("write_meeting_doc", {"name": "요약", "content": "본문"}, ctx_for(msg))
+        assert r.ok and r.data.get("not_saved") is True, (msg, r.message)
+        assert r.data["content"] == "본문", "말할 내용은 돌려줘야 한다"
+        assert meeting_store.list_docs(u, s, mid) == [], f"{msg} 에 문서를 만들었다"
+
+    # 남겨 달라고 한 말들 — 만든다
+    for i, msg in enumerate(("이 회의 요약을 '요약' 문서로 만들어줘.", "회의록으로 남겨줘",
+                             "액션 아이템 정리해서 문서로 만들어줘", "요약 저장해줘")):
+        assert _asked_to_save(ctx_for(msg)), msg
+        r = reg.dispatch("write_meeting_doc", {"name": f"문서{i}", "content": "본문"}, ctx_for(msg))
+        assert r.ok and not r.data.get("not_saved"), (msg, r.message)
+    assert len(meeting_store.list_docs(u, s, mid)) == 4
+
+    # 화면이 부른 것(사용자 메시지가 없는 자리)은 막지 않는다 — 단추를 누른 것이다
+    assert _asked_to_save(SkillContext(user=u, settings=s, today="2026-09-07",
+                                       mode="meeting", meeting_id=mid))
+
+    # 프롬프트도 함께 고쳐 둔다(구조가 막아도 모델이 헛수고하지 않게)
+    from backend.ai import modes
+
+    text = modes.meeting_system(u, "assistant", "2026-09-07", None, [], [])
+    assert "문서를 만들지 마세요" in text
+    assert "없는 화자를 만들어 내지 마세요" in text
+
+
 def test_another_user_cannot_touch_your_papers_meetings_or_words():
     """논문·회의·단어의 모든 입구가 남의 손을 막는다.
 

@@ -219,11 +219,41 @@ class ReadMeetingDoc(SkillBase):
                                  "total_chars": len(d["content"]), "truncated": cut})
 
 
+#: "문서로 남겨 달라"고 실제로 말했는가.
+#:
+#: 프롬프트가 "정리한 결과는 문서로 남깁니다"라고 무조건 시키고 있어서, 그냥
+#: "요약해 줘"에도 2번 중 2번 문서를 만들었다(실측). 문구를 고쳤더니 이번에는
+#: 반대로 **"'요약' 문서로 만들어줘"라는 분명한 요청을 2번 중 1번 무시**했다.
+#: 프롬프트로 양쪽에 실패했으므로 서버가 직접 본다(단어장 71차와 같은 교훈).
+_ASK_TO_SAVE = re.compile(
+    r"문서|파일|저장|남겨|남기|남겨둬|작성|기록해|기록으로|정리해서 .*(만들|남)"
+    r"|만들어 ?줘|만들어 ?주|만들자|추가해|붙여|이어 ?써|덮어"
+    r"|\bdoc\b|\bsave\b|\bwrite\b|\bfile\b"
+)
+
+
+def _asked_to_save(ctx) -> bool:
+    """이번 차례에 사람이 '문서로 남겨 달라'고 했는가.
+
+    안 했으면 만들지 않고 **본문을 그대로 돌려준다** — 모델은 그것을 말로 답하면
+    된다. 잘못 판단해도 손해가 다르다: 안 만들면 사용자가 한 번 더 말하면 되고,
+    잘못 만들면 회의 공간에 만든 적 없는 문서가 쌓이고 같은 이름이면 앞의 것을
+    덮어쓴다.
+
+    화면이 부른 것(user_message 가 비어 있는 경우)은 사용자가 단추를 눌러
+    시킨 일이므로 막지 않는다.
+    """
+    msg = str(getattr(ctx, "user_message", "") or "")
+    return not msg.strip() or bool(_ASK_TO_SAVE.search(msg))
+
+
 class WriteMeetingDoc(SkillBase):
     mutates = "meetings"
     name = "write_meeting_doc"
     description = (
-        "회의 공간에 문서를 만들거나 통째로 덮어쓴다(마크다운). 요약·회의록·액션 아이템 정리는 이걸로. "
+        "회의 공간에 문서를 만들거나 통째로 덮어쓴다(마크다운). "
+        "**사용자가 '문서로 만들어 줘'·'남겨 줘'라고 했을 때만 쓴다** — 그냥 '요약해 줘'는 "
+        "말로 답하라는 뜻이지 문서를 만들라는 뜻이 아니다. "
         "이름은 '요약', '회의록', '액션 아이템' 처럼 짧게. 같은 이름이면 덮어쓴다. "
         "사용자가 원하는 느낌(간결하게/자세히/개조식 등)을 그대로 따른다. "
         "노트 화면의 write_document 와 다른 저장소다 — 회의 요약은 이 스킬로만."
@@ -252,6 +282,16 @@ class WriteMeetingDoc(SkillBase):
             return SkillResult(ok=False, message="문서 이름이 없습니다.", error_code="invalid")
         if not content.strip():
             return SkillResult(ok=False, message="내용이 비어 있습니다.", error_code="invalid")
+        if not _asked_to_save(ctx):
+            # 사용자는 "요약해 줘"라고만 했다. 만들지 않고 본문을 돌려준다 —
+            # 모델은 이것을 말로 답하면 되고, 사용자가 원하면 그때 남긴다.
+            return SkillResult(
+                ok=True,
+                message=("사용자가 문서로 남겨 달라고 하지 않아 **만들지 않았습니다.** "
+                         "아래 내용을 그대로 답으로 말하고, 끝에 '문서로 남길까요?' 라고 "
+                         "한 줄만 물어보세요. **이번 답에서는** 다시 만들려고 하지 마세요."),
+                data={"not_saved": True, "name": name, "content": content},
+            )
         # read_meeting_doc 이 앞 _MAX_CHUNK*2 자만 준다. 그걸 전문으로 믿고 되쓰면
         # 뒷부분이 사라지는데, 회의 문서는 노트와 달리 **휴지통 백업이 없다** —
         # 되돌릴 방법이 아예 없으므로 노트보다 더 확실히 막는다.
