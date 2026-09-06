@@ -9283,6 +9283,53 @@ def test_paper_notes_appends_do_not_overwrite_each_other():
     assert 남은.endswith("가") and "안 들어간다" not in 남은, "실패했는데 메모가 바뀌었다"
 
 
+def test_the_screens_own_examples_all_offer_vocabulary_candidates():
+    """**화면이 스스로 권하는 물음**에서 단어 후보가 올라와야 한다.
+
+    영어 학습 화면은 네 가지를 예시로 띄우고, 그 아래에 "단어·문장을 보내면 …
+    원하면 단어장에 넣어 줍니다"라고 적어 둔다. 그런데 후보를 채우는 조건이
+    '뜻·설명·해석' 같은 말만 보고 있어서, **그 예시 중 둘이 걸리지 않았다**:
+      - "adequate"            — 한글 없이 낱말만 보내는 것이 가장 흔한 물음이다
+      - "이 문장 분석해줘: …"  — '분석'이 조건에 없었다
+    실측: 고치기 전 '분석해줘'는 도구 호출이 아예 0건이었고, 고친 뒤 후보 6개다.
+
+    화면의 예시 목록을 **소스에서 읽어** 확인한다 — 예시를 바꾸면 여기서 걸린다.
+    """
+    import pathlib
+    import re as _re
+
+    from backend import vocab_suggest
+
+    답 = "adequate 는 '충분한'이라는 뜻입니다. " * 5   # 길이 조건을 넘기는 답
+    ask = lambda m: vocab_suggest.should_suggest("english", m, 답, already=False)  # noqa: E731
+
+    # 화면에 실제로 적힌 예시들
+    tsx = (pathlib.Path(__file__).resolve().parent.parent
+           / "frontend" / "src" / "pages" / "English.tsx").read_text(encoding="utf-8")
+    block = tsx[tsx.index("const SUGGESTIONS"):tsx.index("];", tsx.index("const SUGGESTIONS"))]
+    예시 = _re.findall(r'"([^"]+)"', block)
+    assert len(예시) >= 4, 예시
+
+    # 낱말·문장에 대한 물음이면 후보가 올라와야 한다
+    묻는것 = [m for m in 예시 if not _re.search(r"퀴즈|글 써|글쓰기", m)]
+    assert 묻는것, 예시
+    안걸린것 = [m for m in 묻는것 if not ask(m)]
+    assert not 안걸린것, f"화면이 권하는데 후보가 안 올라온다: {안걸린것}"
+
+    # 흔한 다른 형태들도
+    for m in ("perfunctory", "on the fence 가 무슨 뜻이야", "belie 랑 conceal 차이가 뭐야",
+              "이 문단 해석해 줘", "What does 'belie' mean?"):
+        assert ask(m), m
+
+    # 단어장과 상관없는 자리에서는 올리지 않는다
+    assert not vocab_suggest.should_suggest("calendar", "adequate", 답, already=False)
+    assert not vocab_suggest.should_suggest("english", "adequate", 답, already=True)
+    assert not ask("오늘 복습할 단어로 퀴즈 내줘")
+    assert not ask("내일 회의 일정 잡아 줘")
+    # 답이 너무 짧으면(되묻기·인사) 뽑을 것이 없다
+    assert not vocab_suggest.should_suggest("english", "adequate", "네?", already=False)
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"

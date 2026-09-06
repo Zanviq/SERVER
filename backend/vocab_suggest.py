@@ -32,10 +32,17 @@ MODES = ("paper", "english")
 #: "이게 무슨 뜻이야" 류의 물음인가. 답에 나온 어려운 말을 후보로 올릴 자리다.
 #: 넓게 잡아도 손해가 적다 — 후보는 **올릴 뿐 저장하지 않는다**.
 _ASKS_MEANING = re.compile(
-    r"뜻|의미|무슨 말|해석|설명|정의|번역|풀이|무엇인가|뭐야|뭔가요|알려\s?줘"
-    r"|\bmean\b|\bmeaning\b|explain|translate|definition",
+    r"뜻|의미|무슨 말|해석|설명|정의|번역|풀이|분석|해설|차이|쓰임|용법"
+    r"|무엇인가|뭐야|뭔가요|알려\s?줘"
+    r"|\bmean\b|\bmeaning\b|explain|translate|definition|analy[sz]e|difference",
     re.I,
 )
+
+#: 한글이 하나도 없는 짧은 말. 영어 학습·논문 화면에서 "adequate" 한 마디를 보내는 것은
+#: **그 낱말을 묻는 것**이다(화면이 스스로 권하는 첫 번째 예시가 바로 그것이다).
+#: 이걸 안 세면 정작 가장 흔한 물음에서 후보가 안 올라온다.
+_HANGUL = re.compile(r"[가-힣]")
+_BARE_MAX_CHARS = 200
 
 #: 답이 이보다 짧으면 뽑을 것이 없다고 본다(인사·되묻기).
 MIN_ANSWER_CHARS = 40
@@ -65,7 +72,11 @@ def should_suggest(mode: str, user_message: str, answer: str, already: bool) -> 
         return False
     if len((answer or "").strip()) < MIN_ANSWER_CHARS:
         return False
-    return bool(_ASKS_MEANING.search(user_message or ""))
+    msg = (user_message or "").strip()
+    if _ASKS_MEANING.search(msg):
+        return True
+    # 한글 없이 영어만 보냈다 = 그 말을 묻는 것이다("adequate", "on the fence").
+    return bool(msg) and len(msg) <= _BARE_MAX_CHARS and not _HANGUL.search(msg)
 
 
 def _parse(text: str) -> list[dict]:
