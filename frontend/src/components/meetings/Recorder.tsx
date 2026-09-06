@@ -49,6 +49,47 @@ type Phase = "idle" | "recording" | "done";
  */
 const SILENT_PEAK = 0.002;
 
+/** 마이크 권한 응답을 이만큼 기다린다. 넘으면 무엇을 볼지 알려 준다. */
+const MIC_WAIT_MS = 12000;
+
+/** getUserMedia 가 끝내 답하지 않았다는 표시(거부와는 할 일이 다르다). */
+class MicTimeout extends Error {}
+
+/** 약속이 제때 끝나지 않으면 던진다.
+ *
+ *  브라우저가 권한 팝업의 답을 영영 주지 않는 경우가 있다(사용자가 고르지 않고
+ *  놔두거나, 웹뷰가 해결도 거부도 하지 않는다). 그때 `await` 는 그대로 멈춰
+ *  있어서 화면에는 **아무 일도 일어나지 않는다** — 단추가 고장 난 것처럼 보인다. */
+function withTimeout(p: Promise<MediaStream>, ms: number): Promise<MediaStream> {
+  let settled = false;
+  return new Promise<MediaStream>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new MicTimeout());
+    }, ms);
+    p.then(
+      (s) => {
+        clearTimeout(timer);
+        // 포기한 뒤에 늦게 도착하면 **마이크를 놓아 준다.** 그러지 않으면 쓰지도
+        // 않는 스트림이 열린 채 남아 탭의 빨간 점이 계속 켜져 있다.
+        if (settled) {
+          s.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        settled = true;
+        resolve(s);
+      },
+      (e) => {
+        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        reject(e);
+      },
+    );
+  });
+}
+
 /** 소리가 안 들어올 때 실제로 확인해야 하는 것들. 브라우저 설정만 가리키면
  *  안 된다 — 권한은 이미 났는데 OS 쪽에서 막혀 무음이 녹음된 것이기 때문이다. */
 const SILENT_HELP = [
@@ -95,6 +136,9 @@ export function Recorder({ open, onClose, categories, onSave }: Props) {
   const [saving, setSaving] = useState(false);
   // 마이크 문제는 토스트로 흘려보내지 않는다 — 창 안에 남아 있어야 고칠 수 있다
   const [problem, setProblem] = useState("");
+  //: 권한 팝업의 답을 기다리는 중. 누른 순간 화면이 반응해야 한다 — 이게 없으면
+  //: 팝업이 뜨는 몇 초 동안 단추를 눌러도 아무 일이 없는 것처럼 보인다.
+  const [asking, setAsking] = useState(false);
   //: 지금 들어오는 소리의 세기(0~1). 막대 하나로 보여 준다.
   const [level, setLevel] = useState(0);
   //: 녹음이 끝난 뒤 "한 번도 소리가 안 들어왔다"가 확정됐는가
@@ -184,6 +228,7 @@ export function Recorder({ open, onClose, categories, onSave }: Props) {
     setTitle("");
     setSaving(false);
     setProblem("");
+    setAsking(false);
     setSilent(false);
     setMicLabel("");
     peak.current = 0;
@@ -241,15 +286,30 @@ export function Recorder({ open, onClose, categories, onSave }: Props) {
       setProblem("이 브라우저는 녹음을 지원하지 않습니다. 파일 올리기를 쓰세요.");
       return;
     }
+    setAsking(true);
     try {
       // 여기서 브라우저 권한 팝업이 뜬다(처음 한 번). 거부됐거나 서버가
       // Permissions-Policy 로 막아 두면 팝업 없이 NotAllowedError 로 온다.
-      stream.current = await navigator.mediaDevices.getUserMedia({
-        audio: deviceId ? { deviceId: { exact: deviceId } } : true,
-      });
+      //
+      // **답이 영영 안 오는 경우가 있다.** 사용자가 팝업을 고르지 않고 놔두거나,
+      // 어떤 브라우저·웹뷰에서는 약속이 해결도 거부도 되지 않는다(실측: 이 코드가
+      // 그대로 멈춰 있었다). 그러면 화면은 "녹음 시작"인 채 아무 일도 안 일어나고,
+      // 사용자는 단추가 고장 난 줄 안다. 기다리다 지치면 무엇을 볼지 알려 준다.
+      stream.current = await withTimeout(
+        navigator.mediaDevices.getUserMedia({
+          audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+        }),
+        MIC_WAIT_MS,
+      );
     } catch (e) {
-      setProblem(micProblem(e));
+      setProblem(e instanceof MicTimeout
+        ? "마이크 권한 응답을 기다리다 멈췄습니다. 주소창에 권한을 묻는 팝업이 떠 "
+          + "있는지 확인하고 '허용'을 눌러 주세요. 팝업이 없으면 자물쇠(또는 ⓘ) → "
+          + "사이트 설정에서 마이크를 '허용'으로 바꾼 뒤 다시 눌러 주세요."
+        : micProblem(e));
       return;
+    } finally {
+      setAsking(false);
     }
     // 어느 장치가 실제로 잡혔는지 보여 준다. 권한이 난 뒤라야 이름이 온다.
     setMicLabel(stream.current.getAudioTracks()[0]?.label ?? "");
@@ -385,9 +445,19 @@ export function Recorder({ open, onClose, categories, onSave }: Props) {
           {phase === "idle" && (
             <>
               {devicePicker}
-              <button type="button" onClick={start} className="btn btn-primary gap-2">
-                <Mic size={16} /> {problem || silent ? "다시 시도" : "녹음 시작"}
+              {/* 누른 순간 화면이 반응해야 한다. 권한 팝업이 뜨는 몇 초 동안
+                  단추가 그대로면 사용자는 눌리지 않은 줄 알고 또 누른다. */}
+              <button type="button" onClick={start} disabled={asking}
+                className="btn btn-primary gap-2">
+                {asking
+                  ? <><Loader2 size={16} className="animate-spin" /> 마이크 권한을 기다리는 중…</>
+                  : <><Mic size={16} /> {problem || silent ? "다시 시도" : "녹음 시작"}</>}
               </button>
+              {asking && (
+                <p className="text-[11.5px] text-fg-muted">
+                  주소창에 권한을 묻는 팝업이 떴다면 ‘허용’을 눌러 주세요.
+                </p>
+              )}
             </>
           )}
           {problem && phase === "idle" && (
