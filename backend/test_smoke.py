@@ -6092,6 +6092,51 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
     return buf.getvalue()
 
 
+def test_meeting_doc_appends_do_not_overwrite_each_other():
+    """회의 문서에 동시에 이어 써도 하나도 잃지 않는다.
+
+    이어 쓰기는 옛 본문을 읽어 뒤에 붙인다. 락이 없으면 동시에 들어온 두 요청이
+    **같은 옛 본문**을 읽고 서로를 덮는다 — 실측으로 동시 20건 중 1건만 남았다.
+    노트의 append_document 는 같은 이유로 이미 락을 잡고 있었는데 회의 문서만
+    빠져 있었다. Gemini 는 한 차례에 스킬을 여러 개 병렬로 부르므로, AI 가
+    회의록을 두 번 이어 쓰는 것만으로도 이 자리를 밟는다.
+    """
+    import threading
+
+    from backend import meeting_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="meetconcur", display_name="M", expires_at=0, remaining=0)
+    mid = meeting_store.new_id()
+    meeting_store.meeting_dir(u, s, mid).mkdir(parents=True, exist_ok=True)
+    meeting_store.register(u, s, filename="a.wav", mime="audio/wav", size=1, ext="wav",
+                           day="2026-09-07", mid=mid)
+    meeting_store.write_doc(u, s, mid, "회의록", "시작\n")
+
+    n = 20
+    errors: list[str] = []
+
+    def add(i: int) -> None:
+        try:
+            meeting_store.write_doc(u, s, mid, "회의록", f"줄{i}\n", append=True)
+        except Exception as e:  # noqa: BLE001
+            errors.append(repr(e))
+
+    threads = [threading.Thread(target=add, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, errors[:3]
+    body = meeting_store.read_doc(u, s, mid, "회의록")["content"]
+    missing = [i for i in range(n) if f"줄{i}\n" not in body]
+    assert not missing, f"{len(missing)}건이 사라졌다: {missing[:5]}"
+    assert body.startswith("시작\n")
+
+
 def test_every_ai_feature_names_the_same_failure_the_same_way():
     """대화·논문·회의·단어장이 같은 원인에 같은 말을 한다.
 
@@ -7865,6 +7910,10 @@ def test_no_store_writes_without_holding_the_lock():
     targets = sorted(root.glob("*_store.py")) + [root / "trash.py", root / "accounts.py"]
     #: 쓰기만 하는 헬퍼(부른 쪽이 락을 잡는다) — 이름을 적어 두고 그 외는 막는다
     allowed = {"_save", "write_transcript"}
+    #: 손으로 쓰는 것도 센다. 회의 문서가 `tmp.write_text(...)` + `tmp.replace(p)`
+    #: 라는 자작 원자쓰기를 하고 있었는데, write_atomic 만 보던 이 검사에 걸리지
+    #: 않아 **락 없는 이어 쓰기**가 오래 남아 있었다(실측: 동시 20건 중 1건만 남았다).
+    WRITERS = {"_save", "write_atomic", "write_text_atomic", "write_text", "write_bytes"}
     offenders = []
     for path in targets:
         if not path.exists():
@@ -7875,7 +7924,7 @@ def test_no_store_writes_without_holding_the_lock():
                 n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
                 for n in ast.walk(fn) if isinstance(n, ast.Call)
             }
-            writes = called & {"_save", "write_atomic", "write_text_atomic"}
+            writes = called & WRITERS
             if writes and "lock_for" not in called and fn.name not in allowed:
                 offenders.append(f"{path.name}:{fn.lineno} {fn.name} → {sorted(writes)}")
     assert not offenders, "락 없이 저장한다:\n" + "\n".join(offenders)

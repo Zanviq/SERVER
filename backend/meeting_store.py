@@ -396,26 +396,38 @@ def write_doc(user: SessionUser, settings: Settings, mid: str, name: str, conten
     get_meeting(user, settings, mid)
     p = _doc_path(user, settings, mid, name)
     p.parent.mkdir(parents=True, exist_ok=True)
-    existed = p.exists()
-    # mtime 은 소수 자리가 왕복하며 흔들려서 1초 여유를 둔다(노트와 같은 규칙).
-    if base_modified and existed and abs(p.stat().st_mtime - base_modified) > 1.0:
-        raise HTTPException(
-            status_code=409,
-            detail="이 문서가 다른 곳에서 바뀌었습니다. 새로 고쳐 확인한 뒤 저장하세요.",
-        )
-    if not existed and len(list_docs(user, settings, mid)) >= MAX_DOCS:
-        raise HTTPException(status_code=409, detail=f"문서는 회의당 {MAX_DOCS}개까지입니다.")
-    body = str(content or "")
-    if append and existed:
-        old = p.read_text(encoding="utf-8", errors="replace")
-        body = old + ("" if not old or old.endswith("\n") else "\n") + body
-    if len(body) > MAX_DOC_CHARS:
-        raise HTTPException(status_code=413, detail="문서가 너무 큽니다.")
-    tmp = p.with_name(f"{p.name}.tmp{uuid.uuid4().hex[:6]}")
-    tmp.write_text(body, encoding="utf-8")
-    tmp.replace(p)
+    # **읽고-고쳐-쓰기 전체를 잠근다.**
+    #
+    # 이어 쓰기(append)는 옛 본문을 읽어 뒤에 붙이는데, 락이 없으면 동시에 들어온
+    # 두 요청이 같은 옛 본문을 읽고 서로를 덮는다(실측: 동시 20건 중 **1건만**
+    # 남았다). 노트 쪽 append_document 는 같은 이유로 이미 락을 잡고 있었는데
+    # 회의 문서만 빠져 있었다.
+    #
+    # base_modified 검사도 락 안에 있어야 뜻이 있다. 밖에 두면 두 요청이 나란히
+    # 검사를 통과한 뒤 나중 것이 앞 것을 덮는다 — 막으려던 바로 그 일이 난다.
+    with json_store.lock_for(p):
+        existed = p.exists()
+        # mtime 은 소수 자리가 왕복하며 흔들려서 1초 여유를 둔다(노트와 같은 규칙).
+        if base_modified and existed and abs(p.stat().st_mtime - base_modified) > 1.0:
+            raise HTTPException(
+                status_code=409,
+                detail="이 문서가 다른 곳에서 바뀌었습니다. 새로 고쳐 확인한 뒤 저장하세요.",
+            )
+        if not existed and len(list_docs(user, settings, mid)) >= MAX_DOCS:
+            raise HTTPException(status_code=409, detail=f"문서는 회의당 {MAX_DOCS}개까지입니다.")
+        body = str(content or "")
+        if append and existed:
+            old = p.read_text(encoding="utf-8", errors="replace")
+            body = old + ("" if not old or old.endswith("\n") else "\n") + body
+        if len(body) > MAX_DOC_CHARS:
+            raise HTTPException(status_code=413, detail="문서가 너무 큽니다.")
+        # 손으로 만든 임시파일 + replace 였다. 윈도우에서 같은 파일을 동시에
+        # 건드리면 PermissionError 가 나는데(실측), json_store 는 그것을 겪고
+        # 재시도를 넣어 뒀다. 같은 함수를 쓴다(fsync·줄바꿈 보존도 함께 온다).
+        json_store.write_text_atomic(p, body)
+        updated = p.stat().st_mtime
     _recount(user, settings, mid)
-    return {"name": p.stem, "content": body, "updated_at": p.stat().st_mtime, "created": not existed}
+    return {"name": p.stem, "content": body, "updated_at": updated, "created": not existed}
 
 
 def delete_doc(user: SessionUser, settings: Settings, mid: str, name: str) -> None:
