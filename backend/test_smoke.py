@@ -6949,6 +6949,28 @@ def test_trash_reports_how_much_disk_it_holds():
     assert trash.counts_by_kind(u, st)["bytes"] == 0
 
 
+def test_search_snippets_do_not_normalise_whole_documents():
+    """발췌는 **자른 뒤에** 공백을 정리해야 한다.
+
+    반대로 하면 수백 KB 짜리 본문을 통째로 한 줄로 만들어 놓고 120자만 쓴다.
+    맞은 문서 수만큼 그 일을 하니, 큰 벌트에서 검색이 눈에 띄게 느려진다.
+    """
+    from backend import search_all
+
+    big = ("가나다 " * 60000) + "찾을낱말" + (" 라마바" * 60000)   # 약 700KB
+    s = search_all._snippet(big, "찾을낱말")
+    assert "찾을낱말" in s, s
+    assert len(s) <= search_all.SNIPPET + 4, len(s)
+    assert s.startswith("…") and s.endswith("…"), s     # 앞뒤가 잘렸다고 알린다
+
+    # 낱말이 없으면 앞부분만
+    head = search_all._snippet(big, "없는말")
+    assert len(head) <= search_all.SNIPPET + 4 and head.endswith("…"), head
+
+    # 줄바꿈·연속 공백은 한 칸으로 모인다(예전 동작 유지)
+    assert search_all._snippet("가\n\n나   다 찾기", "찾기") == "가 나 다 찾기"
+
+
 def test_search_hit_ids_are_what_each_screen_needs():
     """검색이 준 id 를 그 화면이 그대로 쓸 수 있어야 한다.
 

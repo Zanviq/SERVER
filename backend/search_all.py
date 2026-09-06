@@ -23,16 +23,27 @@ SNIPPET = 120
 
 
 def _snippet(text: str, q: str, width: int = SNIPPET) -> str:
-    """찾은 낱말 언저리를 잘라 준다. 없으면 앞부분."""
-    text = " ".join((text or "").split())
-    if not text:
+    """찾은 낱말 언저리를 잘라 준다. 없으면 앞부분.
+
+    **먼저 자르고 나서 공백을 정리한다.** 반대로 하면 문서 본문 전체(수백 KB)를
+    한 줄로 만들어 놓고 120자만 쓰게 된다 — 한 번 검색에 맞은 문서 수만큼 그 일을
+    한다. 자르는 폭보다 넉넉히(양쪽 세 배) 떠서 공백이 줄어도 모자라지 않게 한다.
+    """
+    raw = text or ""
+    if not raw:
         return ""
-    i = text.lower().find(q.lower())
+    i = raw.lower().find(q.lower())
     if i < 0:
-        return text[:width] + ("…" if len(text) > width else "")
-    start = max(0, i - width // 3)
-    end = min(len(text), start + width)
-    return ("…" if start else "") + text[start:end] + ("…" if end < len(text) else "")
+        head = " ".join(raw[: width * 3].split())
+        return head[:width] + ("…" if len(head) > width or len(raw) > width * 3 else "")
+    lo = max(0, i - width)
+    hi = min(len(raw), i + len(q) + width * 2)
+    cut = " ".join(raw[lo:hi].split())
+    j = cut.lower().find(q.lower())
+    start = max(0, (j if j >= 0 else 0) - width // 3)
+    end = min(len(cut), start + width)
+    return (("…" if lo > 0 or start > 0 else "") + cut[start:end]
+            + ("…" if hi < len(raw) or end < len(cut) else ""))
 
 
 def _flat(item: dict, keys: tuple[str, ...]) -> str:
