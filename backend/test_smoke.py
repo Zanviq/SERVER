@@ -6092,6 +6092,71 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
     return buf.getvalue()
 
 
+def test_context_of_another_user_is_never_readable():
+    """지난 대화는 사용자마다 따로다 — 이름을 알아도 남의 것은 못 읽는다.
+
+    대화 공간 이름은 `paper:<id>` 처럼 만들어져서, id 만 알면 남의 공간 이름을
+    그대로 지어낼 수 있다. 화면(컨텍스트)·AI 미리보기·대화 API 가 모두 같은
+    이름을 받으므로 **입구마다** 확인한다.
+
+    응답에 남의 대화가 섞이면 그것이 그대로 다음 질문의 맥락이 되어, AI 가 남의
+    말을 자기가 아는 것처럼 이어 말하게 된다.
+    """
+    from backend import accounts, chat_store, paper_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    victim = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    SECRET = "컨텍스트비밀QQQ"
+    _login()
+
+    pid = paper_store.register(victim, s, "ctxleak.pdf", 100)["id"]
+    chat_store.append(paper_store.chat_path(victim, s, pid),
+                      chat_store.message("user", f"{SECRET} 내가 한 말"),
+                      chat_store.message("assistant", f"{SECRET} AI 가 한 말"))
+
+    spy = TestClient(app)
+    spy.post("/api/auth/signup",
+             json={"username": "ctxspy", "password": "longenough1", "display_name": "C"})
+    accounts.set_status("ctxspy", accounts.STATUS_ACTIVE, "tester", s)
+    assert spy.post("/api/auth/login",
+                    json={"username": "ctxspy", "password": "longenough1"}).status_code == 200
+    try:
+        space = f"paper:{pid}"
+        # 읽는 입구들 — 없거나 비어 있어야 하고, 어느 쪽이든 비밀이 없어야 한다
+        for r in (spy.get(f"/api/ai/space/{space}"),
+                  spy.get(f"/api/context/messages?space={space}"),
+                  spy.get(f"/api/context/sessions?space={space}"),
+                  spy.get(f"/api/context/search?q={SECRET}")):
+            assert r.status_code in (200, 403, 404), r.status_code
+            if r.status_code == 200:
+                body = r.json()
+                for key in ("messages", "sessions", "hits"):
+                    assert not body.get(key), f"남의 대화가 나왔다: {str(body)[:200]}"
+            assert f"{SECRET} 내가" not in r.text, r.text[:200]
+
+        # 미리보기도 — 남의 논문 화면인 척해도 그 맥락이 실리면 안 된다
+        pv = spy.post("/api/ai/preview", json={"message": "안녕", "mode": "paper", "paper_id": pid})
+        assert pv.status_code in (403, 404), pv.status_code
+        assert SECRET not in pv.text
+
+        # 지우는 입구도 막혀야 한다(못 읽는데 지울 수 있으면 더 나쁘다)
+        assert spy.delete(f"/api/ai/space/{space}").status_code in (403, 404)
+        after = chat_store.load(paper_store.chat_path(victim, s, pid))
+        assert len(after) == 2, f"남이 내 대화를 지웠다: {after}"
+
+        # 모드가 있는 화면에서는 브라우저가 보낸 history 를 쓰지 않는다 —
+        # 쓰면 위조한 기록이 그대로 모델의 맥락이 된다
+        forged = spy.post("/api/ai/preview", json={
+            "message": "안녕", "mode": "english",
+            "history": [{"role": "user", "text": f"{SECRET} 위조된 기록"}]}).json()
+        assert not any(SECRET in t.get("text", "") for t in forged["history"]), forged["history"]
+    finally:
+        client.delete(f"/api/papers/{pid}")
+        client.delete("/api/admin/users/ctxspy")
+
+
 def test_global_search_does_not_leak_between_two_live_sessions():
     """두 사람이 같은 낱말을 나란히 검색해도 서로의 것이 섞이지 않는다.
 
