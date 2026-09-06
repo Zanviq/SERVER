@@ -24,6 +24,7 @@ const TABS = [
   { key: "vocab", label: "단어" },
   { key: "paper", label: "논문" },
   { key: "meeting", label: "회의" },
+  { key: "meeting_doc", label: "회의 문서" },
 ] as const;
 
 export function Trash() {
@@ -142,6 +143,7 @@ export function Trash() {
               : tab === "vocab" ? "복원하면 단어장에 태그째 돌아갑니다"
               : tab === "paper" ? "복원하면 PDF·정보·대화가 함께 돌아갑니다"
               : tab === "meeting" ? "복원하면 녹음·받아쓰기·문서·대화가 함께 돌아갑니다"
+              : tab === "meeting_doc" ? "복원하면 그 회의의 문서로 돌아갑니다(회의가 있어야 합니다)"
               : "복원하면 원래 위치로 돌아갑니다"}
           </span>
         </div>
@@ -162,6 +164,7 @@ export function Trash() {
                 : tab === "vocab" ? "삭제된 단어가 없습니다"
                 : tab === "paper" ? "삭제된 논문이 없습니다"
                 : tab === "meeting" ? "삭제된 회의가 없습니다"
+                : tab === "meeting_doc" ? "삭제된 회의 문서가 없습니다"
                 : "휴지통이 비어 있습니다"}
             </span>
           </div>
@@ -173,7 +176,8 @@ export function Trash() {
               const isVocab = e.kind === "vocab";
               const isPaper = e.kind === "paper";
               const isMeeting = e.kind === "meeting";
-              const Icon = isEvent ? CalendarDays : isTodo ? ListChecks : isVocab ? BookMarked : isPaper ? GraduationCap : isMeeting ? AudioLines : icon(e);
+              const isMeetingDoc = e.kind === "meeting_doc";
+              const Icon = isEvent ? CalendarDays : isTodo ? ListChecks : isVocab ? BookMarked : isPaper ? GraduationCap : isMeeting ? AudioLines : isMeetingDoc ? FileText : icon(e);
               const due = (e.todo_due ?? "").slice(0, 16).replace("T", " ");
               const vocabTags = e.vocab_tags?.length ? ` · ${e.vocab_tags.join(", ")}` : "";
               return (
@@ -192,6 +196,8 @@ export function Trash() {
                         ? `논문${e.paper_filename ? ` · ${e.paper_filename}` : ""} · 삭제 ${fmt(e.deleted_at)}`
                         : isMeeting
                         ? `회의${e.meeting_date ? ` · ${e.meeting_date}` : ""}${e.meeting_category ? ` · ${e.meeting_category}` : ""} · 삭제 ${fmt(e.deleted_at)}`
+                        : isMeetingDoc
+                        ? `회의 문서${e.meeting_title ? ` · ${e.meeting_title}` : ""} · 삭제 ${fmt(e.deleted_at)}`
                         : `${e.orig_rel} · ${fmt(e.deleted_at)}`}
                     </p>
                   </div>

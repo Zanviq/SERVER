@@ -710,6 +710,8 @@ export interface TrashEntry {
   meeting_id?: string;
   meeting_date?: string;
   meeting_category?: string;
+  /** kind === "meeting_doc" 일 때만 — 어느 회의의 문서였는지 */
+  meeting_title?: string;
 }
 
 // ── 기록(상태·일기) ──

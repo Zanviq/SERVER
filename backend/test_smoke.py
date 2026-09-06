@@ -8912,6 +8912,64 @@ def test_two_people_using_the_ai_at_the_same_moment_never_see_each_other(monkeyp
             client.delete(f"/api/admin/users/{name}")
 
 
+def test_a_deleted_meeting_doc_can_be_brought_back():
+    """회의 문서도 휴지통을 거친다 — 이 앱에서 유일하게 못 되돌리던 삭제였다.
+
+    문서·일정·할 일·단어·논문·회의는 전부 휴지통으로 간다. 회의 문서만 unlink 였다.
+    회의록은 사람이 오래 다듬은 기록인데다, AI 도 지울 수 있는 자리다("메모 문서
+    지워 줘" 한 마디에 실제로 지워진다 — 실모델로 확인). 한 번의 오해가 되돌릴 수
+    없는 손실이 되면 안 된다.
+    """
+    import pytest
+    from fastapi import HTTPException
+
+    from backend import meeting_store, trash
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="회의문서휴지통", display_name="D", expires_at=0, remaining=0)
+    mid = meeting_store.new_id()
+    d = meeting_store.meeting_dir(u, s, mid)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "audio.wav").write_bytes(b"RIFF0000WAVE")
+    meeting_store.register(u, s, filename="a.wav", mime="audio/wav", size=12, ext="wav",
+                           day="2026-09-07", title="예산 회의", mid=mid)
+    본문 = "김대리: 다음 분기 예산은 3억.\n박과장: 인건비 40%."
+    meeting_store.write_doc(u, s, mid, "회의록", 본문)
+
+    meeting_store.delete_doc(u, s, mid, "회의록")
+    assert [x["name"] for x in meeting_store.list_docs(u, s, mid)] == []
+
+    쓰레기 = [e for e in trash.list_trash(u, s) if e["kind"] == trash.KIND_MEETING_DOC]
+    assert len(쓰레기) == 1 and 쓰레기[0]["name"] == "회의록", 쓰레기
+    assert 쓰레기[0]["meeting_title"] == "예산 회의"      # 어느 회의 것인지 보인다
+    assert trash.counts_by_kind(u, s)[trash.KIND_MEETING_DOC] == 1
+
+    r = trash.restore(쓰레기[0]["id"], u, s)
+    assert r["kind"] == trash.KIND_MEETING_DOC
+    assert meeting_store.read_doc(u, s, mid, "회의록")["content"] == 본문
+
+    # 지운 뒤 같은 이름으로 새로 썼다면, 복원이 그것을 덮으면 안 된다
+    meeting_store.delete_doc(u, s, mid, "회의록")
+    meeting_store.write_doc(u, s, mid, "회의록", "그 사이에 새로 쓴 회의록")
+    쓰레기 = [e for e in trash.list_trash(u, s) if e["kind"] == trash.KIND_MEETING_DOC]
+    r = trash.restore(쓰레기[0]["id"], u, s)
+    assert meeting_store.read_doc(u, s, mid, "회의록")["content"] == "그 사이에 새로 쓴 회의록"
+    assert meeting_store.read_doc(u, s, mid, r["name"])["content"] == 본문
+    assert r["name"] != "회의록"
+
+    # 회의째 지워졌으면 돌려놓을 자리가 없다 — 조용히 버리지 말고 무엇을 먼저
+    # 해야 하는지 말한다. 엔트리는 남아 있어야 회의를 되살린 뒤 다시 시도할 수 있다.
+    meeting_store.delete_doc(u, s, mid, "회의록")
+    남은쓰레기 = [e for e in trash.list_trash(u, s) if e["kind"] == trash.KIND_MEETING_DOC][0]
+    meeting_store.delete_meeting(u, s, mid)
+    with pytest.raises(HTTPException) as ex:
+        trash.restore(남은쓰레기["id"], u, s)
+    assert ex.value.status_code == 409 and "회의를 먼저" in str(ex.value.detail)
+    assert any(e["id"] == 남은쓰레기["id"] for e in trash.list_trash(u, s)), "엔트리가 사라졌다"
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"

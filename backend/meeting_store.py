@@ -392,16 +392,34 @@ def read_doc(user: SessionUser, settings: Settings, mid: str, name: str) -> dict
             "updated_at": p.stat().st_mtime}
 
 
+def _free_doc_name(user: SessionUser, settings: Settings, mid: str, name: str) -> str:
+    """비어 있는 문서 이름. '메모' 가 이미 있으면 '메모 (2)'."""
+    base = doc_name(name)
+    if not _doc_path(user, settings, mid, base).exists():
+        return base
+    for n in range(2, 100):
+        cand = f"{base} ({n})"
+        if not _doc_path(user, settings, mid, cand).exists():
+            return cand
+    raise HTTPException(status_code=409, detail="같은 이름의 문서가 너무 많습니다.")
+
+
 def write_doc(user: SessionUser, settings: Settings, mid: str, name: str, content: str,
-              *, append: bool = False, base_modified: float = 0.0) -> dict:
+              *, append: bool = False, base_modified: float = 0.0,
+              unique: bool = False) -> dict:
     """회의 문서를 쓴다.
 
     base_modified 를 주면 그 사이 바뀐 문서를 덮어쓰지 않고 409 로 멈춘다. 이
     문서는 사람과 AI 가 함께 쓰는 자리라(사용자가 열어 둔 채 "요약 다시 만들어줘"),
     말없이 덮이면 어느 쪽 글이 사라졌는지도 모른다. AI 스킬은 기준을 주지 않으므로
     예전처럼 그냥 쓴다 — 사용자가 시킨 일이기 때문이다.
+
+    `unique` 는 휴지통 복원용이다. 지운 뒤 같은 이름으로 새 문서를 만들었을 수
+    있는데, 되살리면서 그것을 덮으면 **복원이 곧 삭제**가 된다.
     """
     get_meeting(user, settings, mid)
+    if unique:
+        name = _free_doc_name(user, settings, mid, name)
     p = _doc_path(user, settings, mid, name)
     # 회의 폴더가 있을 때만 docs/ 를 만든다. 위 확인과 여기 사이에 삭제가 끼면
     # mkdir(parents=True) 가 회의 폴더째 되살려 미아를 만든다(transcript 와 같은 결함).
@@ -443,10 +461,19 @@ def write_doc(user: SessionUser, settings: Settings, mid: str, name: str, conten
 
 
 def delete_doc(user: SessionUser, settings: Settings, mid: str, name: str) -> None:
+    """회의 문서를 휴지통으로 옮긴다.
+
+    예전에는 `unlink` 였다 — 이 앱에서 **되돌릴 수 없는 삭제는 여기 하나뿐**이었다.
+    회의록은 사람이 오래 다듬은 기록이고, AI 도 지울 수 있는 자리다("메모 문서
+    지워 줘" 한 마디에 실제로 지워진다). 다른 모든 갈래처럼 휴지통을 거친다.
+    """
+    from . import trash
+
+    meta = get_meeting(user, settings, mid)
     p = _doc_path(user, settings, mid, name)
     if not p.exists():
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
-    p.unlink()
+    trash.move_meeting_doc_to_trash(p, meta, p.stem, user, settings)
     _recount(user, settings, mid)
 
 

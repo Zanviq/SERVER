@@ -43,11 +43,13 @@ KIND_TODO = "todo"
 KIND_VOCAB = "vocab"
 KIND_PAPER = "paper"
 KIND_MEETING = "meeting"
+KIND_MEETING_DOC = "meeting_doc"
 EVENT_FILE = "event.json"
 TODO_FILE = "todo.json"
 VOCAB_FILE = "vocab.json"
 PAPER_DIRNAME = "paper"
 MEETING_DIRNAME = "meeting"
+MEETING_DOC_FILE = "doc.md"
 
 
 def entry_kind(entry: dict) -> str:
@@ -242,6 +244,43 @@ def move_meeting_to_trash(meeting_dir: Path, meta: dict, user: SessionUser, sett
     return _move_folder_to_trash(meeting_dir, entry, MEETING_DIRNAME, user, settings)
 
 
+def move_meeting_doc_to_trash(path: Path, meta: dict, name: str,
+                              user: SessionUser, settings: Settings) -> str:
+    """회의 문서 하나를 휴지통으로.
+
+    **이 앱에서 되돌릴 수 없는 삭제는 여기 하나뿐이었다.** 문서·일정·할 일·단어·
+    논문·회의는 전부 휴지통을 거치는데 회의 문서만 그냥 사라졌다. 회의록은 사람이
+    몇십 분 다듬은 기록이고, AI 도 지울 수 있는 자리다("메모 문서 지워 줘" 한 마디로
+    실제로 지워진다 — 실측). 한 번의 오해가 되돌릴 수 없는 손실이 되면 안 된다.
+    """
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+    entry = _entry(
+        KIND_MEETING_DOC, name,
+        meeting_id=str(meta.get("id") or ""),
+        meeting_title=str(meta.get("title") or ""),
+    )
+    idx_path = _index_path(user, settings)
+    root = _trash_root(user, settings)
+    with lock_for(idx_path):
+        dest_dir = root / "data" / entry["id"]
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / MEETING_DOC_FILE
+        shutil.move(str(path), str(dest))
+        try:
+            entries = read_json(idx_path, [])
+            entries.append(entry)
+            write_atomic(idx_path, entries)
+        except BaseException:
+            try:
+                shutil.move(str(dest), str(path))
+                shutil.rmtree(dest_dir, ignore_errors=True)
+            except OSError:
+                pass
+            raise
+    return entry["id"]
+
+
 def list_trash(user: SessionUser, settings: Settings, kind: str = "") -> list[dict]:
     entries = read_json(_index_path(user, settings), [])
     if kind:
@@ -255,7 +294,8 @@ def list_trash(user: SessionUser, settings: Settings, kind: str = "") -> list[di
 def counts_by_kind(user: SessionUser, settings: Settings) -> dict:
     """갈래별 개수 — 휴지통 탭에 숫자를 띄우기 위한 것."""
     entries = read_json(_index_path(user, settings), [])
-    out = {KIND_DOCUMENT: 0, KIND_EVENT: 0, KIND_TODO: 0, KIND_VOCAB: 0, KIND_PAPER: 0, KIND_MEETING: 0}
+    out = {KIND_DOCUMENT: 0, KIND_EVENT: 0, KIND_TODO: 0, KIND_VOCAB: 0, KIND_PAPER: 0,
+           KIND_MEETING: 0, KIND_MEETING_DOC: 0}
     for e in entries:
         k = entry_kind(e)
         out[k] = out.get(k, 0) + 1
@@ -357,6 +397,34 @@ def restore(entry_id: str, user: SessionUser, settings: Settings) -> dict:
             write_atomic(idx_path, entries)
             return {"ok": True, "kind": KIND_MEETING, "meeting": restored,
                     "meeting_id": restored.get("id", ""), "restored_to": restored.get("title", "")}
+
+        if entry_kind(entry) == KIND_MEETING_DOC:
+            from . import meeting_store
+
+            src = _trash_root(user, settings) / "data" / entry_id / MEETING_DOC_FILE
+            if not src.is_file():
+                entries = [e for e in entries if e.get("id") != entry_id]
+                write_atomic(idx_path, entries)
+                raise HTTPException(status_code=410, detail="복원할 문서 내용이 없습니다.")
+            mid = str(entry.get("meeting_id") or "")
+            # 회의가 통째로 지워졌으면 돌려놓을 자리가 없다. 여기서 조용히 새 회의를
+            # 만들거나 엔트리를 지워 버리면, 사용자는 되살렸다고 믿는데 아무 데도
+            # 없다. 무엇을 먼저 해야 하는지 말해 주고 **엔트리는 그대로 둔다.**
+            if not meeting_store.find_meeting(user, settings, mid):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"'{entry.get('meeting_title') or mid}' 회의가 없습니다. "
+                           "회의를 먼저 되살린 뒤 이 문서를 되살리세요.",
+                )
+            restored = meeting_store.write_doc(
+                user, settings, mid, str(entry.get("name") or "문서"),
+                src.read_text(encoding="utf-8", errors="replace"), unique=True,
+            )
+            shutil.rmtree(src.parent, ignore_errors=True)
+            entries = [e for e in entries if e.get("id") != entry_id]
+            write_atomic(idx_path, entries)
+            return {"ok": True, "kind": KIND_MEETING_DOC, "meeting_id": mid,
+                    "name": restored.get("name", ""), "restored_to": restored.get("name", "")}
 
         if entry_kind(entry) == KIND_VOCAB:
             src = _trash_root(user, settings) / "data" / entry_id / VOCAB_FILE
