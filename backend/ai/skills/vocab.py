@@ -223,9 +223,13 @@ def _as_proposal(words: list, ctx) -> SkillResult:
         c["exists"] = c["word"].lower() in existing
     return SkillResult(
         ok=True,
+        # "더 넣지 마라"는 **이번 차례에만** 해당한다. 그렇게 적지 않으면 이 말이
+        # 대화 기록에 남아, 다음 차례에 사용자가 "넣어줘"라고 해도 모델이 넣기를
+        # 망설인다(실측: 그 뒤 turn 에서 저장이 0건이 되는 판이 나왔다).
         message=(f"사용자가 넣어 달라고 하지 않아 **저장하지 않았습니다.** 대신 후보 "
-                 f"{len(clean)}개를 화면에 띄웠습니다. 고른 것만 저장되니 너는 더 넣지 말고 "
-                 "'넣을 것을 골라 주세요' 정도만 짧게 말해라."),
+                 f"{len(clean)}개를 화면에 띄웠습니다. 고른 것만 저장되니 **이번 답에서는** "
+                 "더 넣지 말고 '넣을 것을 골라 주세요' 정도만 짧게 말해라. "
+                 "다음에 사용자가 넣어 달라고 하면 그때는 add_vocab_words 로 넣으면 된다."),
         data={"proposal": clean, "context": "", "tags": list(ctx.vocab_tags or [])},
     )
 
@@ -388,8 +392,11 @@ class ProposeVocabWords(SkillBase):
             c["exists"] = c["word"].lower() in existing
         return SkillResult(
             ok=True,
+            # "더 넣지 마라"는 이번 차례에만 해당한다 — 이 문장이 대화 기록에 남아
+            # 다음 차례의 "넣어줘"까지 막지 않도록 범위를 분명히 적는다.
             message=f"후보 {len(clean)}개를 화면에 띄웠습니다. **고른 것만** 백그라운드에서 채워 "
-                    "저장되니 너는 더 넣지 말고, 이 뒤에 짧게 '넣을 것을 골라 주세요' 정도만 말하면 된다.",
+                    "저장되니 **이번 답에서는** 더 넣지 말고, 짧게 '넣을 것을 골라 주세요' 정도만 "
+                    "말하면 된다. 다음에 사용자가 넣어 달라고 하면 그때는 add_vocab_words 로 넣는다.",
             data={"proposal": clean, "context": str(args.get("context") or "")[:1000],
                   "tags": list(ctx.vocab_tags or [])},
         )
