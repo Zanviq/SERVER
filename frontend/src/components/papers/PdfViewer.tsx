@@ -52,6 +52,9 @@ const MAX_REGION_PX = 1600;
 /** 자국 하나가 담는 줄 수 상한(아주 긴 선택에서 div 가 수백 개 생기지 않게) */
 const MAX_MARK_RECTS = 60;
 
+/** 고른 글이 더 안 바뀌기를 기다리는 시간. 손잡이를 끄는 동안 말풍선이 따라다니지 않게. */
+const SELECT_SETTLE_MS = 250;
+
 type Size = { w: number; h: number };
 
 /**
@@ -156,6 +159,8 @@ export function PdfViewer({
   // 선택 자국은 배율 1 좌표로 저장한다. 선택을 잡는 곳이 이벤트 리스너 안이라
   // 그때의 배율을 ref 로 읽는다(리스너를 배율마다 다시 달지 않으려고).
   const scaleRef = useRef(scale);
+  //: 지금 손가락·마우스가 눌려 있는가. 끄는 중에는 말풍선을 띄우지 않는다.
+  const dragging = useRef(false);
   scaleRef.current = scale;
 
   // 각 쪽의 위 좌표(스크롤 컨테이너 기준). 크기를 다 알아서 보이는 쪽을 계산으로 고른다.
@@ -230,46 +235,71 @@ export function PdfViewer({
   }, [tops, scrollToPage]);
 
   // ── 텍스트 선택 → 말풍선 ──
+  /** 지금 골라 둔 글을 보고 말풍선을 띄운다. 고른 것이 없거나 뷰어 밖이면 아무 일도 안 한다. */
+  const showFromSelection = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el || tool !== "text") return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    const anchor = range.commonAncestorContainer;
+    const node = anchor.nodeType === 1 ? (anchor as HTMLElement) : anchor.parentElement;
+    if (!node || !el.contains(node)) return;
+    const text = sel.toString().replace(/\s+/g, " ").trim();
+    if (!text) return;
+    const start = range.startContainer.nodeType === 1 ? (range.startContainer as HTMLElement) : range.startContainer.parentElement;
+    const pageEl = start?.closest<HTMLElement>("[data-page]") ?? null;
+    const page = Number(pageEl?.dataset.page ?? current);
+    const r = range.getBoundingClientRect();
+    setPop({ x: r.left + r.width / 2, y: r.bottom + 8, text, page, rects: rectsIn(range, pageEl, scaleRef.current) });
+  }, [tool, current]);
+
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onDown = (e: PointerEvent) => {
       setPop(null);
+      dragging.current = true;
       const layer = (e.target as HTMLElement).closest?.(".textLayer");
       if (layer) el.querySelectorAll(".textLayer").forEach((l) => l.classList.add("selecting"));
     };
     const onUp = () => {
+      dragging.current = false;
       el.querySelectorAll(".textLayer").forEach((l) => l.classList.remove("selecting"));
-      if (tool !== "text") return;
-      setTimeout(() => {
-        const sel = window.getSelection();
-        if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
-        const range = sel.getRangeAt(0);
-        const anchor = range.commonAncestorContainer;
-        const node = anchor.nodeType === 1 ? (anchor as HTMLElement) : anchor.parentElement;
-        if (!node || !el.contains(node)) return;
-        const text = sel.toString().replace(/\s+/g, " ").trim();
-        if (!text) return;
-        const start = range.startContainer.nodeType === 1 ? (range.startContainer as HTMLElement) : range.startContainer.parentElement;
-        const pageEl = start?.closest<HTMLElement>("[data-page]") ?? null;
-        const page = Number(pageEl?.dataset.page ?? current);
-        const r = range.getBoundingClientRect();
-        setPop({ x: r.left + r.width / 2, y: r.bottom + 8, text, page, rects: rectsIn(range, pageEl, scaleRef.current) });
-      }, 0);
+      setTimeout(showFromSelection, 0);
     };
     el.addEventListener("pointerdown", onDown);
     el.addEventListener("pointerup", onUp);
-    return () => { el.removeEventListener("pointerdown", onDown); el.removeEventListener("pointerup", onUp); };
-  }, [tool, current]);
+    // 손가락으로 길게 눌러 글을 고르면 **브라우저가 그 제스처를 가져간다.** 그때는
+    // pointerup 대신 pointercancel 만 온다(편집기가 같은 것에 데였다 — LiveEditor).
+    el.addEventListener("pointercancel", onUp);
+    return () => {
+      el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+    };
+  }, [showFromSelection]);
 
+  // 고른 글이 바뀌는 것 자체를 본다. 휴대폰에서 **글을 고르는 두 가지 방법**이
+  // 둘 다 여기로만 온다 — 길게 눌러 고르기(제스처를 뺏겨 pointerup 이 없다)와
+  // 선택 손잡이 끌어 늘리기(손잡이는 뷰어 밖에 있어 pointerup 이 안 온다).
+  // 실측: 이 둘로는 말풍선이 영영 안 떴다. 마우스로 끄는 중에는 건드리지 않는다
+  // (끄는 내내 말풍선이 따라다니면 성가시고, 놓는 순간 위에서 띄운다).
   useEffect(() => {
+    let timer = 0;
     const onChange = () => {
       const sel = window.getSelection();
-      if (!sel || sel.isCollapsed) setPop(null);
+      if (!sel || sel.isCollapsed) {
+        setPop(null);
+        return;
+      }
+      if (dragging.current) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(showFromSelection, SELECT_SETTLE_MS);
     };
     document.addEventListener("selectionchange", onChange);
-    return () => document.removeEventListener("selectionchange", onChange);
-  }, []);
+    return () => { document.removeEventListener("selectionchange", onChange); window.clearTimeout(timer); };
+  }, [showFromSelection]);
 
   // 말풍선을 쓰면 브라우저 선택은 사라진다(다른 곳을 누르는 순간 어차피 풀린다).
   // 대신 그 자리를 자국으로 남겨 지금 무엇을 얹어 뒀는지 계속 보이게 한다.
