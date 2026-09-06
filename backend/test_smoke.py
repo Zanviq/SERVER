@@ -7311,6 +7311,72 @@ def test_streaming_failure_does_not_become_an_answer(monkeypatch):
     assert [m["role"] for m in msgs] == ["user"], msgs
 
 
+def test_ai_failures_the_user_can_fix_are_named(monkeypatch):
+    """한도 초과·키 오류·없는 모델은 그렇게 말한다. 원문은 새지 않는다.
+
+    전부 "잠시 후 다시 시도해 주세요."였다. 그래서 무료 한도를 다 쓴 것도,
+    설정에서 고른 모델이 없어진 것도 같은 말이라 **영영 되지 않을 것을 기다리게**
+    했다. 붐벼서 실패한 것은 한 번 더 불러 준다(사용자가 다시 치지 않게).
+    """
+    from backend.ai import orchestrator
+    from backend.ai.orchestrator import LLMResult, _is_transient, _llm_error_message
+
+    key_leak = "400 INVALID_ARGUMENT key=AIzaSyLEAK path=/srv/storage/tester"
+    cases = [
+        ("429 RESOURCE_EXHAUSTED: quota exceeded", "사용량 한도", False),
+        ("400 API key not valid. Please pass a valid API key.", "GEMINI_API_KEY", False),
+        ("404 models/gemini-9 is not found for API version v1beta", "모델을 찾을 수 없", False),
+        ("503 UNAVAILABLE: The model is overloaded.", "붐빕니다", True),
+        ("504 DEADLINE_EXCEEDED", "오래 걸려", True),
+    ]
+    for raw, want, transient in cases:
+        msg = _llm_error_message(raw, False)
+        assert want in msg, (raw, msg)
+        assert raw not in msg
+        assert _is_transient(raw) is transient, raw
+    # 모르는 오류는 예전처럼 감춘다
+    assert _llm_error_message(key_leak, False) == "잠시 후 다시 시도해 주세요."
+    assert "AIzaSy" not in _llm_error_message(key_leak, False)
+    assert _llm_error_message(key_leak, True) == key_leak  # DEBUG 는 그대로
+
+    # 한도 초과는 UNAVAILABLE 이 섞여 와도 다시 부르지 않는다(같은 답이 온다)
+    assert not _is_transient("503 UNAVAILABLE: quota exceeded for this project")
+
+    # 붐빔 → 한 번 더 부르고, 두 번째가 성공하면 사용자는 오류를 보지 않는다
+    class Flaky:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, contents, catalog, system):
+            self.n += 1
+            if self.n == 1:
+                return LLMResult(text="", tool_use=None, error="503 UNAVAILABLE: overloaded")
+            return LLMResult(text="다시 불러서 됐습니다", tool_use=None)
+
+    _u, ctx, st = _cal_ctx("flakyai")
+    flaky = Flaky()
+    events = list(orchestrator.run(ctx.user, st, "안녕", "2026-09-06", llm=flaky))
+    assert flaky.n == 2, flaky.n
+    assert not [e for e in events if e["type"] == "error"], events
+    assert any("다시 불러서 됐습니다" in e.get("text", "") for e in events), events
+
+    # 한도 초과는 한 번만 부르고 바로 알린다
+    class Over:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, contents, catalog, system):
+            self.n += 1
+            return LLMResult(text="", tool_use=None, error="429 RESOURCE_EXHAUSTED")
+
+    over = Over()
+    monkeypatch.setattr(st, "debug", False, raising=False)
+    events = list(orchestrator.run(ctx.user, st, "안녕", "2026-09-06", llm=over))
+    assert over.n == 1, over.n
+    err = next(e for e in events if e["type"] == "error")
+    assert "사용량 한도" in err["message"], err
+
+
 def test_a_just_started_event_stays_in_the_reminder_list():
     """막 시작한 일정도 잠깐은 알림 목록에 남는다.
 

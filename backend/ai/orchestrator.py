@@ -138,6 +138,46 @@ def consume_stream(chunks):
     return LLMResult(text=text, tool_uses=tool_uses, finish_reason=finish)
 
 
+#: 사용자가 손쓸 수 있는 실패에만 이름을 붙인다. 예전에는 전부 "잠시 후 다시
+#: 시도해 주세요."였는데, 무료 한도를 다 쓴 것도·키가 틀린 것도·설정에서 고른
+#: 모델이 없는 것도 같은 말이라 **기다려도 영영 되지 않는 것을 기다리게 했다**.
+#: 원문은 절대 내보내지 않는다(경로·키·요청 본문이 섞여 온다).
+_LLM_TROUBLE: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("RESOURCE_EXHAUSTED", "429", "quota"),
+     "AI 사용량 한도를 넘었습니다. 잠시 뒤에 다시 하거나 설정에서 다른 모델을 골라 보세요."),
+    (("API_KEY_INVALID", "API key not valid", "API_KEY_SERVICE_BLOCKED"),
+     "AI 키가 올바르지 않습니다. 서버 .env 의 GEMINI_API_KEY 를 확인해 주세요."),
+    (("PERMISSION_DENIED", "403"),
+     "이 AI 키로는 지금 고른 모델을 쓸 수 없습니다. 설정에서 다른 모델을 골라 보세요."),
+    (("NOT_FOUND", "404", "is not found for API version"),
+     "고른 AI 모델을 찾을 수 없습니다. 설정에서 다른 모델을 골라 주세요."),
+    (("UNAVAILABLE", "503", "overloaded"),
+     "AI 서버가 지금 붐빕니다. 잠시 뒤에 다시 시도해 주세요."),
+    (("DEADLINE_EXCEEDED", "504", "timed out", "timeout"),
+     "AI 응답이 너무 오래 걸려 끊었습니다. 다시 시도해 주세요."),
+)
+
+#: 한 번 더 부르면 대개 되는 것들. 한도 초과·키 오류는 다시 불러도 같다.
+_TRANSIENT = ("UNAVAILABLE", "503", "overloaded", "DEADLINE_EXCEEDED", "504",
+              "timed out", "timeout", "connection reset", "ServerError")
+
+
+def _llm_error_message(raw: str, debug: bool) -> str:
+    low = (raw or "").lower()
+    for keys, msg in _LLM_TROUBLE:
+        if any(k.lower() in low for k in keys):
+            return msg
+    return raw if debug else "잠시 후 다시 시도해 주세요."
+
+
+def _is_transient(raw: str) -> bool:
+    low = (raw or "").lower()
+    # 한도 초과는 UNAVAILABLE 과 함께 오는 일이 있는데, 다시 불러도 소용없다
+    if any(k.lower() in low for k in ("RESOURCE_EXHAUSTED", "429", "quota")):
+        return False
+    return any(k.lower() in low for k in _TRANSIENT)
+
+
 class GeminiLLM:
     """google-genai(신 SDK) 기반 function-calling LLM."""
 
@@ -277,6 +317,7 @@ def run(
         # "응답을 생성하지 못했습니다"를 내밀어 사용자가 같은 말을 다시 쳐야 했다.
         # 사람이 할 일을 서버가 한다 — 한 번만 다시 물어본다.
         for attempt in range(2):
+            sent_any = False  # 이번 시도에서 글자를 이미 화면에 흘렸는가
             if hasattr(llm, "stream"):
                 gen = llm.stream(contents, catalog, system)
                 while True:
@@ -285,10 +326,20 @@ def run(
                     except StopIteration as stop:
                         result = stop.value
                         break
+                    sent_any = True
                     yield {"type": "text_delta", "text": piece}
             else:
                 result = llm.chat(contents, catalog, system)
-            if result.error or result.calls() or (result.text or "").strip():
+            if result.calls() or (result.text or "").strip():
+                break
+            if result.error:
+                # 붐비거나 끊긴 것은 한 번 더 해 보면 대개 된다 — 사용자가 같은
+                # 말을 다시 치게 하지 않는다. 다만 **이미 흘려보낸 글자가 있으면
+                # 다시 부르지 않는다**: 처음부터 다시 오므로 화면에 같은 문장이
+                # 두 번 찍힌다.
+                if attempt == 0 and not sent_any and _is_transient(result.error):
+                    logger.warning("일시적 AI 오류 — 한 번 다시 부른다: %s", result.error)
+                    continue
                 break
             if attempt == 0:
                 logger.warning("빈 응답(finish_reason=%s) — 한 번 다시 부른다",
@@ -299,7 +350,7 @@ def run(
             # 라우터는 예외를 DEBUG 일 때만 흘리는데, 이 경로는 예외가 아니라
             # 값으로 오기 때문에 그 마스킹을 통째로 우회했다.
             logger.warning("AI 호출 실패: %s", result.error)
-            detail = result.error if settings.debug else "잠시 후 다시 시도해 주세요."
+            detail = _llm_error_message(result.error, settings.debug)
             yield {"type": "error", "message": f"AI 호출 실패: {detail}"}
             yield {"type": "done"}
             return

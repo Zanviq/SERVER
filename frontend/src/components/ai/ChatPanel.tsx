@@ -273,6 +273,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     const patchLast = (fn: (m: Msg) => Msg) =>
       setMessages((arr) => arr.map((m, i) => (i === arr.length - 1 ? fn(m) : m)));
 
+    // 실패하면 친 글을 입력칸에 돌려준다. 길게 쓴 질문이 한도 초과 한 번에
+    // 사라지면 말풍선에서 긁어다 다시 붙여야 했다. 그 사이에 다른 것을 치기
+    // 시작했으면 건드리지 않는다(쓰던 글을 덮는 것이 더 나쁘다).
+    const giveBack = () => setInput((cur) => (cur.trim() ? cur : raw));
+
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
@@ -300,12 +305,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
           patchLast((m) => ({ ...m, text: e.text ?? "" }));
         } else if (e.type === "error") {
           patchLast((m) => ({ ...m, text: `오류: ${e.message}` }));
+          giveBack();
         }
       }, { mode, paper_id: paperId, meeting_id: meetingId, ...sent, signal: ctrl.signal });
     } catch (err) {
       if (!ctrl.signal.aborted) {   // 중단은 오류가 아니다
         toast.error(err instanceof Error ? err.message : "AI 오류");
         patchLast((m) => ({ ...m, text: "요청 처리 중 오류가 발생했습니다." }));
+        giveBack();
       }
     } finally {
       if (abortRef.current === ctrl) abortRef.current = null;
