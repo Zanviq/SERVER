@@ -327,21 +327,17 @@ export function Calendar() {
     const day = selectedDay;
     setUnlockedDay(day);
     try {
-      // **그 하루만** 받는다. 달치를 통째로 다시 받으면 다른 날의 글까지 브라우저에
-      // 와 버려서, 하루 단위로 묻는 뜻이 사라진다.
+      // **그 하루만** 받는다. 달치(diaryRange)에는 아예 글이 실려 오지 않는다.
       const entry = await api.diaryGet(day);
       setDiaryDays((prev) => ({ ...prev, [day]: entry }));
     } catch {
       /* 글을 못 받아도 잠금은 풀린 상태 — 다시 누르면 받아진다 */
-    } finally {
-      // 표는 이 한 번의 조회에만 쓴다. 남겨 두면 달을 넘길 때 받는 목록
-      // (diaryRange)에 다른 날의 글이 딸려 온다.
-      api.diaryRelock();
     }
   }, [selectedDay]);
 
   // 아직 글이 없던 날에 **처음 쓰는 중**이면 잠글 이유가 없다. 자동 저장 응답에
   // has_text 가 켜져 돌아오는 순간 자기가 치고 있던 글 위로 자물쇠가 내려왔다.
+  // (표는 그 첫 저장의 응답으로 서버가 함께 준다 — api.diarySave 가 받아 둔다.)
   const onDiaryEdit = useCallback((day: string) => setUnlockedDay(day), []);
 
   // customButtons가 만든 버튼에 눈 아이콘을 심는다(FC는 text/icon만 받는다).

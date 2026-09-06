@@ -7376,11 +7376,17 @@ def test_locked_diary_text_never_leaves_the_server():
     day = "2026-04-11"
     secret = "아무에게도 안 보여줄 이야기"
     try:
-        # 잠금을 풀고 쓴다(자물쇠가 걸린 채로는 글을 저장할 수 없다)
-        tok = client.post("/api/diary/unlock", json={"pin": "0000"}).json()["token"]
+        # 아직 글이 없는 날에는 표 없이 그냥 쓴다 — 가릴 것이 없기 때문이다.
+        # (여기까지 막았더니 잠금을 켠 뒤로 새 일기를 아예 쓸 수 없었다.)
+        first = client.put(f"/api/diary/{day}", json={"body": "star", "text": secret})
+        assert first.status_code == 200 and first.json()["text"] == secret, first.text
+        # 이어 쓸 수 있게 그 하루짜리 표를 함께 준다(다음 저장부터는 '글이 있는 날')
+        tok = first.json().get("unlock") or ""
+        assert tok, first.text
         h = {"X-Diary-Unlock": tok}
-        r = client.put(f"/api/diary/{day}", json={"body": "star", "text": secret}, headers=h)
-        assert r.status_code == 200 and r.json()["text"] == secret, r.text
+        more = client.put(f"/api/diary/{day}", json={"text": secret + "!"}, headers=h)
+        assert more.status_code == 200 and more.json()["text"] == secret + "!", more.text
+        client.put(f"/api/diary/{day}", json={"text": secret}, headers=h)
 
         # 표 없이 보면 글이 없다. 도형과 has_text 는 그대로 온다.
         one = client.get(f"/api/diary/{day}").json()
@@ -7392,15 +7398,29 @@ def test_locked_diary_text_never_leaves_the_server():
         assert secret not in client.get("/api/diary?from=2026-04-01&to=2026-04-30").text
 
         # 틀린 비밀번호는 표를 주지 않는다
-        assert client.post("/api/diary/unlock", json={"pin": "1234"}).status_code == 403
-        assert client.post("/api/diary/unlock", json={"pin": "abcd"}).status_code == 403
+        assert client.post("/api/diary/unlock", json={"pin": "1234", "date": day}).status_code == 403
+        assert client.post("/api/diary/unlock", json={"pin": "abcd", "date": day}).status_code == 403
         # 남의 표는 안 통한다(서명이 사용자 이름을 담는다)
         other = SessionUser(username="침입자", display_name="X", expires_at=0, remaining=0)
+        me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
         s = get_settings()
-        assert not diary_store.is_unlocked(diary_store.issue_unlock(other, s),
-                                           SessionUser(username="tester", display_name="T",
-                                                       expires_at=0, remaining=0), s)
-        assert not diary_store.is_unlocked("아무말", other, s)
+        assert not diary_store.is_unlocked(diary_store.issue_unlock(other, s, day), me, s, day)
+        assert not diary_store.is_unlocked("아무말", other, s, day)
+
+        # **표는 그 하루짜리다.** 한 날을 열었다고 옆 날까지 열리면, 옆 사람에게
+        # 하루를 보여 준 순간 달력 전체가 열리는 것과 같다.
+        other_day = "2026-04-12"
+        mine = client.post("/api/diary/unlock", json={"pin": "0000", "date": day}).json()
+        assert mine["date"] == day, mine
+        assert not diary_store.is_unlocked(mine["token"], me, s, other_day)
+        client.put(f"/api/diary/{other_day}", json={"text": "옆 날의 글"})
+        peek = client.get(f"/api/diary/{other_day}", headers={"X-Diary-Unlock": mine["token"]}).json()
+        assert peek["text"] == "" and peek["locked"] is True, peek
+        assert "옆 날의 글" not in client.get(
+            f"/api/diary/{other_day}", headers={"X-Diary-Unlock": mine["token"]}).text
+        client.put(f"/api/diary/{other_day}", json={"text": ""},
+                   headers={"X-Diary-Unlock": client.post(
+                       "/api/diary/unlock", json={"pin": "0000", "date": other_day}).json()["token"]})
 
         # **잠긴 채로 도형만 눌러도 일기가 지워지면 안 된다.** 화면은 잠기면 글을
         # 빈 문자열로 들고 있으므로 그대로 저장되면 그날 일기가 통째로 날아간다.
@@ -7413,8 +7433,8 @@ def test_locked_diary_text_never_leaves_the_server():
         assert client.put("/api/diary/pin", json={"current": "0000", "next": "12"}).status_code == 400
         assert client.put("/api/diary/pin", json={"current": "0000", "next": "1111"}).status_code == 200
         assert client.get("/api/diary/lock").json()["is_default"] is False
-        assert client.post("/api/diary/unlock", json={"pin": "0000"}).status_code == 403
-        tok2 = client.post("/api/diary/unlock", json={"pin": "1111"}).json()["token"]
+        assert client.post("/api/diary/unlock", json={"pin": "0000", "date": day}).status_code == 403
+        tok2 = client.post("/api/diary/unlock", json={"pin": "1111", "date": day}).json()["token"]
         assert client.get(f"/api/diary/{day}", headers={"X-Diary-Unlock": tok2}).json()["text"] == secret
         # 해시는 어디로도 새지 않는다
         assert "$" not in json.dumps(client.get("/api/diary/lock").json())
@@ -7422,7 +7442,7 @@ def test_locked_diary_text_never_leaves_the_server():
     finally:
         client.put(f"/api/diary/{day}", json={"body": "", "heart": "", "mind": "", "text": ""},
                    headers={"X-Diary-Unlock": client.post(
-                       "/api/diary/unlock", json={"pin": "1111"}).json().get("token", "")})
+                       "/api/diary/unlock", json={"pin": "1111", "date": day}).json().get("token", "")})
         diary_store.set_pin(SessionUser(username="tester", display_name="T", expires_at=0, remaining=0),
                             get_settings(), "0000")
 

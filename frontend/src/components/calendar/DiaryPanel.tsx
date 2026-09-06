@@ -60,7 +60,7 @@ function timeOf(e: CalEvent): string {
  *
  *  틀렸다고 따로 말하지 않는다 — 자기 일기에 자기가 들어가는 자리라 꾸짖을
  *  이유가 없고, 칸을 비워 다시 치게 하는 것으로 충분하다. */
-function DiaryLock({ onUnlock }: { onUnlock: () => void }) {
+function DiaryLock({ date, onUnlock }: { date: string; onUnlock: () => void }) {
   const [asking, setAsking] = useState(false);
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
@@ -73,7 +73,8 @@ function DiaryLock({ onUnlock }: { onUnlock: () => void }) {
   const submit = async (value: string) => {
     setBusy(true);
     try {
-      await api.diaryUnlock(value);
+      // 표는 이 하루에만 듣는다 — 다른 날은 그 날을 누를 때 다시 묻는다.
+      await api.diaryUnlock(value, date);
       onUnlock();
     } catch {
       setPin("");            // 조용히 비우고 다시 받는다
@@ -324,7 +325,7 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
           />
           {/* key 에 날짜를 준다 — 잠긴 날에서 잠긴 날로 옮기면 컴포넌트가 그대로
               남아, 앞 날에 치다 만 숫자와 열린 입력칸이 다음 날로 따라온다. */}
-          {locked && <DiaryLock key={date} onUnlock={onUnlock} />}
+          {locked && <DiaryLock key={date} date={date} onUnlock={onUnlock} />}
         </div>
       </div>
     </div>
