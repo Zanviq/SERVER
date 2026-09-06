@@ -56,6 +56,10 @@ export function DiaryPanel({ date, entry, events, onChange }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const pending = useRef(new PendingSave());
+  //: 몇 번째 누름인가. 늦게 끝난 옛 저장이 방금 고른 것을 덮지 않게 한다.
+  const picks = useRef(0);
+  //: 저장 요청을 한 줄로 세우는 꼬리. 순서가 뒤집히는 것을 막는다.
+  const chain = useRef<Promise<void>>(Promise.resolve());
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const dateRef = useRef(date);
@@ -80,26 +84,43 @@ export function DiaryPanel({ date, entry, events, onChange }: Props) {
     [events, date],
   );
 
-  const pick = async (axis: DiaryAxis, shape: DiaryShape) => {
+  const pick = (axis: DiaryAxis, shape: DiaryShape) => {
     // 같은 도형을 다시 누르면 지운다 — '표시 안 함'으로 돌아가는 유일한 길이다.
     const next: DiaryShape = cur[axis] === shape ? "" : shape;
     // 글을 치는 중이면 그것도 함께 보낸다(따로 가면 뒤늦은 저장이 도형을 되돌리진
     // 않지만, 응답으로 오는 entry 가 옛 글이라 화면이 흔들린다).
     const patch: Partial<DiaryDay> = { [axis]: next };
     if (dirty) patch.text = text;
+
+    // **누른 즉시** 화면을 바꾼다. 예전에는 서버 응답을 기다렸다가 바꿔서, 파이까지
+    // 다녀오는 동안(집 회선과 클라우드플레어를 지난다) 도형도 달력 칸도 가만히
+    // 있었다 — 눌린 건지 아닌지 알 수 없으니 한 번 더 누르게 되고, 그러면 방금 고른
+    // 것이 도로 지워졌다. 저장은 뒤에서 하고, 실패하면 되돌린다.
+    const before = cur;
+    const optimistic: DiaryDay = { ...cur, ...patch };
+    onChangeRef.current(optimistic);
+
+    const mine = ++picks.current;
+    const day = date;
     setSaving(true);
-    try {
-      const saved = await api.diarySave(date, patch);
-      if (dirty) {
-        pending.current.cancel();
-        setDirty(false);
+    // 요청을 줄 세운다. 빠르게 두 번 누르면 두 PUT 이 동시에 날아가는데, 도착 순서가
+    // 뒤집히면 **나중에 고른 것이 먼저 고른 것으로 덮인다**(서버는 받은 순서대로 쓴다).
+    chain.current = chain.current.then(async () => {
+      try {
+        const saved = await api.diarySave(day, patch);
+        if (dirty) {
+          pending.current.cancel();
+          setDirty(false);
+        }
+        // 그 사이에 또 눌렀으면 이 응답은 이미 옛것이다 — 화면을 되돌리지 않는다
+        if (mine === picks.current) onChangeRef.current(saved);
+      } catch (e) {
+        if (mine === picks.current) onChangeRef.current(before);
+        toast.error(e instanceof Error ? e.message : "저장 실패");
+      } finally {
+        if (mine === picks.current) setSaving(false);
       }
-      onChangeRef.current(saved);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "저장 실패");
-    } finally {
-      setSaving(false);
-    }
+    });
   };
 
   const onText = (v: string) => {
