@@ -33,6 +33,21 @@ def resolve(rel: str, user: SessionUser, settings: Settings) -> Path:
     return safe_join(user_data_root(user, settings), rel)
 
 
+def item_root(user: SessionUser, settings: Settings, kind: str) -> Path:
+    """논문·회의처럼 '폴더 하나가 곧 항목'인 저장소의 뿌리. **만들지 않는다.**
+
+    이 함수는 경로 하나를 얻으려고 아주 자주 불린다 — 항목마다
+    chat_path → <항목>_dir → item_root 로 이어져서, 대화 공간 500개를 훑는 화면
+    하나에 mkdir 이 1,521번 불린 적이 있다(실측 0.81초). 이미 있는 폴더에 대고
+    되풀이해 묻는 값비싼 질문이다.
+
+    폴더를 만드는 것은 **쓰는 쪽 몫**이다: register 가 항목 폴더를 parents 째
+    만들고, 색인 저장은 json_store 가 만든다. 읽는 쪽은 없으면 없는 대로
+    빈 목록이 된다(갓 가입한 계정이 정확히 그 상태다).
+    """
+    return settings.user_root(user.username) / kind
+
+
 @dataclass(frozen=True)
 class WalkedFile:
     """순회로 찾은 파일 하나. stat 은 디렉터리를 읽을 때 딸려온 값이라 공짜다."""

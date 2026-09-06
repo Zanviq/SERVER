@@ -26,7 +26,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from . import json_store
+from . import json_store, storage
 from .auth import SessionUser
 from .config import Settings
 
@@ -89,9 +89,7 @@ def audio_ext(filename: str, mime: str = "") -> str:
 
 
 def root(user: SessionUser, settings: Settings) -> Path:
-    # 논문 쪽과 같은 이유로 **폴더를 만들지 않는다**(paper_store.root 의 설명 참조).
-    # 만드는 것은 register·업로드·json_store 의 몫이다.
-    return settings.user_root(user.username) / "meetings"
+    return storage.item_root(user, settings, "meetings")   # 만들지 않는다 — 그 함수 설명 참조
 
 
 def _index_path(user: SessionUser, settings: Settings) -> Path:
