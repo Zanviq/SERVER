@@ -141,7 +141,12 @@ export function DiaryPanel({ date, entry, events, onChange }: Props) {
                     aria-pressed={on}
                     aria-label={`${AXIS_LABEL[axis]} ${SHAPE_LABEL[shape]}`}
                     title={SHAPE_LABEL[shape]}
-                    className={`rounded-md p-1.5 transition-colors hover:bg-hovered ${on ? "text-accent" : "text-fg-subtle"}`}
+                    // 도형이 제 색을 쓰므로 고른 것을 색으로 알릴 수 없다. 고른
+                    // 것은 테두리와 배경으로, 안 고른 것은 흐리게 — 그래도 색은
+                    // 남아 있어서 무엇을 고르는 중인지 보인다.
+                    className={`rounded-md p-1.5 transition-all hover:bg-hovered ${
+                      on ? "bg-accent-muted ring-1 ring-inset ring-accent" : "opacity-60 hover:opacity-100"
+                    }`}
                   >
                     <ShapeIcon shape={shape} size={20} />
                   </button>

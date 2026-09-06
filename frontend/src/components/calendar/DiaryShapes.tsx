@@ -11,6 +11,17 @@ export const SHAPE_LABEL: Record<Exclude<DiaryShape, "">, string> = {
   pentagon: "매우 힘듦",
 };
 
+/** 도형별 색 — 좋은 쪽이 초록, 힘든 쪽이 빨강. 캘린더 칸과 기록 패널이 같은
+ *  표를 쓴다(한쪽만 고치면 같은 도형이 두 색으로 보인다). 실제 값은 테마
+ *  토큰이라 밝은/어두운 화면에서 각각 읽히는 밝기로 나온다. */
+export const SHAPE_COLOR: Record<Exclude<DiaryShape, "">, string> = {
+  star: "rgb(var(--diary-star))",
+  circle: "rgb(var(--diary-circle))",
+  triangle: "rgb(var(--diary-triangle))",
+  square: "rgb(var(--diary-square))",
+  pentagon: "rgb(var(--diary-pentagon))",
+};
+
 export const AXES: DiaryAxis[] = ["body", "heart", "mind"];
 export const AXIS_LABEL: Record<DiaryAxis, string> = { body: "육체", heart: "마음", mind: "정신" };
 
@@ -23,15 +34,21 @@ interface IconProps {
   shape: DiaryShape;
   size?: number;
   className?: string;
+  /** 도형 제 색을 쓰지 않고 부모의 색(currentColor)을 따른다. */
+  plain?: boolean;
 }
 
-/** 도형 하나. shape 가 비어 있으면 '표시 안 함'을 뜻하는 짧은 선(-)을 그린다. */
-export function ShapeIcon({ shape, size = 14, className = "" }: IconProps) {
+/** 도형 하나. shape 가 비어 있으면 '표시 안 함'을 뜻하는 짧은 선(-)을 그린다.
+ *
+ *  색은 도형이 스스로 정한다 — 칸에서든 패널에서든 같은 도형은 같은 색이어야
+ *  한 달을 훑을 때 흐름이 읽힌다. 고르지 않은 자리(짧은 선)만 부모 색을 따른다. */
+export function ShapeIcon({ shape, size = 14, className = "", plain = false }: IconProps) {
   const common = {
     width: size,
     height: size,
     viewBox: "0 0 24 24",
     className,
+    style: !plain && shape ? { color: SHAPE_COLOR[shape] } : undefined,
     "aria-hidden": true,
     focusable: false,
   } as const;

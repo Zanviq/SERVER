@@ -269,7 +269,9 @@
   }
 
   /* 기록 보기: 날마다 투명한 종일 이벤트 하나에 도형 세 개(육체·마음·정신)만.
-     고른 도형은 보라(accent), 안 고른 축은 짧은 선. 누른 날은 테두리로 표시. */
+     도형은 제 색을 갖는다(좋은 쪽 초록 → 힘든 쪽 빨강, DiaryShapes 의 SHAPE_COLOR).
+     여기 color 는 안 고른 축의 짧은 선에만 쓰인다 — 색이 있는 도형 옆에서
+     튀지 않게 흐린 회색으로 둔다. 누른 날은 테두리로 표시. */
   .fc-server .fc-diary {
     box-shadow: none;
     cursor: pointer;
@@ -283,7 +285,7 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    color: rgb(var(--accent));
+    color: rgb(var(--fg-subtle));
   }
   .fc-server .fc-diary-dot {
     display: block;

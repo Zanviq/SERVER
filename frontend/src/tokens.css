@@ -36,6 +36,14 @@
   --danger: 200 60 70;
   --info: 74 96 176;
 
+  /* 기록(일기) 상태 도형. 좋은 쪽이 초록, 힘든 쪽이 빨강이라 색만 봐도 한 달의
+     흐름이 읽힌다. 밝은 배경 위라 순색 노랑·연두는 눈에 안 띄어 한 단 어둡게 쓴다. */
+  --diary-star: 21 128 61;
+  --diary-circle: 101 163 13;
+  --diary-triangle: 202 138 4;
+  --diary-square: 234 88 12;
+  --diary-pentagon: 220 38 38;
+
   --shadow-sm: 0 1px 3px rgba(60, 40, 90, 0.07);
   --shadow-md: 0 4px 12px rgba(60, 40, 90, 0.09);
   --shadow-lg: 0 8px 24px rgba(60, 40, 90, 0.13);
@@ -74,6 +82,14 @@
   --warning: 220 176 70;
   --danger: 224 106 116;
   --info: 122 156 224;
+
+  /* 어두운 배경에서는 반대로 밝혀야 보인다. 별이 여전히 원보다 '진한 초록'으로
+     읽히도록 초록–연두의 순서는 그대로 둔다. */
+  --diary-star: 34 197 94;
+  --diary-circle: 163 230 53;
+  --diary-triangle: 250 204 21;
+  --diary-square: 251 146 60;
+  --diary-pentagon: 248 113 113;
 
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
