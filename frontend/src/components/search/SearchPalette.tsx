@@ -39,6 +39,8 @@ export function SearchPalette() {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [busy, setBusy] = useState(false);
+  // 실패를 빈 결과로 보여 주면 "찾은 것이 없습니다"라는 **거짓말**이 된다.
+  const [failed, setFailed] = useState(false);
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -82,13 +84,13 @@ export function SearchPalette() {
   // 새 답을 덮으면 글자와 결과가 어긋난다).
   useEffect(() => {
     const term = query.trim();
-    if (!term) { setHits([]); setBusy(false); return; }
+    if (!term) { setHits([]); setBusy(false); setFailed(false); return; }
     setBusy(true);
     let alive = true;
     const t = setTimeout(() => {
       api.searchAll(term)
-        .then((r) => { if (alive) { setHits(r.hits); setCursor(0); } })
-        .catch(() => { if (alive) setHits([]); })
+        .then((r) => { if (alive) { setHits(r.hits); setCursor(0); setFailed(false); } })
+        .catch(() => { if (alive) { setHits([]); setFailed(true); } })
         .finally(() => { if (alive) setBusy(false); });
     }, 200);
     return () => { alive = false; clearTimeout(t); };
@@ -161,6 +163,10 @@ export function SearchPalette() {
           {!query.trim() ? (
             <p className="px-4 py-6 text-center text-[13px] text-fg-muted">
               무엇을 찾을까요? 어느 화면에 넣었는지 몰라도 됩니다.
+            </p>
+          ) : failed && !busy ? (
+            <p className="px-4 py-6 text-center text-[13px] text-danger">
+              검색에 실패했습니다. 잠시 뒤 다시 시도해 주세요.
             </p>
           ) : hits.length === 0 && !busy ? (
             <p className="px-4 py-6 text-center text-[13px] text-fg-muted">

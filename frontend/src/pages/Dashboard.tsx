@@ -31,11 +31,14 @@ export function Dashboard() {
   // 아침에 열었을 때 바로 손이 가는 두 가지 — 오늘까지 해야 할 일과 복습할 단어.
   const [todos, setTodos] = useState<Todo[]>([]);
   const [due, setDue] = useState<number | null>(null);
+  // 못 불러온 것을 "없습니다"로 보여 주면 거짓말이 된다. 무엇이 실패했는지 담는다.
+  const [failed, setFailed] = useState<Record<string, boolean>>({});
+  const fail = (k: string) => () => setFailed((f) => ({ ...f, [k]: true }));
 
   useEffect(() => {
     api.noteList()
       .then((list) => setNotes([...list].sort((a, b) => b.modified - a.modified).slice(0, 5)))
-      .catch(() => {});
+      .catch(fail("notes"));
     const now = new Date();
     const to = new Date(now.getTime() + 30 * 86400000);
     // toISOString 은 **UTC** 로 바꾼다. 저장된 일정 시각은 현지 시각이라, 한국에서
@@ -49,16 +52,16 @@ export function Dashboard() {
       .then((evs) =>
         setEvents([...evs].sort((a, b) => a.start.localeCompare(b.start)).slice(0, 5)),
       )
-      .catch(() => {});
+      .catch(fail("events"));
     // 마감이 지났거나 오늘까지인 것만. 기한 없는 할 일은 "오늘 해야 하는 것"이
     // 아니라서 뺀다 — 그것까지 넣으면 목록이 길어져 오늘 것이 묻힌다.
     const today = iso(now).slice(0, 10);
     api.todoList({ include_done: false, to: today, include_undated: false })
       .then((list) => setTodos([...list].sort((a, b) => (a.due || "").localeCompare(b.due || "")).slice(0, 5)))
-      .catch(() => {});
+      .catch(fail("todos"));
     api.vocabBoard()
       .then((b) => setDue(b.stats.due))
-      .catch(() => {});
+      .catch(fail("vocab"));
   }, []);
 
   return (
@@ -109,7 +112,9 @@ export function Dashboard() {
                 </li>
               ))}
               {notes.length === 0 && (
-                <li className="px-4 py-6 text-center text-[12px] text-fg-muted">노트가 없습니다</li>
+                <li className={`px-4 py-6 text-center text-[12px] ${failed.notes ? "text-danger" : "text-fg-muted"}`}>
+                  {failed.notes ? "불러오지 못했습니다" : "노트가 없습니다"}
+                </li>
               )}
             </ul>
           </section>
@@ -136,7 +141,9 @@ export function Dashboard() {
                 </li>
               ))}
               {events.length === 0 && (
-                <li className="px-4 py-6 text-center text-[12px] text-fg-muted">예정된 일정이 없습니다</li>
+                <li className={`px-4 py-6 text-center text-[12px] ${failed.events ? "text-danger" : "text-fg-muted"}`}>
+                  {failed.events ? "불러오지 못했습니다" : "예정된 일정이 없습니다"}
+                </li>
               )}
             </ul>
           </section>
@@ -166,7 +173,9 @@ export function Dashboard() {
                 );
               })}
               {todos.length === 0 && (
-                <li className="px-4 py-6 text-center text-[12px] text-fg-muted">오늘까지 할 일이 없습니다</li>
+                <li className={`px-4 py-6 text-center text-[12px] ${failed.todos ? "text-danger" : "text-fg-muted"}`}>
+                  {failed.todos ? "불러오지 못했습니다" : "오늘까지 할 일이 없습니다"}
+                </li>
               )}
             </ul>
           </section>
@@ -183,7 +192,9 @@ export function Dashboard() {
               </Link>
             </header>
             <div className="px-4 py-5 text-center">
-              {due === null ? (
+              {failed.vocab ? (
+                <p className="text-[12px] text-danger">불러오지 못했습니다</p>
+              ) : due === null ? (
                 <p className="text-[12px] text-fg-muted">불러오는 중…</p>
               ) : due === 0 ? (
                 <p className="text-[12px] text-fg-muted">오늘 복습할 단어가 없습니다</p>
