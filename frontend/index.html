@@ -7,6 +7,17 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- 홈 화면에 추가하면 주소창 없이 앱처럼 열린다. 상태바 색은 사이드바와
+         같은 보라로 맞춰 위쪽이 흰 띠로 뜨지 않게 한다. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/app-icon.svg" />
+    <meta name="theme-color" content="#3c2d5c" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- black-translucent 은 내용이 상태바 밑으로 파고들어 안전영역을 손으로
+         맞춰야 한다. 실기기로 확인하기 전에는 겹치지 않는 기본값을 쓴다. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="SERVER" />
     <title>SERVER</title>
     <link
       rel="stylesheet"

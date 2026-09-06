@@ -56,7 +56,7 @@ export function PaperInfo({ paper: p, categories = [], onUpdate, onAsk, onRetry 
         ) : (
           <h2 className="group flex items-start gap-1.5 text-[14px] font-semibold leading-snug">
             <span className="min-w-0 flex-1">{paperTitle(p)}</span>
-            <button type="button" onClick={() => setEditingTitle(true)} className="btn btn-ghost h-6 shrink-0 px-1 opacity-0 group-hover:opacity-100" title="제목 고치기" aria-label="제목 고치기"><Pencil size={12} /></button>
+            <button type="button" onClick={() => setEditingTitle(true)} className="btn btn-ghost h-6 shrink-0 px-1 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100" title="제목 고치기" aria-label="제목 고치기"><Pencil size={12} /></button>
             <button type="button" onClick={() => onUpdate({ starred: !p.starred })} className="btn btn-ghost h-6 shrink-0 px-1" title={p.starred ? "별표 해제" : "별표"} aria-label="별표">
               <Star size={13} className={p.starred ? "fill-warning text-warning" : ""} />
             </button>

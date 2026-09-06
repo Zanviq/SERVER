@@ -169,7 +169,7 @@ export function MeetingList({
                       </span>
                       <span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                         <Dropdown align="end" width={170}
-                          className={`grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-hovered hover:text-fg ${active ? "" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`}
+                          className={`grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-hovered hover:text-fg ${active ? "" : "sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"}`}
                           trigger={() => <MoreHorizontal size={14} />}>
                           {(close) => (
                             <>

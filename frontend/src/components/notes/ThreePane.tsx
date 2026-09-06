@@ -17,6 +17,47 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
  */
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+/** 좁은 화면에서 칸 두 개를 단추로 바꿔 보는 틀.
+ *
+ *  **감추기만 한다** — 되돌아왔을 때 스크롤 위치, 입력 중인 글, 흐르는 답이
+ *  그대로 있어야 한다(데스크톱에서 칸을 접을 때와 같은 규칙).
+ *
+ *  전환 단추가 차지하는 만큼 안쪽 칸을 줄인다. 그냥 위에 얹으면 자식이 들고 있는
+ *  `h-view-11` 이 그대로라 화면이 단추 높이만큼 밀려 아래 끝이 탭바에 가린다
+ *  (실측 38px). 자식이 스스로 정한 높이는 여기서 무시하고 남은 자리를 채운다. */
+function MobileSwitch({
+  items, onPick,
+}: {
+  items: { key: string; label: string; node: ReactNode; on: boolean }[];
+  onPick: (key: string) => void;
+}) {
+  return (
+    <div className="flex h-view-11 flex-col gap-2">
+      <div className="flex shrink-0 rounded-md border border-line bg-subtle p-0.5"
+        role="tablist" aria-label="보기 전환">
+        {items.map((it) => (
+          <button
+            key={it.key}
+            type="button"
+            role="tab"
+            aria-selected={it.on}
+            onClick={() => onPick(it.key)}
+            className={`h-8 flex-1 rounded text-[12.5px] font-medium transition-colors ${
+              it.on ? "bg-surface text-fg shadow-sm" : "text-fg-muted"}`}
+          >
+            {it.label}
+          </button>
+        ))}
+      </div>
+      {items.map((it) => (
+        <div key={it.key} className={`min-h-0 flex-1 [&>*]:!h-full ${it.on ? "" : "hidden"}`}>
+          {it.node}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** 고정칸이 가질 수 있는 폭 */
 const MIN_FIXED = 180;
 const MAX_FIXED = 560;
@@ -50,13 +91,25 @@ interface Props {
   /** 고정칸의 처음 폭 */
   defaultWidth?: number;
   /**
-   * 모바일 배치. switch=한 번에 하나(showDetail 로 고른다), stack=세로로 쌓아 전부.
-   * 캘린더는 달력과 패널을 함께 봐야 해서 stack 이다.
+   * 모바일 배치.
+   * - switch: 목록 ↔ 본문을 showDetail 로 고르고, 본문과 곁칸은 단추로 바꾼다.
+   * - toggle: 본문 ↔ 고정칸을 단추로 바꾼다(캘린더처럼 고정칸이 곧 작업 공간인 화면).
+   * - stack: 세로로 쌓아 전부 보여 준다.
    */
-  mobile?: "switch" | "stack";
+  mobile?: "switch" | "stack" | "toggle";
+  /**
+   * 이 값이 바뀌면 좁은 화면에서 곁칸(switch) 또는 고정칸(toggle)으로 넘어간다.
+   *
+   * 넓은 화면에서는 두 칸이 나란히 있어서 "AI 에 넣기"를 누르면 그 결과가 바로
+   * 눈에 들어온다. 좁은 화면에서는 그 칸이 숨어 있어, 논문에서 영역을 오려도
+   * 화면에는 아무 일도 안 일어난 것처럼 보였다. 결과가 생긴 쪽으로 데려간다.
+   */
+  mobileFocusKey?: string;
   /** 접힌 띠 버튼에 뭐라고 쓸지 — 화면마다 그 칸의 이름이 다르다("논문 목록", "단어장"…) */
   fixedLabel?: string;
   sideLabel?: string;
+  /** 모바일 전환 단추에 쓸 본문 칸의 이름("PDF", "본문"…) */
+  centerLabel?: string;
 }
 
 export function ThreePane({
@@ -68,8 +121,24 @@ export function ThreePane({
   mobile = "switch",
   fixedLabel = "목록",
   sideLabel = "곁 패널",
+  centerLabel = "본문",
+  mobileFocusKey = "",
 }: Props) {
   const [left, center, right] = Children.toArray(children);
+  //: 모바일에서 본문과 곁칸 중 무엇을 보고 있는가. 문서를 새로 열면 본문부터 본다.
+  const [mobileTab, setMobileTab] = useState<"center" | "side">("center");
+  //: toggle 배치에서 고정칸(패널)을 보고 있는가. 처음에는 본문(달력)부터 본다.
+  const [fixedOpen, setFixedOpen] = useState(false);
+  const focusRef = useRef(mobileFocusKey);
+  useEffect(() => {
+    const prev = focusRef.current;
+    focusRef.current = mobileFocusKey;
+    // 빈 값에서 처음 생기는 것은 "이 기능이 켜졌다"는 뜻이지 사용자가 무언가를
+    // 고른 것이 아니다. 그때도 넘어가면 기록 보기를 켜자마자 달력이 사라진다.
+    if (!mobileFocusKey || !prev || mobileFocusKey === prev) return;
+    setFixedOpen(true);   // toggle 배치
+    setMobileTab("side"); // switch 배치
+  }, [mobileFocusKey]);
   const saved = useRef(load(storageKey)).current;
   const [treeW, setTreeW] = useState<number>(() => saved.treeW ?? defaultWidth);
   const [editorFrac, setEditorFrac] = useState<number>(() => saved.editorFrac ?? 0.5);
@@ -163,12 +232,35 @@ export function ThreePane({
     // 읽는 동안에도 화면 위쪽을 목록이 계속 차지한다. 좁은 화면에서는 한 번에
     // 하나만 보여주고 전환한다(옵시디언 모바일과 같다). 캘린더처럼 둘을 함께
     // 봐야 하는 화면만 stack 으로 쌓는다.
+    if (mobile === "stack") {
+      return <div className="grid grid-cols-1 gap-4">{[center, right, left].filter(Boolean)}</div>;
+    }
+    if (mobile === "toggle") {
+      // 달력과 패널을 쌓으면 각각이 한 화면이라, 날짜를 누른 뒤 답을 보려면
+      // 화면 하나를 통째로 내려가야 했다. 단추로 바꿔 본다.
+      return (
+        <MobileSwitch
+          items={[
+            { key: "center", label: centerLabel, node: center, on: !fixedOpen },
+            { key: "fixed", label: fixedLabel, node: left, on: fixedOpen },
+          ]}
+          onPick={(k) => setFixedOpen(k === "fixed")}
+        />
+      );
+    }
+    if (!showDetail) return <div className="grid grid-cols-1 gap-4">{left}</div>;
+    // 본문과 곁칸(AI·미리보기)도 쌓지 않는다. 쌓으면 논문을 보다 질문하려면 화면
+    // 하나를 통째로 내려가야 하고, 답을 읽고 본문으로 돌아오려면 또 올라와야 했다
+    // (실측: 668px + 668px). 위의 작은 전환 단추로 바꿔 가며 본다.
+    if (!right) return <div className="grid grid-cols-1 gap-4">{center}</div>;
     return (
-      <div className="grid grid-cols-1 gap-4">
-        {mobile === "stack"
-          ? [center, right, left].filter(Boolean)
-          : showDetail ? [center, right].filter(Boolean) : left}
-      </div>
+      <MobileSwitch
+        items={[
+          { key: "center", label: centerLabel, node: center, on: mobileTab === "center" },
+          { key: "side", label: sideLabel, node: right, on: mobileTab === "side" },
+        ]}
+        onPick={(k) => setMobileTab(k as "center" | "side")}
+      />
     );
   }
 

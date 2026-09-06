@@ -163,6 +163,9 @@ export function Calendar() {
     const id = arg.event.id;
     if (id.startsWith("diary:")) {
       setSelectedDay(id.slice("diary:".length));
+      // 좁은 화면에서 그 날의 기록 칸으로 넘어가라는 신호. 같은 날을 다시 눌러도
+      // 넘어가야 하므로 날짜가 아니라 '누른 횟수'를 센다.
+      setDayPicks((n) => n + 1);
       return;
     }
     if (id.startsWith("todo:")) {
@@ -304,6 +307,8 @@ export function Calendar() {
   // 일기 잠금. 자물쇠는 화면 하나가 아니라 이 페이지 전체에 걸린다 — 한 번 풀면
   // 다른 날로 옮겨도 다시 묻지 않는다(같은 사람이 같은 자리에서 보는 중이다).
   const [diaryUnlocked, setDiaryUnlocked] = useState(false);
+  //: 기록 보기에서 날짜를 누른 횟수. 좁은 화면이 기록 칸으로 넘어가는 신호가 된다.
+  const [dayPicks, setDayPicks] = useState(0);
   const onDiaryUnlock = useCallback(async () => {
     setDiaryUnlocked(true);
     // 표를 얻었으니 이번 달치를 글까지 포함해 다시 받는다
@@ -357,7 +362,9 @@ export function Calendar() {
     >
       {/* 오른쪽 패널은 끌어서 넓히고, 최소 폭보다 더 끌면 접힌다(얇은 세로 버튼으로 복귀).
           모바일은 stack — 달력과 패널을 함께 봐야 한다. */}
-      <ThreePane storageKey="calendar.panes.v1" side="right" defaultWidth={380} mobile="stack" fixedLabel="AI 패널">
+      <ThreePane storageKey="calendar.panes.v1" side="right" defaultWidth={380}
+        mobile="toggle" centerLabel="달력" fixedLabel={diary ? "기록" : "AI 패널"}
+        mobileFocusKey={diary ? String(dayPicks) : ""}>
         <div className="card flex h-[70vh] w-full flex-col p-4 lg:h-auto">
           {diary ? (
             <>

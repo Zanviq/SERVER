@@ -49,6 +49,11 @@ export function loadPdfJs(): Promise<PdfJs> {
         import("pdfjs-dist/build/pdf.worker.min.mjs?url").then((m) => m.default as string),
       ]);
       try {
+        // 개발 서버에서는 워커가 **자기완결 번들이 아니다** — Vite 가 `/@vite/client`
+        // 를 import 하는 모듈로 내주는데, blob 안에서는 그 경로를 풀 수 없어
+        // "Failed to resolve module specifier" 로 PDF 가 아예 안 열린다.
+        // 미리 받기는 배포본(정적 import 0개인 한 덩어리)에서만 한다.
+        if (import.meta.env.DEV) throw new Error("dev");
         mod.GlobalWorkerOptions.workerSrc = await toBlobUrl(workerUrl);
       } catch {
         // 미리 받기가 실패해도 PDF 를 포기하지는 않는다. 주소를 그대로 넘기면

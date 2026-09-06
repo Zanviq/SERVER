@@ -45,6 +45,8 @@ export function Papers() {
   const [tab, setTab] = useState<Tab>("chat");
   const [vocabKey, setVocabKey] = useState(0);
   const [pendingAsk, setPendingAsk] = useState<string | null>(null);
+  //: AI 칸으로 데려가야 하는 일이 몇 번 있었나(좁은 화면 전환 신호).
+  const [aiPokes, setAiPokes] = useState(0);
   const chat = useRef<ChatPanelHandle>(null);
 
   const select = useCallback((id: string) => {
@@ -171,12 +173,17 @@ export function Papers() {
   }, [selected]);
   useEffect(() => () => window.clearTimeout(readTimer.current), []);
 
+  // 좁은 화면에서는 AI 칸이 숨어 있다. 글을 얹거나 영역을 오리면 그 칸으로
+  // 데려가야 한다 — 그러지 않으면 눌러도 아무 일도 안 일어난 것처럼 보인다.
+  const pokeAi = useCallback(() => setAiPokes((n) => n + 1), []);
+
   const addText = useCallback((text: string, page: number, rects: PdfRect[] = []) => {
     const id = uid();
     setSelections((s) => [...s, { id, text, page }]);
     if (rects.length) setMarks((m) => [...m, { id, page, kind: "text", rects }]);
     setTab("chat");
-  }, []);
+    pokeAi();
+  }, [pokeAi]);
   const askText = useCallback((text: string, page: number, prompt: string, rects: PdfRect[] = []) => {
     addText(text, page, rects);
     setPendingAsk(prompt);
@@ -186,8 +193,9 @@ export function Papers() {
     setAttachments((a) => [...a, { id, mime: "image/png", data: dataUrl, label: `${page}쪽 영역` }]);
     setMarks((m) => [...m, { id, page, kind: "region", rects: [rect] }]);
     setTab("chat");
+    pokeAi();
     toast.ok(`${page}쪽 영역을 AI 입력에 얹었습니다`);
-  }, []);
+  }, [pokeAi]);
   const dropMark = useCallback((id: string) => setMarks((m) => m.filter((x) => x.id !== id)), []);
   // 선택이 상태에 반영된 다음 보내야 그 선택이 같이 간다
   useEffect(() => {
@@ -203,7 +211,7 @@ export function Papers() {
   const clearContext = useCallback(() => { setAttachments([]); setSelections([]); setMarks([]); }, []);
   const contextCount = attachments.length + selections.length;
 
-  const ask = (text: string) => { setTab("chat"); chat.current?.send(text); };
+  const ask = (text: string) => { setTab("chat"); pokeAi(); chat.current?.send(text); };
 
   const clearChat = async () => {
     if (!selected || !confirm("이 논문의 대화를 모두 지울까요?")) return;
@@ -232,7 +240,8 @@ export function Papers() {
 
   return (
     <Shell title="논문" actions={actions}>
-      <ThreePane storageKey="papers.panes.v1" showDetail={!!selected} fixedLabel="논문 목록" sideLabel="AI 패널">
+      <ThreePane storageKey="papers.panes.v1" showDetail={!!selected} fixedLabel="논문 목록"
+        sideLabel="AI 패널" centerLabel="PDF" mobileFocusKey={String(aiPokes)}>
         <PaperList papers={papers ?? []} failed={failed} onReload={() => void load()}
           categories={categories} selectedId={selectedId} onSelect={select} onUpload={upload}
           onStar={(p) => update(p, { starred: !p.starred })} onDelete={remove} onRetry={retry}

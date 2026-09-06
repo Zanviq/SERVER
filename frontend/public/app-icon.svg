@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- 홈 화면 아이콘. maskable 로도 쓰이므로 가장자리 20%는 잘려도 되는 여백으로
+       비워 두고(안전 영역 안에 그림을 넣는다), 배경은 모서리까지 꽉 채운다. -->
+  <rect width="512" height="512" fill="#3c2d5c"/>
+  <path d="M170 196l60 60-60 60" fill="none" stroke="#c8bede" stroke-width="30"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="266" y1="316" x2="346" y2="316" stroke="#c8bede" stroke-width="30"
+        stroke-linecap="round"/>
+</svg>

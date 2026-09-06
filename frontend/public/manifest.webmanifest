@@ -1,0 +1,26 @@
+{
+  "name": "SERVER",
+  "short_name": "SERVER",
+  "description": "개인 홈서버 — 문서·캘린더·할 일·논문·회의·영어 학습",
+  "lang": "ko",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f6f4fb",
+  "theme_color": "#3c2d5c",
+  "icons": [
+    {
+      "src": "/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
