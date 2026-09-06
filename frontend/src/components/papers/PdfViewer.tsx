@@ -94,6 +94,7 @@ export function PdfViewer({
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [sizes, setSizes] = useState<Size[]>([]);
   const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);   // '다시 시도' 가 문서 열기를 다시 돌린다
   const [zoom, setZoom] = useState<number | "fit">("fit");
   const [tool, setTool] = useState<PdfTool>("text");
   const [containerW, setContainerW] = useState(0);
@@ -134,7 +135,7 @@ export function PdfViewer({
       // 문서(워커·네트워크)를 정리한다 — 논문을 바꿀 때마다 워커가 쌓이면 안 된다
       void doc?.loadingTask.destroy();
     };
-  }, [fileUrl, paperId]);
+  }, [fileUrl, paperId, reload]);
 
   // ── 폭 감시(맞춤 배율) ──
   useEffect(() => {
@@ -327,7 +328,19 @@ export function PdfViewer({
           <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-[13px] text-fg-muted">
             <p>PDF를 열지 못했습니다.</p>
             <p className="text-[12px] text-fg-subtle">{error}</p>
-            <a href={fileUrl} target="_blank" rel="noreferrer" className="btn btn-secondary mt-2 h-8">새 탭에서 열기</a>
+            {/* 뷰어 부품(1MB 남짓)을 받다 실패한 것이면 다시 받으면 열린다.
+                배포로 파일이 교체되는 몇 초에 걸린 경우가 그렇다. */}
+            {/worker|dynamically imported|fetch/i.test(error) && (
+              <p className="text-[12px] text-fg-subtle">
+                뷰어 부품을 받지 못했습니다. 다시 시도하거나, 계속 그러면 새로고침(Ctrl+Shift+R) 해 주세요.
+              </p>
+            )}
+            <div className="mt-2 flex gap-2">
+              <button type="button" className="btn btn-secondary h-8" onClick={() => setReload((n) => n + 1)}>
+                다시 시도
+              </button>
+              <a href={fileUrl} target="_blank" rel="noreferrer" className="btn btn-ghost h-8">새 탭에서 열기</a>
+            </div>
           </div>
         ) : !pdf || !pdfjs ? (
           <div className="flex h-full items-center justify-center"><Loader2 size={22} className="animate-spin text-fg-muted" /></div>
