@@ -5945,14 +5945,24 @@ def test_prompts_anchor_today_with_a_weekday():
     from backend.ai.prompt_builder import build_system, today_with_weekday
     from backend.auth import SessionUser
 
-    assert today_with_weekday("2026-09-06") == "2026-09-06(일요일)"
+    import re as _re
+    from datetime import date as _date
+
+    # 오늘이 아닌 날짜에는 시각을 붙이지 않는다 — 그 날의 '지금'은 모른다
+    other = "2026-09-06" if _date.today().isoformat() != "2026-09-06" else "2026-09-13"
+    assert today_with_weekday(other) == f"{other}(일요일)"
     assert today_with_weekday("망가진 값") == "망가진 값"  # 실패해도 프롬프트는 만들어져야 한다
 
+    # 오늘이면 지금 시각이 함께 온다("두 시간 뒤"를 계산할 수 있어야 한다)
+    now = today_with_weekday(_date.today().isoformat())
+    assert _re.search(r"지금 \d{2}:\d{2}$", now), now
+
     u = SessionUser(username="x", display_name="X", expires_at=0, remaining=0)
-    for text in (build_system(u, "assistant", "2026-09-06"), modes._head(u, "2026-09-06")):
-        assert "2026-09-06(일요일)" in text
-        assert "요일을 함께 적으세요" in text
-        assert "하지 않은 일을 했다고 말하지 마세요" in text
+    for text in (build_system(u, "assistant", other), modes._head(u, other)):
+        assert f"{other}(일요일)" in text
+        assert "요일을 함께 적으세요" in text or "지금 HH:MM" in text
+        assert "지금 HH:MM" in text
+    assert "하지 않은 일을 했다고 말하지 마세요" in build_system(u, "assistant", other)
 
 
 def test_diary_and_paper_skills_cover_the_new_screens():

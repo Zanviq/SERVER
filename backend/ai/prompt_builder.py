@@ -62,10 +62,21 @@ _WEEKDAYS = ("월요일", "화요일", "수요일", "목요일", "금요일", "�
 
 
 def today_with_weekday(today: str) -> str:
+    """'2026-09-06(일요일) 지금 14:20'. 그 날이 정말 오늘일 때만 시각을 붙인다.
+
+    날짜만 주던 시절, 모델은 "지금 몇 시야", "두 시간 뒤로 잡아 줘", "이따 오후에
+    알림" 같은 말을 풀 수 없었다 — 시각을 지어내거나(가장 나쁘다) 되물었다.
+    넘어온 날짜가 오늘이 아니면(고정 날짜로 만드는 프롬프트·테스트) 붙이지
+    않는다. 그 날의 '지금'은 우리가 모르고, 지어낸 시각은 없느니만 못하다.
+    """
     try:
         from datetime import date as _date
+        from datetime import datetime as _dt
 
-        return f"{today}({_WEEKDAYS[_date.fromisoformat(today).weekday()]})"
+        d = _date.fromisoformat(today)
+        label = f"{today}({_WEEKDAYS[d.weekday()]})"
+        now = _dt.now()
+        return f"{label} 지금 {now:%H:%M}" if now.date() == d else label
     except (ValueError, TypeError):
         return today
 
@@ -123,6 +134,9 @@ def build_system(user: SessionUser, tone: str, today: str, cal: dict | None = No
   "다음 주 화요일"처럼 **읽는 사람에 따라 갈리는 말**은(이번 주 안의 그 요일인지, 한 주 뒤인지)
   고른 날짜를 요일과 함께 분명히 적어 사용자가 바로 알아채게 하세요. 일정을 만들 때는 특히
   그렇습니다 — 한 주 어긋난 일정은 그날이 되어서야 드러납니다.
+- **시각이 필요한 말은 맨 윗줄의 '지금 HH:MM'에서 계산하세요.** "두 시간 뒤", "이따 오후",
+  "지금 몇 시야", "30분 뒤에 알려 줘"가 그렇습니다. 맨 윗줄에 시각이 없으면 **지어내지 말고**
+  몇 시로 할지 물어보세요. 오늘 지나간 시각으로 일정을 만들려 할 때도 한 번 확인하세요.
 - 스킬이 실패하면 결과에 error_code가 옵니다. 그에 맞게 스스로 고쳐 다시 시도하세요.
   not_found=대상을 못 찾음(먼저 조회해 정확한 경로·id 확보), invalid=인자가 잘못됨(형식을 고쳐 재시도),
   too_many=대상이 너무 많음(조건을 좁히거나 나눠서 호출), forbidden=권한 없음(재시도 말고 안내).

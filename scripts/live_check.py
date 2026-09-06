@@ -158,6 +158,21 @@ def check_dates(s: Session) -> None:
     ok("100일 뒤를 맞힌다", want.isoformat() in r["text"], r["text"][:80])
 
 
+def check_clock(s: Session) -> None:
+    """지금 몇 시인지 아는가(101차).
+
+    날짜만 주던 시절에는 "두 시간 뒤", "이따 오후", "지금 몇 시야"를 풀 수 없어
+    시각을 지어내거나 되물었다. 프롬프트 맨 윗줄에 '지금 HH:MM' 이 들어간다.
+    """
+    import datetime
+
+    s.clear("assistant")
+    r = s.ask("지금 몇 시야? HH:MM 으로만 답해.")
+    now = datetime.datetime.now()
+    near = {(now + datetime.timedelta(minutes=d)).strftime("%H:%M") for d in range(-4, 5)}
+    ok("지금 시각을 안다", any(t in r["text"] for t in near), f"{r['text'][:60]} (지금 {now:%H:%M})")
+
+
 def check_context(s: Session) -> None:
     """짧은 말이 오간 뒤에도 앞의 사실을 지어내지 않는가(60차)."""
     s.clear("assistant")
@@ -203,6 +218,7 @@ CHECKS = [
     ("vocab", "시키지 않은 저장을 막는가", check_vocab),
     ("modes", "화면 밖 질문을 지어내지 않는가", check_modes),
     ("dates", "날짜를 제대로 세는가", check_dates),
+    ("clock", "지금 몇 시인지 아는가", check_clock),
     ("context", "잘린 창 앞을 지어내지 않는가", check_context),
     ("papers", "논문 제목에 변명이 없는가", check_papers),
     ("calendar", "알림이 실제로 만들어지는가", check_calendar_reminder),
