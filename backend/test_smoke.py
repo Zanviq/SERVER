@@ -7311,6 +7311,37 @@ def test_streaming_failure_does_not_become_an_answer(monkeypatch):
     assert [m["role"] for m in msgs] == ["user"], msgs
 
 
+def test_a_just_started_event_stays_in_the_reminder_list():
+    """막 시작한 일정도 잠깐은 알림 목록에 남는다.
+
+    알림은 화면이 열려 있어야 울린다. 노트북이 자거나 탭이 뒤에 있는 동안 알림
+    시각이 지나면, 목록은 '지금 이후'만 주므로 그 일정이 통째로 빠져 **돌아와도
+    영영 울리지 않았다**. 늦은 알림이라도 침묵보다 낫다.
+    """
+    from datetime import datetime, timedelta
+
+    from backend import calendar_store
+
+    _login()
+    now = datetime.now().replace(microsecond=0)
+    just_started = (now - timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%S")
+    long_gone = (now - timedelta(minutes=40)).strftime("%Y-%m-%dT%H:%M:%S")
+    made = []
+    for title, start in (("방금 시작", just_started), ("한참 전", long_gone)):
+        r = client.post("/api/calendar/events", json={
+            "title": title, "start": start, "end": start, "remind_minutes": 10,
+        })
+        assert r.status_code == 200, r.text
+        made.append(r.json()["id"])
+    try:
+        titles = [e["title"] for e in client.get("/api/calendar/reminders?within=1440").json()]
+        assert "방금 시작" in titles, titles
+        assert "한참 전" not in titles, titles  # 어제 것까지 울리면 안 된다
+    finally:
+        for eid in made:
+            client.delete(f"/api/calendar/events/{eid}")
+
+
 def test_no_store_writes_without_holding_the_lock():
     """읽고-고쳐-쓰는 함수는 반드시 락 안에서 한다.
 

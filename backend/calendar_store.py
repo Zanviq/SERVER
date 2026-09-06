@@ -520,17 +520,28 @@ def delete_event(user: SessionUser, settings: Settings, eid: str) -> None:
         _save(_without_series(events, {eid}), user, settings)
 
 
+#: 이미 시작한 일정을 몇 분까지 알림 목록에 남길지. 화면 쪽(ReminderPoller)의
+#: GRACE_MS 와 같은 값이어야 한다 — 서버가 빼면 화면은 알릴 방법이 없고,
+#: 화면이 버리면 서버가 줘도 소용없다.
+_REMIND_GRACE_MIN = 10
+
+
 def due_reminders(
     user: SessionUser, settings: Settings, now_iso: str, within_minutes: int = 1440
 ) -> list[dict]:
     """지금부터 within_minutes 이내에 시작하며 remind_minutes가 설정된 인스턴스.
 
     각 항목에 remind_at(알림 시각 ISO)을 포함.
+
+    **막 시작한 것도 조금 뒤까지 함께 준다.** 알림은 화면이 열려 있어야 울리는데,
+    노트북이 자거나 탭이 뒤에 있는 동안 알림 시각이 지나가면 그 일정은 이 목록에서
+    빠져 버려서, 돌아와도 **영영 울리지 않았다**. 늦은 알림이라도 침묵보다 낫다.
     """
     now = _parse_dt(now_iso)
     win_end = now + timedelta(minutes=within_minutes)
+    scan_from = now - timedelta(minutes=_REMIND_GRACE_MIN)
     result = []
-    for ev in list_events(user, settings, now_iso, _fmt_dt(win_end, False)):
+    for ev in list_events(user, settings, _fmt_dt(scan_from, False), _fmt_dt(win_end, False)):
         rm = int(ev.get("remind_minutes", 0) or 0)
         if rm <= 0:
             continue
