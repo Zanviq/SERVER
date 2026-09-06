@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Iterator
 
 from ..config import Settings
+from . import errors as ai_errors
 from .prompt_builder import build_system
 from .skill_base import SkillContext
 from .skill_registry import SkillRegistry, default_registry
@@ -162,44 +163,17 @@ def _usage_of(meta) -> dict:
             "total": n("total_token_count")}
 
 
-#: 사용자가 손쓸 수 있는 실패에만 이름을 붙인다. 예전에는 전부 "잠시 후 다시
-#: 시도해 주세요."였는데, 무료 한도를 다 쓴 것도·키가 틀린 것도·설정에서 고른
-#: 모델이 없는 것도 같은 말이라 **기다려도 영영 되지 않는 것을 기다리게 했다**.
-#: 원문은 절대 내보내지 않는다(경로·키·요청 본문이 섞여 온다).
-_LLM_TROUBLE: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("RESOURCE_EXHAUSTED", "429", "quota"),
-     "AI 사용량 한도를 넘었습니다. 잠시 뒤에 다시 하거나 설정에서 다른 모델을 골라 보세요."),
-    (("API_KEY_INVALID", "API key not valid", "API_KEY_SERVICE_BLOCKED"),
-     "AI 키가 올바르지 않습니다. 서버 .env 의 GEMINI_API_KEY 를 확인해 주세요."),
-    (("PERMISSION_DENIED", "403"),
-     "이 AI 키로는 지금 고른 모델을 쓸 수 없습니다. 설정에서 다른 모델을 골라 보세요."),
-    (("NOT_FOUND", "404", "is not found for API version"),
-     "고른 AI 모델을 찾을 수 없습니다. 설정에서 다른 모델을 골라 주세요."),
-    (("UNAVAILABLE", "503", "overloaded"),
-     "AI 서버가 지금 붐빕니다. 잠시 뒤에 다시 시도해 주세요."),
-    (("DEADLINE_EXCEEDED", "504", "timed out", "timeout"),
-     "AI 응답이 너무 오래 걸려 끊었습니다. 다시 시도해 주세요."),
-)
-
-#: 한 번 더 부르면 대개 되는 것들. 한도 초과·키 오류는 다시 불러도 같다.
-_TRANSIENT = ("UNAVAILABLE", "503", "overloaded", "DEADLINE_EXCEEDED", "504",
-              "timed out", "timeout", "connection reset", "ServerError")
-
-
 def _llm_error_message(raw: str, debug: bool) -> str:
-    low = (raw or "").lower()
-    for keys, msg in _LLM_TROUBLE:
-        if any(k.lower() in low for k in keys):
-            return msg
-    return raw if debug else "잠시 후 다시 시도해 주세요."
+    """실패 원문 → 사람에게 보일 한 줄. 판단은 ai/errors.py 한 곳에만 둔다.
+
+    논문 추출·회의 받아쓰기·단어장 채우기도 같은 표를 쓴다 — 같은 원인에 화면마다
+    다른 말을 하면 그중 하나는 반드시 거짓이 된다.
+    """
+    return ai_errors.message(raw, debug)
 
 
 def _is_transient(raw: str) -> bool:
-    low = (raw or "").lower()
-    # 한도 초과는 UNAVAILABLE 과 함께 오는 일이 있는데, 다시 불러도 소용없다
-    if any(k.lower() in low for k in ("RESOURCE_EXHAUSTED", "429", "quota")):
-        return False
-    return any(k.lower() in low for k in _TRANSIENT)
+    return ai_errors.is_transient(raw)
 
 
 def _record_usage(user, settings: Settings, llm, result: "LLMResult") -> None:
