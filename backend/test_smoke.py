@@ -1,5 +1,6 @@
 """기본 동작 스모크 테스트. 인증 + 파일 + 시스템 검증."""
 import errno
+import inspect
 import io
 import json
 import os
@@ -7309,6 +7310,52 @@ def test_streaming_failure_does_not_become_an_answer(monkeypatch):
     # 반쯤 온 글은 저장하지 않는다(다음 차례의 맥락으로 들어가면 안 된다)
     msgs = client.get("/api/ai/space/assistant").json()["messages"]
     assert [m["role"] for m in msgs] == ["user"], msgs
+
+
+def test_context_preview_shows_exactly_what_the_model_gets():
+    """미리보기는 /chat 과 **같은 조립**을 써야 한다.
+
+    대화 기록만 보여 주면 "왜 저렇게 답했지"의 절반만 보인다. 답을 좌우하는
+    것은 화면마다 다른 시스템 프롬프트·잘림 안내·쓸 수 있는 스킬 목록이다.
+    한 벌 더 쓴 미리보기는 반드시 어긋나 거짓말을 하므로, 조립 함수를 공유하는지
+    까지 본다.
+    """
+    from backend.ai import orchestrator
+    from backend.routers import ai as ai_router
+
+    _login()
+    client.delete("/api/ai/space/assistant")
+
+    r = client.post("/api/ai/preview", json={"message": "내일 뭐 해야 하지?", "mode": "assistant"})
+    assert r.status_code == 200, r.text
+    p = r.json()
+    assert p["mode"] == "assistant"
+    assert p["message"] == "내일 뭐 해야 하지?"
+    assert "개인 홈서버" in p["system"] and "지금 HH:MM" in p["system"]
+    assert "create_todo" in p["skills"] and "list_calendar_events" in p["skills"]
+    assert p["totals"]["chars_total"] >= p["totals"]["system_chars"]
+
+    # 화면이 다르면 실제로 다른 것이 간다(영어 화면엔 캘린더 도구가 없다)
+    eng = client.post("/api/ai/preview", json={"message": "안녕", "mode": "english"}).json()
+    assert "create_calendar_event" not in eng["skills"], eng["skills"]
+    assert "add_vocab_words" in eng["skills"]
+    assert eng["system"] != p["system"]
+
+    # 준 대화가 그대로 실린다(선택 영역 안내도 본문에 들어간다)
+    sel = client.post("/api/ai/preview", json={
+        "message": "이거 설명해줘", "mode": "paper",
+        "selections": [{"text": "quantum entanglement", "page": 3}],
+    }).json()
+    assert "quantum entanglement" in sel["message"], sel["message"][:200]
+
+    # 없는 모드는 /chat 과 똑같이 거절한다
+    assert client.post("/api/ai/preview", json={"message": "x", "mode": "없는모드"}).status_code == 400
+    assert client.post("/api/ai/preview", json={"message": "  "}).status_code == 400
+
+    # 조립을 공유하는지 — 미리보기가 부르는 함수를 run() 도 부른다
+    src = inspect.getsource(orchestrator.run)
+    assert "effective_system(" in src, "run() 이 따로 조립하면 미리보기가 거짓말을 한다"
+    assert "_prepare(" in inspect.getsource(ai_router.chat)
 
 
 def test_ai_failures_the_user_can_fix_are_named(monkeypatch):

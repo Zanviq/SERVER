@@ -3,11 +3,12 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Bot, CalendarDays, ChevronDown, ChevronRight, GraduationCap, History, Languages,
   List, Loader2, MessageSquare, Search, Terminal, Trash2, User, X, AudioLines, ExternalLink,
+  FileSearch,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { ThreePane } from "../components/notes/ThreePane";
 import { MarkdownView } from "../components/notes/LazyMarkdownView";
-import { api, ChatMessage, ContextHit, ContextSession, ContextSpace } from "../lib/api";
+import { AiPreview, api, ChatMessage, ContextHit, ContextSession, ContextSpace } from "../lib/api";
 import { isSubmitEnter } from "../lib/keys";
 import { toast } from "../store/toast";
 
@@ -18,6 +19,14 @@ function screenHref(space: string): string {
   if (space.startsWith("paper:")) return `/papers?p=${encodeURIComponent(space.slice(6))}`;
   if (space.startsWith("meeting:")) return `/meetings?m=${encodeURIComponent(space.slice(8))}`;
   return { assistant: "/assistant", calendar: "/calendar", english: "/english" }[space] ?? "";
+}
+
+/** 대화 공간 → 미리보기에 줄 요청(모드·대상 id). 공간 이름이 곧 화면이다. */
+function previewBody(space: string): { message: string; mode: string; paper_id?: string; meeting_id?: string } {
+  const message = "(보내기 전 미리보기)";
+  if (space.startsWith("paper:")) return { message, mode: "paper", paper_id: space.slice(6) };
+  if (space.startsWith("meeting:")) return { message, mode: "meeting", meeting_id: space.slice(8) };
+  return { message, mode: space };
 }
 
 const KIND_ICON: Record<string, typeof Bot> = {
@@ -60,6 +69,7 @@ export function Context() {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<ContextHit[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
 
   const select = useCallback((sp: string, se: string) => {
     setParams((prev) => {
@@ -287,6 +297,14 @@ export function Context() {
                     전체
                   </button>
                 )}
+                {/* 대화만 보면 "왜 저렇게 답했지"의 절반만 보인다. 답을 좌우하는
+                    시스템 프롬프트·잘림 안내·쓸 수 있는 스킬까지 원문으로 본다. */}
+                <button type="button" onClick={() => setShowPreview((v) => !v)}
+                  aria-pressed={showPreview}
+                  className={`btn h-7 shrink-0 gap-1 px-2 text-[11.5px] ${showPreview ? "btn-primary" : "btn-ghost"}`}
+                  title="지금 여기서 보내면 모델이 실제로 받는 것">
+                  <FileSearch size={12} /> 모델이 받는 것
+                </button>
                 {/* 대화를 읽다 "그래서 그 논문이 뭐였지"가 되면 여기서 바로 간다.
                     공간 이름이 곧 화면이므로 주소를 만들 수 있다. */}
                 {screenHref(space) && (
@@ -298,6 +316,7 @@ export function Context() {
                   </a>
                 )}
               </header>
+              {showPreview && <PreviewPanel space={space} />}
               <div className="flex-1 space-y-3 overflow-auto p-3">
                 {loadingMsgs && (
                   <div className="flex justify-center py-8"><Loader2 size={18} className="animate-spin text-fg-muted" /></div>
@@ -312,6 +331,80 @@ export function Context() {
         </div>
       </ThreePane>
     </Shell>
+  );
+}
+
+/** 접었다 펴는 원문 상자. 길면 접어 두지만 **자르지는 않는다** — 이 화면의
+ *  목적은 감사라 "요약본"을 보여 주면 의미가 없다. */
+function RawBlock({ title, chars, text, defaultOpen = false }: {
+  title: string; chars: number; text: string; defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="rounded-md border border-line">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
+        className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[11.5px] hover:bg-hovered">
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <span className="flex-1 font-medium">{title}</span>
+        <span className="text-fg-subtle">{chars.toLocaleString()}자</span>
+      </button>
+      {open && (
+        <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-line bg-subtle px-2.5 py-2 text-[11.5px] leading-relaxed text-fg2">
+          {text || "(비어 있음)"}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/** "지금 이 화면에서 보내면 모델이 실제로 받는 것". 서버가 /chat 과 **같은
+ *  조립**으로 만들어 준다 — 여기서 따로 흉내내면 반드시 어긋나 거짓말이 된다. */
+function PreviewPanel({ space }: { space: string }) {
+  const [data, setData] = useState<AiPreview | null>(null);
+  const [failed, setFailed] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    setData(null);
+    setFailed("");
+    api.aiPreview(previewBody(space))
+      .then((r) => { if (alive) setData(r); })
+      .catch((e) => { if (alive) setFailed(e instanceof Error ? e.message : "불러오지 못했습니다"); });
+    return () => { alive = false; };
+  }, [space]);
+
+  if (failed) {
+    return (
+      <div className="border-b border-line bg-subtle px-3 py-2 text-[12px] text-danger">
+        모델이 받는 것을 불러오지 못했습니다 — {failed}
+      </div>
+    );
+  }
+  if (!data) {
+    return (
+      <div className="flex justify-center border-b border-line bg-subtle py-3">
+        <Loader2 size={15} className="animate-spin text-fg-muted" />
+      </div>
+    );
+  }
+  const t = data.totals;
+  return (
+    <div className="space-y-1.5 border-b border-line bg-subtle px-3 py-2.5">
+      <p className="text-[11.5px] text-fg-muted">
+        지금 이 화면에서 한 마디를 보내면 모델은 아래를 받습니다 · 합계{" "}
+        <b className="text-fg2">{t.chars_total.toLocaleString()}자</b> · 스킬 {t.skills}개
+      </p>
+      <RawBlock title="시스템 프롬프트(이 화면의 규칙)" chars={t.system_chars} text={data.system} />
+      <RawBlock
+        title={`딸려 가는 지난 대화 ${t.history_turns}턴`}
+        chars={t.history_chars}
+        text={data.history.map((h) => `[${h.role === "user" ? "나" : "AI"}] ${h.text}`).join("\n\n")}
+      />
+      <RawBlock title="쓸 수 있는 스킬" chars={t.skills} text={data.skills.join(", ")} />
+      <p className="text-[11px] text-fg-subtle">
+        여기에 없는 것은 모델도 모릅니다. 스킬이 조회해 온 내용은 그때그때 더해집니다.
+      </p>
+    </div>
   );
 }
 

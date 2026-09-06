@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -212,13 +213,32 @@ def _stopped_note(streamed: str, tool_notes: list[dict]) -> str:
     return f"{streamed}\n\n{note}" if streamed else note
 
 
-@router.post("/chat")
-def chat(
-    body: ChatRequest,
-    user: SessionUser = Depends(require_session),
-    settings: Settings = Depends(get_settings),
-):
-    """ReAct 비서. SSE로 thought/tool_call/tool_result/text/done 이벤트 스트리밍."""
+@dataclass
+class Prepared:
+    """한 번의 요청에서 **모델에 실제로 가는 것들**.
+
+    예전에는 이 조립이 chat() 안에만 있었다. 그래서 "컨텍스트에 무엇이 들어가는지"
+    보여주는 화면을 만들려면 같은 코드를 한 벌 더 써야 했고, 한 벌 더 쓴 미리보기는
+    반드시 어긋나 **거짓말을 한다**. 조립은 여기 한 곳뿐이다.
+    """
+
+    today: str
+    mode: str
+    message: str
+    full_message: str
+    system: str
+    history: list[dict]
+    history_note: str
+    attachments: list[dict]
+    paper_id: str
+    meeting_id: str
+    vocab_tags: list[str]
+    persist_path: Path | None
+    user_meta: dict
+
+
+def _prepare(body: "ChatRequest", user: SessionUser, settings: Settings) -> Prepared:
+    """요청 → 모델에 보낼 재료. /chat 과 /preview 가 같은 것을 쓴다."""
     today = date.today().isoformat()
 
     raw_message = body.message or ""
@@ -333,6 +353,65 @@ def chat(
         "attachments": [{"label": a.get("label", ""), "mime": a["mime"]} for a in attachments],
     }
 
+    return Prepared(
+        today=today, mode=mode, message=message, full_message=full_message,
+        system=system, history=history, history_note=history_note,
+        attachments=attachments, paper_id=paper_id, meeting_id=meeting_id,
+        vocab_tags=vocab_tags, persist_path=persist_path, user_meta=user_meta,
+    )
+
+
+@router.post("/preview")
+def preview(
+    body: ChatRequest,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """**이 요청을 보내면 모델이 실제로 무엇을 받는가.** 모델은 부르지 않는다.
+
+    컨텍스트 화면이 쓴다. 대화 기록만 보여 주면 "왜 저렇게 답했지"의 절반만
+    보인다 — 답을 좌우하는 것은 시스템 프롬프트(화면마다 다르다), 잘림 안내,
+    이 화면에서 쓸 수 있는 스킬 목록이다. 그 전부를 원문 그대로 낸다.
+    """
+    p = _prepare(body, user, settings)
+    spec = modes.get_mode(p.mode) if p.mode else None
+    catalog = orchestrator.default_registry().build_catalog()
+    skills = [s["name"] for s in catalog if spec is None or spec.allows(s["name"])]
+    system = orchestrator.effective_system(user, settings, p.today, p.system, p.history_note)
+    turns = [{"role": t["role"], "text": t["text"], "chars": len(t["text"])} for t in p.history]
+    return {
+        "today": p.today,
+        "mode": p.mode or "assistant",
+        "system": system,
+        "history": turns,
+        "message": p.full_message,
+        "attachments": [{"label": a.get("label", ""), "mime": a.get("mime", ""),
+                         "bytes": len(a.get("data") or b"")} for a in p.attachments],
+        "skills": skills,
+        "totals": {
+            "system_chars": len(system),
+            "history_turns": len(turns),
+            "history_chars": sum(t["chars"] for t in turns),
+            "message_chars": len(p.full_message),
+            "skills": len(skills),
+            # 대략의 눈금이다. 정확한 토큰 수는 모델만 안다 — 그렇다고 아무 수치도
+            # 안 주면 "왜 느리지·왜 비싸지"를 가늠할 방법이 없다.
+            "chars_total": len(system) + sum(t["chars"] for t in turns) + len(p.full_message),
+        },
+    }
+
+
+@router.post("/chat")
+def chat(
+    body: ChatRequest,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """ReAct 비서. SSE로 thought/tool_call/tool_result/text/done 이벤트 스트리밍."""
+    p = _prepare(body, user, settings)
+    message, full_message = p.message, p.full_message
+    persist_path, user_meta = p.persist_path, p.user_meta
+
     def gen():
         final_text = ""
         streamed = ""     # 흘려보낸 조각들 — 중간에 멈췄을 때 화면과 기록을 맞춘다
@@ -340,10 +419,10 @@ def chat(
         tool_notes: list[dict] = []
         try:
             for ev in orchestrator.run(
-                user, settings, full_message, today, history=history,
-                mode=mode, system=system, attachments=attachments,
-                paper_id=paper_id, vocab_tags=vocab_tags, meeting_id=meeting_id,
-                history_note=history_note,
+                user, settings, p.full_message, p.today, history=p.history,
+                mode=p.mode, system=p.system, attachments=p.attachments,
+                paper_id=p.paper_id, vocab_tags=p.vocab_tags, meeting_id=p.meeting_id,
+                history_note=p.history_note,
             ):
                 if ev.get("type") == "text":
                     final_text = str(ev.get("text") or "")

@@ -257,6 +257,9 @@ export const api = {
     req(`/api/ai/space/${encodeURIComponent(space)}`, { method: "DELETE" }),
   aiSpaceDelete: (space: string, mid: string) =>
     req(`/api/ai/space/${encodeURIComponent(space)}/${encodeURIComponent(mid)}`, { method: "DELETE" }),
+  /** 지금 이 화면에서 보내면 모델이 실제로 받는 것. 모델은 부르지 않는다. */
+  aiPreview: (body: { message: string; mode?: string; paper_id?: string; meeting_id?: string }) =>
+    req<AiPreview>("/api/ai/preview", jsonInit("POST", body)),
 
 // ── 단어장 ──
   vocabBoard: () => req<VocabBoard>("/api/vocab/board"),
@@ -404,6 +407,25 @@ export interface AiEvent {
 export interface ChatTurn {
   role: "user" | "assistant";
   text: string;
+}
+
+/** 이 요청을 보내면 모델이 실제로 받는 것 전부(원문). */
+export interface AiPreview {
+  today: string;
+  mode: string;
+  system: string;
+  history: { role: string; text: string; chars: number }[];
+  message: string;
+  attachments: { label: string; mime: string; bytes: number }[];
+  skills: string[];
+  totals: {
+    system_chars: number;
+    history_turns: number;
+    history_chars: number;
+    message_chars: number;
+    skills: number;
+    chars_total: number;
+  };
 }
 
 /** 서버에 남은 대화 한 줄(영어 학습·논문). */

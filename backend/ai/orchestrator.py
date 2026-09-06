@@ -178,6 +178,21 @@ def _is_transient(raw: str) -> bool:
     return any(k.lower() in low for k in _TRANSIENT)
 
 
+def effective_system(user, settings: Settings, today: str, system: str = "",
+                     history_note: str = "", prefs: dict | None = None) -> str:
+    """모델에 **실제로 가는** 시스템 프롬프트.
+
+    run() 이 이 함수를 쓰고, 컨텍스트 미리보기도 이 함수를 쓴다. 한 벌 더 쓴
+    미리보기는 반드시 어긋나 거짓말을 한다 — 조립은 여기 한 곳뿐이다.
+    """
+    prefs = prefs or _user_ai_prefs(user, settings)
+    text = system or build_system(user, prefs["tone"], today, prefs.get("calendar"))
+    # 대화가 잘렸으면 **그 사실을 알린다.** 모르면 모델은 보이는 앞부분을 "대화의
+    # 시작"으로 단정한다 — 34턴 중 20턴만 보이는데 "맨 처음에 …라고 하셨습니다"
+    # 하고 엉뚱한 말을 골랐다(실측). 어떻게 꺼내는지도 함께 적는다.
+    return f"{text}\n\n{history_note}" if history_note else text
+
+
 class GeminiLLM:
     """google-genai(신 SDK) 기반 function-calling LLM."""
 
@@ -281,12 +296,7 @@ def run(
     prefs = _user_ai_prefs(user, settings)
     # 모델은 사용자 설정을 따르므로 prefs를 읽은 뒤에 만든다
     llm = llm or GeminiLLM(settings, prefs.get("model", ""))
-    system = system or build_system(user, prefs["tone"], today, prefs.get("calendar"))
-    # 대화가 잘렸으면 **그 사실을 알린다.** 모르면 모델은 보이는 앞부분을 "대화의
-    # 시작"으로 단정한다 — 34턴 중 20턴만 보이는데 "맨 처음에 …라고 하셨습니다"
-    # 하고 엉뚱한 말을 골랐다(실측). 어떻게 꺼내는지도 함께 적는다.
-    if history_note:
-        system = f"{system}\n\n{history_note}"
+    system = effective_system(user, settings, today, system, history_note, prefs=prefs)
     max_steps = max(1, min(16, int(prefs["max_steps"])))
 
     # 이전 대화(멀티턴): [{role: user|assistant, text}] → genai 형식
