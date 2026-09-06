@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { AlertCircle, ChevronDown, ChevronRight, FolderClosed, Loader2, Pencil, RefreshCw, Sparkles, Star } from "lucide-react";
 import { Paper } from "../../lib/api";
 import { formatBytes } from "../../lib/format";
@@ -33,7 +33,25 @@ export function PaperInfo({ paper: p, categories = [], onUpdate, onAsk, onRetry 
   const [title, setTitle] = useState(p.title);
   const [category, setCategory] = useState(p.category);
   const [filename, setFilename] = useState(p.filename);
-  useEffect(() => { setNotes(p.notes); setTitle(p.title); setEditingTitle(false); }, [p.id, p.notes, p.title]);
+  //: 아직 저장하지 않은 손글이 있는가. 있으면 밖에서 온 값으로 덮지 않는다.
+  const editing = useRef(false);
+  //: 내가 치는 동안 서버 쪽 메모가 달라졌다(AI 가 적었거나 다른 기기에서 고쳤다)
+  const [noteConflict, setNoteConflict] = useState(false);
+
+  useEffect(() => { setTitle(p.title); setEditingTitle(false); }, [p.id, p.title]);
+  useEffect(() => {
+    // **치던 글을 덮지 않는다.** "메모에 정리해 줘"를 시켜 두고 정보 탭에서 직접
+    // 메모를 쓰고 있으면, AI 가 끝나는 순간 목록을 다시 받아 오면서 여기까지
+    // 새 값으로 갈아치웠다 — 치던 문장이 눈앞에서 사라진다.
+    if (editing.current && p.notes !== notes) {
+      setNoteConflict(true);
+      return;
+    }
+    setNotes(p.notes);
+    setNoteConflict(false);
+  }, [p.id, p.notes]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // 논문을 바꾸면 그 논문 메모다 — 무조건 새로 채운다
+  useEffect(() => { editing.current = false; setNotes(p.notes); setNoteConflict(false); }, [p.id]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setCategory(p.category); setFilename(p.filename); }, [p.id, p.category, p.filename]);
 
   const saveTitle = () => {
@@ -162,8 +180,26 @@ export function PaperInfo({ paper: p, categories = [], onUpdate, onAsk, onRetry 
             **화면에서 글이 사라진다**(저장 뒤 서버 값으로 다시 채우므로). */}
         <textarea className="input h-auto py-2 text-[12.5px]" rows={5} value={notes} maxLength={MAX_NOTES}
           placeholder="읽으면서 남길 메모. AI도 이 메모를 본다."
-          onChange={(e) => setNotes(e.target.value)}
-          onBlur={() => { if (notes !== p.notes) void onUpdate({ notes }); }} />
+          onChange={(e) => { editing.current = true; setNotes(e.target.value); }}
+          onBlur={() => {
+            if (notes !== p.notes) void onUpdate({ notes });
+            editing.current = false;
+            setNoteConflict(false);
+          }} />
+        {noteConflict && (
+          // 어느 쪽을 살릴지는 사용자가 정한다. 말없이 덮거나 말없이 버리지 않는다.
+          <p className="mt-1 flex items-start gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1.5 text-[11.5px] text-warning">
+            <AlertCircle size={12} className="mt-[2px] shrink-0" />
+            <span>
+              그 사이 메모가 다른 곳에서 바뀌었습니다(AI 또는 다른 기기). 지금 저장하면
+              그쪽 내용을 덮어씁니다 —{" "}
+              <button type="button" className="underline"
+                onClick={() => { editing.current = false; setNotes(p.notes); setNoteConflict(false); }}>
+                바뀐 내용 보기
+              </button>
+            </span>
+          </p>
+        )}
         {notes.length > MAX_NOTES * 0.9 && (
           <p className="mt-1 text-[11px] text-fg-muted">
             {notes.length.toLocaleString()} / {MAX_NOTES.toLocaleString()}자
