@@ -13,6 +13,7 @@ import {
 import { Shell } from "../components/layout/Shell";
 import { GCAL_COLORS, GCAL_COLOR_NAMES } from "../components/calendar/EventDialog";
 import { TodoComposer, TodoDraft, draftToBody } from "../components/todo/TodoComposer";
+import { CategoryDialog, CategoryDraft } from "../components/todo/CategoryDialog";
 import { ListState } from "../components/ui/ListState";
 import { api, Todo as TodoItem, TodoCategory, TodoCounts } from "../lib/api";
 import { toast } from "../store/toast";
@@ -75,7 +76,7 @@ interface CatRowProps {
   selectedCat: string | null;
   onToggle: (id: string) => void;
   onSelect: (id: string) => void;
-  onRename: (c: TodoCategory) => void;
+  onEdit: (c: TodoCategory) => void;
   onRemove: (c: TodoCategory) => void;
 }
 
@@ -87,7 +88,7 @@ interface CatRowProps {
  * 나중에 이 안에 입력칸을 넣으면 포커스가 빠진다).
  */
 function CatRow({
-  node, depth, rollup, openSet, selectedCat, onToggle, onSelect, onRename, onRemove,
+  node, depth, rollup, openSet, selectedCat, onToggle, onSelect, onEdit, onRemove,
 }: CatRowProps) {
   const { cat } = node;
   const n = rollup[cat.id] ?? { total: 0, done: 0 };
@@ -130,14 +131,14 @@ function CatRow({
           </span>
         </button>
         {/* 터치 기기엔 hover 가 없다. opacity-0 인 채로 두면 보이지도 않는데
-            탭은 먹혀서, 행 오른쪽을 누르면 아무 표시 없이 이름 변경 prompt 나
-            삭제 confirm 이 뜬다. 좁은 화면은 항상 보이게 두고, 넓은 화면에서는
+            탭은 먹혀서, 행 오른쪽을 누르면 아무 표시 없이 편집 창이나 삭제
+            confirm 이 뜬다. 좁은 화면은 항상 보이게 두고, 넓은 화면에서는
             hover·포커스로 켠다(포커스도 켜야 키보드로 닿는다). */}
         <span className="flex shrink-0 items-center transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
           <button
             type="button"
-            onClick={() => onRename(cat)}
-            title="이름 바꾸기" aria-label={`${cat.name} 이름 바꾸기`}
+            onClick={() => onEdit(cat)}
+            title="카테고리 편집" aria-label={`${cat.name} 카테고리 편집`}
             className="grid h-6 w-6 place-items-center text-fg-subtle hover:text-fg"
           >
             <Pencil size={12} />
@@ -164,7 +165,7 @@ function CatRow({
               selectedCat={selectedCat}
               onToggle={onToggle}
               onSelect={onSelect}
-              onRename={onRename}
+              onEdit={onEdit}
               onRemove={onRemove}
             />
           ))}
@@ -314,13 +315,27 @@ export function Todo() {
     return guard(() => api.todoCreate(draftToBody(draft)));
   };
 
+  // 카테고리 만들기·고치기는 창 하나로 한다. `catEdit` 가 있으면 편집, 없으면 새로.
+  // (예전에는 window.prompt 로 이름만 물어서 색을 고를 길이 아예 없었다.)
+  const [catDialog, setCatDialog] = useState(false);
+  const [catEdit, setCatEdit] = useState<TodoCategory | null>(null);
+
   const addCategory = () => {
-    const name = window.prompt(
-      selectedCat ? "새 하위 카테고리 이름" : "새 카테고리 이름",
-    );
-    if (!name?.trim()) return;
-    guard(
-      () => api.todoCategoryCreate({ name: name.trim(), parent_id: selectedCat ?? "" }),
+    setCatEdit(null);
+    setCatDialog(true);
+  };
+
+  const submitCategory = (d: CategoryDraft): Promise<boolean> => {
+    if (catEdit) {
+      return guard(
+        () => api.todoCategoryUpdate(catEdit.id, {
+          name: d.name, color: d.color, parent_id: d.parent_id,
+        }),
+        "카테고리를 고쳤습니다",
+      );
+    }
+    return guard(
+      () => api.todoCategoryCreate({ name: d.name, color: d.color, parent_id: d.parent_id }),
       "카테고리 추가됨",
     );
   };
@@ -362,11 +377,10 @@ export function Todo() {
     setSelectedTodo(null);
   }, []);
 
-  const renameCategory = (c: TodoCategory) => {
-    const name = window.prompt("카테고리 이름", c.name);
-    if (!name?.trim() || name.trim() === c.name) return;
-    guard(() => api.todoCategoryUpdate(c.id, { name: name.trim() }));
-  };
+  const editCategory = useCallback((c: TodoCategory) => {
+    setCatEdit(c);
+    setCatDialog(true);
+  }, []);
 
   const uncategorized = counts[UNCATEGORIZED] ?? { total: 0, done: 0 };
   const allTotal = todos.length;
@@ -411,7 +425,7 @@ export function Todo() {
             selectedCat={selectedCat}
             onToggle={toggleOpen}
             onSelect={selectCategory}
-            onRename={renameCategory}
+            onEdit={editCategory}
             onRemove={removeCategory}
           />
         ))}
@@ -584,14 +598,24 @@ export function Todo() {
       <div className="mt-3">
         <span className="mb-1 block text-xs text-fg-muted">색상</span>
         <div className="flex flex-wrap items-center gap-1.5">
+          {/* '자동'이 무슨 색이 되는지 점으로 보여 준다 — 카테고리 색이 곧 이
+              할 일의 기본색인데, 글자만 있으면 무엇을 따르는지 알 수 없다. */}
           <button
             type="button"
             onClick={() => patchDetail({ color: "" })}
-            title="카테고리 색 따르기"
-            className={`h-7 rounded-full border px-2.5 text-[11px] ${
+            title={
+              detail.category_id
+                ? `카테고리 색 따르기 (${GCAL_COLOR_NAMES[colorOf({ ...detail, color: "" }, cats)]})`
+                : "카테고리 색 따르기"
+            }
+            className={`inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[11px] ${
               detail.color === "" ? "border-accent bg-accent-muted text-accent-fg" : "border-line text-fg-muted"
             }`}
           >
+            <span
+              className="h-2.5 w-2.5 rounded-full"
+              style={{ background: GCAL_COLORS[colorOf({ ...detail, color: "" }, cats)] }}
+            />
             자동
           </button>
           {Object.entries(GCAL_COLORS).map(([id, hex]) => (
@@ -678,6 +702,16 @@ export function Todo() {
         <div className={isNarrow ? "max-h-[32vh] overflow-y-auto" : ""}>{leftPane}</div>
         <div className="flex min-h-0 flex-1 flex-col h-[60vh] lg:h-auto">{rightPane}</div>
       </div>
+
+      <CategoryDialog
+        open={catDialog}
+        edit={catEdit}
+        defaultParent={selectedCat ?? ""}
+        cats={cats}
+        busy={busy}
+        onClose={() => setCatDialog(false)}
+        onSubmit={submitCategory}
+      />
     </Shell>
   );
 }

@@ -5117,6 +5117,57 @@ def test_todo_categories_cannot_form_a_cycle():
             assert e.status_code == 409, e.status_code
 
 
+def test_todo_category_color_can_be_changed():
+    """색은 만들 때만 정하는 값이 아니다 — 편집 창이 색을 고쳐 보낸다.
+
+    카테고리 색은 그 안의 할 일이 색을 따로 안 고르면 쓰는 기본색이라(화면에서
+    해석), 여기서 바뀐 값이 그대로 저장돼야 타임라인·달력이 함께 따라간다.
+    """
+    _login()
+    made = client.post("/api/todo/categories", json={"name": "색바꾸기"})
+    assert made.status_code == 200, made.text
+    cat = made.json()
+    assert cat["color"] == "2", cat  # 안 고르면 기본색
+
+    got = client.put(f"/api/todo/categories/{cat['id']}", json={"color": "11"})
+    assert got.status_code == 200 and got.json()["color"] == "11", got.text
+    # 다시 읽어도 남아 있는가(응답만 바뀌고 저장이 안 되는 경우를 잡는다)
+    lst = client.get("/api/todo/categories").json()
+    assert next(c for c in lst if c["id"] == cat["id"])["color"] == "11", lst
+    client.delete(f"/api/todo/categories/{cat['id']}")
+
+
+def test_moving_a_category_respects_the_depth_limit():
+    """깊이는 만들 때만 봤다. 편집 창에서 상위를 바꿀 수 있게 된 뒤로는
+    **옮기기로도** 상한을 넘길 수 있다 — 데려가는 자손까지 함께 세야 한다."""
+    from fastapi import HTTPException
+
+    from backend import todo_store
+
+    u, _ctx, st = _todo_ctx("todeep")
+    # 최상위부터 MAX_DEPTH 단계로 한 줄(A0 ... A4) — 더는 못 붙이는 상태
+    chain = []
+    parent = ""
+    for i in range(todo_store.MAX_DEPTH):
+        chain.append(todo_store.create_category(u, st, {"name": f"A{i}", "parent_id": parent})["id"])
+        parent = chain[-1]
+
+    # 자식이 하나 딸린 두 단계짜리 가지를 따로 만든다
+    top = todo_store.create_category(u, st, {"name": "B"})["id"]
+    todo_store.create_category(u, st, {"name": "B-1", "parent_id": top})
+
+    # B(자손 1단계)를 A3 밑으로 옮기면 B-1 이 6단째가 된다 — 막아야 한다
+    try:
+        todo_store.update_category(u, st, top, {"parent_id": chain[-2]})
+        raise AssertionError("자손이 상한을 넘는 옮기기를 허용했다")
+    except HTTPException as e:
+        assert e.status_code == 409, e.status_code
+
+    # 한 단계 위(A2)로는 들어간다 — 넘지 않는 옮기기까지 막으면 안 된다
+    moved = todo_store.update_category(u, st, top, {"parent_id": chain[-3]})
+    assert moved["parent_id"] == chain[-3], moved
+
+
 def test_todo_http_validates_like_the_calendar():
     """UI로 들어오는 마감도 검증한다(AI 쪽만 막으면 반쪽이다)."""
     _login()
