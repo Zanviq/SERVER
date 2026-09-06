@@ -91,7 +91,8 @@ class SetDiary(SkillBase):
         "'오늘 몸이 힘들었어', '일기 써 줘' 같은 말은 문서를 만들지 말고 **이 스킬로** 남긴다. "
         "축은 셋(육체·마음·정신)이고 값은 매우 좋음/좋음/보통/힘듦/매우 힘듦 중 하나다. "
         "사용자가 말하지 않은 축은 주지 마세요(빈 값으로 두면 화면에 '-' 로 나온다). "
-        "일기는 append=true 면 뒤에 잇고, 아니면 통째로 바꾼다."
+        "일기 본문은 **그날 적어 둔 것이 있으면 뒤에 이어 쓴다.** 통째로 바꾸려면 "
+        "append=false 를 분명히 주세요 — 사용자가 '고쳐 줘·다시 써 줘'라고 했을 때만."
     )
     parameters = {
         "type": "object",
@@ -117,9 +118,14 @@ class SetDiary(SkillBase):
         try:
             if text is not None:
                 new = str(text)
-                if args.get("append"):
-                    cur = str(diary_store.get_day(ctx.user, ctx.settings, day).get("text") or "")
-                    new = (cur + "\n" + new).strip() if cur else new
+                cur = str(diary_store.get_day(ctx.user, ctx.settings, day).get("text") or "")
+                # **이미 적어 둔 일기를 덮지 않는다.** 지나가는 말("요즘 좀
+                # 피곤하네")에도 모델이 이 스킬을 부르는데, 그때 통째로 바꾸면
+                # 사용자가 아침에 쓴 일기가 한 줄로 사라진다. 덮어쓰기는
+                # append=false 를 **분명히 준** 경우에만 한다.
+                overwrite = args.get("append") is False
+                if cur and not overwrite:
+                    new = (cur + "\n" + new).strip()
                 patch["text"] = new
             if not patch:
                 return SkillResult(ok=False, message="적을 내용이 없습니다.", error_code="invalid")

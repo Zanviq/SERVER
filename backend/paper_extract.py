@@ -48,7 +48,12 @@ Read the paper and answer with a single JSON object (no prose, no code fence) wi
   "keywords": ["5~10개 영어 키워드"],
   "sections": ["1 Introduction", "2 Related Work", "..."]
 }
-Keep every value concise. Use Korean for summary/key_findings/methods/limitations, keep title/authors/abstract/keywords in the paper's language."""
+Keep every value concise. Use Korean for summary/key_findings/methods/limitations, keep title/authors/abstract/keywords in the paper's language.
+
+If the document is blank or you cannot read it, return every value EMPTY ("" or []).
+Do NOT write an explanation into "title" or "summary" — those fields are shown to the
+user as the paper's own title and summary. An empty value is correct; a sentence like
+"Unable to extract title" is not."""
 
 
 def extract_text(pdf: Path) -> tuple[int, str]:
@@ -119,6 +124,40 @@ def _ask_gemini(settings: Settings, pdf: Path, text: str, model: str = "") -> di
     return _parse_json(getattr(resp, "text", "") or "")
 
 
+#: "못 읽었다"는 설명이 제목·요약 자리에 들어왔을 때 알아보는 말들.
+#: 빈 PDF 를 네 번 올려 보니 한 번은 제목에 "Unable to extract title", 요약에
+#: "문서 내용이 제공되지 않아 …"가 들어왔다. 목록에는 그게 논문 제목처럼 보인다.
+#: **둘 다** 있어야 설명으로 본다 — 못 하겠다는 말과, 그 대상이 문서·제목이라는 말.
+#: 한쪽만 보면 "Cannot Stop the Music" 같은 **진짜 제목을 지운다.** 놓치는 쪽이
+#: 지우는 쪽보다 낫다(놓치면 보기 흉할 뿐이고, 지우면 정보가 사라진다).
+_REFUSAL_VERB = re.compile(
+    r"unable to|cannot be|can not be|could not be|not provided|not available|no content"
+    r"|is missing|is empty|없어서|없으므로|제공되지 않|읽을 수 없|추출할 수 없|생성할 수 없",
+    re.I,
+)
+_REFUSAL_SUBJECT = re.compile(
+    r"document|content|title|abstract|paper|text|file|문서|내용|제목|초록|본문|파일",
+    re.I,
+)
+
+
+def _drop_refusals(info: dict) -> dict:
+    """모델이 필드에 적어 넣은 '못 읽었다'는 설명을 지운다.
+
+    빈 값이 정답인 자리다 — 비워 두면 제목은 파일 이름으로 되돌아가고 요약은
+    안 보인다. 설명을 남기면 사용자는 그 문장을 논문 제목으로 읽게 된다.
+    """
+    out = dict(info)
+    for k in ("title", "summary", "abstract", "methods", "limitations"):
+        v = out.get(k)
+        if not (isinstance(v, str) and v.strip()):
+            continue
+        if _REFUSAL_VERB.search(v) and _REFUSAL_SUBJECT.search(v):
+            logger.info("추출 결과에서 설명 문장을 지웠다: %s=%r", k, v[:80])
+            out[k] = ""
+    return out
+
+
 def _title_guess(text: str, fallback: str) -> str:
     """모델을 못 쓸 때 첫 줄에서 제목을 짐작한다."""
     for line in (text or "").splitlines():
@@ -173,6 +212,7 @@ def run_sync(user: SessionUser, settings: Settings, pid: str, *, asker=None) -> 
         })
         return paper_store.update_meta(user, settings, pid, patch)
 
+    info = _drop_refusals(info)
     for k in ("title", "authors", "year", "venue", "abstract", "summary", "key_findings",
               "methods", "limitations", "keywords", "sections"):
         if k in info and info[k] not in (None, ""):

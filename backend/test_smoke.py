@@ -6368,6 +6368,55 @@ def test_the_viewer_can_fix_a_page_count_pypdf_could_not_read():
         client.delete("/api/papers/" + pid)
 
 
+def test_extraction_never_stores_the_models_excuse_as_the_title():
+    """빈 PDF 네 번 중 한 번, 모델이 제목 자리에 "Unable to extract title" 을 적었다.
+
+    목록에서는 그 문장이 논문 제목처럼 보인다. 빈 값이 정답인 자리다 — 비우면
+    제목은 파일 이름으로 되돌아가고 요약은 안 보인다.
+    """
+    from backend import paper_extract, paper_store
+
+    _login()
+    r = client.post("/api/papers/upload",
+                    files={"file": ("변명논문.pdf", _tiny_pdf(), "application/pdf")})
+    pid = r.json()["id"]
+    try:
+        from backend.auth import SessionUser
+
+        me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+        st = get_settings()
+        paper_extract.run_sync(me, st, pid, asker=lambda *a, **k: {
+            "title": "Unable to extract title.",
+            "summary": "문서 내용이 제공되지 않아 논문의 요약을 생성할 수 없습니다.",
+            "abstract": "The document is empty.",
+            "authors": [],
+        })
+        p = paper_store.find_paper(me, st, pid)
+        assert "Unable" not in p["title"], p["title"]
+        assert p["title"], p                      # 파일 이름으로라도 남는다
+        assert not str(p.get("summary") or "").strip(), p["summary"]
+        assert not str(p.get("abstract") or "").strip(), p["abstract"]
+    finally:
+        client.delete("/api/papers/" + pid)
+
+    # **진짜 내용은 지우지 않는다.** 낱말이 겹친다는 이유로 지우면 정보가 사라진다.
+    kept = paper_extract._drop_refusals({
+        "title": "Cannot Stop the Music: A Study of Auditory Memory",
+        "summary": "이 논문은 소리 기억을 다룬다. 한계는 표본이 적어서 일반화할 수 없다는 점이다.",
+        "limitations": "데이터가 없어서 재현이 어렵다.",
+    })
+    assert kept["title"].startswith("Cannot Stop"), kept["title"]
+    assert kept["summary"].startswith("이 논문은"), kept["summary"]
+    assert kept["limitations"].startswith("데이터가"), kept["limitations"]
+
+    # 못 읽었다는 말 + 그 대상이 문서·제목일 때만 지운다
+    dropped = paper_extract._drop_refusals({
+        "title": "The document content is not provided.",
+        "summary": "문서 내용이 제공되지 않아 요약할 수 없습니다.",
+    })
+    assert dropped["title"] == "" and dropped["summary"] == "", dropped
+
+
 def test_a_paper_with_no_text_keeps_its_fields_empty():
     """글자가 없는 PDF(빈 문서·스캔본)에서 논문을 지어내면 안 된다.
 
@@ -6802,6 +6851,36 @@ def test_account_backup_includes_everything_but_the_trash():
     assert any(n.endswith("백업시험.md") for n in names), names[:10]
     assert any("vocab" in n for n in names), names[:10]      # 문서 밖의 것도 들어간다
     assert not any(n.startswith(".trash/") for n in names), [n for n in names if ".trash" in n]
+
+
+def test_the_diary_is_never_overwritten_by_a_passing_remark():
+    """지나가는 말에도 모델이 set_diary 를 부른다("요즘 좀 피곤하네" → set_diary).
+
+    그때 통째로 바꾸면 아침에 쓴 일기가 한 줄로 사라진다. 이미 적어 둔 것이
+    있으면 이어 쓰고, 덮어쓰기는 append=false 를 분명히 준 경우에만 한다.
+    """
+    from backend import diary_store
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    u, ctx, st = _todo_ctx("diarykeep")
+    day = "2026-09-06"
+
+    reg.dispatch("set_diary", {"date": day, "text": "아침에 쓴 긴 일기."}, ctx)
+    assert diary_store.get_day(u, st, day)["text"] == "아침에 쓴 긴 일기."
+
+    # 지나가는 말 — 이어 쓴다
+    reg.dispatch("set_diary", {"date": day, "text": "피곤하다."}, ctx)
+    kept = diary_store.get_day(u, st, day)["text"]
+    assert kept == "아침에 쓴 긴 일기.\n피곤하다.", kept
+
+    # 사용자가 다시 써 달라고 하면(append=false) 그때는 바꾼다
+    reg.dispatch("set_diary", {"date": day, "text": "새로 쓴 일기.", "append": False}, ctx)
+    assert diary_store.get_day(u, st, day)["text"] == "새로 쓴 일기."
+
+    # 빈 날에는 그냥 쓴다
+    reg.dispatch("set_diary", {"date": "2026-09-07", "text": "처음."}, ctx)
+    assert diary_store.get_day(u, st, "2026-09-07")["text"] == "처음."
 
 
 def test_words_are_not_added_unless_the_user_asked():
