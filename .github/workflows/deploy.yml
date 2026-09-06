@@ -80,4 +80,21 @@ jobs:
             docker compose $PROFILE_ARGS logs --tail 80 backend || true
             exit 1
           fi
+
+          # 백엔드가 살아 있어도 **화면이 안 뜨는** 배포가 있을 수 있다(빌드 산출물이
+          # 비었거나 nginx 설정이 깨진 경우). health 만 보면 초록불인데 사용자에게는
+          # 흰 화면이다. 최소한만 확인한다 — index 가 오고 그 안에 스크립트가 있는지.
+          echo "▶ 화면 확인"
+          page="$(curl -fsS -m 5 http://127.0.0.1/ 2>/dev/null || true)"
+          case "$page" in
+            *"<script"*) echo "   index.html OK" ;;
+            *)
+              echo "::error::배포 후 화면이 뜨지 않습니다(index.html 에 스크립트가 없음). 되돌리려면 파이에서:"
+              while IFS= read -r line; do echo "::error::$line"; done < /tmp/twoems-rollback.txt
+              echo "::error::  docker compose $PROFILE_ARGS up -d --no-build"
+              docker compose $PROFILE_ARGS logs --tail 40 frontend || true
+              exit 1
+              ;;
+          esac
+
           echo "✅ 배포 완료: $(git rev-parse --short HEAD)"
