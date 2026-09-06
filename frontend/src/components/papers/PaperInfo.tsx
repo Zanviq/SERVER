@@ -23,6 +23,9 @@ const QUICK = [
   { label: "어려운 단어", ask: "이 논문 초록과 서론에서 어려운 영어 단어를 뽑아 단어장 후보로 제안해줘." },
 ];
 
+/** 메모 상한. 서버(paper_store MAX_TEXT * 2)와 같은 값이어야 한다. */
+const MAX_NOTES = 12000;
+
 /** 오른쪽 "정보" 탭 — AI가 뽑아 둔 메타데이터·요약, 그리고 내 메모. */
 export function PaperInfo({ paper: p, categories = [], onUpdate, onAsk, onRetry }: Props) {
   const [notes, setNotes] = useState(p.notes);
@@ -154,9 +157,19 @@ export function PaperInfo({ paper: p, categories = [], onUpdate, onAsk, onRetry 
       )}
 
       <Block title="내 메모">
-        <textarea className="input h-auto py-2 text-[12.5px]" rows={5} value={notes} placeholder="읽으면서 남길 메모. AI도 이 메모를 본다."
+        {/* maxLength 는 서버 상한(paper_store MAX_TEXT * 2)과 같아야 한다. 없으면
+            더 적을 수 있는 것처럼 보이다가, 저장할 때 서버가 말없이 뒤를 잘라
+            **화면에서 글이 사라진다**(저장 뒤 서버 값으로 다시 채우므로). */}
+        <textarea className="input h-auto py-2 text-[12.5px]" rows={5} value={notes} maxLength={MAX_NOTES}
+          placeholder="읽으면서 남길 메모. AI도 이 메모를 본다."
           onChange={(e) => setNotes(e.target.value)}
           onBlur={() => { if (notes !== p.notes) void onUpdate({ notes }); }} />
+        {notes.length > MAX_NOTES * 0.9 && (
+          <p className="mt-1 text-[11px] text-fg-muted">
+            {notes.length.toLocaleString()} / {MAX_NOTES.toLocaleString()}자
+            {notes.length >= MAX_NOTES && " — 여기까지만 저장됩니다"}
+          </p>
+        )}
       </Block>
     </div>
   );

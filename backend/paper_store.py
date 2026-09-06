@@ -241,6 +241,25 @@ def update_meta(user: SessionUser, settings: Settings, pid: str, patch: dict) ->
         for k in ("abstract", "summary", "methods", "limitations", "notes", "error"):
             if k in patch and patch[k] is not None:
                 p[k] = _s(patch[k], MAX_TEXT * 2 if k == "notes" else MAX_TEXT)
+        # 메모 덧붙이기는 **이 락 안에서** 이어 붙인다.
+        #
+        # 예전에는 부르는 쪽(set_paper_notes)이 메모를 읽어 이어 붙인 뒤 통째로
+        # 넘겼다. 읽기와 쓰기 사이가 락 밖이라, 겹쳐 들어오면 서로를 덮는다 —
+        # 실측: 동시에 20번 덧붙였더니 **1개만 남고** 스킬은 20번 다 성공이라고
+        # 답했다. 사용자는 "메모에 남겼습니다"를 스무 번 듣고 하나만 받는다.
+        # 회의 문서가 3차에 같은 결함을 겪었다.
+        if patch.get("notes_append"):
+            add = str(patch["notes_append"]).strip()
+            cur = str(p.get("notes") or "").rstrip()
+            joined = f"{cur}\n\n{add}" if cur else add
+            if len(joined) > MAX_TEXT * 2:
+                # 조용히 자르면 방금 적은 정리가 반만 남는다. 못 넣었다고 말한다.
+                raise HTTPException(
+                    status_code=413,
+                    detail=(f"메모가 {MAX_TEXT * 2}자를 넘습니다(지금 {len(cur)}자). "
+                            "기존 메모를 줄이거나 나눠서 남기세요."),
+                )
+            p["notes"] = joined
         for k in ("authors", "key_findings", "keywords", "sections", "tags"):
             if k in patch and patch[k] is not None:
                 p[k] = _strs(patch[k], MAX_SHORT, 40 if k == "sections" else MAX_LIST)

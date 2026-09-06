@@ -307,19 +307,23 @@ class SetPaperNotes(SkillBase):
                          "않았습니다. 그 사실은 **답으로 말하고**, 무엇을 메모할지 "
                          "물어보거나 read_paper_text 로 본문을 읽어 내용을 만드세요."),
             )
+        # **이미 적어 둔 메모를 덮지 않는다.** 논문 메모는 사용자가 손으로 쓴
+        # 글이라, "메모해 둬" 한마디에 통째로 바뀌면 그동안 정리한 것이 사라진다
+        # (일기에서 같은 일을 겪었다). 덮어쓰기는 append=false 를 분명히 준
+        # 경우에만 — 사용자가 "메모 다시 써 줘"라고 했을 때다.
+        #
+        # 이어 붙이기는 **저장소가 락 안에서** 한다. 여기서 읽어 붙여 넘기면 그
+        # 사이에 들어온 다른 요청과 서로를 덮는다(실측: 동시 20건 중 1건만 남음).
+        overwrite = args.get("append") is False
         try:
-            cur = str(paper_store.get_paper(ctx.user, ctx.settings, pid).get("notes") or "").rstrip()
-            # **이미 적어 둔 메모를 덮지 않는다.** 논문 메모는 사용자가 손으로 쓴
-            # 글이라, "메모해 둬" 한마디에 통째로 바뀌면 그동안 정리한 것이 사라진다
-            # (일기에서 같은 일을 겪었다). 덮어쓰기는 append=false 를 분명히 준
-            # 경우에만 — 사용자가 "메모 다시 써 줘"라고 했을 때다.
-            overwrite = args.get("append") is False
-            if cur and not overwrite:
-                notes = f"{cur}\n\n{notes}"
-            p = paper_store.update_meta(ctx.user, ctx.settings, pid, {"notes": notes})
+            had = bool(str(paper_store.get_paper(ctx.user, ctx.settings, pid).get("notes") or "").strip())
+            p = paper_store.update_meta(
+                ctx.user, ctx.settings, pid,
+                {"notes": notes} if overwrite else {"notes_append": notes},
+            )
         except Exception as e:  # noqa: BLE001
             return _fail(e)
-        how = "덮어씀" if (overwrite or not cur) else "덧붙임"
+        how = "덮어씀" if (overwrite or not had) else "덧붙임"
         return SkillResult(ok=True, message=f"'{p.get('title', '')}' 메모 {how}", data={"paper_id": pid})
 
 

@@ -9115,6 +9115,60 @@ def test_naming_a_speaker_reaches_every_place_that_shows_them(monkeypatch):
     assert "화자 1: 예산은 3억" in 본문 and "박영희: 인건비" in 본문, 본문[:200]
 
 
+def test_paper_notes_appends_do_not_overwrite_each_other():
+    """논문 메모에 겹쳐 덧붙여도 하나도 사라지지 않는다.
+
+    부르는 쪽이 메모를 읽어 이어 붙인 뒤 통째로 넘기고 있었다. 읽기와 쓰기
+    사이가 락 밖이라 겹쳐 들어오면 서로를 덮는다 — 실측: 동시에 20번 덧붙였더니
+    **1개만 남고** 스킬은 20번 다 성공이라고 답했다. 사용자는 "메모에 남겼습니다"를
+    스무 번 듣고 하나만 받는다. 회의 문서가 3차에 같은 결함을 겪었다.
+
+    메모는 사용자가 손으로 쓴 글이고 휴지통도 없다.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from backend import paper_store
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="메모겹침", display_name="N", expires_at=0, remaining=0)
+    pid = paper_store.new_id()
+    d = paper_store.paper_dir(u, s, pid)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / paper_store.PDF_NAME).write_bytes(b"%PDF")
+    paper_store.register(u, s, "겹침.pdf", 4, pid=pid)
+    paper_store.update_meta(u, s, pid, {"notes": "손으로 쓴 첫 줄"})
+
+    reg = default_registry()
+    ctx = SkillContext(user=u, settings=s, today="2026-09-07", paper_id=pid)
+    N = 20
+    with ThreadPoolExecutor(max_workers=N) as ex:
+        res = list(ex.map(lambda i: reg.dispatch("set_paper_notes", {"notes": f"덧붙임{i:02d}"}, ctx),
+                          range(N)))
+
+    assert all(r.ok for r in res), [r.message for r in res if not r.ok]
+    notes = paper_store.get_paper(u, s, pid)["notes"]
+    사라진 = [i for i in range(N) if f"덧붙임{i:02d}" not in notes]
+    assert not 사라진, f"성공이라고 답하고 사라진 것: {사라진}"
+    assert "손으로 쓴 첫 줄" in notes, "사용자가 쓴 줄을 덮었다"
+
+    # append=false 는 여전히 통째로 바꾼다("메모 다시 써 줘")
+    r = reg.dispatch("set_paper_notes", {"notes": "새로 쓴 메모", "append": False}, ctx)
+    assert r.ok and paper_store.get_paper(u, s, pid)["notes"] == "새로 쓴 메모"
+
+    # 상한을 넘기면 **조용히 자르지 않고** 말한다 — 반만 남은 메모가 제일 나쁘다
+    paper_store.update_meta(u, s, pid, {"notes": "가" * (paper_store.MAX_TEXT * 2 - 10)})
+    r = reg.dispatch("set_paper_notes", {"notes": "이건 안 들어간다" * 5}, ctx)
+    assert not r.ok, r
+    assert str(paper_store.MAX_TEXT * 2) in r.message, f"상한이 얼마인지 말해야 한다: {r.message}"
+    assert "나눠서" in r.message, f"무엇을 하라는지 말해야 한다: {r.message}"
+    남은 = paper_store.get_paper(u, s, pid)["notes"]
+    assert 남은.endswith("가") and "안 들어간다" not in 남은, "실패했는데 메모가 바뀌었다"
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"
