@@ -28,7 +28,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from .. import chat_store, context_store, meeting_store, paper_store, vocab_store
+from .. import (
+    chat_store, context_store, meeting_store, paper_store, vocab_store, vocab_suggest,
+)
 from ..ai import models as ai_models
 from ..ai import modes, orchestrator
 from ..auth import SessionUser, require_session
@@ -361,6 +363,29 @@ def _prepare(body: "ChatRequest", user: SessionUser, settings: Settings) -> Prep
     )
 
 
+def _late_proposal(p: "Prepared", answer: str, notes: list[dict],
+                   user: SessionUser, settings: Settings) -> dict | None:
+    """모델이 안 올린 단어 후보를 서버가 뽑아 화면에 올린다.
+
+    이미 후보가 올라갔거나(스킬을 불렀거나) 자리가 아니면 아무것도 하지 않는다.
+    뽑기만 하고 **저장하지 않는다** — 고르는 것은 사용자다(71차 규칙).
+    """
+    already = any(isinstance(n.get("data"), dict) and n["data"].get("proposal") for n in notes)
+    if not vocab_suggest.should_suggest(p.mode, p.message, answer, already):
+        return None
+    words = vocab_suggest.suggest(
+        settings, p.message, answer,
+        model=orchestrator._user_ai_prefs(user, settings).get("model", ""))
+    if not words:
+        return None
+    return {
+        "name": "propose_vocab_words", "ok": True,
+        "message": f"단어장 후보 {len(words)}개 — 고른 것만 저장됩니다.",
+        "args": "", "result": "",
+        "data": {"proposal": words, "context": "", "tags": list(p.vocab_tags or [])},
+    }
+
+
 @router.post("/preview")
 def preview(
     body: ChatRequest,
@@ -447,6 +472,17 @@ def chat(
                         note["data"] = data
                     tool_notes.append(note)
                 yield orchestrator.sse_format(ev)
+
+            # 모델이 후보 올리기를 잊었으면 **서버가 채운다.** 프롬프트가 약속한
+            # 동작인데 실측으로 6번 중 2번만 지켜졌다("이 문장 무슨 뜻이야"는
+            # 프롬프트에 적힌 예시인데도 0/2). 부탁으로 안 되는 자리다.
+            extra = _late_proposal(p, final_text, tool_notes, user, settings)
+            if extra:
+                tool_notes.append(extra)
+                yield orchestrator.sse_format({
+                    "type": "tool_result", "name": "propose_vocab_words", "ok": True,
+                    "message": extra["message"], "data": extra["data"],
+                })
         except Exception as e:  # noqa: BLE001
             # 내부 예외 문자열을 사용자에게 그대로 흘리지 않는다(경로·키가 섞일 수 있다).
             logger.exception("AI 스트림 실패")

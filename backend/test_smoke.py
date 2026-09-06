@@ -6092,6 +6092,75 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
     return buf.getvalue()
 
 
+def test_server_fills_in_vocab_candidates_when_the_model_forgets(monkeypatch):
+    """단어 후보 올리기는 **서버가 보장한다.**
+
+    논문·영어 화면 프롬프트는 "'이 문장 무슨 뜻이야' 처럼 물으면 답한 뒤
+    propose_vocab_words 로 후보를 올려라"라고 적어 두었다. 그런데 실측하면
+    **6번 중 2번만** 올렸다 — 프롬프트에 적힌 바로 그 예시("이 문장 무슨 뜻이야")
+    조차 0/2 였다. 답은 잘 하고 그 다음 한 걸음을 잊는다.
+
+    부탁으로 안 되는 자리라 서버가 채운다(30·47·60·71·90차와 같은 결론).
+    채우되 **저장하지는 않는다** — 고르는 것은 사용자다.
+    """
+    from backend import vocab_suggest
+    from backend.ai import orchestrator
+    from backend.ai.orchestrator import LLMResult
+
+    # 언제 채우는가
+    assert vocab_suggest.should_suggest("paper", "이 문장 무슨 뜻이야?", "가" * 60, False)
+    assert vocab_suggest.should_suggest("english", "degrade 설명해줘", "가" * 60, False)
+    # 이미 모델이 올렸으면 겹쳐 올리지 않는다
+    assert not vocab_suggest.should_suggest("paper", "무슨 뜻이야", "가" * 60, True)
+    # 단어장과 상관없는 화면에서는 하지 않는다
+    assert not vocab_suggest.should_suggest("calendar", "무슨 뜻이야", "가" * 60, False)
+    assert not vocab_suggest.should_suggest("meeting", "무슨 뜻이야", "가" * 60, False)
+    # 뜻을 묻는 말이 아니거나 답이 짧으면 하지 않는다(인사·되묻기)
+    assert not vocab_suggest.should_suggest("paper", "고마워", "가" * 60, False)
+    assert not vocab_suggest.should_suggest("paper", "무슨 뜻이야", "짧다", False)
+
+    # 뽑은 결과의 모양 — 화면이 그리는 체크 목록과 같은 모양이어야 한다
+    def fake_ask(settings, payload, model):
+        assert "비서의 답" in payload
+        return ('{"words": [{"word": "selectivity", "kind": "term", "pos": "n.",'
+                ' "meaning": "선택성"}, {"word": "selectivity", "meaning": "중복"},'
+                ' {"word": "", "meaning": "빈 것"}]}')
+
+    got = vocab_suggest.suggest(get_settings(), "selectivity 뜻", "가" * 60, asker=fake_ask)
+    assert [w["word"] for w in got] == ["selectivity"], got
+    assert got[0]["kind"] == "term" and got[0]["meaning"] == "선택성"
+    # 모델이 실패해도 대화를 막지 않는다
+    def boom(*a, **k):
+        raise RuntimeError("down")
+    assert vocab_suggest.suggest(get_settings(), "뜻", "가" * 60, asker=boom) == []
+
+    # 실제 흐름 — 모델이 후보를 안 올려도 화면에는 온다
+    _login()
+    pid = client.post("/api/papers/upload",
+                      files={"file": ("s.pdf", _tiny_pdf("Sel"), "application/pdf")}).json()["id"]
+    try:
+        class Quiet:
+            def chat(self, contents, catalog, system):
+                return LLMResult(text="selectivity 는 선택성을 뜻합니다. " * 4, tool_use=None)
+
+        monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": Quiet())
+        monkeypatch.setattr(vocab_suggest, "_ask", fake_ask)
+        monkeypatch.setattr(get_settings(), "gemini_api_key", "x", raising=False)
+        client.delete(f"/api/ai/space/paper:{pid}")
+        r = client.post("/api/ai/chat", json={"message": "selectivity 뜻이 뭐야?",
+                                              "mode": "paper", "paper_id": pid})
+        events = [json.loads(ln[6:]) for ln in r.text.splitlines() if ln.startswith("data: ")]
+        props = [e for e in events if e.get("type") == "tool_result"
+                 and isinstance(e.get("data"), dict) and e["data"].get("proposal")]
+        assert props, f"모델이 잊었는데 서버도 안 채웠다: {[e.get('type') for e in events]}"
+        assert props[0]["data"]["proposal"][0]["word"] == "selectivity"
+        # **저장하지는 않는다** — 고르는 것은 사용자다
+        assert not [w for w in client.get("/api/vocab/words?limit=500").json()
+                    if w["word"] == "selectivity"]
+    finally:
+        client.delete(f"/api/papers/{pid}")
+
+
 def test_file_paths_cannot_escape_your_own_storage():
     """파일을 내주고 받는 자리에서 사용자 밖으로 나가지 못한다.
 
