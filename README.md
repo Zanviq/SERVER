@@ -90,7 +90,7 @@ sudo mount /mnt/server
 
 ```bash
 python -m pytest backend/test_smoke.py -q   # 백엔드 (가짜 모델, 2분)
-cd frontend && npm test                     # 프런트 (표, 살균, 위키링크, 자동저장 등)
+cd frontend && npm test                     # 프런트 (표·살균·위키링크·자동저장·밑글·IME)
 python scripts/live_check.py                # 돌고 있는 서버에 **진짜 모델로** 물어본다
 ```
 
