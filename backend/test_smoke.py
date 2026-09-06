@@ -6909,6 +6909,32 @@ def test_account_backup_includes_everything_but_the_trash():
     assert not any(n.startswith(".trash/") for n in names), [n for n in names if ".trash" in n]
 
 
+def test_paper_notes_are_never_overwritten_by_a_passing_remark():
+    """논문 메모는 사용자가 손으로 쓴 글이다 — "메모해 둬" 한마디에 사라지면 안 된다.
+
+    일기에서 같은 일을 겪고(90차) 같은 규칙을 여기에도 적용했다.
+    """
+    from backend import paper_store
+    from backend.ai.skill_registry import default_registry
+
+    reg = default_registry()
+    u, ctx, st = _todo_ctx("papernotes")
+    meta = paper_store.register(u, st, filename="a.pdf", size=10)
+    pid = meta["id"]
+    ctx.paper_id = pid
+
+    reg.dispatch("set_paper_notes", {"notes": "직접 정리한 긴 메모."}, ctx)
+    assert paper_store.find_paper(u, st, pid)["notes"] == "직접 정리한 긴 메모."
+
+    r = reg.dispatch("set_paper_notes", {"notes": "한 줄 더."}, ctx)
+    assert "덧붙임" in r.message, r.message
+    assert paper_store.find_paper(u, st, pid)["notes"] == "직접 정리한 긴 메모.\n\n한 줄 더."
+
+    r2 = reg.dispatch("set_paper_notes", {"notes": "새로 씀.", "append": False}, ctx)
+    assert "덮어씀" in r2.message, r2.message
+    assert paper_store.find_paper(u, st, pid)["notes"] == "새로 씀."
+
+
 def test_the_diary_is_never_overwritten_by_a_passing_remark():
     """지나가는 말에도 모델이 set_diary 를 부른다("요즘 좀 피곤하네" → set_diary).
 

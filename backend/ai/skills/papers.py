@@ -233,7 +233,8 @@ class SetPaperNotes(SkillBase):
     mutates = "papers"
     name = "set_paper_notes"
     description = (
-        "논문 메모(내 정리)를 쓴다. append=true 면 기존 메모 아래에 덧붙인다. "
+        "논문 메모(내 정리)를 쓴다. **이미 적어 둔 메모가 있으면 아래에 덧붙인다** — "
+        "통째로 바꾸려면 append=false 를 분명히 주세요(사용자가 '메모 다시 써 줘'라고 했을 때만). "
         "사용자가 '이거 메모해 둬', '정리해서 남겨 줘' 하면 이걸로."
     )
     parameters = {
@@ -254,13 +255,19 @@ class SetPaperNotes(SkillBase):
         if not notes:
             return SkillResult(ok=False, message="메모 내용이 없습니다.", error_code="invalid")
         try:
-            if args.get("append"):
-                cur = str(paper_store.get_paper(ctx.user, ctx.settings, pid).get("notes") or "").rstrip()
-                notes = f"{cur}\n\n{notes}" if cur else notes
+            cur = str(paper_store.get_paper(ctx.user, ctx.settings, pid).get("notes") or "").rstrip()
+            # **이미 적어 둔 메모를 덮지 않는다.** 논문 메모는 사용자가 손으로 쓴
+            # 글이라, "메모해 둬" 한마디에 통째로 바뀌면 그동안 정리한 것이 사라진다
+            # (일기에서 같은 일을 겪었다). 덮어쓰기는 append=false 를 분명히 준
+            # 경우에만 — 사용자가 "메모 다시 써 줘"라고 했을 때다.
+            overwrite = args.get("append") is False
+            if cur and not overwrite:
+                notes = f"{cur}\n\n{notes}"
             p = paper_store.update_meta(ctx.user, ctx.settings, pid, {"notes": notes})
         except Exception as e:  # noqa: BLE001
             return _fail(e)
-        return SkillResult(ok=True, message=f"'{p.get('title', '')}' 메모 저장", data={"paper_id": pid})
+        how = "덮어씀" if (overwrite or not cur) else "덧붙임"
+        return SkillResult(ok=True, message=f"'{p.get('title', '')}' 메모 {how}", data={"paper_id": pid})
 
 
 class UpdatePaperInfo(SkillBase):

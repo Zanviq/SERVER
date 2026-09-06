@@ -152,7 +152,10 @@ class ReadMeetingTranscript(SkillBase):
                 i = text.lower().find(ql, e)
             if not hits:
                 return SkillResult(ok=True, message=f"'{q}' 는 받아쓰기에 없습니다", data={"hits": []})
-            return SkillResult(ok=True, message=f"'{q}' {len(hits)}곳", data={"hits": hits})
+            # 8곳에서 끊는 것을 알리지 않으면 모델이 "여덟 번 나온다"고 답한다
+            capped = len(hits) >= 8
+            msg = f"'{q}' {len(hits)}곳" + (" (상한 8곳에 도달 — 더 있을 수 있습니다)" if capped else "")
+            return SkillResult(ok=True, message=msg, data={"hits": hits, "truncated": capped})
         try:
             offset = max(0, int(args.get("offset") or 0))
         except (TypeError, ValueError):
@@ -205,8 +208,15 @@ class ReadMeetingDoc(SkillBase):
             d = meeting_store.read_doc(ctx.user, ctx.settings, mid, str(args.get("name") or ""))
         except Exception as e:  # noqa: BLE001
             return _fail(e)
-        return SkillResult(ok=True, message=f"'{d['name']}' {len(d['content'])}자",
-                           data={"name": d["name"], "content": d["content"][:_MAX_CHUNK * 2]})
+        # 길면 잘라서 주는데 길이는 전체를 말하고 있었다 — 모델은 다 받은 줄 안다.
+        body = d["content"][:_MAX_CHUNK * 2]
+        cut = len(d["content"]) > len(body)
+        msg = f"'{d['name']}' {len(d['content'])}자"
+        if cut:
+            msg += f" (앞 {len(body)}자만 실었습니다)"
+        return SkillResult(ok=True, message=msg,
+                           data={"name": d["name"], "content": body,
+                                 "total_chars": len(d["content"]), "truncated": cut})
 
 
 class WriteMeetingDoc(SkillBase):
