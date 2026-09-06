@@ -167,11 +167,18 @@ def _compose_message(message: str, selections: list[Selection], attachments: lis
         return message
     lines = []
     for s in selections[:MAX_SELECTIONS]:
-        txt = (s.text or "").strip()[:MAX_SELECTION_CHARS]
+        full = (s.text or "").strip()
+        txt = full[:MAX_SELECTION_CHARS]
         if not txt:
             continue
         where = f"{s.page}쪽" if s.page else "논문"
-        lines.append(f"[{where}에서 선택한 글]\n{txt}")
+        # 조용히 자르면 모델은 앞부분만 보고 "이 대목에는 그런 말이 없다"고 답한다.
+        cut = (f"\n[…이 선택은 {MAX_SELECTION_CHARS}자에서 잘렸습니다. "
+               f"뒤에 {len(full) - MAX_SELECTION_CHARS}자가 더 있습니다 — "
+               "필요하면 나눠서 선택해 달라고 말하세요.]") if len(full) > MAX_SELECTION_CHARS else ""
+        lines.append(f"[{where}에서 선택한 글]\n{txt}{cut}")
+    if len(selections) > MAX_SELECTIONS:
+        lines.append(f"[안내] 선택한 글이 {len(selections)}개인데 앞 {MAX_SELECTIONS}개만 실었습니다.")
     for i, a in enumerate(attachments, 1):
         lines.append(f"[첨부 이미지 {i}: {a.get('label') or '드래그한 영역'}]")
     quoted = "\n\n".join(lines)

@@ -6693,6 +6693,29 @@ def test_saving_a_note_changed_elsewhere_stops_instead_of_overwriting():
         client.delete("/api/notes/delete", params={"path": path})
 
 
+def test_long_or_many_selections_say_they_were_cut():
+    """논문에서 긴 대목을 드래그해 물으면 앞 4000자만 실린다.
+
+    조용히 자르면 모델은 앞부분만 보고 "이 대목에는 그런 말이 없다"고 답한다.
+    선택 개수가 상한을 넘을 때도 마찬가지다.
+    """
+    from backend.routers.ai import MAX_SELECTION_CHARS, MAX_SELECTIONS, Selection, _compose_message
+
+    long_sel = Selection(text="가" * (MAX_SELECTION_CHARS + 250), page=3)
+    out = _compose_message("이 대목 설명해줘", [long_sel], [])
+    assert "3쪽에서 선택한 글" in out
+    assert "잘렸습니다" in out and "250자가 더 있습니다" in out, out[-200:]
+
+    short = Selection(text="짧은 인용", page=1)
+    plain = _compose_message("설명해줘", [short], [])
+    assert "잘렸습니다" not in plain, plain
+
+    many = [Selection(text=f"조각{i}", page=i + 1) for i in range(MAX_SELECTIONS + 3)]
+    out2 = _compose_message("정리해줘", many, [])
+    assert f"앞 {MAX_SELECTIONS}개만 실었습니다" in out2, out2[-200:]
+    assert f"조각{MAX_SELECTIONS}" not in out2      # 정말 안 실린다
+
+
 def test_an_over_long_message_says_it_was_cut(monkeypatch):
     """조용히 자르면 모델은 앞부분만 보고 답하고, 사용자는 뒤에 적은 것이 왜
     무시됐는지 모른다 — 진짜 질문은 대개 끝에 있다."""
