@@ -6092,6 +6092,55 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
     return buf.getvalue()
 
 
+def test_global_search_does_not_leak_between_two_live_sessions():
+    """두 사람이 같은 낱말을 나란히 검색해도 서로의 것이 섞이지 않는다.
+
+    전역 검색은 프로세스 안에 캐시를 둔다(일정은 구글 호출을 30초 재사용하고,
+    문서 본문도 캐시한다). 그 키에 사용자가 빠지면 **먼저 검색한 사람의 결과가
+    다음 사람에게 그대로 간다.** 스킬 단위가 아니라 진짜 로그인 두 개로 본다.
+    """
+    from backend import accounts
+    from backend.config import get_settings
+
+    s = get_settings()
+    _login()
+    mine = "겹치는낱말ABC"
+    client.put("/api/notes/save", json={"path": f"{mine}-내문서.md", "content": f"{mine} 내 본문"})
+    ev = client.post("/api/calendar/events",
+                     json={"title": f"{mine} 내 일정", "start": "2026-09-11T10:00:00"})
+    eid = ev.json().get("id") if ev.status_code == 200 else ""
+
+    other = TestClient(app)
+    other.post("/api/auth/signup",
+               json={"username": "sidebyside", "password": "longenough1", "display_name": "O"})
+    accounts.set_status("sidebyside", accounts.STATUS_ACTIVE, "tester", s)
+    assert other.post("/api/auth/login",
+                      json={"username": "sidebyside", "password": "longenough1"}).status_code == 200
+    try:
+        def hits(resp) -> list:
+            body = resp.json()
+            return body["hits"] if isinstance(body, dict) else body
+
+        # 내가 먼저 검색해 캐시를 덥힌다
+        assert hits(client.get(f"/api/search?q={mine}")), "내 것은 내가 찾을 수 있어야 한다"
+
+        # 곧바로 남이 같은 낱말로 검색한다
+        theirs = other.get(f"/api/search?q={mine}")
+        assert theirs.status_code == 200, theirs.text
+        assert hits(theirs) == [], f"남의 검색에 내 것이 섞였다: {theirs.text[:200]}"
+        assert "내 본문" not in theirs.text and "내 일정" not in theirs.text
+
+        # 반대 방향도 — 남이 먼저 만들고 내가 검색
+        other.put("/api/notes/save", json={"path": f"{mine}-남문서.md", "content": f"{mine} 남 본문"})
+        again = hits(client.get(f"/api/search?q={mine}"))
+        assert all("남문서" not in str(h) for h in again), again
+    finally:
+        client.delete(f"/api/notes/delete?path={mine}-내문서.md")
+        if eid:
+            client.delete(f"/api/calendar/events/{eid}")
+        client.delete("/api/admin/users/sidebyside")
+
+
 def test_ai_skills_cannot_reach_another_users_data():
     """AI 가 남의 논문·회의·단어에 닿지 못한다.
 
@@ -6143,6 +6192,14 @@ def test_ai_skills_cannot_reach_another_users_data():
     # 공격자의 ctx 인데 화면 id 는 피해자 것 — 화면 인자가 위조된 상황
     ctx = SkillContext(user=spy, settings=s, today="2026-09-07",
                        paper_id=pid, meeting_id=mid, user_message="저거 문서로 남겨줘")
+
+    # **피해자가 먼저 검색해 프로세스 캐시를 덥힌다.** 일정·문서 본문에는 사용자
+    # 사이에 공유되는 캐시가 있다(일정은 구글 호출을 30초 재사용한다). 키에
+    # 사용자가 빠지면 바로 다음 사람이 앞사람 것을 보게 된다 — 순서를 밟아 본다.
+    victim_ctx = SkillContext(user=victim, settings=s, today="2026-09-07",
+                              paper_id=pid, meeting_id=mid, user_message="찾아줘")
+    for name in ("search_everything", "list_calendar_events", "list_documents", "list_papers"):
+        reg.dispatch(name, {"query": SECRET} if name == "search_everything" else {}, victim_ctx)
 
     calls = [
         ("get_paper_info", {"paper_id": pid}),
