@@ -9050,6 +9050,71 @@ def test_a_brand_new_account_can_read_every_list_before_anything_exists():
         client.delete("/api/admin/users/brandnew21")
 
 
+def test_naming_a_speaker_reaches_every_place_that_shows_them(monkeypatch):
+    """화자에 이름을 붙이면 그 뒤로는 어디서나 그 이름이어야 한다.
+
+    받아쓰기는 "화자 1/화자 2" 라벨로만 온다. 사용자가 이름을 붙이는 순간부터
+    그 사람에게 회의록은 '김철수'다. 한 곳이라도 라벨로 남으면 그 화면이 고장 난
+    것처럼 보인다. 이름은 네 군데를 거친다 — 메타·AI 프롬프트·AI 도구·전역 검색.
+
+    특히 **덮어쓰기**를 본다. 이름은 한 번에 하나씩 붙이므로, 두 번째를 붙일 때
+    앞의 것이 사라지면 사용자는 같은 일을 되풀이하게 된다.
+    """
+    from backend import meeting_store, search_all
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="화자이름", display_name="S", expires_at=0, remaining=0)
+    mid = meeting_store.new_id()
+    d = meeting_store.meeting_dir(u, s, mid)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "audio.wav").write_bytes(b"RIFF0000WAVE")
+    meeting_store.register(u, s, filename="a.wav", mime="audio/wav", size=12, ext="wav",
+                           day="2026-09-07", title="예산 회의", mid=mid)
+    seg = [{"start": "00:00", "end": "00:12", "speaker": "화자 1", "text": "예산은 3억으로 합시다."},
+           {"start": "00:12", "end": "00:25", "speaker": "화자 2", "text": "인건비를 40%로 줄입시다."},
+           {"start": "00:25", "end": "00:40", "speaker": "화자 1", "text": "협력사 견적은 제가 받아 옵니다."}]
+    meeting_store.write_transcript(u, s, mid, seg,
+                                   "\n".join(f"{x['speaker']}: {x['text']}" for x in seg))
+    meeting_store.update_meta(u, s, mid, {"status": meeting_store.STATUS_READY, "segments": 3})
+
+    ctx = SkillContext(user=u, settings=s, today="2026-09-07", meeting_id=mid)
+    reg = default_registry()
+
+    # 하나씩 붙인다 — 두 번째가 첫 번째를 지우면 안 된다
+    meeting_store.update_meta(u, s, mid, {"speakers": {"화자 1": "김철수"}})
+    r = reg.dispatch("update_meeting_info", {"speakers": {"화자 2": "박영희"}}, ctx)
+    assert r.ok, r
+    이름 = meeting_store.get_meeting(u, s, mid)["speakers"]
+    assert 이름 == {"화자 1": "김철수", "화자 2": "박영희"}, 이름
+
+    # 받아쓰기 원본은 라벨 그대로다(화면이 meta.speakers 로 바꿔 준다).
+    # 여기가 바뀌면 이름을 지웠을 때 되돌릴 수 없다.
+    raw = meeting_store.read_transcript(u, s, mid)
+    assert {x["speaker"] for x in raw["segments"]} == {"화자 1", "화자 2"}
+
+    # AI 가 읽는 본문에는 이름이 들어가야 한다("김철수가 뭐라 했어"에 답하려면)
+    본문 = reg.dispatch("read_meeting_transcript", {}, ctx).data["text"]
+    assert "김철수: 예산은 3억" in 본문 and "박영희: 인건비" in 본문, 본문[:200]
+    assert "화자 1" not in 본문 and "화자 2" not in 본문, 본문[:200]
+
+    # 전역 검색은 이름으로도, 받아쓰기 본문으로도 그 회의를 찾아야 한다
+    for q in ("김철수", "협력사"):
+        hits = search_all.search(u, s, q)
+        assert any(h.get("id") == mid for h in hits), f"'{q}' 로 못 찾았다: {hits}"
+        # 같은 회의가 여러 줄로 나오면 사용자는 회의가 여러 개인 줄 안다
+        ids = [h.get("id") for h in hits if h.get("kind") == "meeting"]
+        assert len(ids) == len(set(ids)), f"'{q}' 결과에 같은 회의가 겹쳤다: {ids}"
+
+    # 이름을 지우면 라벨로 돌아간다
+    meeting_store.update_meta(u, s, mid, {"speakers": {"화자 1": "", "화자 2": "박영희"}})
+    본문 = reg.dispatch("read_meeting_transcript", {}, ctx).data["text"]
+    assert "화자 1: 예산은 3억" in 본문 and "박영희: 인건비" in 본문, 본문[:200]
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"
