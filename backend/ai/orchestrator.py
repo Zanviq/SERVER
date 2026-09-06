@@ -62,6 +62,17 @@ def _claims_without_doing(text: str, mutated: bool) -> bool:
     return bool(_DID_IT.search(tail))
 
 
+def _hard_block(finish_reason: str) -> bool:
+    """다시 물어도 같은 답이 올 자리인가.
+
+    안전 필터·인용 차단은 같은 프롬프트로 다시 불러도 같은 결과다 — 다시 부르는
+    것은 시간과 요금만 쓴다. 반대로 STOP 처럼 이유가 없는 빈 답은 다음 번에
+    멀쩡히 오는 일이 잦다(실측).
+    """
+    r = (finish_reason or "").upper()
+    return any(k in r for k in ("SAFETY", "BLOCK", "PROHIBITED", "RECITATION"))
+
+
 def _empty_answer_note(finish_reason: str) -> str:
     """두 번 물어도 빈 답이 왔을 때 사용자에게 할 말.
 
@@ -351,7 +362,11 @@ def run(
         # 아무것도 없는 답(글도 호출도 없음)이 이따금 온다. 예전에는 그대로
         # "응답을 생성하지 못했습니다"를 내밀어 사용자가 같은 말을 다시 쳐야 했다.
         # 사람이 할 일을 서버가 한다 — 한 번만 다시 물어본다.
-        for attempt in range(2):
+        # 빈 답은 **두 번까지** 다시 물어본다. 한 번만 다시 부르던 때에도 실측으로
+        # 두 번 연속 빈 답이 나왔다(같은 물음이 그 다음엔 멀쩡히 됐다). 사용자에게
+        # 빈 답은 완전한 막다른 길이라, 드물게 한 번 더 부르는 값이 그보다 싸다.
+        # 오류(붐빔 등)로 인한 재시도는 예전처럼 한 번만 — 그쪽은 대개 곧 낫지 않는다.
+        for attempt in range(3):
             sent_any = False  # 이번 시도에서 글자를 이미 화면에 흘렸는가
             if hasattr(llm, "stream"):
                 gen = llm.stream(contents, catalog, system)
@@ -378,9 +393,10 @@ def run(
                     logger.warning("일시적 AI 오류 — 한 번 다시 부른다: %s", result.error)
                     continue
                 break
-            if attempt == 0:
-                logger.warning("빈 응답(finish_reason=%s) — 한 번 다시 부른다",
-                               result.finish_reason or "?")
+            if _hard_block(result.finish_reason) or attempt >= 2:
+                break
+            logger.warning("빈 응답(finish_reason=%s) — 다시 부른다(%d/2)",
+                           result.finish_reason or "?", attempt + 1)
         last_finish = result.finish_reason or last_finish
         if result.error:
             # 상류(Gemini SDK)의 예외 문자열에는 경로·키·요청 본문이 섞일 수 있다.

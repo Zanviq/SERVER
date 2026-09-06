@@ -239,11 +239,33 @@ def check_calendar_reminder(s: Session) -> None:
             s.c.delete("/api/calendar/events/" + e["id"])
 
 
+def check_saved_dates(s: Session) -> None:
+    """상대 날짜를 **저장**할 때도 맞는가(45차).
+
+    말로 답하는 것보다 저장하는 쪽이 위험하다. 틀린 날짜가 할 일·회의에 박히면
+    사용자는 그날이 되어서야 안다. 할 일은 내부 저장소라 구글에 닿지 않는다.
+    """
+    import datetime
+
+    want = (datetime.date.today() + datetime.timedelta(days=100)).isoformat()
+    mark = f"날짜점검-{want}"
+    before = {t["id"] for t in s.get("/api/todo/list")}
+    s.clear("assistant")
+    s.ask(f"'{mark}' 라는 할 일을 100일 뒤 마감으로 만들어 줘.")
+    made = [t for t in s.get("/api/todo/list") if t["id"] not in before]
+    mine = [t for t in made if mark in str(t.get("title"))]
+    got = str(mine[0].get("due", "")) if mine else "(만들지 않음)"
+    ok("100일 뒤 마감을 그대로 저장한다", got.startswith(want), f"{got} (맞는 값 {want})")
+    for t in made:
+        s.c.delete(f"/api/todo/{t['id']}")
+
+
 CHECKS = [
     ("stream", "답이 흘러나오는가", check_stream),
     ("vocab", "시키지 않은 저장을 막는가", check_vocab),
     ("modes", "화면 밖 질문을 지어내지 않는가", check_modes),
     ("dates", "날짜를 제대로 세는가", check_dates),
+    ("saved_dates", "상대 날짜를 그대로 저장하는가", check_saved_dates),
     ("clock", "지금 몇 시인지 아는가", check_clock),
     ("context", "잘린 창 앞을 지어내지 않는가", check_context),
     ("papers", "논문 제목에 변명이 없는가", check_papers),

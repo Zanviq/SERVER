@@ -8178,11 +8178,17 @@ def test_recurring_events_appear_once_in_search():
     assert hits[0]["when"].endswith("-11-12"), hits[0]
 
 
-def test_an_empty_answer_is_retried_once_before_giving_up(monkeypatch):
+def test_an_empty_answer_is_retried_before_giving_up(monkeypatch):
     """모델이 이따금 글도 호출도 없는 답을 준다(실제로 겪었다).
 
     예전에는 그대로 "응답을 생성하지 못했습니다"를 내밀어 사용자가 같은 말을 다시
-    쳐야 했다. 사람이 할 일을 서버가 한다 — 한 번만 다시 부른다.
+    쳐야 했다. 사람이 할 일을 서버가 한다 — **두 번까지** 다시 부른다(한 번만
+    부르던 때에도 실측으로 두 번 연속 빈 답을 봤고, 같은 물음이 그 다음엔
+    멀쩡히 됐다). 빈 답은 사용자에게 완전한 막다른 길이라, 드물게 한 번 더
+    부르는 값이 그보다 싸다.
+
+    다만 **안전 필터·인용 차단은 다시 부르지 않는다** — 같은 프롬프트면 같은
+    결과라, 요금만 쓰고 사용자는 더 오래 기다린다.
     """
     from backend.ai import orchestrator
     from backend.ai.orchestrator import LLMResult, _empty_answer_note
@@ -8225,7 +8231,40 @@ def test_an_empty_answer_is_retried_once_before_giving_up(monkeypatch):
     events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
     text = next(e for e in events if e["type"] == "text")["text"]
     assert "안전 필터" in text, text        # 왜 막혔는지 말해 준다
-    assert llm2.n == 2, llm2.n            # 끝없이 다시 부르지 않는다
+    assert llm2.n == 1, llm2.n            # 안전 필터는 다시 불러도 같다 — 한 번으로 끝낸다
+
+    # 이유 없는 빈 답(STOP)은 두 번까지 다시 부른다
+    class EmptyTwiceThenFine:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, contents, catalog, system):
+            self.n += 1
+            if self.n < 3:
+                return LLMResult(text="", tool_use=None, finish_reason="STOP")
+            return LLMResult(text="세 번째에 답했습니다.", tool_use=None)
+
+    llm3 = EmptyTwiceThenFine()
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": llm3)
+    client.delete("/api/ai/space/assistant")
+    r = client.post("/api/ai/chat", json={"message": "안녕", "mode": "assistant"})
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+    assert next(e for e in events if e["type"] == "text")["text"] == "세 번째에 답했습니다."
+    assert llm3.n == 3, llm3.n
+
+    class NeverAnswers:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, contents, catalog, system):
+            self.n += 1
+            return LLMResult(text="", tool_use=None, finish_reason="STOP")
+
+    llm4 = NeverAnswers()
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": llm4)
+    client.delete("/api/ai/space/assistant")
+    client.post("/api/ai/chat", json={"message": "안녕", "mode": "assistant"})
+    assert llm4.n == 3, llm4.n            # 끝없이 다시 부르지 않는다
 
     # 이유별 안내
     assert "안전 필터" in _empty_answer_note("SAFETY")
