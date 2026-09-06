@@ -8544,6 +8544,96 @@ def test_no_store_writes_without_holding_the_lock():
     assert not offenders, "락 없이 저장한다:\n" + "\n".join(offenders)
 
 
+def test_no_skill_reads_a_value_then_writes_it_back():
+    """스킬이 "읽어서 → 고쳐서 → 되쓰기"를 하면 안 된다.
+
+    위의 검사는 **저장소 함수 하나**가 락 없이 쓰는지 본다. 그런데 논문 메모가
+    그 검사를 통과하면서도 겹쳐 쓰였다 — 스킬이 `get_paper()` 로 읽고, 이어 붙이고,
+    `update_meta()` 로 넘겼기 때문이다. 읽기도 쓰기도 각각은 안전한데 **그 사이**가
+    락 밖이라, 겹쳐 들어온 둘이 서로를 덮었다(실측: 동시 20건 중 1건만 남고
+    스킬은 20번 다 성공이라고 답했다).
+
+    합치는 일은 저장소가 락 안에서 해야 한다(meeting_store.write_doc(append=),
+    paper_store.update_meta(notes_append=) 처럼). 스킬은 "무엇을 더할지"만 넘긴다.
+    """
+    import ast
+    import pathlib
+
+    #: 읽어 오는 함수들 — 이것으로 받은 값을 고쳐서 되쓰면 그 사이가 위험하다
+    READS = {"get_paper", "find_paper", "get_meeting", "find_meeting", "read_doc",
+             "read_transcript", "list_words", "load", "read_json", "read_json_strict"}
+    #: 통째로 덮어쓰는 함수들
+    WRITES = {"update_meta", "write_doc", "save", "replace_word", "_save"}
+    def names_in(node) -> set[str]:
+        return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+    def calls_in(node) -> set[str]:
+        return {
+            n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
+            for n in ast.walk(node) if isinstance(n, ast.Call)
+        }
+
+    def scan(source: str, label: str) -> list[str]:
+        found = []
+        tree = ast.parse(source)
+        for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+            # 읽어 온 값이 **쓰기의 인자까지 흘러가는지**만 본다. 읽기를 검사용으로만
+            # 쓰는 곳(write_meeting_doc 의 '되쓰면 잘리는가' 확인)까지 걸면, 진짜
+            # 결함이 잡음에 묻혀 이 검사가 곧 꺼진다.
+            tainted: set[str] = set()
+            for n in ast.walk(fn):
+                if not isinstance(n, (ast.Assign, ast.AugAssign)):
+                    continue
+                if calls_in(n.value) & READS or names_in(n.value) & tainted:
+                    targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+                    for t in targets:
+                        tainted |= names_in(t)
+            for n in ast.walk(fn):
+                if not isinstance(n, ast.Call):
+                    continue
+                name = n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
+                if name not in WRITES:
+                    continue
+                실린것 = set()
+                for a in list(n.args) + [k.value for k in n.keywords]:
+                    실린것 |= names_in(a) & tainted
+                    if calls_in(a) & READS:
+                        실린것.add("(직접)")
+                if 실린것:
+                    found.append(f"{label}:{fn.lineno} {fn.name} "
+                                 f"→ {name}({', '.join(sorted(실린것))})")
+        return found
+
+    # 검사기가 실제로 그 모양을 잡는지 먼저 확인한다. 이런 검사는 조용히
+    # 아무것도 안 잡는 상태가 되기 쉽고, 그러면 있으나 마나다.
+    나쁜예 = """
+def run(self, args, ctx):
+    cur = dict(meeting_store.get_meeting(u, s, mid).get("speakers") or {})
+    cur.update(args["speakers"])
+    patch = {}
+    patch["speakers"] = cur
+    return meeting_store.update_meta(u, s, mid, patch)
+"""
+    assert scan(나쁜예, "나쁜예"), "검사기가 읽고-되쓰기를 못 잡는다"
+    좋은예 = """
+def run(self, args, ctx):
+    cur = meeting_store.read_doc(u, s, mid, name)["content"]
+    if len(cur) > 100 >= len(content):
+        return SkillResult(ok=False)
+    return meeting_store.write_doc(u, s, mid, name, content)
+"""
+    assert not scan(좋은예, "좋은예"), "검사용으로만 읽은 것까지 잡으면 잡음에 묻힌다"
+
+    root = pathlib.Path(__file__).resolve().parent / "ai" / "skills"
+    offenders = []
+    for path in sorted(root.glob("*.py")):
+        offenders += scan(path.read_text(encoding="utf-8"), path.name)
+    assert not offenders, (
+        "읽어 온 값을 그대로 되쓰고 있다 — 그 사이에 들어온 변경을 덮는다.\n"
+        "저장소가 락 안에서 합치게 하고, 스킬은 더할 것만 넘긴다:\n" + "\n".join(offenders)
+    )
+
+
 def test_origin_backfill_does_not_overwrite_a_concurrent_approval(monkeypatch):
     """읽기 경로의 백필이 그 사이에 저장된 승인을 덮으면 안 된다.
 
@@ -9113,6 +9203,25 @@ def test_naming_a_speaker_reaches_every_place_that_shows_them(monkeypatch):
     meeting_store.update_meta(u, s, mid, {"speakers": {"화자 1": "", "화자 2": "박영희"}})
     본문 = reg.dispatch("read_meeting_transcript", {}, ctx).data["text"]
     assert "화자 1: 예산은 3억" in 본문 and "박영희: 인건비" in 본문, 본문[:200]
+
+    # **한꺼번에 여러 명을 붙여도 다 남는다.** 모델은 "1번은 김철수, 2번은
+    # 박영희야" 한 마디에 이 도구를 나란히 여러 번 부른다(Gemini 는 함수 호출을
+    # 병렬로 낸다). 스킬이 밖에서 읽어 합치면 서로를 덮어 한 명만 남았다.
+    from concurrent.futures import ThreadPoolExecutor
+
+    meeting_store.update_meta(u, s, mid, {"speakers": {}})
+    많은이름 = {f"화자 {i}": f"사람{i}" for i in range(1, 9)}
+    with ThreadPoolExecutor(max_workers=len(많은이름)) as ex:
+        rs = list(ex.map(lambda kv: reg.dispatch("update_meeting_info",
+                                                 {"speakers": {kv[0]: kv[1]}}, ctx),
+                         많은이름.items()))
+    assert all(r.ok for r in rs), [r.message for r in rs if not r.ok]
+    붙은것 = meeting_store.get_meeting(u, s, mid)["speakers"]
+    assert 붙은것 == 많은이름, f"동시에 붙인 이름이 사라졌다: {붙은것}"
+
+    # 화면에서 통째로 바꾸는 길(PUT)은 여전히 통째로 바꾼다
+    meeting_store.update_meta(u, s, mid, {"speakers": {"화자 1": "혼자만"}})
+    assert meeting_store.get_meeting(u, s, mid)["speakers"] == {"화자 1": "혼자만"}
 
 
 def test_paper_notes_appends_do_not_overwrite_each_other():

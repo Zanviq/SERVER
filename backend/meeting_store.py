@@ -282,6 +282,19 @@ def update_meta(user: SessionUser, settings: Settings, mid: str, patch: dict) ->
             m["error"] = _s(patch["error"], 300)
         if "speakers" in patch and isinstance(patch["speakers"], dict):
             m["speakers"] = {_s(k, 60): _s(v, 60) for k, v in patch["speakers"].items() if _s(k, 60)}
+        # 이름 하나만 더 붙이는 길. **이 락 안에서 합친다.**
+        #
+        # 스킬이 밖에서 읽어 합친 뒤 통째로 넘기고 있었는데, 모델은 "화자 1은
+        # 김철수, 화자 2는 박영희야" 한 마디에 도구를 **동시에 두 번** 부른다
+        # (Gemini 는 함수 호출을 나란히 낸다). 그러면 둘이 서로를 덮어 한 사람
+        # 이름만 남는다 — 사용자는 다시 붙여야 하고, 왜 하나만 됐는지 모른다.
+        if isinstance(patch.get("speakers_merge"), dict):
+            merged = dict(m.get("speakers") or {})
+            for k, v in patch["speakers_merge"].items():
+                key = _s(k, 60)
+                if key:
+                    merged[key] = _s(v, 60)
+            m["speakers"] = merged
         if "status" in patch and patch["status"] in (STATUS_PENDING, STATUS_READY, STATUS_FAILED):
             m["status"] = patch["status"]
         for k in ("transcribed_at", "duration"):

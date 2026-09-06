@@ -402,12 +402,10 @@ class UpdateMeetingInfo(SkillBase):
             return SkillResult(ok=False, message="meeting_id 가 필요합니다.", error_code="invalid")
         patch = {k: args[k] for k in ("title", "category", "date", "summary") if args.get(k) is not None}
         if isinstance(args.get("speakers"), dict):
-            try:
-                cur = dict(meeting_store.get_meeting(ctx.user, ctx.settings, mid).get("speakers") or {})
-            except Exception as e:  # noqa: BLE001
-                return _fail(e)
-            cur.update({str(k): str(v) for k, v in args["speakers"].items()})
-            patch["speakers"] = cur
+            # **여기서 읽어 합치지 않는다.** 모델은 "화자 1은 김철수, 화자 2는
+            # 박영희야" 한 마디에 이 도구를 나란히 두 번 부르는데, 각자 읽어
+            # 합치면 서로를 덮어 한 사람 이름만 남는다. 저장소가 락 안에서 합친다.
+            patch["speakers_merge"] = {str(k): str(v) for k, v in args["speakers"].items()}
         if not patch:
             return SkillResult(ok=False, message="바꿀 내용이 없습니다.", error_code="invalid")
         if "date" in patch and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(patch["date"])):
