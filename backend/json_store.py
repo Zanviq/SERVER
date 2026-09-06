@@ -30,8 +30,8 @@ def lock_for(path: Path) -> threading.Lock:
         return lk
 
 
-def write_atomic(path: Path, data, *, create_parents: bool = True) -> None:
-    """같은 디렉토리 임시파일에 쓴 뒤 os.replace로 원자 교체.
+def _parent_ready(path: Path, create_parents: bool) -> None:
+    """쓸 자리의 부모 폴더를 마련한다 — 또는 없는 대로 실패한다.
 
     `create_parents=False` 는 **없는 폴더를 되살리지 않는다.** 논문·회의처럼
     "폴더 하나가 곧 그 항목"인 자리에서는 폴더를 만드는 것이 곧 항목을 되살리는
@@ -43,6 +43,11 @@ def write_atomic(path: Path, data, *, create_parents: bool = True) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
     elif not path.parent.is_dir():
         raise FileNotFoundError(f"저장할 폴더가 없습니다: {path.parent}")
+
+
+def write_atomic(path: Path, data, *, create_parents: bool = True) -> None:
+    """같은 디렉토리 임시파일에 쓴 뒤 os.replace로 원자 교체."""
+    _parent_ready(path, create_parents)
     # 이름이 PID만이면 같은 프로세스의 스레드끼리 같은 임시파일을 쓴다
     tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}.{uuid.uuid4().hex[:8]}")
     try:
@@ -71,12 +76,9 @@ def write_text_atomic(path: Path, text: str, *, create_parents: bool = True) -> 
     문서 저장이 plain write_text였다. 쓰는 도중 죽으면 파일이 잘린 채 남고,
     같은 문서에 두 요청이 겹치면 서로를 덮어썼다.
 
-    `create_parents` 는 write_atomic 과 같은 뜻이다.
+    `create_parents` 는 write_atomic 과 같은 뜻이다(_parent_ready).
     """
-    if create_parents:
-        path.parent.mkdir(parents=True, exist_ok=True)
-    elif not path.parent.is_dir():
-        raise FileNotFoundError(f"저장할 폴더가 없습니다: {path.parent}")
+    _parent_ready(path, create_parents)
     tmp = path.with_name(path.name + f".tmp{os.getpid()}.{uuid.uuid4().hex[:8]}")
     try:
         # newline="" 이 없으면 파이썬이 줄바꿈을 os.linesep 으로 바꿔 쓴다.
