@@ -9330,6 +9330,45 @@ def test_the_screens_own_examples_all_offer_vocabulary_candidates():
     assert not vocab_suggest.should_suggest("english", "adequate", "네?", already=False)
 
 
+def test_the_meeting_screens_own_examples_can_still_make_documents():
+    """화면이 권하는 "문서를 만들어줘"는 **막히면 안 된다.**
+
+    6차에 "요약해 줘"가 시키지도 않은 문서를 만드는 것을 구조로 막았다
+    (`_asked_to_save`). 그 장치가 너무 빡빡하면 이번에는 반대로, 화면이 스스로
+    권하는 단추를 눌러도 아무 문서도 안 생긴다 — 사용자는 눌렀는데 왜 아무 일도
+    없는지 모른다. 37차에 영어 화면에서 정확히 그런 일을 봤다.
+
+    화면의 예시 목록을 **소스에서 읽어** 확인한다.
+    """
+    import pathlib
+    import re as _re
+
+    from backend.ai.skills.meetings import _asked_to_save
+    from backend.ai.skill_base import SkillContext
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="예시확인", display_name="E", expires_at=0, remaining=0)
+    asked = lambda m: _asked_to_save(  # noqa: E731
+        SkillContext(user=u, settings=s, today="2026-09-07", user_message=m))
+
+    tsx = (pathlib.Path(__file__).resolve().parent.parent
+           / "frontend" / "src" / "pages" / "Meetings.tsx").read_text(encoding="utf-8")
+    block = tsx[tsx.index("const SUGGESTIONS"):tsx.index("];", tsx.index("const SUGGESTIONS"))]
+    예시 = _re.findall(r'"([^"]+)"', block)
+    assert len(예시) >= 4, 예시
+
+    문서를시키는것 = [m for m in 예시 if "문서" in m or "만들어" in m]
+    assert 문서를시키는것, 예시
+    막힌것 = [m for m in 문서를시키는것 if not asked(m)]
+    assert not 막힌것, f"화면이 권하는데 문서를 못 만든다: {막힌것}"
+
+    # 반대쪽도 그대로다 — 시키지 않았으면 만들지 않는다(6차)
+    for m in ("이 회의를 3줄로 요약해줘", "화자별로 무슨 말을 했는지 정리해줘", "이 회의 정리해 줘"):
+        assert not asked(m), m
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"
