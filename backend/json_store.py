@@ -30,9 +30,19 @@ def lock_for(path: Path) -> threading.Lock:
         return lk
 
 
-def write_atomic(path: Path, data) -> None:
-    """같은 디렉토리 임시파일에 쓴 뒤 os.replace로 원자 교체."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+def write_atomic(path: Path, data, *, create_parents: bool = True) -> None:
+    """같은 디렉토리 임시파일에 쓴 뒤 os.replace로 원자 교체.
+
+    `create_parents=False` 는 **없는 폴더를 되살리지 않는다.** 논문·회의처럼
+    "폴더 하나가 곧 그 항목"인 자리에서는 폴더를 만드는 것이 곧 항목을 되살리는
+    것이라, 지운 뒤 늦게 끝난 백그라운드 작업이 목록에도 휴지통에도 없는 미아를
+    남긴다(실측: 받아쓰기 도중 지운 회의 4건이 transcript.json 만 든 폴더로
+    되살아나 있었다 — 사용자가 지운 회의 내용이 지울 수 없는 채 디스크에 남는다).
+    """
+    if create_parents:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    elif not path.parent.is_dir():
+        raise FileNotFoundError(f"저장할 폴더가 없습니다: {path.parent}")
     # 이름이 PID만이면 같은 프로세스의 스레드끼리 같은 임시파일을 쓴다
     tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}.{uuid.uuid4().hex[:8]}")
     try:
@@ -55,13 +65,18 @@ def write_atomic(path: Path, data) -> None:
         raise
 
 
-def write_text_atomic(path: Path, text: str) -> None:
+def write_text_atomic(path: Path, text: str, *, create_parents: bool = True) -> None:
     """텍스트를 원자적으로 쓴다(같은 디렉터리 임시파일 + os.replace).
 
     문서 저장이 plain write_text였다. 쓰는 도중 죽으면 파일이 잘린 채 남고,
     같은 문서에 두 요청이 겹치면 서로를 덮어썼다.
+
+    `create_parents` 는 write_atomic 과 같은 뜻이다.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if create_parents:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    elif not path.parent.is_dir():
+        raise FileNotFoundError(f"저장할 폴더가 없습니다: {path.parent}")
     tmp = path.with_name(path.name + f".tmp{os.getpid()}.{uuid.uuid4().hex[:8]}")
     try:
         # newline="" 이 없으면 파이썬이 줄바꿈을 os.linesep 으로 바꿔 쓴다.

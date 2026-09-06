@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from .. import meeting_store, meeting_transcribe
+from .. import meeting_store, meeting_transcribe, orphans
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 
@@ -53,6 +53,9 @@ def list_meetings(
 ):
     items = meeting_store.list_meetings(user, settings)
     _requeue_stale(user, settings, items)
+    orphans.sweep(meeting_store.root(user, settings),
+                  {str(m.get("id") or "") for m in items}, "audio.",
+                  key=f"meetings:{user.username}")
     return items
 
 

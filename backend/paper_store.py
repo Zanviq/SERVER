@@ -212,6 +212,9 @@ def register(user: SessionUser, settings: Settings, filename: str, size: int,
     meta = _new_meta(sanitize_filename(filename), size)
     if pid:
         meta["id"] = pid
+    # 목록에 있으면 폴더도 있다(회의와 같은 규칙) — 대화·본문 저장이 폴더 없음을
+    # "지워졌다"로 읽을 수 있어야 지운 논문을 되살리지 않는다.
+    paper_dir(user, settings, meta["id"]).mkdir(parents=True, exist_ok=True)
     with json_store.lock_for(idx):
         papers = _load(user, settings)
         if len(papers) >= MAX_PAPERS:

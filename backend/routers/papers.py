@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from .. import paper_extract, paper_store
+from .. import orphans, paper_extract, paper_store
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 
@@ -58,6 +58,9 @@ def list_papers(
 ):
     papers = paper_store.list_papers(user, settings)
     _requeue_stale(user, settings, papers)
+    orphans.sweep(paper_store.root(user, settings),
+                  {str(p.get("id") or "") for p in papers}, paper_store.PDF_NAME,
+                  key=f"papers:{user.username}")
     return papers
 
 

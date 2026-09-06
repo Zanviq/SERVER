@@ -40,8 +40,10 @@ def load(path: Path) -> list[dict]:
 
 
 def _save(path: Path, msgs: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    json_store.write_atomic(path, {"messages": msgs[-MAX_MESSAGES:]})
+    # **폴더를 만들지 않는다.** 논문·회의 대화는 그 항목 폴더 안에 있어서, 폴더를
+    # 만드는 것이 곧 지워진 항목을 되살리는 것이다(목록에도 휴지통에도 없는 미아가
+    # 된다). 고정 공간(영어 학습 등)의 chats/ 는 위 경로 함수들이 미리 만든다.
+    json_store.write_atomic(path, {"messages": msgs[-MAX_MESSAGES:]}, create_parents=False)
 
 
 def message(role: str, text: str, meta: dict | None = None) -> dict:

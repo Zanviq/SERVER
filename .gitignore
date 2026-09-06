@@ -51,3 +51,10 @@ _devserver.ps1
 /_*.log
 /_*.sh
 /_*/
+
+# 검증 루프에서 잠깐 쓰는 탐침·작업 폴더
+_probe*.py
+_pi.py
+_routes.py
+_uv.err
+.claude/worktrees/

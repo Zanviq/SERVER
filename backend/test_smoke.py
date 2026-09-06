@@ -8697,6 +8697,128 @@ def test_disk_full_says_disk_full(monkeypatch):
     assert "AIzaSy" not in r.text and "/srv/" not in r.text, r.text
 
 
+def test_deleting_a_meeting_mid_transcription_leaves_nothing_behind():
+    """지운 회의가 폴더로 되살아나면 안 된다.
+
+    받아쓰기는 몇 분씩 걸린다. 그 사이 사용자가 회의를 지우면, 늦게 끝난 스레드가
+    transcript.json 을 쓰면서 **원자적 쓰기의 mkdir(parents=True) 이 회의 폴더를
+    다시 만들었다.** 그 폴더는 목록에도 휴지통에도 없어서 사용자가 지울 방법이
+    없다 — 지운 회의에서 오간 말이 디스크에 영영 남는다(실측 4건).
+    """
+    import pytest
+    from fastapi import HTTPException
+
+    from backend import meeting_store, meeting_transcribe
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="지운회의", display_name="G", expires_at=0, remaining=0)
+    mid = meeting_store.new_id()
+    d = meeting_store.meeting_dir(u, s, mid)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "audio.wav").write_bytes(b"RIFF0000WAVE")
+    meeting_store.register(u, s, filename="a.wav", mime="audio/wav", size=12, ext="wav",
+                           day="2026-09-07", mid=mid)
+
+    seg = [{"start": "00:00", "end": "00:02", "speaker": "화자 1", "text": "비밀 이야기"}]
+
+    def slow_ask(settings, audio, mime):
+        # 모델이 답하는 동안 사용자가 지운다 — 실제로 일어나는 순서 그대로
+        meeting_store.delete_meeting(u, s, mid)
+        return {"segments": seg, "summary": "요약"}
+
+    meeting_transcribe.run_sync(u, s, mid, asker=slow_ask)
+
+    assert not d.exists(), f"지운 회의 폴더가 되살아났다: {list(d.iterdir()) if d.exists() else ''}"
+    assert not any(m.get("id") == mid for m in meeting_store.list_meetings(u, s))
+    # 문서 쓰기도 같은 길이다(mkdir 이 부모째 만들지 않는지)
+    with pytest.raises(HTTPException):
+        meeting_store.write_doc(u, s, mid, "요약", "되살아나면 안 된다")
+    assert not d.exists()
+
+
+def test_a_folder_left_behind_is_cleaned_up_but_an_upload_in_progress_is_not():
+    """미아는 치우되, 올리는 중인 것은 건드리지 않는다.
+
+    지우는 것은 사용자 자료다. 조건이 하나라도 어긋나면 손대지 않는 편이,
+    올리는 중인 논문을 삼키는 것보다 낫다.
+    """
+    import time as _time
+    from pathlib import Path as _Path
+
+    from backend import orphans, paper_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="미아정리", display_name="O", expires_at=0, remaining=0)
+    base = paper_store.root(u, s)
+    base.mkdir(parents=True, exist_ok=True)
+    old = _time.time() - 7200
+
+    def make(name: str, files: dict, age: float) -> _Path:
+        d = base / name
+        d.mkdir(parents=True, exist_ok=True)
+        for n, b in files.items():
+            (d / n).write_bytes(b)
+        os.utime(d, (age, age))
+        return d
+
+    미아 = make(paper_store.new_id(), {"text.txt": "버려진 본문".encode()}, old)
+    살아있음 = make(paper_store.new_id(), {"paper.pdf": b"%PDF"}, old)
+    올리는중 = make(paper_store.new_id(), {"paper.pdf.upload1.ab": b"%PDF"}, _time.time())
+    실물있는미아 = make(paper_store.new_id(), {"paper.pdf": b"%PDF"}, old)
+    사람폴더 = make("내가만든폴더", {"메모.txt": "내 것".encode()}, old)
+
+    removed = orphans.sweep(base, {살아있음.name}, paper_store.PDF_NAME)
+
+    assert 미아.name in removed and not 미아.exists()
+    assert 살아있음.exists(), "색인에 있는 것을 지웠다"
+    assert 올리는중.exists(), "올리는 중인 폴더를 지웠다 — 사용자의 논문이 사라진다"
+    assert 실물있는미아.exists(), "실물이 있으면 색인이 어긋난 것일 수 있어 두고 본다"
+    assert 사람폴더.exists(), "id 모양이 아닌 폴더는 우리 것이 아니다"
+
+    # 같은 열쇠로는 곧바로 다시 훑지 않는다(목록 요청마다 디스크를 뒤지지 않게)
+    또미아 = make(paper_store.new_id(), {"text.txt": "또".encode()}, old)
+    assert orphans.sweep(base, set(), paper_store.PDF_NAME, key="같은열쇠") != []
+    assert orphans.sweep(base, set(), paper_store.PDF_NAME, key="같은열쇠") == []
+    assert not 또미아.exists()
+
+
+def test_a_paper_chat_does_not_recreate_a_deleted_paper():
+    """지운 논문에 대화를 남기면 폴더가 되살아났다 — 영어 학습 대화는 그대로 저장된다."""
+    import shutil
+
+    import pytest
+
+    from backend import chat_store, paper_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="지운논문", display_name="P", expires_at=0, remaining=0)
+    pid = paper_store.new_id()
+    d = paper_store.paper_dir(u, s, pid)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / paper_store.PDF_NAME).write_bytes(b"%PDF-1.4")
+    paper_store.register(u, s, "논문.pdf", 8, pid=pid)
+    path = paper_store.chat_path(u, s, pid)
+    chat_store.append(path, chat_store.message("user", "이 논문 요약해 줘"))
+    assert chat_store.load(path)
+
+    paper_store.delete_paper(u, s, pid)
+    with pytest.raises(FileNotFoundError):
+        chat_store.append(path, chat_store.message("user", "지운 뒤에 온 말"))
+    assert not d.exists(), "지운 논문 폴더가 대화 저장으로 되살아났다"
+
+    # 고정 공간(영어 학습)은 chats/ 가 없어도 그대로 저장돼야 한다
+    eng = chat_store.english_path(u, s)
+    shutil.rmtree(eng.parent, ignore_errors=True)
+    chat_store.append(chat_store.english_path(u, s), chat_store.message("user", "hello"))
+    assert chat_store.load(chat_store.english_path(u, s))
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"

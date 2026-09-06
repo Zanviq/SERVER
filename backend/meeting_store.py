@@ -214,7 +214,11 @@ def read_transcript(user: SessionUser, settings: Settings, mid: str) -> dict:
 
 
 def write_transcript(user: SessionUser, settings: Settings, mid: str, segments: list[dict], text: str) -> None:
-    json_store.write_atomic(transcript_path(user, settings, mid), {"segments": segments, "text": text})
+    # 받아쓰기는 몇 분씩 걸린다. 그 사이 사용자가 회의를 지웠으면 **폴더를 다시
+    # 만들지 않는다** — 만들면 목록에도 휴지통에도 없는 폴더에 회의 내용이 남아
+    # 사용자가 지울 수 없게 된다(실측 4건). 부르는 쪽이 FileNotFoundError 를 본다.
+    json_store.write_atomic(transcript_path(user, settings, mid),
+                            {"segments": segments, "text": text}, create_parents=False)
 
 
 def transcript_text(user: SessionUser, settings: Settings, mid: str, speakers: dict | None = None) -> str:
@@ -247,6 +251,10 @@ def register(user: SessionUser, settings: Settings, *, filename: str, mime: str,
     meta = _new_meta(sanitize_filename(filename), mime, size, ext, check_date(day), title, category)
     if mid:
         meta["id"] = mid
+    # 목록에 있으면 폴더도 있다 — 그래야 받아쓰기·문서 저장이 "폴더가 없으면
+    # 지워진 것"이라고 믿고 되살리지 않을 수 있다. 지금까지는 올리는 쪽만 폴더를
+    # 만들어서, 목록에는 있는데 폴더가 없는 회의가 만들어질 수 있었다.
+    meeting_dir(user, settings, meta["id"]).mkdir(parents=True, exist_ok=True)
     with json_store.lock_for(idx):
         items = _load(user, settings)
         if len(items) >= MAX_MEETINGS:
@@ -395,7 +403,11 @@ def write_doc(user: SessionUser, settings: Settings, mid: str, name: str, conten
     """
     get_meeting(user, settings, mid)
     p = _doc_path(user, settings, mid, name)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    # 회의 폴더가 있을 때만 docs/ 를 만든다. 위 확인과 여기 사이에 삭제가 끼면
+    # mkdir(parents=True) 가 회의 폴더째 되살려 미아를 만든다(transcript 와 같은 결함).
+    if not meeting_dir(user, settings, mid).is_dir():
+        raise HTTPException(status_code=404, detail="회의를 찾을 수 없습니다.")
+    p.parent.mkdir(exist_ok=True)
     # **읽고-고쳐-쓰기 전체를 잠근다.**
     #
     # 이어 쓰기(append)는 옛 본문을 읽어 뒤에 붙이는데, 락이 없으면 동시에 들어온

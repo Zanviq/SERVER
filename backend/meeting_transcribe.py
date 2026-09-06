@@ -182,7 +182,12 @@ def run_sync(user: SessionUser, settings: Settings, mid: str, *, asker=None) -> 
             "status": meeting_store.STATUS_FAILED, "error": "AI 응답을 해석하지 못했습니다.",
         })
     text = "\n".join(f"{s['speaker']}: {s['text']}" if s["speaker"] else s["text"] for s in segments)
-    meeting_store.write_transcript(user, settings, mid, segments, text)
+    try:
+        meeting_store.write_transcript(user, settings, mid, segments, text)
+    except FileNotFoundError:
+        # 받아쓰는 동안 사용자가 회의를 지웠다. 지운 것을 되살려 적지 않는다.
+        logger.info("받아쓰기가 끝나기 전에 회의가 지워졌다: %s", mid)
+        return {"id": mid, "status": "gone"}
     return meeting_store.update_meta(user, settings, mid, {
         "status": meeting_store.STATUS_READY, "error": "", "transcribed_at": time.time(),
         "summary": str(info.get("summary") or ""), "segments": len(segments),
