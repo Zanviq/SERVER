@@ -6092,6 +6092,56 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
     return buf.getvalue()
 
 
+def test_paper_notes_never_hold_an_it_was_not_extracted_excuse():
+    """"정보가 추출되지 않았습니다"는 메모가 아니다.
+
+    추출이 실패한 논문에서 "메모해 둬"를 시키면 모델이 "아직 핵심 발견·방법·
+    한계 정보는 추출되지 않았습니다"를 **메모에 적어 넣었다**(실측 2/6). 메모는
+    덧붙이는 자리라 그런 줄이 쌓이고 사용자가 손으로 지워야 한다. 90차에 논문
+    **제목**에서 막은 결함이 자리만 옮긴 것이다.
+
+    막는 조건은 좁게 둔다 — **놓치는 쪽이 지우는 쪽보다 낫다.** 잘못 막으면
+    사용자가 부탁한 메모가 사라지고, 놓치면 지저분한 줄이 하나 남을 뿐이다.
+    """
+    from backend import paper_store
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.ai.skills.papers import _is_excuse
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    # 설명으로 보는 것 / 진짜 메모로 보는 것
+    for text in ("아직 핵심 발견, 방법, 한계, 섹션 등의 정보는 추출되지 않았습니다.",
+                 "이 논문의 요약이 아직 추출되지 않았습니다",
+                 "본문 내용을 확인할 수 없습니다."):
+        assert _is_excuse(text), text
+    for text in ("트랜스포머는 어텐션만으로 만든 모델이다. 재귀와 합성곱을 쓰지 않는다.",
+                 "이 논문은 한계가 명확하지 않다는 점이 아쉽다. 실험도 영어 데이터뿐이다.",
+                 "3쪽 self-attention 정의 다시 볼 것",
+                 # 긴 메모 안에 그런 문장이 한 줄 섞이는 것은 정상이다
+                 "저자들이 밝힌 한계: 긴 문서에서는 성능이 떨어진다는 정보가 없습니다. "
+                 "그래서 후속 연구에서 확인이 필요하다고 본다. 내 생각에는 이 부분이 이 "
+                 "논문의 가장 약한 고리이고, 다음 주 세미나에서 물어봐야겠다."):
+        assert not _is_excuse(text), text
+
+    s = get_settings()
+    u = SessionUser(username="papernote", display_name="P", expires_at=0, remaining=0)
+    pid = paper_store.register(u, s, "note.pdf", 100)["id"]
+    ctx = SkillContext(user=u, settings=s, today="2026-09-07", mode="paper", paper_id=pid,
+                       user_message="핵심 내용 메모해 둬")
+    reg = default_registry()
+
+    bad = reg.dispatch("set_paper_notes",
+                       {"notes": "이 논문의 요약이 아직 추출되지 않았습니다."}, ctx)
+    assert not bad.ok and bad.error_code == "nothing_to_note", bad
+    assert not (paper_store.find_paper(u, s, pid) or {}).get("notes"), "설명이 메모에 남았다"
+
+    good = reg.dispatch("set_paper_notes",
+                        {"notes": "어텐션만으로 만든 구조. 3쪽 정의 다시 볼 것."}, ctx)
+    assert good.ok, good
+    assert "어텐션만으로" in (paper_store.find_paper(u, s, pid) or {})["notes"]
+
+
 def test_asking_for_a_summary_does_not_create_a_meeting_document():
     """"요약해 줘"는 말로 답하라는 뜻이지 문서를 만들라는 뜻이 아니다.
 

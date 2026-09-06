@@ -229,6 +229,46 @@ class SearchPaperChats(SkillBase):
         return SkillResult(ok=True, message=msg, data={"hits": hits, "truncated": capped})
 
 
+#: 메모 자리에 들어온 "못 읽었다"는 설명을 알아보는 규칙.
+#:
+#: 논문 추출에서 쓰는 것과 **같은 두 신호**를 쓴다(paper_extract._drop_refusals):
+#: 못 하겠다는 말 + 그 대상이 문서·정보라는 말. 한쪽만 보면 진짜 메모를 막는다
+#: ("이 논문은 한계가 명확하지 않다"는 사용자가 적을 법한 메모다).
+#:
+#: 길이도 함께 본다. 긴 메모 안에 그런 문장이 한 줄 섞이는 것은 정상이고,
+#: **메모 전체가** 그 설명뿐일 때만 막는다.
+_EXCUSE_VERB = re.compile(
+    r"추출되지 않|추출하지 못|제공되지 않|확인할 수 없|읽을 수 없|찾을 수 없"
+    r"|없습니다|아직 없|비어 있|not (?:provided|available|extracted)|unable to|no content",
+    re.I,
+)
+_EXCUSE_SUBJECT = re.compile(
+    r"정보|내용|요약|본문|논문|문서|핵심|발견|방법|한계|섹션"
+    r"|information|content|summary|abstract|paper|document",
+    re.I,
+)
+#: 이보다 길거나 문장이 많으면 설명이 섞인 진짜 메모로 본다.
+#:
+#: **놓치는 쪽이 지우는 쪽보다 낫다**(90차와 같은 판단). 잘못 막으면 사용자가
+#: 부탁한 메모가 사라지고, 놓치면 지저분한 줄이 하나 남을 뿐이다. 그래서 실제로
+#: 본 실패의 모양 — **한 문장짜리 짧은 설명** — 에만 걸리게 좁힌다.
+#: ("…성능이 떨어진다는 정보가 없습니다. 그래서 후속 연구에서…" 같은 여러 문장
+#:  짜리 진짜 메모를 막던 것을 실측으로 잡아 이 조건을 붙였다.)
+_EXCUSE_MAX_CHARS = 200
+_EXCUSE_MAX_SENTENCES = 2
+_SENTENCE_END = re.compile(r"[.!?…]|다\s*$|다[\s\n]", re.M)
+
+
+def _is_excuse(text: str) -> bool:
+    """메모가 아니라 '정보가 없다'는 설명인가."""
+    body = (text or "").strip()
+    if not body or len(body) > _EXCUSE_MAX_CHARS:
+        return False
+    if len(_SENTENCE_END.findall(body)) > _EXCUSE_MAX_SENTENCES:
+        return False
+    return bool(_EXCUSE_VERB.search(body) and _EXCUSE_SUBJECT.search(body))
+
+
 class SetPaperNotes(SkillBase):
     mutates = "papers"
     name = "set_paper_notes"
@@ -254,6 +294,19 @@ class SetPaperNotes(SkillBase):
         notes = str(args.get("notes") or "").strip()
         if not notes:
             return SkillResult(ok=False, message="메모 내용이 없습니다.", error_code="invalid")
+        if _is_excuse(notes):
+            # **"못 읽었다"는 말은 메모가 아니다.** 추출이 실패한 논문에서
+            # "메모해 둬"를 시키면 모델이 "아직 핵심 발견·방법·한계 정보는
+            # 추출되지 않았습니다"를 메모에 적어 넣었다(실측). 메모는 덧붙이는
+            # 자리라 그런 줄이 쌓이고, 사용자가 손으로 지워야 한다.
+            # 90차에 논문 제목에서 막은 것과 같은 결함이 자리만 옮긴 것이다.
+            return SkillResult(
+                ok=False,
+                error_code="nothing_to_note",
+                message=("메모에 적을 내용이 아니라 '정보가 없다'는 설명입니다 — 저장하지 "
+                         "않았습니다. 그 사실은 **답으로 말하고**, 무엇을 메모할지 "
+                         "물어보거나 read_paper_text 로 본문을 읽어 내용을 만드세요."),
+            )
         try:
             cur = str(paper_store.get_paper(ctx.user, ctx.settings, pid).get("notes") or "").rstrip()
             # **이미 적어 둔 메모를 덮지 않는다.** 논문 메모는 사용자가 손으로 쓴
