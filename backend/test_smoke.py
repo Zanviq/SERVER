@@ -6139,6 +6139,10 @@ def test_usage_shows_numbers_and_never_content():
         assert {"from": "/calendar", "to": "/notes", "count": 1} in got["moves"], got["moves"]
         assert got["counts"]["documents"] >= 1 and isinstance(got["counts"]["events"], int)
         assert isinstance(got["context"]["chars"], int)
+        # 이름만으로 부를 때도(주인이 남의 것을 볼 때) 같은 값이 나와야 한다.
+        # 문자열을 그대로 저장소에 넘기면 예외를 삼킨 예비 경로로 빠져 턴 수가
+        # 0 이 되고 글자 수는 파일 크기가 된다 — 조용히 틀린 수치가 나온다.
+        assert usage.summary("tester", s)["context"] == got["context"]
         # 값이 전부 수치인가(문자열은 이름·달·화면 이름뿐)
         for v in got["counts"].values():
             assert isinstance(v, int), got["counts"]

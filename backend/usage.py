@@ -201,17 +201,30 @@ def _counts(user, settings: Settings) -> dict:
     return out
 
 
+def _as_user(user) -> SessionUser:
+    """이름만 있어도 저장소가 받는 모양으로 만든다.
+
+    주인이 **남의** 사용량을 볼 때는 이름(문자열)만 있다. 저장소 함수들은
+    SessionUser 를 기대하므로 문자열을 그대로 넘기면 AttributeError 가 나고,
+    감싸 둔 except 가 그것을 삼켜 **수치가 조용히 틀린다**(턴 수는 0인데 글자
+    수는 파일 크기로 잡히는 식으로). 실제로 그렇게 나왔다.
+    """
+    if isinstance(user, SessionUser):
+        return user
+    name = str(user)
+    return SessionUser(username=name, display_name=name, expires_at=0, remaining=0)
+
+
 def _context(user, settings: Settings) -> dict:
-    """대화 공간의 크기 — 세션 수, 턴 수, 글자 수. **내용은 읽지 않는다.**"""
-    name = user if isinstance(user, str) else user.username
-    root = settings.user_root(name)
+    """대화 공간의 크기 — 세션 수, 턴 수, 글자 수. **내용은 세기만 한다.**"""
+    who = _as_user(user)
+    root = settings.user_root(who.username)
     spaces = turns = chars = 0
     try:
         from . import context_store
 
-        for space in context_store.space_rows(name if isinstance(user, str) else user, settings):
-            msgs = context_store.load_space(
-                name if isinstance(user, str) else user, settings, space["space"])
+        for space in context_store.space_rows(who, settings):
+            msgs = context_store.load_space(who, settings, space["space"])
             if not msgs:
                 continue
             spaces += 1
