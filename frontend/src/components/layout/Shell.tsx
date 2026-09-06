@@ -39,7 +39,12 @@ export function Shell({
           </div>
         </header>
         <main className="min-h-0 flex-1 overflow-auto">
-          <div className="mx-auto max-w-[1280px] px-4 py-5 pb-24 sm:px-6 sm:pb-8 md:px-8 md:py-8">
+          {/* 폭을 1280px 로 묶어 두었다. 화면을 축소하면(=CSS 픽셀 폭이 커지면)
+              내용은 그대로 1280px 인 채 남는 자리가 전부 좌우 여백이 되어, 넓게
+              보려고 축소할수록 쓸 수 있는 자리가 줄어드는 꼴이었다. 이제 폭은
+              화면을 따라가고, 좌우 여백은 위 여백과 같은 값으로 고정된다
+              (md 이상에서 둘 다 32px). */}
+          <div className="px-4 py-5 pb-24 sm:px-6 sm:pb-8 md:px-8 md:py-8">
             {children}
           </div>
         </main>
