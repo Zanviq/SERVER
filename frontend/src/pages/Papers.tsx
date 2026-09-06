@@ -153,9 +153,17 @@ export function Papers() {
 
   // 읽던 쪽 저장 — 스크롤마다 쓰지 않고 멈춘 뒤 한 번
   const readTimer = useRef<number>(0);
-  const onPageChange = useCallback((page: number) => {
+  const onPageChange = useCallback((page: number, total: number) => {
     // 먼저 취소한다 — 열자마자 1쪽이 잡혔다가 읽던 쪽으로 튀는데, 그 1쪽 저장이 남으면 안 된다
     window.clearTimeout(readTimer.current);
+    // 쪽수는 보통 추출할 때 pypdf 가 채우지만, **스캔본처럼 pypdf 가 못 여는 PDF 는
+    // 0 으로 남는다.** 뷰어는 실제 쪽수를 알고 있으니 한 번 알려 준다 —
+    // 0 이면 목록에서 읽은 진도를 계산할 수 없다.
+    if (selected && total > 0 && selected.pages !== total) {
+      api.paperUpdate(selected.id, { pages: total })
+        .then((n) => patch(selected.id, { pages: n.pages }))
+        .catch(() => {});
+    }
     if (!selected || selected.read_page === page) return;
     readTimer.current = window.setTimeout(() => {
       api.paperUpdate(selected.id, { read_page: page }).then((n) => patch(selected.id, { read_page: n.read_page })).catch(() => {});

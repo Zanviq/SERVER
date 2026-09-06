@@ -6340,6 +6340,34 @@ def test_global_search_finds_the_same_word_across_every_screen():
         assert any(h["kind"] == "paper" for h in search_all.search(u, st, seed))
 
 
+def test_the_viewer_can_fix_a_page_count_pypdf_could_not_read():
+    """쪽수는 보통 추출할 때 채우지만, pypdf 가 못 여는 PDF 는 0 으로 남는다.
+
+    뷰어(pdf.js)는 실제 쪽수를 알고 있으니 한 번 알려 준다. 0 이면 목록에서
+    "어디까지 읽었는지"를 계산할 수 없다(실제로 그런 논문이 있었다).
+    """
+    from backend import paper_store
+
+    _login()
+    r = client.post("/api/papers/upload",
+                    files={"file": ("쪽수없음.pdf", _tiny_pdf(), "application/pdf")})
+    pid = r.json()["id"]
+    try:
+        from backend.auth import SessionUser
+
+        me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+        st = get_settings()
+        paper_store.update_meta(me, st, pid, {"pages": 0})
+        assert paper_store.find_paper(me, st, pid)["pages"] == 0
+
+        got = client.put(f"/api/papers/{pid}", json={"pages": 14})
+        assert got.status_code == 200, got.text
+        assert got.json()["pages"] == 14, got.json()
+        assert paper_store.find_paper(me, st, pid)["pages"] == 14
+    finally:
+        client.delete("/api/papers/" + pid)
+
+
 def test_a_paper_with_no_text_keeps_its_fields_empty():
     """글자가 없는 PDF(빈 문서·스캔본)에서 논문을 지어내면 안 된다.
 

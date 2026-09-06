@@ -138,6 +138,19 @@ export function PaperList({
                     p.year, p.venue, p.pages ? `${p.pages}쪽` : "",
                   ].filter(Boolean).join(" · ")}
             </span>
+            {/* 어디까지 읽었는지. 값은 이미 저장하고 있었지만(다시 열면 그 쪽으로
+                간다) 목록에서는 안 보여서, 무엇을 손도 안 댔는지 알 수 없었다. */}
+            {p.status === "ready" && p.pages > 1 && p.read_page > 1 && (
+              <span className="mt-1 flex items-center gap-1.5" title={`${p.read_page}/${p.pages}쪽까지 읽음`}>
+                <span className="h-[3px] flex-1 overflow-hidden rounded-full bg-line">
+                  <span className="block h-full rounded-full bg-accent"
+                    style={{ width: `${Math.min(100, Math.round((p.read_page / p.pages) * 100))}%` }} />
+                </span>
+                <span className="shrink-0 text-[10.5px] tabular-nums text-fg-subtle">
+                  {Math.min(100, Math.round((p.read_page / p.pages) * 100))}%
+                </span>
+              </span>
+            )}
           </span>
           {p.starred && <Star size={12} className="mt-1 shrink-0 fill-warning text-warning" />}
           <span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>

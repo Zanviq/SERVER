@@ -36,6 +36,10 @@ class PaperPatch(BaseModel):
     notes: str | None = None
     starred: bool | None = None
     read_page: int | None = None
+    #: 쪽수. 보통은 추출할 때 pypdf 가 채우지만, **스캔본처럼 pypdf 가 못 여는
+    #: PDF 는 0 으로 남는다.** 그런 논문은 뷰어(pdf.js)가 실제 쪽수를 알고 있으므로
+    #: 한 번 알려 준다 — 0 이면 "읽은 진도"도 계산할 수 없다.
+    pages: int | None = None
     tags: list[str] | None = None
 
 
