@@ -6092,6 +6092,58 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
     return buf.getvalue()
 
 
+def test_every_ai_feature_names_the_same_failure_the_same_way():
+    """대화·논문·회의·단어장이 같은 원인에 같은 말을 한다.
+
+    넷이 같은 모델을 같은 키로 부르는데, 실패했을 때 대화만 "사용량 한도를
+    넘었습니다"라고 구분해 말하고 나머지 셋은 무슨 일이든 "AI 호출에
+    실패했습니다." 한 줄이었다. 한도를 다 쓴 사람이 논문 화면에서는 그것을 알
+    길이 없어, 기다려도 영영 되지 않을 것을 기다리게 된다.
+    """
+    import inspect
+
+    from backend import meeting_transcribe, paper_extract, vocab_fill
+    from backend.ai import errors as ai_errors
+    from backend.ai import orchestrator
+
+    quota = "429 RESOURCE_EXHAUSTED: quota exceeded"
+    assert "사용량 한도" in ai_errors.message(quota)
+    assert "붐빕니다" in ai_errors.message("503 UNAVAILABLE: overloaded")
+    assert ai_errors.message("400 key=AIzaSyLEAK /srv/x") == "잠시 후 다시 시도해 주세요."
+    assert ai_errors.is_transient("503 overloaded") and not ai_errors.is_transient(quota)
+
+    # 네 곳 모두 같은 표를 부른다 — 한 곳이라도 자기 문구를 들고 있으면 어긋난다
+    for mod in (paper_extract, vocab_fill, meeting_transcribe):
+        src = inspect.getsource(mod)
+        assert "ai_errors.message(" in src, f"{mod.__name__} 이 공용 표를 안 쓴다"
+        # 주석은 뺀다 — 왜 고쳤는지 적어 둔 글에 옛 문구가 인용돼 있다
+        code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+        assert "AI 호출에 실패했습니다." not in code, f"{mod.__name__} 에 자기 문구가 남았다"
+    assert "ai_errors.message(" in inspect.getsource(orchestrator._llm_error_message)
+
+    # 논문 추출이 한도 초과로 실패하면 그렇게 적힌다
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    _login()
+    r = client.post("/api/papers/upload",
+                    files={"file": ("quota.pdf", _tiny_pdf("Quota"), "application/pdf")})
+    pid = r.json()["id"]
+    try:
+        u = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+
+        def blow(*a, **k):
+            raise RuntimeError(quota)
+
+        out = paper_extract.run_sync(u, s, pid, asker=blow)
+        assert out["status"] == "failed", out
+        assert "사용량 한도" in out["error"], out["error"]
+        assert "RESOURCE_EXHAUSTED" not in out["error"], "원문이 새면 안 된다"
+    finally:
+        client.delete(f"/api/papers/{pid}")
+
+
 def test_picking_many_words_does_not_silently_drop_them():
     """고른 단어를 조용히 버리지 않는다.
 

@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from . import paper_store
+from .ai import errors as ai_errors
 from .auth import SessionUser
 from .config import Settings
 
@@ -232,7 +233,10 @@ def run_sync(user: SessionUser, settings: Settings, pid: str, *, asker=None) -> 
         logger.exception("논문 정보 추출 실패: %s", pid)
         patch.update({
             "status": paper_store.STATUS_FAILED,
-            "error": (str(e) if settings.debug else "AI 호출에 실패했습니다.")[:300],
+            # 왜 실패했는지 구분해 말한다 — "AI 호출에 실패했습니다." 한 줄이면
+            # 한도를 다 쓴 것도, 키가 틀린 것도, 붐비는 것도 같은 말이라
+            # 기다려도 영영 되지 않을 것을 기다리게 된다(ai/errors.py 와 같은 표).
+            "error": ai_errors.message(str(e), settings.debug)[:300],
             "title": _title_guess(text, str(meta.get("title") or "")),
         })
         return paper_store.update_meta(user, settings, pid, patch)

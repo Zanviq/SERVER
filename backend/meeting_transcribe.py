@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from . import meeting_store
+from .ai import errors as ai_errors
 from .auth import SessionUser
 from .config import Settings
 
@@ -162,7 +163,9 @@ def run_sync(user: SessionUser, settings: Settings, mid: str, *, asker=None) -> 
         logger.exception("회의 받아쓰기 실패: %s", mid)
         return meeting_store.update_meta(user, settings, mid, {
             "status": meeting_store.STATUS_FAILED,
-            "error": (str(e) if settings.debug else "AI 호출에 실패했습니다.")[:300],
+            # 대화 화면과 같은 표를 쓴다 — 같은 원인에 화면마다 다른 말을 하면
+            # 그중 하나는 반드시 거짓이 된다(ai/errors.py).
+            "error": ai_errors.message(str(e), settings.debug)[:300],
         })
     # 못 들었으면 **지어낸 것을 저장하지 않는다.** 깨진 WAV 를 넣었더니 모델이
     # 그럴듯한 회의를 통째로 만들어 내고 ready 로 저장된 적이 있다(실측). 회의록은

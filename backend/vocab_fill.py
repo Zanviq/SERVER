@@ -27,6 +27,7 @@ import time
 import uuid
 
 from . import vocab_store
+from .ai import errors as ai_errors
 from .auth import SessionUser
 from .config import Settings
 
@@ -239,6 +240,7 @@ def run_fill(user: SessionUser, settings: Settings, job_id: str, items: list[dic
     batches = [items[i:i + BATCH_ITEMS] for i in range(0, len(items), BATCH_ITEMS)]
     filled: dict[str, dict] = {}
     failures = 0
+    last_error = ""
     for batch in batches:
         try:
             raw = (asker or _ask_gemini)(settings, _PROMPT_FILL, payload_for(batch),
@@ -248,15 +250,17 @@ def run_fill(user: SessionUser, settings: Settings, job_id: str, items: list[dic
                 # 모델이 표제어를 살짝 바꿔 오는 일이 있다(대소문자·원형화) — 요청한 것에만 맞춘다
                 if hw in wanted and hw not in filled:
                     filled[hw] = e
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
             # 한 묶음이 실패해도 나머지는 채운다. 아래에서 못 채운 것도 결국
             # 단어장에는 들어가므로(뜻만 빈 채로) 고른 것이 사라지지는 않는다.
             logger.exception("단어장 채우기 실패(모델) — 묶음 %d/%d", failures + 1, len(batches))
             failures += 1
+            last_error = str(e)
     if failures == len(batches):
         _finish(user, job_id, {
             "status": STATUS_FAILED,
-            "error": "AI 호출에 실패했습니다.",
+            # 왜 실패했는지 구분해 말한다(대화 화면과 같은 표)
+            "error": ai_errors.message(last_error, settings.debug)[:200],
         })
         return {"added": [], "merged": [], "failed": []}
 
@@ -296,7 +300,8 @@ def run_collect(user: SessionUser, settings: Settings, job_id: str, text: str,
         logger.exception("단어장 정리 실패(모델)")
         _finish(user, job_id, {
             "status": STATUS_FAILED,
-            "error": (str(e) if settings.debug else "AI 호출에 실패했습니다.")[:200],
+            # 대화 화면과 같은 표(ai/errors.py) — 한도 초과와 붐빔은 할 일이 다르다.
+            "error": ai_errors.message(str(e), settings.debug)[:200],
         })
         return {"added": [], "merged": [], "failed": []}
 
