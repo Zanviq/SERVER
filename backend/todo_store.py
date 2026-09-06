@@ -145,6 +145,26 @@ def _depth_of(cats: list[dict], cid: str) -> int:
     return depth
 
 
+def _subtree_height(cats: list[dict], cid: str) -> int:
+    """cid 아래로 몇 단계나 더 있는가(자식이 없으면 0).
+
+    옮기기는 그 밑에 달린 것을 통째로 데려간다 — 옮길 자리의 깊이만 보면
+    자손이 상한을 넘어가는 것을 못 잡는다.
+    """
+    kids: dict[str, list[str]] = {}
+    for c in cats:
+        kids.setdefault(str(c.get("parent_id") or ""), []).append(str(c.get("id")))
+    height, level, seen = 0, [cid], {cid}
+    while level:
+        nxt = [k for p in level for k in kids.get(p, []) if k not in seen]
+        if not nxt:
+            break
+        seen.update(nxt)
+        level = nxt
+        height += 1
+    return height
+
+
 def _would_cycle(cats: list[dict], cid: str, new_parent: str) -> bool:
     """new_parent 가 cid 자신이거나 그 자손이면 순환이다."""
     if not new_parent:
@@ -219,6 +239,10 @@ def update_category(user: SessionUser, settings: Settings, cid: str, payload: di
             # 자기 자신이나 자손 밑으로 넣으면 트리가 끊긴 고리가 되어 화면에서 사라진다
             if _would_cycle(cats, cid, new_parent):
                 raise HTTPException(status_code=409, detail="자기 자신이나 하위 카테고리 아래로 옮길 수 없습니다.")
+            # 만들 때만 깊이를 봤다. 편집 창에서 상위를 바꿀 수 있게 된 뒤로는
+            # 옮기기로도 상한을 넘길 수 있다 — 데려가는 자손까지 함께 센다.
+            if new_parent and _depth_of(cats, new_parent) + 1 + _subtree_height(cats, cid) >= MAX_DEPTH:
+                raise HTTPException(status_code=409, detail=f"카테고리는 {MAX_DEPTH}단계까지 중첩할 수 있습니다.")
             cat["parent_id"] = new_parent
         if payload.get("order") is not None:
             try:

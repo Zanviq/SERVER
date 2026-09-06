@@ -195,12 +195,21 @@ def _serializer(settings: Settings) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(settings.session_secret, salt=_UNLOCK_SALT)
 
 
-def issue_unlock(user: SessionUser, settings: Settings) -> str:
-    return _serializer(settings).dumps({"u": user.username})
+def issue_unlock(user: SessionUser, settings: Settings, day: str) -> str:
+    """**하루짜리** 표. 표에 날짜를 함께 서명한다.
+
+    사람 것만 서명해 두면 한 번 맞힌 비밀번호가 그 뒤로 모든 날을 연다 —
+    옆 사람에게 하루를 보여 주려고 푼 순간 달력 전체가 열리는 셈이라, 가리는
+    뜻이 없어진다.
+    """
+    return _serializer(settings).dumps({"u": user.username, "d": check_date(day)})
 
 
-def is_unlocked(token: str, user: SessionUser, settings: Settings) -> bool:
-    """표가 이 사람 것이고 아직 살아 있는가. 아니면 조용히 False(잠긴 채로 본다)."""
+def is_unlocked(token: str, user: SessionUser, settings: Settings, day: str) -> bool:
+    """표가 이 사람의 **그 하루** 것이고 아직 살아 있는가.
+
+    아니면 조용히 False(잠긴 채로 본다).
+    """
     if not token or not settings.session_secret:
         return False
     try:
@@ -209,4 +218,6 @@ def is_unlocked(token: str, user: SessionUser, settings: Settings) -> bool:
         return False
     except Exception:  # noqa: BLE001 - 망가진 표는 '잠김'이지 500 이 아니다
         return False
-    return isinstance(data, dict) and data.get("u") == user.username
+    if not isinstance(data, dict) or data.get("u") != user.username:
+        return False
+    return str(data.get("d") or "") == str(day or "")

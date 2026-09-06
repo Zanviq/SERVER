@@ -5117,6 +5117,57 @@ def test_todo_categories_cannot_form_a_cycle():
             assert e.status_code == 409, e.status_code
 
 
+def test_todo_category_color_can_be_changed():
+    """색은 만들 때만 정하는 값이 아니다 — 편집 창이 색을 고쳐 보낸다.
+
+    카테고리 색은 그 안의 할 일이 색을 따로 안 고르면 쓰는 기본색이라(화면에서
+    해석), 여기서 바뀐 값이 그대로 저장돼야 타임라인·달력이 함께 따라간다.
+    """
+    _login()
+    made = client.post("/api/todo/categories", json={"name": "색바꾸기"})
+    assert made.status_code == 200, made.text
+    cat = made.json()
+    assert cat["color"] == "2", cat  # 안 고르면 기본색
+
+    got = client.put(f"/api/todo/categories/{cat['id']}", json={"color": "11"})
+    assert got.status_code == 200 and got.json()["color"] == "11", got.text
+    # 다시 읽어도 남아 있는가(응답만 바뀌고 저장이 안 되는 경우를 잡는다)
+    lst = client.get("/api/todo/categories").json()
+    assert next(c for c in lst if c["id"] == cat["id"])["color"] == "11", lst
+    client.delete(f"/api/todo/categories/{cat['id']}")
+
+
+def test_moving_a_category_respects_the_depth_limit():
+    """깊이는 만들 때만 봤다. 편집 창에서 상위를 바꿀 수 있게 된 뒤로는
+    **옮기기로도** 상한을 넘길 수 있다 — 데려가는 자손까지 함께 세야 한다."""
+    from fastapi import HTTPException
+
+    from backend import todo_store
+
+    u, _ctx, st = _todo_ctx("todeep")
+    # 최상위부터 MAX_DEPTH 단계로 한 줄(A0 ... A4) — 더는 못 붙이는 상태
+    chain = []
+    parent = ""
+    for i in range(todo_store.MAX_DEPTH):
+        chain.append(todo_store.create_category(u, st, {"name": f"A{i}", "parent_id": parent})["id"])
+        parent = chain[-1]
+
+    # 자식이 하나 딸린 두 단계짜리 가지를 따로 만든다
+    top = todo_store.create_category(u, st, {"name": "B"})["id"]
+    todo_store.create_category(u, st, {"name": "B-1", "parent_id": top})
+
+    # B(자손 1단계)를 A3 밑으로 옮기면 B-1 이 6단째가 된다 — 막아야 한다
+    try:
+        todo_store.update_category(u, st, top, {"parent_id": chain[-2]})
+        raise AssertionError("자손이 상한을 넘는 옮기기를 허용했다")
+    except HTTPException as e:
+        assert e.status_code == 409, e.status_code
+
+    # 한 단계 위(A2)로는 들어간다 — 넘지 않는 옮기기까지 막으면 안 된다
+    moved = todo_store.update_category(u, st, top, {"parent_id": chain[-3]})
+    assert moved["parent_id"] == chain[-3], moved
+
+
 def test_todo_http_validates_like_the_calendar():
     """UI로 들어오는 마감도 검증한다(AI 쪽만 막으면 반쪽이다)."""
     _login()
@@ -7325,11 +7376,17 @@ def test_locked_diary_text_never_leaves_the_server():
     day = "2026-04-11"
     secret = "아무에게도 안 보여줄 이야기"
     try:
-        # 잠금을 풀고 쓴다(자물쇠가 걸린 채로는 글을 저장할 수 없다)
-        tok = client.post("/api/diary/unlock", json={"pin": "0000"}).json()["token"]
+        # 아직 글이 없는 날에는 표 없이 그냥 쓴다 — 가릴 것이 없기 때문이다.
+        # (여기까지 막았더니 잠금을 켠 뒤로 새 일기를 아예 쓸 수 없었다.)
+        first = client.put(f"/api/diary/{day}", json={"body": "star", "text": secret})
+        assert first.status_code == 200 and first.json()["text"] == secret, first.text
+        # 이어 쓸 수 있게 그 하루짜리 표를 함께 준다(다음 저장부터는 '글이 있는 날')
+        tok = first.json().get("unlock") or ""
+        assert tok, first.text
         h = {"X-Diary-Unlock": tok}
-        r = client.put(f"/api/diary/{day}", json={"body": "star", "text": secret}, headers=h)
-        assert r.status_code == 200 and r.json()["text"] == secret, r.text
+        more = client.put(f"/api/diary/{day}", json={"text": secret + "!"}, headers=h)
+        assert more.status_code == 200 and more.json()["text"] == secret + "!", more.text
+        client.put(f"/api/diary/{day}", json={"text": secret}, headers=h)
 
         # 표 없이 보면 글이 없다. 도형과 has_text 는 그대로 온다.
         one = client.get(f"/api/diary/{day}").json()
@@ -7341,15 +7398,29 @@ def test_locked_diary_text_never_leaves_the_server():
         assert secret not in client.get("/api/diary?from=2026-04-01&to=2026-04-30").text
 
         # 틀린 비밀번호는 표를 주지 않는다
-        assert client.post("/api/diary/unlock", json={"pin": "1234"}).status_code == 403
-        assert client.post("/api/diary/unlock", json={"pin": "abcd"}).status_code == 403
+        assert client.post("/api/diary/unlock", json={"pin": "1234", "date": day}).status_code == 403
+        assert client.post("/api/diary/unlock", json={"pin": "abcd", "date": day}).status_code == 403
         # 남의 표는 안 통한다(서명이 사용자 이름을 담는다)
         other = SessionUser(username="침입자", display_name="X", expires_at=0, remaining=0)
+        me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
         s = get_settings()
-        assert not diary_store.is_unlocked(diary_store.issue_unlock(other, s),
-                                           SessionUser(username="tester", display_name="T",
-                                                       expires_at=0, remaining=0), s)
-        assert not diary_store.is_unlocked("아무말", other, s)
+        assert not diary_store.is_unlocked(diary_store.issue_unlock(other, s, day), me, s, day)
+        assert not diary_store.is_unlocked("아무말", other, s, day)
+
+        # **표는 그 하루짜리다.** 한 날을 열었다고 옆 날까지 열리면, 옆 사람에게
+        # 하루를 보여 준 순간 달력 전체가 열리는 것과 같다.
+        other_day = "2026-04-12"
+        mine = client.post("/api/diary/unlock", json={"pin": "0000", "date": day}).json()
+        assert mine["date"] == day, mine
+        assert not diary_store.is_unlocked(mine["token"], me, s, other_day)
+        client.put(f"/api/diary/{other_day}", json={"text": "옆 날의 글"})
+        peek = client.get(f"/api/diary/{other_day}", headers={"X-Diary-Unlock": mine["token"]}).json()
+        assert peek["text"] == "" and peek["locked"] is True, peek
+        assert "옆 날의 글" not in client.get(
+            f"/api/diary/{other_day}", headers={"X-Diary-Unlock": mine["token"]}).text
+        client.put(f"/api/diary/{other_day}", json={"text": ""},
+                   headers={"X-Diary-Unlock": client.post(
+                       "/api/diary/unlock", json={"pin": "0000", "date": other_day}).json()["token"]})
 
         # **잠긴 채로 도형만 눌러도 일기가 지워지면 안 된다.** 화면은 잠기면 글을
         # 빈 문자열로 들고 있으므로 그대로 저장되면 그날 일기가 통째로 날아간다.
@@ -7362,8 +7433,8 @@ def test_locked_diary_text_never_leaves_the_server():
         assert client.put("/api/diary/pin", json={"current": "0000", "next": "12"}).status_code == 400
         assert client.put("/api/diary/pin", json={"current": "0000", "next": "1111"}).status_code == 200
         assert client.get("/api/diary/lock").json()["is_default"] is False
-        assert client.post("/api/diary/unlock", json={"pin": "0000"}).status_code == 403
-        tok2 = client.post("/api/diary/unlock", json={"pin": "1111"}).json()["token"]
+        assert client.post("/api/diary/unlock", json={"pin": "0000", "date": day}).status_code == 403
+        tok2 = client.post("/api/diary/unlock", json={"pin": "1111", "date": day}).json()["token"]
         assert client.get(f"/api/diary/{day}", headers={"X-Diary-Unlock": tok2}).json()["text"] == secret
         # 해시는 어디로도 새지 않는다
         assert "$" not in json.dumps(client.get("/api/diary/lock").json())
@@ -7371,7 +7442,7 @@ def test_locked_diary_text_never_leaves_the_server():
     finally:
         client.put(f"/api/diary/{day}", json={"body": "", "heart": "", "mind": "", "text": ""},
                    headers={"X-Diary-Unlock": client.post(
-                       "/api/diary/unlock", json={"pin": "1111"}).json().get("token", "")})
+                       "/api/diary/unlock", json={"pin": "1111", "date": day}).json().get("token", "")})
         diary_store.set_pin(SessionUser(username="tester", display_name="T", expires_at=0, remaining=0),
                             get_settings(), "0000")
 

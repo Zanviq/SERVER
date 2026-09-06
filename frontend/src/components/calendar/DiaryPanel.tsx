@@ -18,8 +18,14 @@ interface Props {
   onChange: (entry: DiaryDay) => void;
   /** 그날 일기가 있는데 아직 비밀번호를 안 넣었다 */
   locked: boolean;
-  /** 비밀번호가 맞았을 때. 부모가 글까지 다시 받아 온다 */
+  /** 비밀번호가 맞았을 때. 부모가 그날의 글을 받아 온다 */
   onUnlock: () => void;
+  /** 이 날의 글을 직접 고치기 시작했다.
+   *
+   *  잠금은 "이미 적혀 있던 글을 남에게 안 보이기" 위한 것이지, 지금 쓰는 사람을
+   *  막는 것이 아니다. 이걸 알리지 않으면 첫 자동 저장이 끝나 has_text 가 켜지는
+   *  순간 자기가 치고 있던 글 위로 자물쇠가 내려온다. */
+  onEdit: (date: string) => void;
 }
 
 function emptyEntry(date: string): DiaryDay {
@@ -54,7 +60,7 @@ function timeOf(e: CalEvent): string {
  *
  *  틀렸다고 따로 말하지 않는다 — 자기 일기에 자기가 들어가는 자리라 꾸짖을
  *  이유가 없고, 칸을 비워 다시 치게 하는 것으로 충분하다. */
-function DiaryLock({ onUnlock }: { onUnlock: () => void }) {
+function DiaryLock({ date, onUnlock }: { date: string; onUnlock: () => void }) {
   const [asking, setAsking] = useState(false);
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
@@ -67,7 +73,8 @@ function DiaryLock({ onUnlock }: { onUnlock: () => void }) {
   const submit = async (value: string) => {
     setBusy(true);
     try {
-      await api.diaryUnlock(value);
+      // 표는 이 하루에만 듣는다 — 다른 날은 그 날을 누를 때 다시 묻는다.
+      await api.diaryUnlock(value, date);
       onUnlock();
     } catch {
       setPin("");            // 조용히 비우고 다시 받는다
@@ -123,7 +130,7 @@ function DiaryLock({ onUnlock }: { onUnlock: () => void }) {
  * 하루의 상태(육체·마음·정신)와 일기. 날짜와 일정은 달력이 채워 주고,
  * 사용자는 도형과 글만 고친다. 도형은 누르는 즉시, 글은 잠시 뒤 자동 저장.
  */
-export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock }: Props) {
+export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, onEdit }: Props) {
   const autosaveMs = useSettings((st) => st.settings?.notes.autosave_ms ?? 900);
   const cur = entry ?? emptyEntry(date);
   const [text, setText] = useState(cur.text);
@@ -136,6 +143,8 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock }: 
   const chain = useRef<Promise<void>>(Promise.resolve());
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onEditRef = useRef(onEdit);
+  onEditRef.current = onEdit;
   const dateRef = useRef(date);
   dateRef.current = date;
 
@@ -211,6 +220,7 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock }: 
     setText(v);
     setDirty(true);
     const day = date;
+    onEditRef.current(day);
     pending.current.schedule(autosaveMs, async () => {
       setSaving(true);
       try {
@@ -313,7 +323,9 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock }: 
             placeholder={locked ? "" : "오늘 어땠는지 적어 두세요."}
             className="input min-h-[120px] flex-1 resize-none leading-relaxed"
           />
-          {locked && <DiaryLock onUnlock={onUnlock} />}
+          {/* key 에 날짜를 준다 — 잠긴 날에서 잠긴 날로 옮기면 컴포넌트가 그대로
+              남아, 앞 날에 치다 만 숫자와 열린 입력칸이 다음 날로 따라온다. */}
+          {locked && <DiaryLock key={date} date={date} onUnlock={onUnlock} />}
         </div>
       </div>
     </div>

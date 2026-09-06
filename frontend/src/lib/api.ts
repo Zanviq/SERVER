@@ -106,10 +106,14 @@ const jsonInit = (method: string, body: unknown): RequestInit => ({
 const q = (o: Record<string, string>) => new URLSearchParams(o).toString();
 
 /** 일기 잠금을 푼 표. **메모리에만 둔다** — 새 탭·새로고침이면 다시 잠긴다.
- *  localStorage 에 두면 브라우저를 열어 둔 사람 누구나 계속 볼 수 있다. */
-let diaryUnlockToken = "";
-const unlockHeader = (): Record<string, string> =>
-  (diaryUnlockToken ? { "X-Diary-Unlock": diaryUnlockToken } : {});
+ *  localStorage 에 두면 브라우저를 열어 둔 사람 누구나 계속 볼 수 있다.
+ *
+ *  표는 **하루짜리**다. 서버도 날짜를 함께 서명하므로, 한 날에서 얻은 표로
+ *  다른 날을 열 수 없다(예전에는 한 번 맞히면 달력 전체가 열렸다). 그래서
+ *  여기서도 어느 날 것인지 함께 들고 다니며 그 날 요청에만 붙인다. */
+let diaryUnlock: { token: string; day: string } | null = null;
+const unlockHeader = (day: string): Record<string, string> =>
+  (diaryUnlock && diaryUnlock.day === day ? { "X-Diary-Unlock": diaryUnlock.token } : {});
 
 export const api = {
   // ── auth ──
@@ -324,25 +328,33 @@ export const api = {
       `/api/papers/${encodeURIComponent(id)}/extract`, { method: "POST" }),
 
   // ── 기록(상태·일기) ──
-  diaryRange: (from: string, to: string) =>
-    req<DiaryDay[]>(`/api/diary?${q({ from, to })}`, { headers: unlockHeader() }),
-  diaryGet: (day: string) => req<DiaryDay>(`/api/diary/${day}`, { headers: unlockHeader() }),
-  diarySave: (day: string, body: Partial<Pick<DiaryDay, "body" | "heart" | "mind" | "text">>) =>
-    req<DiaryDay>(`/api/diary/${day}`, {
+  /** 달력 한 화면치. 서버가 글을 아예 안 실어 주므로 표를 붙이지 않는다. */
+  diaryRange: (from: string, to: string) => req<DiaryDay[]>(`/api/diary?${q({ from, to })}`),
+  diaryGet: (day: string) => req<DiaryDay>(`/api/diary/${day}`, { headers: unlockHeader(day) }),
+  diarySave: async (day: string, body: Partial<Pick<DiaryDay, "body" | "heart" | "mind" | "text">>) => {
+    const r = await req<DiaryDay>(`/api/diary/${day}`, {
       ...jsonInit("PUT", body),
-      headers: { "Content-Type": "application/json", ...unlockHeader() },
-    }),
-  /** 일기 잠금 풀기. 맞으면 표를 받아 두고, 그 뒤 기록 요청에 실어 보낸다. */
-  diaryUnlock: async (pin: string) => {
-    const r = await req<{ token: string; ttl: number }>("/api/diary/unlock", jsonInit("POST", { pin }));
-    diaryUnlockToken = r.token;
+      headers: { "Content-Type": "application/json", ...unlockHeader(day) },
+    });
+    // 아직 글이 없던 날에 처음 쓰면 서버가 그 하루짜리 표를 함께 준다. 받아 두지
+    // 않으면 **다음 자동 저장부터** 서버가 글을 버린다(그때부터는 '이미 글이
+    // 있는 날'이라 잠긴 요청으로 보이기 때문이다).
+    if (r.unlock) diaryUnlock = { token: r.unlock, day };
+    return r;
+  },
+  /** 일기 잠금 풀기. 맞으면 **그 하루짜리** 표를 받아 둔다. */
+  diaryUnlock: async (pin: string, day: string) => {
+    const r = await req<{ token: string; date: string; ttl: number }>(
+      "/api/diary/unlock", jsonInit("POST", { pin, date: day }));
+    diaryUnlock = { token: r.token, day: r.date || day };
     return r;
   },
   diaryLockState: () => req<{ is_default: boolean }>("/api/diary/lock"),
   diaryChangePin: (current: string, next: string) =>
     req<{ ok: boolean; is_default: boolean }>("/api/diary/pin", jsonInit("PUT", { current, next })),
-  diaryRelock: () => { diaryUnlockToken = ""; },
-  diaryIsUnlocked: () => !!diaryUnlockToken,
+  diaryRelock: () => { diaryUnlock = null; },
+  /** 지금 열려 있는 하루(없으면 ""). */
+  diaryUnlockedDay: () => diaryUnlock?.day ?? "",
 
   // ── 회의 녹음 ──
   meetingList: () => req<Meeting[]>("/api/meetings"),
@@ -665,6 +677,9 @@ export interface DiaryDay {
   has_text: boolean;
   /** 서버가 글을 빼고 보냈다는 표시. */
   locked?: boolean;
+  /** 아직 글이 없던 날에 처음 쓴 저장의 응답에만 온다 — 그 하루짜리 표.
+   *  `diarySave` 가 받아서 보관하므로 화면이 직접 다룰 일은 없다. */
+  unlock?: string;
   updated_at: string;
 }
 
