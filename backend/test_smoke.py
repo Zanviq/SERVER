@@ -6092,6 +6092,61 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
     return buf.getvalue()
 
 
+def test_context_search_does_not_reread_the_index_per_space(monkeypatch):
+    """공간을 훑을 때 논문·회의 색인을 공간마다 다시 읽지 않는다.
+
+    `space_path` 는 부를 때마다 색인을 통째로 읽어 존재를 확인한다(이름 하나를
+    물어볼 때는 맞다). 그런데 공간을 전부 도는 자리에서 그 확인이 공간 수만큼
+    되풀이되면서 O(n²)가 됐다 — 논문 300 + 회의 300 일 때 전역 검색이 **7.4초**
+    였고, 그중 7.1초가 대화 갈래였다(고친 뒤 0.9초).
+
+    시간으로 재면 기계에 따라 흔들리므로 **색인을 몇 번 읽는지**로 고정한다.
+    """
+    from backend import context_store, meeting_store, paper_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="ctxscale", display_name="C", expires_at=0, remaining=0)
+    n = 12
+    for i in range(n):
+        paper_store.register(u, s, f"scale{i}.pdf", 100 + i)
+        mid = meeting_store.new_id()
+        meeting_store.meeting_dir(u, s, mid).mkdir(parents=True, exist_ok=True)
+        meeting_store.register(u, s, filename=f"s{i}.wav", mime="audio/wav", size=1,
+                               ext="wav", day="2026-09-07", mid=mid)
+
+    reads = {"paper": 0, "meeting": 0}
+    real_papers, real_meetings = paper_store.list_papers, meeting_store.list_meetings
+
+    def count_papers(*a, **k):
+        reads["paper"] += 1
+        return real_papers(*a, **k)
+
+    def count_meetings(*a, **k):
+        reads["meeting"] += 1
+        return real_meetings(*a, **k)
+
+    monkeypatch.setattr(paper_store, "list_papers", count_papers)
+    monkeypatch.setattr(meeting_store, "list_meetings", count_meetings)
+    # 존재 확인 경로가 다시 들어오면 여기서 터진다(공간마다 색인을 읽는 길이다)
+    monkeypatch.setattr(paper_store, "get_paper",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("공간마다 get_paper 를 부르고 있다")))
+    monkeypatch.setattr(meeting_store, "get_meeting",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("공간마다 get_meeting 을 부르고 있다")))
+
+    context_store.search(u, s, "아무말")
+    # all_spaces 1회 + _labels 1회 = 갈래당 2회. 공간 수(24)에 비례하면 안 된다.
+    assert reads["paper"] <= 3, f"논문 색인을 {reads['paper']}번 읽었다"
+    assert reads["meeting"] <= 3, f"회의 색인을 {reads['meeting']}번 읽었다"
+
+    reads["paper"] = reads["meeting"] = 0
+    context_store.space_rows(u, s)
+    assert reads["paper"] <= 3 and reads["meeting"] <= 3, reads
+
+
 def test_meeting_doc_appends_do_not_overwrite_each_other():
     """회의 문서에 동시에 이어 써도 하나도 잃지 않는다.
 

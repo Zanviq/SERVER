@@ -114,6 +114,45 @@ def space_path(user: SessionUser, settings: Settings, space: str):
     return meeting_store.chat_path(user, settings, mid)
 
 
+def _space_file(user: SessionUser, settings: Settings, space: str):
+    """공간 이름 → 파일 경로. **있는지 확인하지 않는다.**
+
+    `space_path` 는 부를 때마다 논문·회의 색인을 통째로 다시 읽어 존재를 확인한다
+    (없는 공간에 404 를 주려는 것이고, 화면이 이름 하나를 물어볼 때는 맞다).
+    그런데 **공간을 전부 훑는 자리**에서 그 확인이 공간 수만큼 되풀이되면
+    O(n²)가 된다 — 논문 300 + 회의 300 일 때 전역 검색이 7.1초였다(실측).
+
+    여기서 다루는 이름은 `all_spaces` 가 색인에서 뽑아 준 것이라 존재가 이미
+    보장된다. 확인을 한 번 더 하는 것은 값을 얻지 못하고 시간만 쓴다.
+    """
+    if space in FIXED_SPACES:
+        return _fixed_path(user, settings, space)
+    if space.startswith("paper:"):
+        return paper_store.chat_path(user, settings, space[len("paper:"):])
+    return meeting_store.chat_path(user, settings, space[len("meeting:"):])
+
+
+def _labels(user: SessionUser, settings: Settings) -> dict[str, str]:
+    """공간 이름 → 사람이 읽는 이름. 색인을 **한 번만** 읽어 표로 만든다.
+
+    공간마다 `space_label` 을 부르면 그때마다 색인을 다시 읽는다(같은 O(n²)).
+    """
+    out = dict(FIXED_SPACES)
+    try:
+        for p in paper_store.list_papers(user, settings):
+            if p.get("id"):
+                out[f"paper:{p['id']}"] = str(p.get("title") or p.get("filename") or "논문")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        for m in meeting_store.list_meetings(user, settings):
+            if m.get("id"):
+                out[f"meeting:{m['id']}"] = str(m.get("title") or m.get("filename") or "회의")
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def space_label(user: SessionUser, settings: Settings, space: str) -> str:
     """사람이 읽는 이름. 논문·회의는 그 제목을 쓴다."""
     if space in FIXED_SPACES:
@@ -211,14 +250,16 @@ def session_rows(msgs: list[dict]) -> list[dict]:
 
 def space_rows(user: SessionUser, settings: Settings) -> list[dict]:
     """왼쪽 폴더 목록 + AI 의 list_context_spaces 가 함께 쓴다."""
+    labels = _labels(user, settings)
     rows = []
     for space in all_spaces(user, settings):
-        msgs = load_space(user, settings, space)
+        # 검색과 같은 이유로 색인을 다시 읽지 않는다(사용량 화면도 이 함수를 쓴다)
+        msgs = chat_store.load(_space_file(user, settings, space))
         times = [float(m.get("ts") or 0) for m in msgs if m.get("ts")]
         rows.append({
             "space": space,
             "kind": space_kind(space),
-            "label": space_label(user, settings, space),
+            "label": labels.get(space, space),
             "messages": len(msgs),
             "sessions": len(split_sessions(msgs)) if msgs else 0,
             "last_at": max(times) if times else 0.0,
@@ -334,9 +375,11 @@ def search(user: SessionUser, settings: Settings, query: str, *,
         return []
     phrase = str(query or "").strip().lower()
     targets = spaces or all_spaces(user, settings)
+    labels = _labels(user, settings)
     hits: list[dict] = []
     for space in targets:
-        msgs = load_space(user, settings, space)
+        # 공간마다 색인을 다시 읽지 않는다 — 그것이 이 검색을 O(n²)로 만들었다.
+        msgs = chat_store.load(_space_file(user, settings, space))
         sessions = split_sessions(msgs)
         for s in sessions:
             sid = session_id(s)
@@ -355,7 +398,7 @@ def search(user: SessionUser, settings: Settings, query: str, *,
                 end = min(len(text), i + len(found) + SNIPPET_WINDOW)
                 hits.append({
                     "space": space,
-                    "label": space_label(user, settings, space),
+                    "label": labels.get(space, space),
                     "session": sid,
                     "id": m.get("id", ""),
                     "role": m.get("role", ""),
