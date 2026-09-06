@@ -27,6 +27,16 @@ const LABEL: Record<string, string> = {
 };
 const label = (r: string) => LABEL[r] ?? r;
 
+/** AI 화면 이름 → 사람이 읽는 이름. 서버가 접어서 준 값만 온다. */
+const MODE_LABEL: Record<string, string> = {
+  assistant: "AI 비서",
+  calendar: "캘린더",
+  english: "영어 학습",
+  paper: "논문",
+  meeting: "회의",
+  기타: "기타",
+};
+
 const COUNT_LABEL: Record<string, string> = {
   documents: "문서",
   papers: "논문",
@@ -122,6 +132,13 @@ export function Analytics() {
   const maxMove = data?.moves[0]?.count ?? 0;
   const days = useMemo(() => Object.entries(data?.days ?? {}), [data]);
   const maxDay = days.reduce((m, [, v]) => Math.max(m, v.seconds), 0);
+  const modes = useMemo(
+    () => Object.entries(data?.tokens.by_mode ?? {}).sort((a, b) => b[1].total - a[1].total),
+    [data],
+  );
+  const maxMode = modes[0]?.[1].total ?? 0;
+  const unknownMode = Math.max(
+    0, (data?.tokens.total ?? 0) - modes.reduce((sum, [, v]) => sum + v.total, 0));
 
   return (
     <Shell
@@ -215,6 +232,31 @@ export function Analytics() {
                   </div>
                 ))}
               </div>
+            </section>
+
+            <section className="card p-4">
+              <h2 className="mb-2 text-[13px] font-semibold">화면별 AI 토큰</h2>
+              <p className="mb-1 text-[11.5px] text-fg-subtle">
+                어느 화면이 요금을 쓰는가 · 논문 화면은 PDF 를 함께 실어 같은 질문도 비싸다
+              </p>
+              {modes.length === 0 ? (
+                <p className="py-6 text-center text-[12.5px] text-fg-muted">아직 AI 를 쓰지 않았습니다.</p>
+              ) : (
+                <>
+                  {modes.map(([m, v]) => (
+                    <Bar key={m} name={MODE_LABEL[m] ?? m} value={v.total} max={maxMode}
+                      right={`${num(v.total)} · ${num(v.calls)}회`} />
+                  ))}
+                  {/* 화면을 세기 전에 쓴 것은 어느 화면인지 알 수 없다. 막대 합이
+                      위의 총합과 안 맞는 것을 그냥 두면 어느 쪽이 틀렸는지 모른다. */}
+                  {unknownMode > 0 && (
+                    <p className="mt-2 text-[11.5px] text-fg-subtle">
+                      화면을 세기 전에 쓴 {num(unknownMode)} 토큰은 어느 화면인지 알 수 없어
+                      막대에 없습니다(위 총합에는 들어 있습니다).
+                    </p>
+                  )}
+                </>
+              )}
             </section>
 
             <section className="card p-4">

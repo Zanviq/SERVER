@@ -63,8 +63,19 @@ def _path(user: SessionUser | str, settings: Settings, ym: str):
     return base / f"{check_month(ym)}.json"
 
 
+#: AI 를 쓸 수 있는 화면. 토큰을 화면별로도 센다 — 어느 화면이 요금을 쓰는지
+#: 알아야 프롬프트를 어디서 줄일지 정할 수 있다. 모르는 값은 '기타'로 접는다.
+MODES = ("assistant", "calendar", "english", "paper", "meeting")
+
+
+def norm_mode(mode: str) -> str:
+    m = str(mode or "").strip().lower() or "assistant"
+    return m if m in MODES else OTHER
+
+
 def _blank() -> dict:
-    return {"tokens": {"total": 0, "prompt": 0, "output": 0, "calls": 0, "by_model": {}},
+    return {"tokens": {"total": 0, "prompt": 0, "output": 0, "calls": 0,
+                       "by_model": {}, "by_mode": {}},
             "pages": {}, "moves": {}, "days": {}}
 
 
@@ -79,8 +90,9 @@ def _read(user, settings: Settings, ym: str) -> dict:
     t = out["tokens"]
     for k in ("total", "prompt", "output", "calls"):
         t[k] = int(t.get(k) or 0)
-    if not isinstance(t.get("by_model"), dict):
-        t["by_model"] = {}
+    for k in ("by_model", "by_mode"):
+        if not isinstance(t.get(k), dict):
+            t[k] = {}
     return out
 
 
@@ -97,7 +109,7 @@ def _day_bucket(data: dict, day: str) -> dict:
 
 
 def add_tokens(user, settings: Settings, *, model: str,
-               prompt: int, output: int, total: int = 0) -> None:
+               prompt: int, output: int, total: int = 0, mode: str = "") -> None:
     """모델 호출 한 번의 토큰을 더한다. 실패해도 조용히 넘어간다.
 
     집계 때문에 대화가 끊기면 안 된다 — 사용량은 곁다리고 답이 본체다.
@@ -116,11 +128,12 @@ def add_tokens(user, settings: Settings, *, model: str,
             t["output"] += output
             t["calls"] += 1
             m = str(model or "?")[:64]
-            row = t["by_model"].setdefault(m, {"total": 0, "prompt": 0, "output": 0, "calls": 0})
-            row["total"] += total
-            row["prompt"] += prompt
-            row["output"] += output
-            row["calls"] += 1
+            for table, key in ((t["by_model"], m), (t["by_mode"], norm_mode(mode))):
+                row = table.setdefault(key, {"total": 0, "prompt": 0, "output": 0, "calls": 0})
+                row["total"] += total
+                row["prompt"] += prompt
+                row["output"] += output
+                row["calls"] += 1
             day = _day_bucket(data, _today())
             day["tokens"] = int(day.get("tokens") or 0) + total
             day["calls"] = int(day.get("calls") or 0) + 1

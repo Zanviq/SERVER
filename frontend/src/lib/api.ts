@@ -481,6 +481,13 @@ export interface UsageUserRow {
   tokens: number;
 }
 
+export interface UsageTokens {
+  total: number;
+  prompt: number;
+  output: number;
+  calls: number;
+}
+
 /** 한 사용자의 사용량 — 전부 수치다. 제목·본문은 어떤 필드에도 오지 않는다. */
 export interface UsageSummary {
   username: string;
@@ -488,7 +495,9 @@ export interface UsageSummary {
   months: string[];
   tokens: {
     total: number; prompt: number; output: number; calls: number;
-    by_model: Record<string, { total: number; prompt: number; output: number; calls: number }>;
+    by_model: Record<string, UsageTokens>;
+    /** 화면별 AI 토큰(assistant·calendar·english·paper·meeting·기타). */
+    by_mode: Record<string, UsageTokens>;
   };
   /** 화면 이름 → 머문 시간·본 횟수. 이름은 서버가 아는 라우트로 접힌 값이다. */
   pages: Record<string, { seconds: number; views: number }>;

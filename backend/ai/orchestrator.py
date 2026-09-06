@@ -176,8 +176,12 @@ def _is_transient(raw: str) -> bool:
     return ai_errors.is_transient(raw)
 
 
-def _record_usage(user, settings: Settings, llm, result: "LLMResult") -> None:
+def _record_usage(user, settings: Settings, llm, result: "LLMResult", mode: str = "") -> None:
     """모델 호출 한 번의 토큰을 사용량에 더한다.
+
+    어느 화면에서 쓴 것인지(mode)도 함께 센다 — 요금을 어디서 쓰는지 알아야
+    프롬프트를 어디서 줄일지 정할 수 있다. 논문 화면은 PDF 를 통째로 싣기 때문에
+    같은 질문이라도 훨씬 비싸다.
 
     집계는 곁다리다 — 여기서 나는 어떤 오류도 대화를 막아서는 안 된다.
     """
@@ -192,6 +196,7 @@ def _record_usage(user, settings: Settings, llm, result: "LLMResult") -> None:
             prompt=result.usage.get("prompt", 0),
             output=result.usage.get("output", 0),
             total=result.usage.get("total", 0),
+            mode=mode,
         )
     except Exception:  # noqa: BLE001
         logger.debug("사용량 집계 실패", exc_info=True)
@@ -361,7 +366,7 @@ def run(
             else:
                 result = llm.chat(contents, catalog, system)
             # 한 차례에 모델을 여러 번 부른다(도구를 쓸 때마다). 부를 때마다 센다.
-            _record_usage(user, settings, llm, result)
+            _record_usage(user, settings, llm, result, mode)
             if result.calls() or (result.text or "").strip():
                 break
             if result.error:

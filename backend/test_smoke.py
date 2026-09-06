@@ -6092,6 +6092,112 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
     return buf.getvalue()
 
 
+def test_ai_skills_cannot_reach_another_users_data():
+    """AI 가 남의 논문·회의·단어에 닿지 못한다.
+
+    사람이 API 로 들어오는 길은 따로 막혀 있다. 여기서 보는 것은 **AI 가 인자로
+    남의 식별자를 넣는 길**이다 — 모델이 id 를 지어내거나, 지난 대화에 남아 있던
+    남의 id 를 그대로 쓰거나, 주입된 글이 시키는 대로 넣을 수 있다.
+
+    스킬은 언제나 `ctx.user` 의 저장소만 본다. 그 약속이 스킬마다 지켜지는지
+    **전부** 확인하고, 새 스킬이 생기면 이 목록에 없다고 깨지게 한다.
+    """
+    from backend import (
+        calendar_store, chat_store, meeting_store, paper_store, todo_store, vocab_store,
+    )
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    victim = SessionUser(username="leakvictim", display_name="V", expires_at=0, remaining=0)
+    spy = SessionUser(username="leakspy", display_name="S", expires_at=0, remaining=0)
+    SECRET = "절대비밀문자열XYZ"
+
+    pid = paper_store.register(victim, s, f"{SECRET}.pdf", 100)["id"]
+    paper_store.update_meta(victim, s, pid, {
+        "status": "ready", "title": f"{SECRET} 논문",
+        "summary": f"{SECRET} 요약", "notes": f"{SECRET} 메모"})
+    tp = paper_store.text_path(victim, s, pid)
+    tp.parent.mkdir(parents=True, exist_ok=True)
+    tp.write_text(f"[[page 1]]\n{SECRET} 본문", encoding="utf-8")
+    chat_store.append(paper_store.chat_path(victim, s, pid),
+                      chat_store.message("user", f"{SECRET} 대화"))
+
+    mid = meeting_store.new_id()
+    meeting_store.meeting_dir(victim, s, mid).mkdir(parents=True, exist_ok=True)
+    meeting_store.register(victim, s, filename=f"{SECRET}.wav", mime="audio/wav", size=1,
+                           ext="wav", day="2026-09-07", mid=mid, title=f"{SECRET} 회의")
+    meeting_store.write_transcript(
+        victim, s, mid,
+        [{"start": "00:00", "end": "00:05", "speaker": "화자 1", "text": f"{SECRET} 발언"}],
+        f"{SECRET} 받아쓰기")
+    meeting_store.write_doc(victim, s, mid, "회의록", f"{SECRET} 회의록")
+    vocab_store.add_words(victim, s, [{"word": "secretword9", "meanings": [f"{SECRET} 뜻"]}])
+    todo_store.create_todo(victim, s, {"title": f"{SECRET} 할일"})
+    calendar_store.create_event(victim, s, {"title": f"{SECRET} 일정",
+                                            "start": "2026-09-09T10:00:00"})
+
+    reg = default_registry()
+    # 공격자의 ctx 인데 화면 id 는 피해자 것 — 화면 인자가 위조된 상황
+    ctx = SkillContext(user=spy, settings=s, today="2026-09-07",
+                       paper_id=pid, meeting_id=mid, user_message="저거 문서로 남겨줘")
+
+    calls = [
+        ("get_paper_info", {"paper_id": pid}),
+        ("read_paper_text", {"paper_id": pid}),
+        ("set_paper_notes", {"paper_id": pid, "notes": "가로채기"}),
+        ("update_paper_info", {"paper_id": pid, "title": "가로채기"}),
+        ("search_paper_chats", {"query": SECRET}),
+        ("list_papers", {}),
+        ("get_meeting_info", {"meeting_id": mid}),
+        ("read_meeting_transcript", {"meeting_id": mid}),
+        ("list_meeting_docs", {"meeting_id": mid}),
+        ("read_meeting_doc", {"meeting_id": mid, "name": "회의록"}),
+        ("write_meeting_doc", {"meeting_id": mid, "name": "회의록", "content": "가로채기"}),
+        ("append_meeting_doc", {"meeting_id": mid, "name": "회의록", "content": "가로채기"}),
+        ("delete_meeting_doc", {"meeting_id": mid, "name": "회의록"}),
+        ("update_meeting_info", {"meeting_id": mid, "title": "가로채기"}),
+        ("list_meetings", {}),
+        ("list_vocab", {"query": "secretword9"}),
+        ("list_context_spaces", {}),
+        ("read_context", {"space": f"paper:{pid}"}),
+        ("list_todos", {}),
+        ("list_calendar_events", {"date": "2026-09-09"}),
+        ("list_documents", {}),
+    ]
+    for name, args in calls:
+        r = reg.dispatch(name, args, ctx)
+        blob = f"{r.message}|{r.data}"
+        assert SECRET not in blob, f"{name} 이 남의 자료를 냈다: {blob[:200]}"
+        assert "secretword9" not in blob, f"{name} 이 남의 단어를 냈다: {blob[:200]}"
+
+    # 검색 스킬은 **찾은 말을 되돌려 주므로** 본문이 샜는지는 결과 건수로 본다
+    for name in ("search_everything", "search_context", "search_documents"):
+        r = reg.dispatch(name, {"query": SECRET}, ctx)
+        found = r.data or {}
+        for key in ("hits", "matches", "items", "recent"):
+            assert not found.get(key), f"{name} 이 남의 자료를 찾아 냈다: {found}"
+
+    # 바꾸는 스킬도 남의 자료를 건드리지 못했다
+    p = paper_store.find_paper(victim, s, pid) or {}
+    assert str(p.get("title", "")).startswith(SECRET), p.get("title")
+    assert str(p.get("notes", "")).startswith(SECRET), p.get("notes")
+    assert meeting_store.read_doc(victim, s, mid, "회의록")["content"].startswith(SECRET)
+    assert str(meeting_store.get_meeting(victim, s, mid).get("title", "")).startswith(SECRET)
+
+    # **새 스킬이 생기면 여기 목록에 넣게 강제한다.** 남의 id 를 받을 수 있는
+    # 스킬(paper_id/meeting_id/space 를 인자로 쓰는 것)은 전부 확인되어야 한다.
+    checked = {n for n, _ in calls} | {"search_everything", "search_context", "search_documents"}
+    takes_id = {
+        sk["name"] for sk in reg.build_catalog()
+        if {"paper_id", "meeting_id", "space"} & set(
+            (sk.get("parameters") or {}).get("properties", {}))
+    }
+    assert not (takes_id - checked), f"남의 id 를 받는 새 스킬이 확인되지 않았다: {takes_id - checked}"
+
+
 def test_paper_notes_never_hold_an_it_was_not_extracted_excuse():
     """"정보가 추출되지 않았습니다"는 메모가 아니다.
 
@@ -6517,6 +6623,14 @@ def test_usage_shows_numbers_and_never_content():
         got = r.json()
         assert got["tokens"]["total"] == 140 and got["tokens"]["calls"] == 1, got["tokens"]
         assert got["tokens"]["by_model"]["gemini-x"]["output"] == 40
+        # 화면별로도 센다 — 어느 화면이 요금을 쓰는지 알아야 어디를 줄일지 정한다
+        assert got["tokens"]["by_mode"]["assistant"]["total"] == 140, got["tokens"]["by_mode"]
+        usage.add_tokens(victim, s, model="gemini-x", prompt=10, output=5, mode="paper")
+        usage.add_tokens(victim, s, model="gemini-x", prompt=1, output=1, mode="없는화면")
+        modes = client.get("/api/usage/me").json()["tokens"]["by_mode"]
+        assert modes["paper"]["total"] == 15 and modes["assistant"]["total"] == 140, modes
+        # 모르는 화면 이름은 '기타'로 접는다(자료가 이름으로 새지 않게)
+        assert modes["기타"]["total"] == 2 and "없는화면" not in modes, modes
         assert got["pages"]["/notes"]["seconds"] >= 12.5, got["pages"]
         # 물음표 뒤(논문 id 등)는 잘려 나가고 화면 이름만 남는다
         assert got["pages"]["/papers"]["seconds"] == 3.0, got["pages"]
@@ -6544,7 +6658,8 @@ def test_usage_shows_numbers_and_never_content():
         assert client.get("/api/usage/user/없는사람").status_code == 404
         rows = client.get("/api/usage/users").json()["users"]
         me = next(x for x in rows if x["username"] == "tester")
-        assert me["tokens"] == 140, me
+        # 위에서 화면별 집계를 확인하며 더 넣은 17 토큰이 함께 잡힌다
+        assert me["tokens"] == 157, me
         # 목록에 실리는 것은 정해진 필드뿐이다(자료가 끼어들 자리가 없다)
         assert set(me) == {"username", "display_name", "role", "status", "tokens"}, me
 
