@@ -8819,6 +8819,99 @@ def test_a_paper_chat_does_not_recreate_a_deleted_paper():
     assert chat_store.load(chat_store.english_path(u, s))
 
 
+def test_two_people_using_the_ai_at_the_same_moment_never_see_each_other(monkeypatch):
+    """**같은 순간에** 둘이 AI를 써도 섞이지 않는다.
+
+    앞선 검증은 한 사람씩 차례로 두드렸다. 그런데 이 저장소의 아픈 결함은 대부분
+    동시성에서 나왔다 — 모듈 수준 상태(클라이언트·캐시·'지금 사용자')가 하나뿐이면
+    차례로 부를 때는 멀쩡하고 겹칠 때만 섞인다. 그리고 그렇게 섞이면 남의 논문·회의·
+    단어가 통째로 넘어간다.
+
+    가짜 모델은 **받은 것을 그대로 되읊는다.** 스킬 결과와 시스템 프롬프트에 남의
+    것이 한 글자라도 들어오면 답에 그대로 나온다.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from backend import accounts, meeting_store, paper_store
+    from backend.ai import orchestrator
+    from backend.ai.orchestrator import LLMResult
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    people = {
+        "concur1": {"pw": "longenough1", "말": "보라색고슴도치", "논문": "초전도고슴도치"},
+        "concur2": {"pw": "longenough2", "말": "노란색두더지", "논문": "양자두더지"},
+    }
+    clients = {}
+    try:
+        for name, d in people.items():
+            cl = TestClient(app)
+            cl.post("/api/auth/signup",
+                    json={"username": name, "password": d["pw"], "display_name": name})
+            accounts.set_status(name, accounts.STATUS_ACTIVE, "tester", s)
+            assert cl.post("/api/auth/login",
+                           json={"username": name, "password": d["pw"]}).status_code == 200
+            clients[name] = cl
+            u = SessionUser(username=name, display_name=name, expires_at=0, remaining=0)
+
+            pid = cl.post("/api/papers/upload",
+                          files={"file": (f"{d['논문']}.pdf", _tiny_pdf(name), "application/pdf")}
+                          ).json()["id"]
+            cl.put(f"/api/papers/{pid}", json={"title": d["논문"], "notes": d["말"]})
+            d["pid"] = pid
+
+            mid = meeting_store.new_id()
+            meeting_store.meeting_dir(u, s, mid).mkdir(parents=True, exist_ok=True)
+            (meeting_store.meeting_dir(u, s, mid) / "audio.wav").write_bytes(b"RIFF0000WAVE")
+            meeting_store.register(u, s, filename="a.wav", mime="audio/wav", size=12, ext="wav",
+                                   day="2026-09-07", title=f"{d['말']} 회의", mid=mid)
+            meeting_store.write_doc(u, s, mid, "합의문", f"결론은 {d['말']} 이다.")
+            d["mid"] = mid
+            cl.post("/api/vocab/words", json={"word": d["말"], "meanings": [d["말"]],
+                                              "tags": [d["논문"]]})
+
+        class EchoLLM:
+            """받은 시스템 프롬프트와 도구 결과를 그대로 답으로 돌려준다."""
+
+            def __init__(self):
+                self.n = 0
+
+            def chat(self, contents, catalog, system):
+                self.n += 1
+                if self.n == 1:
+                    return LLMResult(text="", tool_use={"name": "list_vocab", "args": {}})
+                seen = json.dumps(contents, ensure_ascii=False)
+                return LLMResult(text=(system + seen)[:20000], tool_use=None)
+
+        monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": EchoLLM())
+
+        def ask(name: str, mode: str) -> str:
+            d = people[name]
+            body = {"message": "내 것을 알려 줘", "mode": mode}
+            if mode == "paper":
+                body["paper_id"] = d["pid"]
+            if mode == "meeting":
+                body["meeting_id"] = d["mid"]
+            return clients[name].post("/api/ai/chat", json=body).text
+
+        jobs = [(n, m) for n in people for m in ("english", "paper", "meeting")] * 2
+        with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
+            got = list(ex.map(lambda a: (a, ask(*a)), jobs))
+
+        for (name, mode), text in got:
+            other = next(o for o in people if o != name)
+            for 남의것 in (people[other]["말"], people[other]["논문"],
+                           people[other]["pid"], people[other]["mid"], other):
+                assert 남의것 not in text, f"{name}/{mode} 안에 {other} 의 '{남의것}' 이 들어왔다"
+            # 섞이지 않았을 뿐 아니라 **제 것은 제대로 봤어야** 한다. 아무것도 못 본
+            # 답끼리는 서로 섞이지도 않아서, 이 확인이 없으면 시험이 공허해진다.
+            assert people[name]["말"] in text, f"{name}/{mode} 가 제 자료를 못 봤다: {text[:200]}"
+    finally:
+        for name in people:
+            client.delete(f"/api/admin/users/{name}")
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"
