@@ -42,7 +42,9 @@ function MobileSwitch({
             role="tab"
             aria-selected={it.on}
             onClick={() => onPick(it.key)}
-            className={`h-8 flex-1 rounded text-[12.5px] font-medium transition-colors ${
+            // h-8(32px)이면 테두리 안쪽이 27px 이라 손가락에 작다. 이건 좁은
+            // 화면에서 화면을 오가는 **주된 단추**라 넉넉해야 한다(실측 390px).
+            className={`h-10 flex-1 rounded text-[13px] font-medium transition-colors ${
               it.on ? "bg-surface text-fg shadow-sm" : "text-fg-muted"}`}
           >
             {it.label}

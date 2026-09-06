@@ -55,6 +55,26 @@
   .label {
     @apply text-[11px] font-semibold uppercase tracking-wider text-fg-muted;
   }
+  /**
+   * 작게 보여야 하지만 **손가락으로는 넉넉히 눌려야** 하는 단추(목록 줄 끝의
+   * 아이콘 같은 것). 보이는 크기는 그대로 두고 눌리는 자리만 44×44 로 넓힌다.
+   * 실측(390px): 그런 단추들이 24×24 였다 — 권장 최소치의 절반이다.
+   * 마우스에서는 건드리지 않는다(넓은 자리가 옆 줄을 가로챌 이유가 없다).
+   */
+  @media (pointer: coarse) {
+    .tap {
+      position: relative;
+    }
+    .tap::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+    }
+  }
   .btn {
     @apply inline-flex min-h-[2.25rem] touch-manipulation items-center justify-center gap-1.5
       rounded-md border border-transparent px-3 text-[13px] font-medium leading-none

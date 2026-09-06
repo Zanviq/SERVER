@@ -155,7 +155,7 @@ export function PaperList({
           {p.starred && <Star size={12} className="mt-1 shrink-0 fill-warning text-warning" />}
           <span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
             <Dropdown align="end" width={190}
-              className={`grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-hovered hover:text-fg ${active ? "" : "sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"}`}
+              className={`tap grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-hovered hover:text-fg ${active ? "" : "sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"}`}
               trigger={() => <MoreHorizontal size={14} />}>
               {(close) => (
                 <>

@@ -98,7 +98,7 @@ export function TranscriptView({ meeting, onSeek, onRenameSpeaker, onRetry }: Pr
                     className="input h-6 w-28 px-2 text-[11.5px]" />
                 ) : (
                   <button key={label} type="button" onClick={() => { setEditing(label); setDraft(meeting.speakers?.[label] || ""); }}
-                    title="이름 붙이기" className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] ${colorOf(label)}`}>
+                    title="이름 붙이기" className={`tap inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] ${colorOf(label)}`}>
                     {nameOf(label)} <Pencil size={10} className="opacity-60" />
                   </button>
                 )
@@ -113,17 +113,23 @@ export function TranscriptView({ meeting, onSeek, onRenameSpeaker, onRetry }: Pr
         ) : (
           <ol className="space-y-2">
             {tr.segments.map((s, i) => (
-              <li key={i} className="flex gap-2 text-[13px] leading-relaxed">
+              // **줄 전체가 '여기부터 듣기'다.** 예전에는 시각 글자만 눌렸는데,
+              // 휴대폰에서 그 자리는 33×19px 이라 손가락으로 정확히 짚기 어렵다
+              // (실측 390px). 녹음을 되감는 것이 이 화면의 주된 조작이고,
+              // 한 회의에 이런 줄이 수백 개 있다.
+              <li key={i}>
                 <button type="button" onClick={() => onSeek(toSec(s.start))} title="여기부터 듣기"
-                  className="mt-0.5 shrink-0 font-mono text-[11px] tabular-nums text-fg-subtle hover:text-accent">
-                  {s.start || "--:--"}
+                  className="flex w-full gap-2 rounded-md px-1 py-1 text-left text-[13px] leading-relaxed hover:bg-hovered">
+                  <span className="mt-0.5 shrink-0 font-mono text-[11px] tabular-nums text-fg-subtle">
+                    {s.start || "--:--"}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    {s.speaker && (
+                      <span className={`mr-1.5 rounded px-1.5 py-px text-[11px] font-medium ${colorOf(s.speaker)}`}>{nameOf(s.speaker)}</span>
+                    )}
+                    <span>{s.text}</span>
+                  </span>
                 </button>
-                <div className="min-w-0 flex-1">
-                  {s.speaker && (
-                    <span className={`mr-1.5 rounded px-1.5 py-px text-[11px] font-medium ${colorOf(s.speaker)}`}>{nameOf(s.speaker)}</span>
-                  )}
-                  <span>{s.text}</span>
-                </div>
               </li>
             ))}
           </ol>

@@ -570,7 +570,7 @@ function MeetingHeader({ meeting, categories, onBack, onUpdate, onRetry }: {
 
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-3 py-2">
-      <button onClick={onBack} aria-label="회의 목록으로" className="-ml-1 shrink-0 rounded p-1 text-fg-muted hover:bg-hovered hover:text-fg lg:hidden">
+      <button onClick={onBack} aria-label="회의 목록으로" className="tap -ml-1 shrink-0 rounded p-1 text-fg-muted hover:bg-hovered hover:text-fg lg:hidden">
         <ChevronLeft size={16} />
       </button>
       <input value={title} onChange={(e) => setTitle(e.target.value)} onBlur={commitTitle}
