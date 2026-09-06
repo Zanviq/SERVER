@@ -160,7 +160,9 @@ def ensure_seed(settings: Settings) -> None:
     with lock_for(p):
         existing = read_json(p, None)
         if existing is not None:
-            _backfill_origin(existing, p, settings)
+            # 이미 락 안이다 — _backfill_origin(락을 잡는다)을 부르면 멈춘다
+            if isinstance(existing, list) and _apply_origin(existing, settings):
+                write_atomic(p, existing)
             return
         if p.exists():
             # 있는데 못 읽는다 = 손상. 여기서 새로 쓰면 계정이 전부 날아간다.
@@ -192,8 +194,8 @@ def ensure_seed(settings: Settings) -> None:
         write_atomic(p, rows)
 
 
-def _backfill_origin(rows: list[dict], p: Path, settings: Settings) -> None:
-    """origin이 없던 시절에 만들어진 행에 origin을 채운다.
+def _apply_origin(rows: list[dict], settings: Settings) -> bool:
+    """origin이 없던 시절에 만들어진 행에 origin을 채운다(메모리만). 바뀌면 True.
 
     이 백필이 없으면 실제 배포된 주인 계정이 signup으로 읽혀, 주인 전용 게이트를
     켜는 순간 본인이 잠긴다(ensure_seed가 파일이 있으면 early-return하므로).
@@ -204,7 +206,7 @@ def _backfill_origin(rows: list[dict], p: Path, settings: Settings) -> None:
     seeded = {str(u.username).lower() for u in settings.users}
     changed = False
     for row in rows:
-        if row.get("origin"):
+        if not isinstance(row, dict) or row.get("origin"):
             continue
         looks_bootstrap = (
             str(row.get("approved_by", "")).startswith("system(")
@@ -212,8 +214,26 @@ def _backfill_origin(rows: list[dict], p: Path, settings: Settings) -> None:
         )
         row["origin"] = ORIGIN_BOOTSTRAP if looks_bootstrap else ORIGIN_SIGNUP
         changed = True
-    if changed:
-        write_atomic(p, rows)
+    return changed
+
+
+def _backfill_origin(rows: list[dict], p: Path, settings: Settings) -> None:
+    """origin 백필을 파일에도 남긴다. **락을 잡지 않은 곳에서만 부른다.**
+
+    예전에는 읽어 온 rows 를 락 없이 그대로 되썼다. 이 함수는 로그인·목록 등
+    읽기 경로(_load)에서 불리는데, 그 사이에 다른 요청이 락을 잡고 **가입 승인**을
+    저장하면, 승인 전에 읽어 둔 rows 가 그 위를 덮어 승인이 사라진다. 백필은
+    업그레이드 직후 한 번뿐이지만 하필 그때가 승인이 몰리는 때다.
+    쓸 때는 락 안에서 다시 읽어 그 최신 목록에 백필한다.
+    """
+    if not _apply_origin(rows, settings):  # 부른 쪽이 보는 목록은 바로 고쳐 준다
+        return
+    with lock_for(p):
+        cur = read_json(p, None)
+        if not isinstance(cur, list):
+            return
+        if _apply_origin(cur, settings):
+            write_atomic(p, cur)
 
 
 def _match(rows: list[dict], username: str) -> dict | None:

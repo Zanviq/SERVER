@@ -7301,6 +7301,78 @@ def test_streaming_failure_does_not_become_an_answer(monkeypatch):
     assert [m["role"] for m in msgs] == ["user"], msgs
 
 
+def test_no_store_writes_without_holding_the_lock():
+    """읽고-고쳐-쓰는 함수는 반드시 락 안에서 한다.
+
+    폰과 PC를 같이 쓰면 같은 파일에 두 요청이 겹친다. 락 없이 읽고 쓰면 나중에
+    쓴 쪽이 상대의 변경을 통째로 덮는데, 오류도 로그도 남지 않아 **없어진 줄도
+    모른다**. 실제로 accounts.py 의 origin 백필이 그랬다(읽기 경로에서 락 없이
+    되썼다). 사람이 매번 확인하는 대신 구조로 막는다.
+    """
+    import ast
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent
+    targets = sorted(root.glob("*_store.py")) + [root / "trash.py", root / "accounts.py"]
+    #: 쓰기만 하는 헬퍼(부른 쪽이 락을 잡는다) — 이름을 적어 두고 그 외는 막는다
+    allowed = {"_save", "write_transcript"}
+    offenders = []
+    for path in targets:
+        if not path.exists():
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+            called = {
+                n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
+                for n in ast.walk(fn) if isinstance(n, ast.Call)
+            }
+            writes = called & {"_save", "write_atomic", "write_text_atomic"}
+            if writes and "lock_for" not in called and fn.name not in allowed:
+                offenders.append(f"{path.name}:{fn.lineno} {fn.name} → {sorted(writes)}")
+    assert not offenders, "락 없이 저장한다:\n" + "\n".join(offenders)
+
+
+def test_origin_backfill_does_not_overwrite_a_concurrent_approval(monkeypatch):
+    """읽기 경로의 백필이 그 사이에 저장된 승인을 덮으면 안 된다.
+
+    _load 는 락 없이 읽는다. 백필이 그 rows 를 그대로 되쓰면, 읽은 뒤 저장된
+    변경(가입 승인 등)이 통째로 사라진다. 업그레이드 직후 한 번뿐인 백필이지만
+    하필 그때가 승인이 몰리는 때다.
+    """
+    from backend import accounts as acc
+    from backend.json_store import read_json, write_atomic
+
+    _login()  # 계정 파일이 없으면 여기서 시드된다(테스트를 혼자 돌릴 때)
+    s = get_settings()
+    p = acc._path(s)
+    rows = read_json(p, None)
+    assert isinstance(rows, list) and rows
+    backup = json.loads(json.dumps(rows))
+    try:
+        # origin 이 없던 시절의 파일을 흉내낸다
+        old = json.loads(json.dumps(rows))
+        for r in old:
+            r.pop("origin", None)
+        write_atomic(p, old)
+
+        stale = json.loads(json.dumps(old))  # 읽기 경로가 손에 쥔 옛 목록
+        # 그 사이에 다른 요청이 승인을 저장했다
+        saved = json.loads(json.dumps(old))
+        saved.append({"username": "늦게승인", "display_name": "L", "password_hash": "x",
+                      "role": "user", "status": "active", "origin": "signup"})
+        write_atomic(p, saved)
+
+        acc._backfill_origin(stale, p, s)
+
+        after = read_json(p, None)
+        assert any(r["username"] == "늦게승인" for r in after), "승인이 백필에 덮였다"
+        assert all(r.get("origin") for r in after), after
+        # 부른 쪽이 들고 있던 목록도 제자리에서 고쳐져야 한다(주인이 잠기지 않게)
+        assert all(r.get("origin") for r in stale), stale
+    finally:
+        write_atomic(p, backup)
+
+
 def test_long_meeting_doc_is_not_shrunk_to_the_read_limit():
     """회의 문서는 휴지통도 없다 — 되쓰기로 뒷부분을 날리면 그걸로 끝이다."""
     from backend import meeting_store
