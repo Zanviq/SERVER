@@ -42,6 +42,36 @@ logging.basicConfig(
 logger = logging.getLogger("server")
 
 
+def _log_to_disk() -> None:
+    """경고·오류를 **파일에도** 남긴다.
+
+    지금까지는 stdout 뿐이었다. 그런데 이 서버는 main 에 푸시할 때마다 컨테이너가
+    새로 뜬다 — 그때 `docker logs` 가 통째로 비워진다. 사용자가 "안 돼요"라고
+    말할 즈음이면 이미 몇 번 배포된 뒤라, 무슨 일이 있었는지 볼 방법이 없다.
+    실제로 신규 사용자의 논문 추출이 실패했을 때 로그가 없어 추측으로 좁혔다.
+
+    저장소 볼륨에 두므로 재시작·배포에도 남는다. 4MB × 3 으로 묶어 디스크를
+    잠식하지 않게 한다(라즈베리파이의 SD 카드다).
+    """
+    from logging.handlers import RotatingFileHandler
+
+    try:
+        path = get_settings().storage_root / "logs"
+        path.mkdir(parents=True, exist_ok=True)
+        h = RotatingFileHandler(path / "server.log", maxBytes=4_000_000, backupCount=3,
+                                encoding="utf-8")
+        # 경고 이상만. INFO 까지 담으면 접속 기록으로 금세 차서 정작 오류가 밀려 나간다.
+        h.setLevel(logging.WARNING)
+        h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logging.getLogger().addHandler(h)
+    except OSError as e:
+        # 로그를 못 남기는 것으로 서버가 안 뜨면 안 된다
+        logger.warning("로그 파일을 열지 못했습니다(계속 진행): %s", e)
+
+
+_log_to_disk()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()

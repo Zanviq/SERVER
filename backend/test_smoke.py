@@ -9369,6 +9369,38 @@ def test_the_meeting_screens_own_examples_can_still_make_documents():
         assert not asked(m), m
 
 
+def test_errors_survive_a_restart():
+    """경고·오류는 파일에도 남아야 한다.
+
+    지금까지는 stdout 뿐이었는데, 이 서버는 main 에 푸시할 때마다 컨테이너가
+    새로 뜬다 — 그때 `docker logs` 가 통째로 비워진다. 사용자가 "안 돼요"라고
+    말할 즈음이면 이미 몇 번 배포된 뒤라 무슨 일이 있었는지 볼 방법이 없다
+    (신규 사용자의 논문 추출이 실패했을 때 실제로 그랬다).
+    """
+    import logging as _logging
+    import pathlib
+    from logging.handlers import RotatingFileHandler
+
+    from backend.config import get_settings
+
+    handlers = [h for h in _logging.getLogger().handlers
+                if isinstance(h, RotatingFileHandler)]
+    assert handlers, "파일 핸들러가 없다 — 재시작하면 오류 기록이 사라진다"
+    h = handlers[0]
+    assert _logging.INFO < h.level <= _logging.WARNING, (
+        "경고 이상만 남긴다 — INFO 까지 담으면 접속 기록으로 차서 정작 오류가 밀려 나간다")
+    assert h.maxBytes and h.backupCount, "묶지 않으면 SD 카드를 잠식한다"
+    assert h.maxBytes * (h.backupCount + 1) <= 32_000_000, "너무 크다"
+
+    # 저장소 볼륨 안이어야 재시작·배포에도 남는다
+    path = pathlib.Path(h.baseFilename).resolve()
+    path.relative_to(get_settings().storage_root.resolve())
+
+    _logging.getLogger("server.test").warning("재시작에도 남아야 하는 줄")
+    h.flush()
+    assert "재시작에도 남아야 하는 줄" in path.read_text(encoding="utf-8")
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"
