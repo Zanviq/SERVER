@@ -6616,6 +6616,29 @@ def test_saving_a_note_changed_elsewhere_stops_instead_of_overwriting():
         client.delete("/api/notes/delete", params={"path": path})
 
 
+def test_prompt_tells_the_model_that_missing_skills_are_not_absent_data():
+    """화면에 도구가 없다고 해서 '없는 것'이 아니다 — '볼 수 없는 것'이다.
+
+    85차: 캘린더 도구가 없는 영어 학습 화면에서 "오늘 일정 뭐 있어?"에 조회도
+    없이 **"오늘은 일정이 없습니다"**라고 답했다. 사용자는 일정이 비었다고 믿는다.
+    """
+    from backend.ai import modes
+    from backend.auth import SessionUser
+
+    u = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    today = "2026-09-06 (일)"
+    for text in (modes.english_system(u, "assistant", today),
+                 modes.paper_system(u, "assistant", today, None, []),
+                 modes.meeting_system(u, "assistant", today, None, [], [])):
+        assert "볼 수 없습니다" in text, text[:400]
+        assert "짐작해 답하지 마세요" in text, text[:400]
+
+    # 영어 학습 화면에는 캘린더·회의 도구가 없다(그래서 이 규칙이 필요하다)
+    english = modes.MODES["english"]
+    assert not english.allows("list_calendar_events")
+    assert not english.allows("list_meetings")
+
+
 def test_readme_skill_count_matches_reality():
     """README 는 이 저장소에서 설명서이자 계약서다. 스킬 수는 특히 잘 낡는다.
 
