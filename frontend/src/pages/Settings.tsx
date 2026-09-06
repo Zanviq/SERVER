@@ -150,9 +150,14 @@ export function Settings() {
   const { settings: s, loaded, error, load, patch } = useSettings();
   // 구글 콜백은 `/settings?google=...` 로 돌아온다. 그때는 곧장 캘린더 탭이어야
   // 결과(연동됨/취소됨)를 보여 줄 자리가 생긴다.
-  const [tab, setTab] = useState(() =>
-    new URLSearchParams(window.location.search).has("google") ? "calendar" : "account",
-  );
+  // `?tab=members` 로도 들어온다 — 사용량 화면에서 "계정 관리"로 돌아올 때
+  // 엉뚱한 탭에 떨어지면 방금 보던 목록을 다시 찾아야 한다.
+  const [tab, setTab] = useState(() => {
+    const q = new URLSearchParams(window.location.search);
+    if (q.has("google")) return "calendar";
+    const want = q.get("tab") ?? "";
+    return [...BASE_TABS, ADMIN_TAB].some((t) => t.id === want) ? want : "account";
+  });
   const [aiRules, setAiRules] = useState("");
   // 모델 목록은 서버가 Gemini API에서 받아온다(코드에 박아두면 새 모델이 나올 때마다 고쳐야 한다)
   const [models, setModels] = useState<{ id: string; label: string }[] | null>(null);

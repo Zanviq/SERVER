@@ -31,6 +31,7 @@ from .routers import (
     terminal,
     todo,
     trash,
+    usage,
     vocab,
 )
 
@@ -113,6 +114,7 @@ app.include_router(diary.router, dependencies=_PROTECTED)
 app.include_router(meetings.router, dependencies=_PROTECTED)
 app.include_router(context.router, dependencies=_PROTECTED)
 app.include_router(search.router, dependencies=_PROTECTED)
+app.include_router(usage.router, dependencies=_PROTECTED)
 app.include_router(terminal.router, dependencies=_PROTECTED)
 app.include_router(admin.router, dependencies=_OWNER_ONLY)
 app.include_router(google.router, dependencies=_PROTECTED)

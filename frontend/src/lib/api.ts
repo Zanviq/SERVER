@@ -349,6 +349,16 @@ export const api = {
     diaryUnlock = { token: r.token, day: r.date || day };
     return r;
   },
+  // ── 사용량(수치만) ──
+  usagePage: (body: { route: string; seconds: number; came_from: string }) =>
+    req<{ ok: boolean }>("/api/usage/page", jsonInit("POST", body)),
+  usageMine: (month = "") => req<UsageSummary>(`/api/usage/me?${q({ month })}`),
+  /** 주인 전용. 목록에는 이번 달 토큰만 실린다. */
+  usageUsers: (month = "") =>
+    req<{ month: string; users: UsageUserRow[] }>(`/api/usage/users?${q({ month })}`),
+  usageUser: (username: string, month = "") =>
+    req<UsageSummary>(`/api/usage/user/${encodeURIComponent(username)}?${q({ month })}`),
+
   diaryLockState: () => req<{ is_default: boolean }>("/api/diary/lock"),
   diaryChangePin: (current: string, next: string) =>
     req<{ ok: boolean; is_default: boolean }>("/api/diary/pin", jsonInit("PUT", { current, next })),
@@ -459,6 +469,37 @@ export interface AiPreview {
     skills: number;
     chars_total: number;
   };
+}
+
+// ── 사용량 ──
+/** 계정 목록 한 줄. **이번 달 토큰 말고는 아무 수치도 싣지 않는다.** */
+export interface UsageUserRow {
+  username: string;
+  display_name: string;
+  role: string;
+  status: string;
+  tokens: number;
+}
+
+/** 한 사용자의 사용량 — 전부 수치다. 제목·본문은 어떤 필드에도 오지 않는다. */
+export interface UsageSummary {
+  username: string;
+  month: string;
+  months: string[];
+  tokens: {
+    total: number; prompt: number; output: number; calls: number;
+    by_model: Record<string, { total: number; prompt: number; output: number; calls: number }>;
+  };
+  /** 화면 이름 → 머문 시간·본 횟수. 이름은 서버가 아는 라우트로 접힌 값이다. */
+  pages: Record<string, { seconds: number; views: number }>;
+  /** 많이 다닌 길(최대 20). */
+  moves: { from: string; to: string; count: number }[];
+  days: Record<string, { seconds: number; tokens: number; calls: number }>;
+  total_seconds: number;
+  total_views: number;
+  counts: Record<string, number>;
+  context: { spaces: number; turns: number; chars: number };
+  generated_at: number;
 }
 
 /** 서버에 남은 대화 한 줄(영어 학습·논문). */

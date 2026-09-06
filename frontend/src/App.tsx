@@ -1,6 +1,6 @@
 import { lazyChunk } from "./lib/lazyChunk";
 import { Suspense, useEffect } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "./store/auth";
 import { useSettings } from "./store/settings";
@@ -9,6 +9,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { Toaster } from "./components/ui/Toaster";
 import { ReminderPoller } from "./components/ReminderPoller";
 import { SearchPalette } from "./components/search/SearchPalette";
+import { startPageTiming, trackRoute } from "./lib/pageTiming";
 
 // 무거운 라우트는 코드 분할(지연 로드) — 초기 번들 축소
 // 라우트별 동적 import 썽크 — lazy()와 프리페치에 함께 사용
@@ -25,6 +26,7 @@ const loaders = {
   profile: () => import("./pages/Profile"),
   trash: () => import("./pages/Trash"),
   context: () => import("./pages/Context"),
+  analytics: () => import("./pages/Analytics"),
   terminal: () => import("./pages/Terminal"),
 };
 
@@ -41,6 +43,7 @@ const Profile = lazyChunk(() => loaders.profile().then((m) => ({ default: m.Prof
 const Trash = lazyChunk(() => loaders.trash().then((m) => ({ default: m.Trash })));
 const ContextPage = lazyChunk(() => loaders.context().then((m) => ({ default: m.Context })));
 const TerminalPage = lazyChunk(() => loaders.terminal().then((m) => ({ default: m.TerminalPage })));
+const Analytics = lazyChunk(() => loaders.analytics().then((m) => ({ default: m.Analytics })));
 
 /** 로그인 후 유휴 시간에 모든 라우트 청크를 미리 로드 → 페이지 이동 지연 제거 */
 function prefetchRoutes() {
@@ -56,6 +59,14 @@ function Spinner() {
       <Loader2 size={22} className="animate-spin" />
     </div>
   );
+}
+
+/** 화면 이동을 사용량에 기록한다(화면 이름과 머문 초만 나간다). */
+function PageTiming() {
+  const { pathname } = useLocation();
+  useEffect(() => startPageTiming(), []);
+  useEffect(() => { trackRoute(pathname); }, [pathname]);
+  return null;
 }
 
 function AuthedRoutes() {
@@ -79,6 +90,8 @@ function AuthedRoutes() {
         <Route path="/profile" element={<Profile />} />
         <Route path="/trash" element={<Trash />} />
         <Route path="/context" element={<ContextPage />} />
+        {/* 사용량은 주인 전용이다 — 백엔드도 require_owner 로 다시 막는다 */}
+        <Route path="/analytics" element={isOwner ? <Analytics /> : <Navigate to="/notes" replace />} />
         <Route path="/terminal" element={isOwner ? <TerminalPage /> : <Navigate to="/notes" replace />} />
         <Route path="*" element={<Navigate to={isOwner ? "/" : "/notes"} replace />} />
       </Routes>
@@ -118,6 +131,7 @@ export default function App() {
       {session ? (
         <BrowserRouter>
           <AuthedRoutes />
+          <PageTiming />
           {/* 화면마다 껍데기가 달라서(노트·논문은 Shell 을 쓰지 않는다) 여기에 둔다 */}
           <SearchPalette />
           <ReminderPoller />

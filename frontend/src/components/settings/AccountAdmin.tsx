@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Check, X, Ban, Trash2, Loader2, UserCheck } from "lucide-react";
 import { api, AdminUser } from "../../lib/api";
 import { toast } from "../../store/toast";
@@ -16,6 +17,10 @@ export function AccountAdmin({ me }: { me: string }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  //: 사용자 → 이번 달 토큰. 계정 목록과 따로 받아서, 사용량 집계가 실패해도
+  //: 계정 관리 자체는 그대로 쓸 수 있게 둔다.
+  const [tokens, setTokens] = useState<Record<string, number>>({});
+  const navigate = useNavigate();
 
   const load = useCallback(async () => {
     try {
@@ -26,6 +31,12 @@ export function AccountAdmin({ me }: { me: string }) {
       toast.error(e instanceof Error ? e.message : "계정 목록을 불러오지 못했습니다.");
     } finally {
       setLoading(false);
+    }
+    try {
+      const u = await api.usageUsers();
+      setTokens(Object.fromEntries(u.users.map((x) => [x.username, x.tokens])));
+    } catch {
+      /* 토큰을 못 받아도 목록은 보여 준다 */
     }
   }, []);
 
@@ -92,15 +103,27 @@ export function AccountAdmin({ me }: { me: string }) {
         <ul className="divide-y divide-line">
           {users.map((u) => (
             <li key={u.username} className="flex items-center gap-3 py-2.5">
-              <div className="min-w-0 flex-1">
+              {/* 이름을 누르면 그 사람의 **수치** 화면으로. 목록에는 이번 달
+                  토큰 말고 아무 수치도 싣지 않는다(자료는 어느 쪽에도 없다). */}
+              <button
+                type="button"
+                onClick={() => navigate(`/analytics?u=${encodeURIComponent(u.username)}`)}
+                className="min-w-0 flex-1 rounded-md px-1 py-0.5 text-left hover:bg-hovered"
+                title={`${u.username} 사용량 보기`}
+              >
                 <p className="truncate text-[13.5px] font-medium">
                   {u.display_name}
                   {u.username === me && <span className="ml-1.5 text-[11px] text-accent">(나)</span>}
+                  <span className="ml-2 text-[11px] font-normal tabular-nums text-fg-muted">
+                    {tokens[u.username] === undefined
+                      ? "…"
+                      : `이번 달 ${tokens[u.username].toLocaleString()} 토큰`}
+                  </span>
                 </p>
                 <p className="truncate text-[11.5px] text-fg-muted">
                   @{u.username} · {u.role === "admin" ? "관리자" : "사용자"} · {STATUS_LABEL[u.status]}
                 </p>
-              </div>
+              </button>
               {u.status === "active" && (
                 <button disabled={busy === u.username} className="btn btn-ghost h-8 hover:text-danger"
                   title="비활성화 (세션도 즉시 만료됩니다)"

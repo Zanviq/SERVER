@@ -6092,6 +6092,94 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
     return buf.getvalue()
 
 
+def test_usage_shows_numbers_and_never_content():
+    """사용량 화면은 **수치만** 낸다. 남의 자료는 한 글자도 나가지 않는다.
+
+    주인이 다른 사용자의 사용량을 보는 화면이라, 여기로 본문이 새면 "통계"라는
+    이름으로 남의 일기·문서·대화를 읽는 길이 된다. 화면에서 가리는 것으로는
+    부족하고(개발자 도구로 응답을 그대로 본다), 서버가 애초에 안 보내야 한다.
+    """
+    from backend import usage
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    _login()
+
+    # 훔쳐볼 만한 것을 잔뜩 만들어 둔다
+    secrets = ["아무도 모르는 일기입니다", "비밀 문서 제목", "몰래 잡은 일정"]
+    victim = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    client.put("/api/notes/save", json={"path": f"{secrets[1]}.md", "content": "본문도 비밀"})
+    ev = client.post("/api/calendar/events",
+                     json={"title": secrets[2], "start": "2026-09-09T10:00:00"})
+    made_ev = ev.json().get("id") if ev.status_code == 200 else ""
+
+    usage.add_tokens(victim, s, model="gemini-x", prompt=100, output=40)
+    usage.add_page(victim, s, route="/notes", seconds=12.5, came_from="/calendar")
+    # 주소에 섞여 온 남의 식별자는 화면 이름이 되지 못한다
+    usage.add_page(victim, s, route=f"/papers?p={secrets[1]}", seconds=3, came_from="/notes")
+    # 앱의 화면이 아닌 주소는 통째로 '기타'가 된다
+    usage.add_page(victim, s, route=f"/x/{secrets[0]}", seconds=2, came_from="/notes")
+
+    try:
+        r = client.get("/api/usage/me")
+        assert r.status_code == 200, r.text
+        body = r.text
+        for secret in secrets:
+            assert secret not in body, f"사용량 응답에 자료가 샜다: {secret}"
+        got = r.json()
+        assert got["tokens"]["total"] == 140 and got["tokens"]["calls"] == 1, got["tokens"]
+        assert got["tokens"]["by_model"]["gemini-x"]["output"] == 40
+        assert got["pages"]["/notes"]["seconds"] >= 12.5, got["pages"]
+        # 물음표 뒤(논문 id 등)는 잘려 나가고 화면 이름만 남는다
+        assert got["pages"]["/papers"]["seconds"] == 3.0, got["pages"]
+        # 앱의 화면이 아닌 주소는 통째로 '기타'로 접힌다
+        assert "기타" in got["pages"], got["pages"]
+        assert all(p in usage.ROUTES or p == usage.OTHER for p in got["pages"]), got["pages"]
+        assert {"from": "/calendar", "to": "/notes", "count": 1} in got["moves"], got["moves"]
+        assert got["counts"]["documents"] >= 1 and isinstance(got["counts"]["events"], int)
+        assert isinstance(got["context"]["chars"], int)
+        # 값이 전부 수치인가(문자열은 이름·달·화면 이름뿐)
+        for v in got["counts"].values():
+            assert isinstance(v, int), got["counts"]
+
+        # 켜 놓고 잔 시간을 '사용'으로 세지 않는다
+        usage.add_page(victim, s, route="/notes", seconds=99999)
+        assert client.get("/api/usage/me").json()["pages"]["/notes"]["seconds"] <= 12.5 + usage.MAX_DWELL
+
+        # 남의 것은 주인만 본다
+        assert client.get("/api/usage/users").status_code == 200
+        assert client.get("/api/usage/user/tester").status_code == 200
+        assert client.get("/api/usage/user/없는사람").status_code == 404
+        rows = client.get("/api/usage/users").json()["users"]
+        me = next(x for x in rows if x["username"] == "tester")
+        assert me["tokens"] == 140, me
+        # 목록에 실리는 것은 정해진 필드뿐이다(자료가 끼어들 자리가 없다)
+        assert set(me) == {"username", "display_name", "role", "status", "tokens"}, me
+
+        # 가입 사용자는 남의 사용량을 못 본다
+        from backend import accounts
+
+        TestClient(app).post("/api/auth/signup",
+                             json={"username": "peeper", "password": "longenough1", "display_name": "P"})
+        accounts.set_status("peeper", accounts.STATUS_ACTIVE, "tester", s)
+        spy = TestClient(app)
+        assert spy.post("/api/auth/login",
+                        json={"username": "peeper", "password": "longenough1"}).status_code == 200
+        assert spy.get("/api/usage/users").status_code == 403
+        assert spy.get("/api/usage/user/tester").status_code == 403
+        assert spy.get("/api/usage/me").status_code == 200   # 자기 것은 본다
+        # 남의 이름으로 쌓을 수 없다(엔드포인트가 사용자 이름을 받지 않는다)
+        spy.post("/api/usage/page", json={"route": "/notes", "seconds": 5,
+                                          "username": "tester", "came_from": "/"})
+        assert client.get("/api/usage/me").json()["pages"]["/notes"]["views"] == 2
+    finally:
+        client.delete(f"/api/notes/delete?path={secrets[1]}.md")
+        if made_ev:
+            client.delete(f"/api/calendar/events/{made_ev}")
+        client.delete("/api/admin/users/peeper")
+
+
 def test_broken_pdf_text_does_not_kill_extraction(monkeypatch):
     """UTF-8 로 못 쓰는 글자가 섞여 와도 논문 한 편이 통째로 못 쓰게 되면 안 된다.
 

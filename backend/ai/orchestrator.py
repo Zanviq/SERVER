@@ -89,6 +89,8 @@ class LLMResult:
     tool_uses: list[dict] = field(default_factory=list)  # 한 응답에 여러 호출이 올 때
     #: 모델이 왜 멈췄는가(STOP/MAX_TOKENS/SAFETY/…). 빈 답이 왔을 때 이것만이 단서다.
     finish_reason: str = ""
+    #: 이 호출이 쓴 토큰 {prompt, output, total}. 모르면 빈 dict.
+    usage: dict = field(default_factory=dict)
 
     def calls(self) -> list[dict]:
         """이번 응답이 요청한 스킬 호출 전부."""
@@ -123,19 +125,41 @@ def consume_stream(chunks):
     때문에 화면에 썼다 지우는 깜빡임이 생긴다.
     """
     text, tool_uses, finish = "", [], ""
+    usage = None
     for chunk in chunks:
         cand = chunk.candidates[0] if chunk.candidates else None
         piece, calls = parse_candidate(cand)
         reason = getattr(cand, "finish_reason", None)
         if reason:
             finish = getattr(reason, "name", None) or str(reason)
+        # 사용량은 마지막 청크에만 오고, 그때 값이 그 호출 전체의 합이다.
+        if getattr(chunk, "usage_metadata", None):
+            usage = chunk.usage_metadata
         if calls:
             tool_uses.extend(calls)
         if piece:
             text += piece
             if not tool_uses:
                 yield piece
-    return LLMResult(text=text, tool_uses=tool_uses, finish_reason=finish)
+    return LLMResult(text=text, tool_uses=tool_uses, finish_reason=finish,
+                     usage=_usage_of(usage))
+
+
+def _usage_of(meta) -> dict:
+    """응답의 usage_metadata → 우리가 세는 모양. 없으면 빈 값.
+
+    SDK 판이 바뀌면 필드가 사라질 수 있는데, 그때 대화가 죽으면 안 되므로
+    전부 getattr 로 조심스럽게 읽는다.
+    """
+    if meta is None:
+        return {}
+    def n(name: str) -> int:
+        try:
+            return max(0, int(getattr(meta, name, 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+    return {"prompt": n("prompt_token_count"), "output": n("candidates_token_count"),
+            "total": n("total_token_count")}
 
 
 #: 사용자가 손쓸 수 있는 실패에만 이름을 붙인다. 예전에는 전부 "잠시 후 다시
@@ -176,6 +200,27 @@ def _is_transient(raw: str) -> bool:
     if any(k.lower() in low for k in ("RESOURCE_EXHAUSTED", "429", "quota")):
         return False
     return any(k.lower() in low for k in _TRANSIENT)
+
+
+def _record_usage(user, settings: Settings, llm, result: "LLMResult") -> None:
+    """모델 호출 한 번의 토큰을 사용량에 더한다.
+
+    집계는 곁다리다 — 여기서 나는 어떤 오류도 대화를 막아서는 안 된다.
+    """
+    if not getattr(result, "usage", None):
+        return
+    try:
+        from .. import usage as usage_store
+
+        usage_store.add_tokens(
+            user, settings,
+            model=getattr(llm, "_model", "") or settings.gemini_model,
+            prompt=result.usage.get("prompt", 0),
+            output=result.usage.get("output", 0),
+            total=result.usage.get("total", 0),
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("사용량 집계 실패", exc_info=True)
 
 
 def effective_system(user, settings: Settings, today: str, system: str = "",
@@ -228,7 +273,8 @@ class GeminiLLM:
         text, tool_uses = parse_candidate(cand)
         reason = getattr(cand, "finish_reason", None)
         return LLMResult(text=text, tool_uses=tool_uses,
-                         finish_reason=(getattr(reason, "name", None) or str(reason or "")))
+                         finish_reason=(getattr(reason, "name", None) or str(reason or "")),
+                         usage=_usage_of(getattr(resp, "usage_metadata", None)))
 
     def stream(self, contents: list[dict], catalog: list[dict], system: str):
         """한 번 호출하되 **글자가 오는 대로** yield 한다. 끝나면 LLMResult 를 return.
@@ -340,6 +386,8 @@ def run(
                     yield {"type": "text_delta", "text": piece}
             else:
                 result = llm.chat(contents, catalog, system)
+            # 한 차례에 모델을 여러 번 부른다(도구를 쓸 때마다). 부를 때마다 센다.
+            _record_usage(user, settings, llm, result)
             if result.calls() or (result.text or "").strip():
                 break
             if result.error:
