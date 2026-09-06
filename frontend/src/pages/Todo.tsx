@@ -215,6 +215,7 @@ export function Todo() {
   }, [reload]);
 
   const tree = useMemo(() => buildTree(cats), [cats]);
+  const catById = useMemo(() => new Map(cats.map((c) => [c.id, c])), [cats]);
 
   /** 카테고리별 누계(자기 + 하위). 클릭하면 하위까지 보여주므로 배지도 그래야 한다 —
    *  직접 소속만 세면 "0/1"인데 열어 보니 3개가 나오는 어긋남이 생긴다. */
@@ -463,6 +464,12 @@ export function Todo() {
           {visible.map((t) => {
             const tone = dueTone(t.due);
             const hex = GCAL_COLORS[colorOf(t, cats)] ?? GCAL_COLORS["2"];
+            // 어느 칸에 든 할 일인지 제목 앞에 붙인다. **바로 위 카테고리**다 —
+            // A 를 골라 A-1-1 의 할 일까지 함께 보고 있을 때 "(A-1)"을 붙이면
+            // 어느 칸에 든 것인지 여전히 알 수 없다.
+            const cat = t.category_id ? catById.get(t.category_id) : undefined;
+            // 지금 보고 있는 그 카테고리를 다시 적지는 않는다(제목마다 같은 말).
+            const badge = cat && cat.id !== selectedCat ? cat : undefined;
             return (
               <li key={t.id} data-todo-id={t.id} className="relative py-1.5">
                 <span
@@ -492,11 +499,22 @@ export function Todo() {
                     className="min-w-0 flex-1 text-left"
                   >
                     <div
-                      className={`truncate text-sm ${
+                      className={`flex min-w-0 items-baseline gap-1 text-sm ${
                         t.done ? "text-fg-subtle line-through" : "text-fg"
                       }`}
                     >
-                      {t.title}
+                      {badge && (
+                        // 긴 카테고리 이름이 제목을 통째로 밀어내지 않도록 절반까지만
+                        // 차지하고 저도 줄인다. 색은 그 카테고리의 색이다.
+                        <span
+                          className="max-w-[45%] shrink-0 truncate font-medium"
+                          style={{ color: t.done ? undefined : GCAL_COLORS[badge.color] ?? GCAL_COLORS["2"] }}
+                          title={badge.name}
+                        >
+                          ({badge.name})
+                        </span>
+                      )}
+                      <span className="truncate">{t.title}</span>
                     </div>
                     <div className="mt-0.5 flex items-center gap-2 text-[11px]">
                       <span className={t.done ? "text-fg-subtle" : tone.cls}>
