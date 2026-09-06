@@ -267,15 +267,24 @@ export function Meetings() {
   };
 
   // ── 회의 ──
+  /**
+   * 녹음을 올린다. **하나라도 실패하면 false.**
+   *
+   * 예전에는 실패를 토스트로만 흘리고 늘 성공처럼 돌아왔다. 파일 올리기는 원본이
+   * 디스크에 남아 있으니 그래도 됐지만, **녹음 창은 그 값을 보고 창을 닫는다** —
+   * 녹음은 메모리에만 있어서 한 시간짜리 회의가 통째로 사라졌다.
+   */
   const upload = async (files: File[], meta: { title?: string; category?: string; day?: string } = {}) => {
     setUploading((n) => n + files.length);
     let first = "";
+    let allOk = true;
     for (const f of files) {
       try {
         const m = await api.meetingUpload(f, meta);
         setMeetings((arr) => [m, ...(arr ?? []).filter((x) => x.id !== m.id)]);
         if (!first) first = m.id;
       } catch (e) {
+        allOk = false;
         toast.error(`${f.name}: ${e instanceof Error ? e.message : "올리지 못했습니다"}`);
       } finally {
         setUploading((n) => n - 1);
@@ -286,6 +295,7 @@ export function Meetings() {
       toast.ok("올렸습니다. AI가 받아쓰는 중입니다.");
       void load(); // 정렬(날짜순)·카테고리 목록을 서버 기준으로
     }
+    return allOk;
   };
 
   const update = async (m: Meeting, body: Parameters<typeof api.meetingUpdate>[1]) => {

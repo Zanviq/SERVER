@@ -8555,6 +8555,11 @@ def test_no_skill_reads_a_value_then_writes_it_back():
 
     합치는 일은 저장소가 락 안에서 해야 한다(meeting_store.write_doc(append=),
     paper_store.update_meta(notes_append=) 처럼). 스킬은 "무엇을 더할지"만 넘긴다.
+
+    **스킬만 본다.** 같은 검사를 라우터에 대 보니 0건이었고, 추출·받아쓰기 같은
+    파이프라인에서는 전부 헛detection 이었다 — 거기서는 읽은 값이 매개변수로
+    흐를 뿐(mime, 제목 후보) 되쓰는 것이 아니다. 그것까지 걸면 진짜 결함이
+    잡음에 묻혀 이 검사가 곧 꺼진다.
     """
     import ast
     import pathlib

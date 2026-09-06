@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Loader2, Mic, Square, Upload } from "lucide-react";
+import { AlertTriangle, Download, Loader2, Mic, Square, Upload } from "lucide-react";
 import { Modal } from "../ui/Modal";
 
 interface Props {
@@ -7,8 +7,12 @@ interface Props {
   onClose: () => void;
   /** 이미 있는 카테고리(자동완성) */
   categories: string[];
-  /** 녹음 파일과 함께 제목·카테고리·날짜를 넘긴다. 올리기가 끝날 때까지 기다린다. */
-  onSave: (file: File, meta: { title: string; category: string; day: string }) => Promise<void>;
+  /**
+   * 녹음 파일과 함께 제목·카테고리·날짜를 넘긴다. 올리기가 끝날 때까지 기다린다.
+   * **성공했는지 돌려줘야 한다.** 실패했는데 성공처럼 돌아오면 이 창이 닫히고,
+   * 그러면 녹음은 메모리에만 있었으므로 통째로 사라진다.
+   */
+  onSave: (file: File, meta: { title: string; category: string; day: string }) => Promise<boolean>;
 }
 
 const today = () => {
@@ -349,19 +353,42 @@ export function Recorder({ open, onClose, categories, onSave }: Props) {
     setPhase("idle");
     setElapsed(0);
     setSilent(false);
+    setProblem("");   // 지난번 올리기 실패 안내가 새 녹음에 따라붙지 않게
     peak.current = 0;
   };
 
   const save = async () => {
     if (!blob) return;
     setSaving(true);
+    setProblem("");
     try {
       const file = new File([blob], `recording.${extRef.current}`, { type: blob.type });
-      await onSave(file, { title: title.trim(), category: category.trim(), day });
-      onClose();
+      // **올리지 못했으면 창을 닫지 않는다.** 녹음은 여기 메모리에만 있다 —
+      // 닫는 순간 한 시간짜리 회의가 통째로 사라지고 되돌릴 방법이 없다.
+      // 예전에는 부모가 오류를 토스트로만 삼켜서 늘 성공처럼 돌아왔다.
+      if (await onSave(file, { title: title.trim(), category: category.trim(), day })) {
+        onClose();
+        return;
+      }
+      setProblem("올리지 못했습니다. 녹음은 그대로 있으니 다시 저장해 보세요. "
+                 + "계속 안 되면 아래에서 파일로 내려받아 두세요.");
+    } catch (e) {
+      setProblem((e instanceof Error ? e.message : "올리지 못했습니다")
+                 + " — 녹음은 그대로 있습니다. 다시 저장하거나 파일로 내려받으세요.");
     } finally {
       setSaving(false);
     }
+  };
+
+  /** 녹음을 내 기기에 파일로 받는다. 서버가 아예 안 될 때 마지막 수단이다. */
+  const download = () => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(title.trim() || `${day} 회의`).replace(/[\\/:*?"<>|]/g, "_")}.${extRef.current}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   };
 
   /** MediaRecorder 가 만든 webm 에는 길이가 안 적혀 있어 duration 이 Infinity 로
@@ -460,7 +487,9 @@ export function Recorder({ open, onClose, categories, onSave }: Props) {
               )}
             </>
           )}
-          {problem && phase === "idle" && (
+          {/* 마이크 문제(idle)든 올리기 실패(done)든 여기 남는다. 예전에는 idle
+              일 때만 그려서, **녹음을 못 올린 이유가 어디에도 안 보였다.** */}
+          {problem && (
             <p className="flex items-start gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-left text-[12px] text-warning">
               <AlertTriangle size={13} className="mt-[2px] shrink-0" /> <span>{problem}</span>
             </p>
@@ -492,9 +521,14 @@ export function Recorder({ open, onClose, categories, onSave }: Props) {
               {devicePicker}
               <audio ref={audioEl} controls src={previewUrl.current}
                 onLoadedMetadata={onPreviewMeta} className="w-full" />
-              <div className="flex gap-2">
+              <div className="flex flex-wrap justify-center gap-2">
                 <button type="button" onClick={retake} className="btn btn-secondary" disabled={saving}>
                   다시 녹음
+                </button>
+                {/* 이 녹음은 여기 메모리에만 있다. 서버가 안 될 때 손에 남길 길을
+                    하나는 둔다 — 회의는 다시 열 수 없다. */}
+                <button type="button" onClick={download} className="btn btn-secondary gap-1.5" disabled={saving}>
+                  <Download size={14} /> 내려받기
                 </button>
                 <button type="button" onClick={save}
                   className={`btn gap-2 ${silent ? "btn-secondary" : "btn-primary"}`} disabled={saving}>
