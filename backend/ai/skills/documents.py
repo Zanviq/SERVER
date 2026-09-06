@@ -340,10 +340,20 @@ class ReadDocument(SkillBase):
 class WriteDocument(SkillBase):
     mutates = "documents"
     name = "write_document"
-    description = "문서를 만들거나 덮어쓴다(마크다운, [[위키링크]] 가능). 확장자를 안 적으면 .md."
+    description = (
+        "문서를 만들거나 덮어쓴다(마크다운, [[위키링크]] 가능). 확장자를 안 적으면 .md. "
+        "**끝에 무언가를 더하는 것이라면 append_document 를 쓰세요** — 이건 통째로 바꿉니다."
+    )
     parameters = {
         "type": "object",
-        "properties": {"path": _PATH_PROP, "content": {"type": "string"}},
+        "properties": {
+            "path": _PATH_PROP,
+            "content": {"type": "string"},
+            "shorten": {
+                "type": "boolean",
+                "description": "긴 문서를 일부러 짧게 줄이는 경우에만 true. 기본 false.",
+            },
+        },
         "required": ["path", "content"],
     }
 
@@ -379,7 +389,26 @@ class WriteDocument(SkillBase):
         backup_failed = False
         # 같은 문서에 대한 다른 쓰기(UI 자동저장 등)와 겹치지 않게 직렬화한다
         with lock_for(target):
-            if target.exists() and target.read_text(encoding="utf-8", errors="replace") != args["content"]:
+            prev = target.read_text(encoding="utf-8", errors="replace") if target.exists() else None
+            # read_document 는 앞 _MAX_READ 자만 준다. 모델이 그걸 전문으로 믿고
+            # 손봐서 되쓰면 뒷부분이 통째로 날아간다 — "나머지가 사라집니다" 라고
+            # 알려 주기는 하지만, 그건 부탁이지 잠금장치가 아니다. 한도보다 긴 글이
+            # 한도 아래로 줄어드는 것은 그 사고의 정확한 모양이므로 여기서 막고,
+            # **정말 줄이려는 것이면** shorten=true 로 한 번 더 부르게 한다.
+            if prev is not None and not args.get("shorten"):
+                if len(prev) > _MAX_READ >= len(args["content"]):
+                    return SkillResult(
+                        ok=False,
+                        error_code="would_truncate",
+                        message=(
+                            f"'{args['path']}' 는 {len(prev)}자인데 {len(args['content'])}자로 "
+                            f"덮으려 했습니다. read_document 는 앞 {_MAX_READ}자만 주므로, "
+                            "읽은 만큼만 되쓰면 뒷부분이 사라집니다. 끝에 더하는 것이면 "
+                            "append_document 를, 정말로 줄이는 것이면 shorten=true 로 다시 부르세요."
+                        ),
+                        data={"path": _ident(root, target), "total_chars": len(prev)},
+                    )
+            if prev is not None and prev != args["content"]:
                 try:
                     _backup_before_overwrite(root, target, ctx)
                     backed_up = True

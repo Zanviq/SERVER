@@ -1,4 +1,5 @@
 """기본 동작 스모크 테스트. 인증 + 파일 + 시스템 검증."""
+import errno
 import io
 import json
 import os
@@ -18,7 +19,7 @@ os.environ["DEBUG"] = "true"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from backend import accounts, login_guard  # noqa: E402
+from backend import accounts, json_store, login_guard  # noqa: E402
 from backend.config import get_settings  # noqa: E402
 from backend.main import app  # noqa: E402
 
@@ -2558,7 +2559,8 @@ def test_emptying_the_trash_does_not_leave_ghosts_when_the_index_write_fails():
     trash_mod.write_atomic = lambda *a, **k: (_ for _ in ()).throw(OSError(28, "no space"))
     try:
         r = quiet.delete("/api/trash/empty")
-        assert r.status_code == 500, r.text
+        # 507 = 공간 없음(ENOSPC 를 이름 붙여 내보낸다), 그 밖의 실패는 500
+        assert r.status_code in (500, 507), r.text
     finally:
         trash_mod.write_atomic = real
 
@@ -7297,6 +7299,118 @@ def test_streaming_failure_does_not_become_an_answer(monkeypatch):
     # 반쯤 온 글은 저장하지 않는다(다음 차례의 맥락으로 들어가면 안 된다)
     msgs = client.get("/api/ai/space/assistant").json()["messages"]
     assert [m["role"] for m in msgs] == ["user"], msgs
+
+
+def test_long_meeting_doc_is_not_shrunk_to_the_read_limit():
+    """회의 문서는 휴지통도 없다 — 되쓰기로 뒷부분을 날리면 그걸로 끝이다."""
+    from backend import meeting_store
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.ai.skills.meetings import _MAX_CHUNK
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="longmeet", display_name="LM", expires_at=0, remaining=0)
+    mid = meeting_store.new_id()
+    meeting_store.meeting_dir(u, s, mid).mkdir(parents=True, exist_ok=True)
+    meeting_store.register(u, s, filename="a.wav", mime="audio/wav", size=1, ext="wav",
+                           day="2026-09-06", mid=mid)
+    ctx = SkillContext(user=u, settings=s, today="2026-09-06", meeting_id=mid)
+    reg = default_registry()
+
+    body = "회의록 한 줄\n" * 5000
+    assert len(body) > _MAX_CHUNK * 2
+    assert reg.dispatch("write_meeting_doc", {"name": "회의록", "content": body}, ctx).ok
+
+    r = reg.dispatch("read_meeting_doc", {"name": "회의록"}, ctx)
+    assert r.data["truncated"] and "앞" in r.message, r
+
+    back = reg.dispatch("write_meeting_doc", {"name": "회의록", "content": r.data["content"]}, ctx)
+    assert not back.ok and back.error_code == "would_truncate", back
+    assert "append_meeting_doc" in back.message
+    assert reg.dispatch("read_meeting_doc", {"name": "회의록"}, ctx).data["total_chars"] == len(body)
+
+    # 새 문서·짧은 문서·일부러 줄이기는 그대로 된다
+    assert reg.dispatch("write_meeting_doc", {"name": "요약", "content": "세 줄 요약"}, ctx).ok
+    assert reg.dispatch("write_meeting_doc",
+                        {"name": "회의록", "content": "줄인 요약", "shorten": True}, ctx).ok
+
+
+def test_long_document_is_not_shrunk_to_the_read_limit():
+    """읽은 만큼만 되쓰면 뒷부분이 사라진다 — 그건 막고 되묻는다.
+
+    read_document 는 앞 20000자만 준다. 모델이 그걸 전문으로 믿고 손봐서
+    write_document 로 되쓰는 것이 이 시스템에서 가장 조용한 데이터 손실이었다.
+    """
+    from backend.ai.skill_registry import default_registry
+    from backend.ai.skills._common import _MAX_READ
+
+    reg = default_registry()
+    _u, ctx, _st = _cal_ctx("longdoc")
+    head = "앞부분\n" * 5000          # 20000자 넘게
+    body = head + "여기부터가 뒷부분이다\n"
+    assert len(body) > _MAX_READ
+    assert reg.dispatch("write_document", {"path": "긴글", "content": body}, ctx).ok
+
+    r = reg.dispatch("read_document", {"path": "긴글"}, ctx)
+    assert r.data["truncated"] and "사라집니다" in r.message, r
+
+    # 읽은 것을 그대로 되쓰기 → 막힌다
+    back = reg.dispatch("write_document", {"path": "긴글", "content": r.data["content"]}, ctx)
+    assert not back.ok and back.error_code == "would_truncate", back
+    assert "append_document" in back.message and "shorten" in back.message
+    assert reg.dispatch("read_document", {"path": "긴글"}, ctx).data["total_chars"] == len(body)
+
+    # 덧붙이기는 막히지 않는다
+    assert reg.dispatch("append_document", {"path": "긴글", "content": "한 줄 더"}, ctx).ok
+
+    # 정말 줄이려는 것이면 shorten=true 로 통과한다(이전 내용은 휴지통에)
+    cut = reg.dispatch("write_document", {"path": "긴글", "content": "요약본", "shorten": True}, ctx)
+    assert cut.ok and cut.data["backed_up"], cut
+    assert reg.dispatch("read_document", {"path": "긴글"}, ctx).data["content"] == "요약본"
+
+    # 짧은 문서는 예전처럼 그냥 덮인다(한도 아래에서는 이 검사가 끼어들지 않는다)
+    reg.dispatch("write_document", {"path": "짧은글", "content": "가" * 100}, ctx)
+    assert reg.dispatch("write_document", {"path": "짧은글", "content": "나"}, ctx).ok
+
+
+def test_disk_full_says_disk_full(monkeypatch):
+    """저장이 실패한 이유가 디스크면 그렇게 말한다.
+
+    라즈베리파이는 SD·외장하드가 차거나 빠진다. 그때 화면에 뜨는 말이
+    "internal server error" 면 사용자가 할 수 있는 일이 없다. 공간이 없다고
+    말해 주면 휴지통을 비우면 된다.
+    """
+    _login()
+    quiet = TestClient(app, raise_server_exceptions=False)
+    quiet.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    monkeypatch.setattr(get_settings(), "debug", False, raising=False)
+
+    def full(*a, **k):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(json_store, "write_atomic", full)
+    r = quiet.post("/api/todo/create", json={"title": "공간 없을 때"})
+    assert r.status_code == 507, r.status_code
+    assert "가득" in r.json()["detail"], r.text
+
+    def readonly(*a, **k):
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    monkeypatch.setattr(json_store, "write_atomic", readonly)
+    r = quiet.post("/api/todo/create", json={"title": "읽기 전용일 때"})
+    assert r.status_code == 500
+    assert "읽기 전용" in r.json()["detail"], r.text
+
+    # 디스크와 무관한 오류는 여전히 감춘다(경로·키가 새어 나가면 안 된다)
+    def boom(*a, **k):
+        raise RuntimeError("AIzaSyLEAK /srv/storage/tester")
+
+    monkeypatch.setattr(json_store, "write_atomic", boom)
+    r = quiet.post("/api/todo/create", json={"title": "다른 오류"})
+    assert r.status_code == 500
+    assert "AIzaSy" not in r.text and "/srv/" not in r.text, r.text
 
 
 if __name__ == "__main__":

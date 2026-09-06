@@ -234,6 +234,10 @@ class WriteMeetingDoc(SkillBase):
             "meeting_id": {"type": "string", "description": "생략하면 지금 회의"},
             "name": {"type": "string", "description": "문서 이름(확장자 없이)"},
             "content": {"type": "string", "description": "마크다운 본문"},
+            "shorten": {
+                "type": "boolean",
+                "description": "긴 문서를 일부러 짧게 줄이는 경우에만 true. 기본 false.",
+            },
         },
         "required": ["name", "content"],
     }
@@ -248,6 +252,27 @@ class WriteMeetingDoc(SkillBase):
             return SkillResult(ok=False, message="문서 이름이 없습니다.", error_code="invalid")
         if not content.strip():
             return SkillResult(ok=False, message="내용이 비어 있습니다.", error_code="invalid")
+        # read_meeting_doc 이 앞 _MAX_CHUNK*2 자만 준다. 그걸 전문으로 믿고 되쓰면
+        # 뒷부분이 사라지는데, 회의 문서는 노트와 달리 **휴지통 백업이 없다** —
+        # 되돌릴 방법이 아예 없으므로 노트보다 더 확실히 막는다.
+        if not args.get("shorten"):
+            try:
+                cur = meeting_store.read_doc(ctx.user, ctx.settings, mid, name)["content"]
+            except Exception:  # noqa: BLE001 - 없는 문서면 새로 만드는 것이다
+                cur = ""
+            if len(cur) > _MAX_CHUNK * 2 >= len(content):
+                return SkillResult(
+                    ok=False,
+                    error_code="would_truncate",
+                    message=(
+                        f"'{name}' 은 {len(cur)}자인데 {len(content)}자로 덮으려 했습니다. "
+                        f"read_meeting_doc 은 앞 {_MAX_CHUNK * 2}자만 주므로 읽은 만큼만 "
+                        "되쓰면 뒷부분이 사라지고, 회의 문서는 휴지통에 남지 않습니다. "
+                        "끝에 더하는 것이면 append_meeting_doc 을, 정말로 줄이는 것이면 "
+                        "shorten=true 로 다시 부르세요."
+                    ),
+                    data={"meeting_id": mid, "name": name, "total_chars": len(cur)},
+                )
         try:
             d = meeting_store.write_doc(ctx.user, ctx.settings, mid, name, content)
         except Exception as e:  # noqa: BLE001

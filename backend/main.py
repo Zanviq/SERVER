@@ -4,6 +4,7 @@ FastAPI 단일 게이트웨이. 인증 미들웨어로 전 API 보호.
 """
 from __future__ import annotations
 
+import errno
 import logging
 from contextlib import asynccontextmanager
 
@@ -127,10 +128,28 @@ def health():
     return {"ok": True, "storage_exists": s.storage_root.exists()}
 
 
+#: 저장이 실패하는 흔한 이유들. 그냥 500 "internal server error" 로 내보내면
+#: 사용자는 "왜 저장이 안 되지"만 알고, 정작 할 일(공간 비우기·권한 고치기)을 모른다.
+#: 라즈베리파이에서 실제로 마주칠 수 있는 것들이다(외장하드가 빠지거나 가득 찬다).
+_DISK_TROUBLE = {
+    errno.ENOSPC: "저장 공간이 가득 찼습니다. 휴지통을 비우거나 큰 파일을 지워 주세요.",
+    errno.EDQUOT: "저장 공간 할당량을 넘었습니다.",
+    errno.EROFS: "저장소가 읽기 전용입니다(디스크가 잘못 붙었을 수 있습니다).",
+    errno.EACCES: "저장소에 쓸 권한이 없습니다.",
+    errno.EPERM: "저장소에 쓸 권한이 없습니다.",
+    errno.ENOENT: "저장 폴더를 찾을 수 없습니다(외장하드가 빠졌는지 확인하세요).",
+    errno.EIO: "저장소를 읽고 쓰는 중 오류가 났습니다(디스크를 확인하세요).",
+}
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception(request: Request, exc: Exception):
     """미처리 예외 로깅. DEBUG일 때만 상세 노출, 운영은 일반 메시지."""
     logger.exception("미처리 예외 @ %s %s", request.method, request.url.path)
     s = get_settings()
+    # 디스크 문제는 이름을 붙여 준다 — 사용자가 스스로 고칠 수 있는 몇 안 되는 오류다.
+    if isinstance(exc, OSError) and exc.errno in _DISK_TROUBLE:
+        return JSONResponse(status_code=507 if exc.errno == errno.ENOSPC else 500,
+                            content={"detail": _DISK_TROUBLE[exc.errno]})
     detail = f"{exc.__class__.__name__}: {exc}" if s.debug else "internal server error"
     return JSONResponse(status_code=500, content={"detail": detail})
