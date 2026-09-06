@@ -214,7 +214,16 @@ def chat(
     """ReAct 비서. SSE로 thought/tool_call/tool_result/text/done 이벤트 스트리밍."""
     today = date.today().isoformat()
 
-    message = (body.message or "")[:MAX_MESSAGE_CHARS]
+    raw_message = body.message or ""
+    message = raw_message[:MAX_MESSAGE_CHARS]
+    if len(raw_message) > MAX_MESSAGE_CHARS:
+        # 조용히 자르면 모델은 잘린 앞부분만 보고 답하고, 사용자는 뒤에 적은
+        # 것(대개 진짜 질문이 거기 있다)이 왜 무시됐는지 모른다.
+        message += (
+            f"\n\n[안내] 이 메시지는 {MAX_MESSAGE_CHARS}자에서 잘렸습니다. "
+            f"뒤에 {len(raw_message) - MAX_MESSAGE_CHARS}자가 더 있었습니다 — "
+            "잘린 뒤의 내용은 보이지 않으니, 필요하면 나눠서 다시 보내 달라고 말하세요."
+        )
     attachments = _decode_attachments(body.attachments) if body.attachments else []
     if not message.strip() and not attachments and not body.selections:
         raise HTTPException(status_code=400, detail="메시지가 비어 있습니다.")

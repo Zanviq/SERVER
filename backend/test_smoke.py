@@ -6693,6 +6693,39 @@ def test_saving_a_note_changed_elsewhere_stops_instead_of_overwriting():
         client.delete("/api/notes/delete", params={"path": path})
 
 
+def test_an_over_long_message_says_it_was_cut(monkeypatch):
+    """조용히 자르면 모델은 앞부분만 보고 답하고, 사용자는 뒤에 적은 것이 왜
+    무시됐는지 모른다 — 진짜 질문은 대개 끝에 있다."""
+    from backend.ai import orchestrator
+    from backend.ai.orchestrator import LLMResult
+    from backend.routers.ai import MAX_MESSAGE_CHARS
+
+    seen = {}
+
+    class Echo:
+        def chat(self, contents, catalog, system):
+            seen["contents"] = contents
+            return LLMResult(text="네.", tool_use=None)
+
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": Echo())
+    _login()
+    client.delete("/api/ai/space/assistant")
+
+    tail = " 진짜 질문은 여기 있다."
+    long_msg = "가" * (MAX_MESSAGE_CHARS + 500) + tail
+    r = client.post("/api/ai/chat", json={"message": long_msg, "mode": "assistant"})
+    assert r.status_code == 200, r.text
+    sent = json.dumps(seen["contents"], ensure_ascii=False)
+    assert "잘렸습니다" in sent, sent[-400:]
+    assert f"{500 + len(tail)}자가 더 있었습니다" in sent, sent[-400:]
+    assert "진짜 질문은 여기 있다" not in sent      # 잘린 뒤는 정말 안 간다
+
+    # 상한 안이면 군더더기를 붙이지 않는다
+    client.delete("/api/ai/space/assistant")
+    client.post("/api/ai/chat", json={"message": "짧은 질문", "mode": "assistant"})
+    assert "잘렸습니다" not in json.dumps(seen["contents"], ensure_ascii=False)
+
+
 def test_prompt_tells_the_model_that_missing_skills_are_not_absent_data():
     """화면에 도구가 없다고 해서 '없는 것'이 아니다 — '볼 수 없는 것'이다.
 
