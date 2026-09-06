@@ -6616,6 +6616,29 @@ def test_saving_a_note_changed_elsewhere_stops_instead_of_overwriting():
         client.delete("/api/notes/delete", params={"path": path})
 
 
+def test_readme_skill_count_matches_reality():
+    """README 는 이 저장소에서 설명서이자 계약서다. 스킬 수는 특히 잘 낡는다.
+
+    새 스킬을 넣고 README 를 안 고치면, 다음에 읽는 사람(사람이든 모델이든)이
+    틀린 수를 근거로 판단한다. 숫자 하나라도 지켜 둔다.
+    """
+    import re
+    from pathlib import Path
+
+    from backend.ai.skills import ALL_SKILLS
+
+    readme = Path(__file__).resolve().parent.parent / "README.md"
+    text = readme.read_text(encoding="utf-8")
+    said = [int(n) for n in re.findall(r"스킬은 \*\*(\d+)개\*\*다", text)]
+    assert said, "README 에 '스킬은 **N개**다' 문장이 없다"
+    assert said[0] == len(ALL_SKILLS), f"README {said[0]}개 vs 실제 {len(ALL_SKILLS)}개"
+
+    # 표의 갈래별 합도 같아야 한다(한 줄만 고치고 총계를 잊는 일이 잦다)
+    rows = re.findall(r"^\| [^|]+ \| (\d+) \|", text, flags=re.M)
+    assert sum(int(n) for n in rows) == len(ALL_SKILLS), \
+        f"표 합계 {sum(int(n) for n in rows)}개 vs 실제 {len(ALL_SKILLS)}개"
+
+
 def test_prompts_only_promise_skills_and_arguments_that_exist():
     """프롬프트가 없는 스킬·인자를 권하면 모델은 그대로 부르고 실패한다.
 
