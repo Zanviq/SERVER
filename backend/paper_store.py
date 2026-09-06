@@ -56,9 +56,14 @@ def sanitize_filename(name: str) -> str:
 
 
 def root(user: SessionUser, settings: Settings) -> Path:
-    base = settings.user_root(user.username) / "papers"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
+    # **폴더를 만들지 않는다.** 이 함수는 경로 하나를 얻으려고 아주 자주 불린다 —
+    # 논문 하나마다 chat_path → paper_dir → root 가 이어져서, 대화 공간 500개를
+    # 훑는 화면 하나에 mkdir 이 1,521번 불렸다(실측: 그 한 번에 0.81초).
+    # 이미 있는 폴더에 대고 묻는 값비싼 질문이다.
+    #
+    # 만드는 것은 **쓰는 쪽 몫**이다: register 가 논문 폴더를 parents 째 만들고,
+    # 색인 저장은 json_store 가 만든다. 읽는 쪽은 없으면 없는 대로 빈 목록이 된다.
+    return settings.user_root(user.username) / "papers"
 
 
 def _index_path(user: SessionUser, settings: Settings) -> Path:

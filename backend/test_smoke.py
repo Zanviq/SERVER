@@ -8970,6 +8970,86 @@ def test_a_deleted_meeting_doc_can_be_brought_back():
     assert any(e["id"] == 남은쓰레기["id"] for e in trash.list_trash(u, s)), "엔트리가 사라졌다"
 
 
+def test_reading_a_list_does_not_make_a_folder_per_item(monkeypatch):
+    """읽기만 하는데 항목 수만큼 mkdir 하면 안 된다.
+
+    `paper_store.root()`/`meeting_store.root()` 가 부를 때마다 mkdir 했다. 경로
+    하나를 얻는 값싼 함수처럼 보이지만 논문마다 chat_path → paper_dir → root 로
+    이어져서, 대화 공간 500개를 훑는 화면 하나에 **mkdir 이 1,521번** 불렸다
+    (실측 0.81초). 없는 폴더를 만드는 것은 쓰는 쪽 몫이다.
+
+    개수로 못을 박는다 — "빠르게 고쳤다"는 다음 사람이 되돌리기 쉽다.
+    """
+    from pathlib import Path as _P
+
+    from backend import context_store, meeting_store, paper_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    s = get_settings()
+    u = SessionUser(username="mkdir세기", display_name="M", expires_at=0, remaining=0)
+    for i in range(12):
+        pid = paper_store.new_id()
+        d = paper_store.paper_dir(u, s, pid)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / paper_store.PDF_NAME).write_bytes(b"%PDF")
+        paper_store.register(u, s, f"논문{i}.pdf", 4, pid=pid)
+        mid = meeting_store.new_id()
+        md = meeting_store.meeting_dir(u, s, mid)
+        md.mkdir(parents=True, exist_ok=True)
+        (md / "audio.wav").write_bytes(b"RIFF")
+        meeting_store.register(u, s, filename=f"회의{i}.wav", mime="audio/wav", size=4,
+                               ext="wav", day="2026-09-07", mid=mid)
+
+    made: list[str] = []
+    real = _P.mkdir
+
+    def counting(self, *a, **k):
+        made.append(str(self))
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(_P, "mkdir", counting)
+    rows = context_store.space_rows(u, s)
+    assert len(rows) >= 24, rows            # 논문 12 + 회의 12 + 고정 공간
+    assert len(made) <= 3, f"읽기만 했는데 mkdir 을 {len(made)}번 했다: {made[:5]}"
+
+    made.clear()
+    paper_store.list_papers(u, s)
+    meeting_store.list_meetings(u, s)
+    assert not made, f"목록을 읽는데 폴더를 만들었다: {made[:5]}"
+
+
+def test_a_brand_new_account_can_read_every_list_before_anything_exists():
+    """폴더가 하나도 없는 계정도 모든 목록이 열린다.
+
+    읽는 길에서 mkdir 을 뺐으니, 이제 "폴더가 없다"가 정상 상태다. 갓 가입한
+    사람이 논문 화면을 열자마자 500 을 보면 그걸로 끝이다.
+    """
+    from backend import accounts
+    from backend.config import get_settings
+
+    s = get_settings()
+    fresh = TestClient(app)
+    fresh.post("/api/auth/signup",
+               json={"username": "brandnew21", "password": "longenough1", "display_name": "N"})
+    accounts.set_status("brandnew21", accounts.STATUS_ACTIVE, "tester", s)
+    assert fresh.post("/api/auth/login",
+                      json={"username": "brandnew21", "password": "longenough1"}).status_code == 200
+    try:
+        for path in ("/api/papers", "/api/meetings", "/api/papers/categories",
+                     "/api/meetings/categories", "/api/context/spaces", "/api/vocab/board",
+                     "/api/search?q=아무거나", "/api/trash/counts"):
+            r = fresh.get(path)
+            assert r.status_code == 200, f"{path} → {r.status_code} {r.text[:120]}"
+        # 첫 업로드도 된다(아무도 폴더를 안 만들어 둔 상태)
+        r = fresh.post("/api/papers/upload",
+                       files={"file": ("첫논문.pdf", _tiny_pdf("First"), "application/pdf")})
+        assert r.status_code == 200, r.text
+        assert len(fresh.get("/api/papers").json()) == 1
+    finally:
+        client.delete("/api/admin/users/brandnew21")
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"

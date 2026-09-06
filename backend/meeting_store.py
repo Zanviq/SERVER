@@ -89,9 +89,9 @@ def audio_ext(filename: str, mime: str = "") -> str:
 
 
 def root(user: SessionUser, settings: Settings) -> Path:
-    base = settings.user_root(user.username) / "meetings"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
+    # 논문 쪽과 같은 이유로 **폴더를 만들지 않는다**(paper_store.root 의 설명 참조).
+    # 만드는 것은 register·업로드·json_store 의 몫이다.
+    return settings.user_root(user.username) / "meetings"
 
 
 def _index_path(user: SessionUser, settings: Settings) -> Path:
