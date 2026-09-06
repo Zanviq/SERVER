@@ -42,6 +42,8 @@ export function Papers() {
   const [selections, setSelections] = useState<ChatSelection[]>([]);
   // PDF 위에 남기는 선택 자국. 칩과 id 를 공유해서 칩을 빼면 자국도 사라진다.
   const [marks, setMarks] = useState<PdfMark[]>([]);
+  //: 보내면서 내린 선택·그림. 보내기가 실패하면 이걸로 되돌린다.
+  const sentContext = useRef<{ a: ChatAttachment[]; s: ChatSelection[]; m: PdfMark[] } | null>(null);
   const [tab, setTab] = useState<Tab>("chat");
   const [vocabKey, setVocabKey] = useState(0);
   const [pendingAsk, setPendingAsk] = useState<string | null>(null);
@@ -208,7 +210,28 @@ export function Papers() {
   // 폼이 입력 중에 초기화되므로 제목이 바뀔 때만 새로 만든다.
   const vocabTags = useMemo(() => (selected?.title ? [selected.title] : []), [selected?.title]);
 
-  const clearContext = useCallback(() => { setAttachments([]); setSelections([]); setMarks([]); }, []);
+  /**
+   * 얹어 둔 선택·오린 그림을 내린다.
+   *
+   * `reason === "sent"` 이면 **되돌릴 수 있게 챙겨 둔다.** 보내기가 실패하면
+   * 친 글은 입력칸으로 돌아오는데 선택·그림은 사라져서, PDF 에서 문단을 다시
+   * 고르고 그림을 다시 오려야 했다(휴대폰에서는 더 고약하다). 사용자가 '지우기'로
+   * 직접 내린 것은 챙기지 않는다 — 일부러 지운 것을 되살리면 그게 더 이상하다.
+   */
+  const clearContext = useCallback((reason?: "sent") => {
+    if (reason === "sent") sentContext.current = { a: attachments, s: selections, m: marks };
+    else sentContext.current = null;
+    setAttachments([]); setSelections([]); setMarks([]);
+  }, [attachments, selections, marks]);
+
+  const restoreContext = useCallback(() => {
+    const keep = sentContext.current;
+    if (!keep) return;
+    // 그 사이 새로 고른 것이 있으면 건드리지 않는다(쓰던 것을 덮는 게 더 나쁘다).
+    setAttachments((cur) => (cur.length ? cur : keep.a));
+    setSelections((cur) => (cur.length ? cur : keep.s));
+    setMarks((cur) => (cur.length ? cur : keep.m));
+  }, []);
   const contextCount = attachments.length + selections.length;
 
   const ask = (text: string) => { setTab("chat"); pokeAi(); chat.current?.send(text); };
@@ -277,7 +300,7 @@ export function Papers() {
                 suggestions={SUGGESTIONS} attachments={attachments} selections={selections}
                 onRemoveAttachment={(id) => { setAttachments((a) => a.filter((x) => x.id !== id)); dropMark(id); }}
                 onRemoveSelection={(id) => { setSelections((s) => s.filter((x) => x.id !== id)); dropMark(id); }}
-                onClearContext={clearContext}
+                onClearContext={clearContext} onRestoreContext={restoreContext}
                 emptyTitle={paperTitle(selected)}
                 emptySubtitle="논문 본문·정보·다른 논문에서 나눈 대화까지 보고 답합니다"
                 placeholder="논문에 대해 물어보세요… (글을 드래그하거나 영역을 오려 붙일 수 있어요)"

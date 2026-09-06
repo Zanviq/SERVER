@@ -158,8 +158,13 @@ interface ChatPanelProps {
   selections?: ChatSelection[];
   onRemoveAttachment?: (id: string) => void;
   onRemoveSelection?: (id: string) => void;
-  /** 첨부·선택을 모두 비운다(전송 직후에도 불린다) */
-  onClearContext?: () => void;
+  /**
+   * 첨부·선택을 모두 비운다. 보내면서 비울 때는 reason="sent" 로 알린다 —
+   * 그러면 부모가 챙겨 뒀다가, 보내기가 실패했을 때 onRestoreContext 로 되돌린다.
+   */
+  onClearContext?: (reason?: "sent") => void;
+  /** 보내기가 실패했을 때 방금 내린 첨부·선택을 되돌린다 */
+  onRestoreContext?: () => void;
   emptyTitle?: string;
   emptySubtitle?: string;
   placeholder?: string;
@@ -193,6 +198,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   onRemoveAttachment,
   onRemoveSelection,
   onClearContext,
+  onRestoreContext,
   emptyTitle = "무엇을 도와드릴까요?",
   emptySubtitle = "파일·노트·일정을 자동으로 처리합니다",
   placeholder,
@@ -267,8 +273,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
       },
       { role: "assistant", text: "", steps: [], pending: true },
     ]);
-    // 보낸 첨부는 칩에서 내린다(클로드처럼) — 다음 질문에 또 실리면 안 된다
-    onClearContext?.();
+    // 보낸 첨부는 칩에서 내린다(클로드처럼) — 다음 질문에 또 실리면 안 된다.
+    // "sent" 라고 알려 두면 실패했을 때 부모가 되돌려 준다.
+    onClearContext?.("sent");
 
     const patchLast = (fn: (m: Msg) => Msg) =>
       setMessages((arr) => arr.map((m, i) => (i === arr.length - 1 ? fn(m) : m)));
@@ -276,7 +283,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     // 실패하면 친 글을 입력칸에 돌려준다. 길게 쓴 질문이 한도 초과 한 번에
     // 사라지면 말풍선에서 긁어다 다시 붙여야 했다. 그 사이에 다른 것을 치기
     // 시작했으면 건드리지 않는다(쓰던 글을 덮는 것이 더 나쁘다).
-    const giveBack = () => setInput((cur) => (cur.trim() ? cur : raw));
+    // 첨부·선택도 함께 돌려준다. 글만 돌아오면 PDF 에서 문단을 다시 고르고
+    // 그림을 다시 오려야 한다 — 정작 되찾기 어려운 쪽이 그쪽이다.
+    const giveBack = () => {
+      setInput((cur) => (cur.trim() ? cur : raw));
+      onRestoreContext?.();
+    };
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -327,7 +339,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
       }));
       setBusy(false);
     }
-  }, [attachments, busy, hasContext, messages, meetingId, mode, onClearContext, onToolSuccess, paperId, selections, transformMessage]);
+  }, [attachments, busy, hasContext, messages, meetingId, mode, onClearContext, onRestoreContext, onToolSuccess, paperId, selections, transformMessage]);
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
