@@ -4362,37 +4362,46 @@ def test_find_free_slots_over_a_range():
     from backend.auth import SessionUser
     from backend.config import get_settings
 
+    from datetime import date as _date, timedelta as _td
+
     st = get_settings()
     u = SessionUser(username="freeslots", display_name="F", expires_at=0, remaining=0)
-    ctx = SkillContext(user=u, settings=st, today="2026-09-01")
     reg = default_registry()
+
+    # **날짜를 진짜 시계에서 멀리 떼어 놓는다.** 이 스킬은 '오늘'이면 지나간 시간을
+    # 빈 자리로 내놓지 않는데, 고정 날짜를 쓰면 그날이 실제로 오는 순간 시험이
+    # 오후마다 깨진다(2026-09-07 오후에 09:00 이 아니라 13:44 가 나왔다).
+    mon = _date.today() + _td(days=30)
+    mon += _td(days=(0 - mon.weekday()) % 7 or 7)      # 30일 뒤 이후의 월요일
+    tue, wed = mon + _td(days=1), mon + _td(days=2)
+    ctx = SkillContext(user=u, settings=st, today=(mon - _td(days=6)).isoformat())
 
     # 화요일 하루만 오전이 막혀 있다
     reg.dispatch("create_calendar_event", {
-        "title": "종일 회의", "start": "2026-09-08T09:00:00", "end": "2026-09-08T12:00:00",
+        "title": "종일 회의", "start": f"{tue}T09:00:00", "end": f"{tue}T12:00:00",
     }, ctx)
 
     # 하루만: 예전과 같은 동작
-    one = reg.dispatch("find_free_slots", {"date": "2026-09-08", "duration_minutes": 60}, ctx)
+    one = reg.dispatch("find_free_slots", {"date": tue.isoformat(), "duration_minutes": 60}, ctx)
     assert one.ok, one
     assert [x["start"][11:16] for x in one.data["free_slots"]] == ["12:00"], one.data
 
     # 기간: 월~수를 한 번에
     many = reg.dispatch("find_free_slots", {
-        "date": "2026-09-07", "to_date": "2026-09-09", "duration_minutes": 60,
+        "date": mon.isoformat(), "to_date": wed.isoformat(), "duration_minutes": 60,
     }, ctx)
     assert many.ok, many
     by_date = {}
     for x in many.data["free_slots"]:
         by_date.setdefault(x["date"], []).append(x["start"][11:16])
-    assert by_date["2026-09-07"] == ["09:00"], by_date
-    assert by_date["2026-09-08"] == ["12:00"], by_date   # 회의 뒤만 빈다
-    assert by_date["2026-09-09"] == ["09:00"], by_date
+    assert by_date[mon.isoformat()] == ["09:00"], by_date
+    assert by_date[tue.isoformat()] == ["12:00"], by_date   # 회의 뒤만 빈다
+    assert by_date[wed.isoformat()] == ["09:00"], by_date
     assert many.data["days_checked"] == 3, many.data
 
     # 거꾸로 준 기간은 거절한다(조용히 하루만 보지 않는다)
     bad = reg.dispatch("find_free_slots", {
-        "date": "2026-09-09", "to_date": "2026-09-07", "duration_minutes": 60,
+        "date": wed.isoformat(), "to_date": mon.isoformat(), "duration_minutes": 60,
     }, ctx)
     assert bad.ok is False and bad.error_code == "invalid", bad
 

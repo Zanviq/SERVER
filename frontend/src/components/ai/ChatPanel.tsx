@@ -11,6 +11,7 @@ import { isSubmitEnter } from "../../lib/keys";
 import { toast } from "../../store/toast";
 import { useMediaQuery } from "../../lib/useMediaQuery";
 import { VocabProposal, VocabProposalData } from "./VocabProposal";
+import { skillIcon } from "./skillIcon";
 
 interface Step {
   name: string;
@@ -308,10 +309,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
             for (let i = steps.length - 1; i >= 0; i--) {
               if (steps[i].name === e.name && steps[i].ok === undefined) {
                 steps[i] = { ...steps[i], ok: e.ok, message: e.message, data: e.data };
-                break;
+                return { ...m, steps };
               }
             }
-            return { ...m, steps };
+            // 짝이 되는 tool_call 이 없는 결과도 있다 — **서버가 스스로 한 일**이다
+            // (모델이 잊은 단어 후보를 서버가 채우는 경우). 예전에는 여기서 조용히
+            // 버려서, 그 후보 목록이 **화면에 아예 안 나왔다**. 칩도 없고 고를
+            // 것도 없으니 서버가 한 일이 통째로 사라진 셈이다.
+            return { ...m, steps: [...steps, { name: e.name!, ok: e.ok, message: e.message, data: e.data }] };
           });
           if (e.ok && e.mutates) onToolSuccess?.(e.mutates);
         } else if (e.type === "text") {
@@ -434,17 +439,24 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
               <div className="min-w-0 flex-1 space-y-2">
                 {m.steps.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
-                    {m.steps.map((s, j) => (
-                      <span key={j} title={s.message}
-                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] ${
-                          s.ok === false ? "border-danger/30 text-danger"
-                          : s.ok ? "border-accent/30 bg-accent-muted text-accent-fg"
-                          : "border-line text-fg-muted"}`}>
-                        {s.ok === undefined ? <Loader2 size={11} className="animate-spin" />
-                          : s.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
-                        {SKILL_LABEL[s.name] ?? s.name}
-                      </span>
-                    ))}
+                    {m.steps.map((s, j) => {
+                      // 갈래 아이콘 + 상태 아이콘. 갈래는 "무엇을 했나"(일정·논문·
+                      // 단어장…), 상태는 "됐나"를 말한다 — 둘은 다른 물음이라
+                      // 하나로 합치면 어느 쪽도 알 수 없다.
+                      const Kind = skillIcon(s.name);
+                      return (
+                        <span key={j} title={s.message}
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] ${
+                            s.ok === false ? "border-danger/30 text-danger"
+                            : s.ok ? "border-accent/30 bg-accent-muted text-accent-fg"
+                            : "border-line text-fg-muted"}`}>
+                          <Kind size={11} className="shrink-0 opacity-80" />
+                          {SKILL_LABEL[s.name] ?? s.name}
+                          {s.ok === undefined ? <Loader2 size={11} className="animate-spin" />
+                            : s.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
+                        </span>
+                      );
+                    })}
                   </div>
                 )}
                 {m.text ? (
