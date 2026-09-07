@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BookMarked, Check, Loader2 } from "lucide-react";
+import { BookMarked, Check, Loader2, X } from "lucide-react";
 import { api, VocabKind } from "../../lib/api";
 import { toast } from "../../store/toast";
 import { vocabJobs } from "../../store/vocabJobs";
@@ -35,6 +35,9 @@ export function VocabProposal({ data, tags }: Props) {
   );
   const [sent, setSent] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
+  //: 이 목록만 닫는다. 넣을 것이 없을 때 답을 가리고 있으면 치울 수 있어야 한다
+  //: — 대화 기록에는 남아 있어서 다시 열면 그대로 보인다(영구히 끄는 것이 아니다).
+  const [closed, setClosed] = useState(false);
   const selectable = items.filter((p) => !p.exists);
 
   const toggle = (w: string) => {
@@ -63,19 +66,27 @@ export function VocabProposal({ data, tags }: Props) {
     }
   };
 
-  if (items.length === 0) return null;
+  if (items.length === 0 || closed) return null;
   const shownTags = tags?.length ? tags : data.tags ?? [];
 
   return (
     <div className="card px-3.5 py-3">
       <div className="mb-2 flex items-center gap-2 text-[12.5px] font-medium">
-        <BookMarked size={14} className="text-accent" />
+        <BookMarked size={14} className="shrink-0 text-accent" />
         단어장에 넣을까요?
         {shownTags.length > 0 && (
           <span className="ml-auto truncate text-[11px] font-normal text-fg-muted" title={shownTags.join(", ")}>
             태그: {shownTags.join(", ")}
           </span>
         )}
+        {/* 넣을 것이 없을 때 치울 길. 이 목록 하나만 닫는다 — 다음에 넣어 달라고
+            하면 다시 뜬다(기능을 끄는 것이 아니다). */}
+        <button type="button" onClick={() => setClosed(true)} aria-label="이 목록 닫기"
+          title="이 목록 닫기"
+          className={`tap grid h-6 w-6 shrink-0 place-items-center rounded text-fg-muted hover:bg-hovered hover:text-fg ${
+            shownTags.length > 0 ? "" : "ml-auto"}`}>
+          <X size={13} />
+        </button>
       </div>
       <ul className="space-y-1">
         {items.map((p) => {
