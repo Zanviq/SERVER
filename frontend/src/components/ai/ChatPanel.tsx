@@ -26,6 +26,8 @@ interface Msg {
   text: string;
   steps: Step[];
   pending?: boolean;
+  /** 도구를 부른 뒤라 다음에 오는 글로 갈아쳐야 하는가(앞의 글은 그때까지 그대로 둔다) */
+  rewriting?: boolean;
   /** 사용자 메시지에 같이 보낸 것(논문 화면) — 말풍선 아래 작게 보여 준다 */
   selections?: { text: string; page: number }[];
   attachments?: { label: string }[];
@@ -297,12 +299,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     try {
       await aiChatStream(text, history, (e: AiEvent) => {
         if (e.type === "tool_call") {
-          // 스킬을 부르기 직전에 흘러나온 말은 답이 아니라 머리말이다. 도구를 쓰고
-          // 나면 모델이 답을 처음부터 다시 쓰므로, 여기서 비워 두지 않으면
-          // 머리말 뒤에 진짜 답이 이어 붙어 잠깐 두 번 말한 것처럼 보인다.
-          patchLast((m) => ({ ...m, text: "", steps: [...m.steps, { name: e.name! }] }));
+          // 스킬을 부르기 직전에 흘러나온 말은 대개 머리말이고, 도구를 쓰고 나면
+          // 모델이 답을 처음부터 다시 쓴다. 그래서 갈아치워야 하는데, **여기서
+          // 곧바로 비우면 안 된다** — 모델이 답을 다 쓴 뒤 마지막에 도구를 부르는
+          // 경우가 있고(단어 후보가 그랬다), 그러면 다 읽던 답이 눈앞에서 사라진다.
+          // 표시만 해 두고, **새 글이 실제로 오는 순간** 갈아친다.
+          patchLast((m) => ({ ...m, rewriting: true, steps: [...m.steps, { name: e.name! }] }));
         } else if (e.type === "text_delta") {
-          patchLast((m) => ({ ...m, text: m.text + (e.text ?? "") }));
+          patchLast((m) => ({
+            ...m,
+            text: (m.rewriting ? "" : m.text) + (e.text ?? ""),
+            rewriting: false,
+          }));
         } else if (e.type === "tool_result") {
           patchLast((m) => {
             const steps = [...m.steps];
@@ -320,7 +328,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
           });
           if (e.ok && e.mutates) onToolSuccess?.(e.mutates);
         } else if (e.type === "text") {
-          patchLast((m) => ({ ...m, text: e.text ?? "" }));
+          patchLast((m) => ({ ...m, text: e.text ?? "", rewriting: false }));
         } else if (e.type === "error") {
           patchLast((m) => ({ ...m, text: `오류: ${e.message}` }));
           giveBack();
