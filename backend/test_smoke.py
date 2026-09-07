@@ -5451,7 +5451,8 @@ def test_vocab_skills_add_and_propose_with_context_tags():
     # 화면이 그리도록 data 를 SSE 로 내보내는 스킬이다
     assert reg.get("propose_vocab_words").expose_data is True
 
-    # 넣는 스킬은 **사용자가 넣어 달라고 했을 때만** 실제로 저장한다(71차).
+    # 넣는 스킬도 **바로 저장하지 않는다** — 넣어 달라고 했어도 어느 것을 넣을지는
+    # 사용자가 고른다. 모델이 고르는 목록과 사용자가 원하는 것은 자주 다르다.
     ctx.user_message = "attend 단어장에 넣어줘"
     r = reg.dispatch("add_vocab_words", {
         "words": [{"word": "attend", "meanings": ["주목하다", "참석하다"], "pos": "동사",
@@ -5459,7 +5460,12 @@ def test_vocab_skills_add_and_propose_with_context_tags():
         "tags": ["Transformer"],
     }, ctx)
     assert r.ok, r.message
-    assert len(r.data["added"]) == 1
+    assert [w["word"] for w in r.data["proposal"]] == ["attend"], r.data
+    assert vocab_store.list_words(u, s) == [], "고르기도 전에 저장했다"
+
+    # 고른 뒤 실제로 들어가는 길은 /api/vocab/fill 이다(화면이 부른다)
+    vocab_store.add_words(u, s, [{"word": "attend", "meanings": ["주목하다"]}],
+                          extra_tags=["Transformer", "Attention Is All You Need"])
     saved = vocab_store.find_by_word(u, s, "attend")
     assert set(saved["tags"]) == {"Transformer", "Attention Is All You Need"}
 
@@ -6102,31 +6108,31 @@ def _tiny_pdf(text: str = "Hello paper") -> bytes:
 
 
 def test_server_fills_in_vocab_candidates_when_the_model_forgets(monkeypatch):
-    """단어 후보 올리기는 **서버가 보장한다.**
+    """**넣어 달라고 했는데** 모델이 후보를 안 올렸으면 서버가 채운다.
 
-    논문·영어 화면 프롬프트는 "'이 문장 무슨 뜻이야' 처럼 물으면 답한 뒤
-    propose_vocab_words 로 후보를 올려라"라고 적어 두었다. 그런데 실측하면
-    **6번 중 2번만** 올렸다 — 프롬프트에 적힌 바로 그 예시("이 문장 무슨 뜻이야")
-    조차 0/2 였다. 답은 잘 하고 그 다음 한 걸음을 잊는다.
+    모델은 답은 잘 하고 그 다음 한 걸음을 자주 잊는다(실측 6번 중 2번만 올렸다).
+    그래서 서버가 받쳐 준다 — 다만 **사용자가 넣어 달라고 했을 때만**이다.
+    예전에는 "뜻이 뭐야"에도 채워서, 물을 때마다 목록이 답 밑에 따라붙었다.
 
-    부탁으로 안 되는 자리라 서버가 채운다(30·47·60·71·90차와 같은 결론).
     채우되 **저장하지는 않는다** — 고르는 것은 사용자다.
     """
     from backend import vocab_suggest
     from backend.ai import orchestrator
     from backend.ai.orchestrator import LLMResult
 
-    # 언제 채우는가
-    assert vocab_suggest.should_suggest("paper", "이 문장 무슨 뜻이야?", "가" * 60, False)
-    assert vocab_suggest.should_suggest("english", "degrade 설명해줘", "가" * 60, False)
+    # 언제 채우는가 — 넣어 달라고 했을 때
+    assert vocab_suggest.should_suggest("paper", "이 용어들 단어장에 넣어줘", "가" * 60, False)
+    assert vocab_suggest.should_suggest("english", "방금 단어들 저장해줘", "가" * 60, False)
+    # 그냥 물어본 것에는 채우지 않는다(사용자가 보고한 문제)
+    assert not vocab_suggest.should_suggest("paper", "이 문장 무슨 뜻이야?", "가" * 60, False)
+    assert not vocab_suggest.should_suggest("english", "degrade 설명해줘", "가" * 60, False)
     # 이미 모델이 올렸으면 겹쳐 올리지 않는다
-    assert not vocab_suggest.should_suggest("paper", "무슨 뜻이야", "가" * 60, True)
+    assert not vocab_suggest.should_suggest("paper", "단어장에 넣어줘", "가" * 60, True)
     # 단어장과 상관없는 화면에서는 하지 않는다
-    assert not vocab_suggest.should_suggest("calendar", "무슨 뜻이야", "가" * 60, False)
-    assert not vocab_suggest.should_suggest("meeting", "무슨 뜻이야", "가" * 60, False)
-    # 뜻을 묻는 말이 아니거나 답이 짧으면 하지 않는다(인사·되묻기)
-    assert not vocab_suggest.should_suggest("paper", "고마워", "가" * 60, False)
-    assert not vocab_suggest.should_suggest("paper", "무슨 뜻이야", "짧다", False)
+    assert not vocab_suggest.should_suggest("calendar", "단어장에 넣어줘", "가" * 60, False)
+    assert not vocab_suggest.should_suggest("meeting", "단어장에 넣어줘", "가" * 60, False)
+    # 답이 짧으면 뽑을 것이 없다(인사·되묻기)
+    assert not vocab_suggest.should_suggest("paper", "단어장에 넣어줘", "짧다", False)
 
     # 뽑은 결과의 모양 — 화면이 그리는 체크 목록과 같은 모양이어야 한다
     def fake_ask(settings, payload, model):
@@ -6156,7 +6162,7 @@ def test_server_fills_in_vocab_candidates_when_the_model_forgets(monkeypatch):
         monkeypatch.setattr(vocab_suggest, "_ask", fake_ask)
         monkeypatch.setattr(get_settings(), "gemini_api_key", "x", raising=False)
         client.delete(f"/api/ai/space/paper:{pid}")
-        r = client.post("/api/ai/chat", json={"message": "selectivity 뜻이 뭐야?",
+        r = client.post("/api/ai/chat", json={"message": "selectivity 단어장에 넣어줘",
                                               "mode": "paper", "paper_id": pid})
         events = [json.loads(ln[6:]) for ln in r.text.splitlines() if ln.startswith("data: ")]
         props = [e for e in events if e.get("type") == "tool_result"
@@ -6166,6 +6172,15 @@ def test_server_fills_in_vocab_candidates_when_the_model_forgets(monkeypatch):
         # **저장하지는 않는다** — 고르는 것은 사용자다
         assert not [w for w in client.get("/api/vocab/words?limit=500").json()
                     if w["word"] == "selectivity"]
+
+        # 그냥 물어봤을 때는 아무것도 안 뜬다(사용자가 보고한 문제)
+        client.delete(f"/api/ai/space/paper:{pid}")
+        r = client.post("/api/ai/chat", json={"message": "selectivity 뜻이 뭐야?",
+                                              "mode": "paper", "paper_id": pid})
+        events = [json.loads(ln[6:]) for ln in r.text.splitlines() if ln.startswith("data: ")]
+        assert not [e for e in events if e.get("type") == "tool_result"
+                    and isinstance(e.get("data"), dict) and e["data"].get("proposal")], \
+            "묻기만 했는데 후보 목록이 떴다"
     finally:
         client.delete(f"/api/papers/{pid}")
 
@@ -7098,7 +7113,8 @@ def test_paper_upload_extracts_in_background_and_ai_context(monkeypatch):
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
     import base64 as _b64
     r = client.post("/api/ai/chat", json={
-        "message": "이 그림 설명해줘", "mode": "paper", "paper_id": pid,
+        # 단어 후보는 **넣어 달라고 했을 때만** 뜬다 — 이 시험은 그 경로의 태그를 본다
+        "message": "이 그림 설명해주고 어려운 단어는 단어장에 넣어줘", "mode": "paper", "paper_id": pid,
         "attachments": [{"mime": "image/png", "data": _b64.b64encode(png).decode(), "label": "2쪽 영역"}],
         "selections": [{"text": "We propose a greeting.", "page": 1}],
     })
@@ -7109,7 +7125,7 @@ def test_paper_upload_extracts_in_background_and_ai_context(monkeypatch):
     assert "read_paper_text" in seen["catalog"] and "get_system_status" not in seen["catalog"]
     # 마지막 LLM 호출의 대화에는 [사용자 메시지, 도구 호출, 도구 결과, …] 순으로 쌓인다
     user_turn = next(c for c in seen["contents"] if c["role"] == "user" and "text" in c["parts"][0]
-                     and "이 그림 설명해줘" in c["parts"][0]["text"])
+                     and "이 그림 설명해주고" in c["parts"][0]["text"])
     assert any("inline_data" in p and p["inline_data"]["data"] == png for p in user_turn["parts"])
     assert "We propose a greeting." in user_turn["parts"][0]["text"] and "1쪽" in user_turn["parts"][0]["text"]
     hits = next(e for e in events if e["type"] == "tool_result" and e["name"] == "search_paper_chats")
@@ -7121,7 +7137,7 @@ def test_paper_upload_extracts_in_background_and_ai_context(monkeypatch):
     # 대화가 서버에 남았고(선택 글 메타 포함), 다시 열면 그대로 온다
     msgs = client.get(f"/api/ai/space/paper:{pid}").json()["messages"]
     assert [m["role"] for m in msgs] == ["user", "assistant"]
-    assert msgs[0]["text"] == "이 그림 설명해줘"
+    assert msgs[0]["text"].startswith("이 그림 설명해주고")
     assert msgs[0]["meta"]["selections"][0]["page"] == 1
     assert msgs[0]["meta"]["attachments"][0]["label"] == "2쪽 영역"
     assert msgs[1]["meta"]["tools"][-1]["data"]["proposal"][0]["word"] == "encode"
@@ -7129,7 +7145,7 @@ def test_paper_upload_extracts_in_background_and_ai_context(monkeypatch):
     client.post("/api/ai/chat", json={"message": "고마워", "mode": "paper", "paper_id": pid,
                                       "history": [{"role": "user", "text": "가짜 기록"}]})
     texts = [p.get("text", "") for c in seen["contents"] for p in c["parts"]]
-    assert any("이 그림 설명해줘" in t for t in texts) and not any("가짜 기록" in t for t in texts)
+    assert any("이 그림 설명해주고" in t for t in texts) and not any("가짜 기록" in t for t in texts)
 
     # 영역 이미지는 논문 모드에서만: PNG·JPEG·WebP 만, 크기 제한
     r = client.post("/api/ai/chat", json={"message": "x", "mode": "paper", "paper_id": pid,
@@ -7176,13 +7192,15 @@ def test_english_mode_persists_chat_and_limits_skills(monkeypatch):
     r = client.post("/api/ai/chat", json={"message": "adequate 단어장에 넣어줘", "mode": "english"})
     assert r.status_code == 200, r.text
     events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+    # 넣어 달라고 했어도 **바로 저장하지 않고 체크 목록으로** 온다 — 어느 것을
+    # 넣을지는 사용자가 고른다(고른 뒤 /api/vocab/fill 이 실제로 넣는다).
     added = next(e for e in events if e["type"] == "tool_result" and e["name"] == "add_vocab_words")
-    assert added["ok"] and added["mutates"] == "vocab" and added["data"]["added"][0]["word"] == "adequate"
+    assert added["ok"] and added["data"]["proposal"][0]["word"] == "adequate"
     assert "add_vocab_words" in seen["catalog"] and "create_calendar_event" not in seen["catalog"]
     assert "영어 학습 튜터" in seen["system"]
     msgs = client.get("/api/ai/space/english").json()["messages"]
     assert [m["role"] for m in msgs] == ["user", "assistant"]
-    assert any(w["word"] == "adequate" for w in client.get("/api/vocab/words", params={"tag": "영어 학습"}).json())
+    assert not client.get("/api/vocab/words", params={"tag": "영어 학습"}).json(), "고르기도 전에 저장했다"
     # 한 줄 지우기·비우기
     assert client.delete(f"/api/ai/space/english/{msgs[0]['id']}").status_code == 200
     assert len(client.get("/api/ai/space/english").json()["messages"]) == 1
@@ -7445,13 +7463,14 @@ def test_list_vocab_does_not_scold_a_limit_it_was_given():
     그때까지 "tag/query 로 좁히세요"라고 하면, 이미 태그로 좁혀 놓고 세 개만
     달라고 한 모델에게 엉뚱한 훈수를 두는 셈이다(47차에서 실제로 봤다).
     """
+    from backend import vocab_store
     from backend.ai.skill_registry import default_registry
 
     reg = default_registry()
-    _u, ctx, _st = _todo_ctx("vocablimit")
-    ctx.user_message = "단어장에 넣어줘"      # 넣기는 사용자가 시켰을 때만 된다
-    reg.dispatch("add_vocab_words", {"words": [
-        {"word": f"w{i}", "meanings": ["뜻"]} for i in range(6)]}, ctx)
+    u, ctx, st = _todo_ctx("vocablimit")
+    # 저장소에 바로 넣는다 — 대화로 넣는 길은 이제 반드시 체크 목록을 거치므로
+    # (사용자가 고른다) 여기서 쓸 수 없다. 이 시험이 보는 것은 list_vocab 이다.
+    vocab_store.add_words(u, st, [{"word": f"w{i}", "meanings": ["뜻"]} for i in range(6)])
 
     asked = reg.dispatch("list_vocab", {"limit": 3}, ctx)
     assert "요청한 3개만" in asked.message, asked.message
@@ -7469,44 +7488,41 @@ def test_list_vocab_does_not_scold_a_limit_it_was_given():
         vsk._MAX_ROWS = old
 
 
-def test_a_thin_word_gets_filled_in_the_background(monkeypatch):
-    """모델이 사전 내용을 덜 채워 저장하면 카드가 반쪽으로 남는다.
+def test_the_model_can_never_put_a_word_in_the_notebook_by_itself():
+    """모델이 스스로 단어장에 쓰는 길이 **하나도 없어야** 한다.
 
-    실측(50차): 답에는 비슷한 단어를 적어 놓고 add_vocab_words 에는 synonyms 를
-    비워 보냈다. 후보에서 고른 항목과 같은 경로로 뒤에서 채운다.
+    사용자가 보고한 문제: 물어볼 때마다 "단어장에 넣을까요?"가 뜨고, 시켰을 때는
+    고르지도 않은 단어까지 통째로 들어갔다. 그래서 대화에서 오는 것은 전부
+    체크 목록을 거치게 했다 — 실제로 넣는 것은 사용자가 고른 뒤 화면이 부르는
+    /api/vocab/fill 뿐이다.
+
+    스킬이 하나라도 저장하면 그 구멍으로 다시 새므로, **스킬 목록에서** 확인한다.
     """
-    from backend import vocab_fill
+    from backend import vocab_store
     from backend.ai.skill_registry import default_registry
-    from backend.ai.skills import vocab as vsk
+    from backend.auth import SessionUser
+    from backend.config import get_settings
 
+    st = get_settings()
+    u = SessionUser(username="쓰기없음", display_name="N", expires_at=0, remaining=0)
     reg = default_registry()
-    _u, ctx, st = _todo_ctx("thinfill")
-    monkeypatch.setattr(st, "gemini_api_key", "test-key", raising=False)
 
-    ctx.user_message = "단어장에 넣어줘"      # 넣기는 사용자가 시켰을 때만 된다
-    started: list[list[str]] = []
-    monkeypatch.setattr(vocab_fill, "start_fill",
-                        lambda user, settings, items, tags, context="":
-                        started.append([i["word"] for i in items]) or {"id": "j"})
+    from backend.ai.skill_base import SkillContext
+    ctx = SkillContext(user=u, settings=st, today="2026-09-07",
+                       user_message="이 단어들 전부 단어장에 넣어줘")
 
-    # 사전 내용이 다 찬 것은 건드리지 않는다
-    reg.dispatch("add_vocab_words", {"words": [{
-        "word": "complete", "meanings": ["완전한"], "english_def": "Whole.",
-        "synonyms": ["whole(전체의)"],
-        "examples": [{"en": "It is complete.", "ko": "그것은 완전하다.", "grammar": ""}],
-    }]}, ctx)
-    assert started == [], started
+    for name, args in (
+        ("add_vocab_words", {"words": [{"word": "alpha", "meanings": ["가"]}]}),
+        ("propose_vocab_words", {"words": [{"word": "beta", "meaning": "나"}]}),
+    ):
+        r = reg.dispatch(name, args, ctx)
+        assert r.ok, (name, r.message)
+        assert r.data.get("proposal"), (name, r.data)
+    assert vocab_store.list_words(u, st) == [], "스킬이 단어장에 바로 썼다"
 
-    # 뜻만 있는 것은 뒤에서 채운다
-    reg.dispatch("add_vocab_words", {"words": [{"word": "thin", "meanings": ["얇은"]}]}, ctx)
-    assert started == [["thin"]], started
-
-    # 키가 없으면 채울 방법이 없으니 부르지 않는다(넣은 것은 그대로 남는다)
-    started.clear()
-    monkeypatch.setattr(st, "gemini_api_key", "", raising=False)
-    r = reg.dispatch("add_vocab_words", {"words": [{"word": "nokey", "meanings": ["열쇠없음"]}]}, ctx)
-    assert r.ok and started == [], (r.message, started)
-    assert any(w["word"] == "nokey" for w in vsk.vocab_store.list_words(_u, st))
+    # 넣는 스킬이라고 표시돼 있으면 화면이 괜히 단어장을 다시 받아 온다
+    assert not getattr(reg.get("add_vocab_words"), "mutates", ""), \
+        "저장하지 않는데 mutates 가 붙어 있다"
 
 
 def test_adding_many_words_touches_the_file_once():
@@ -7958,11 +7974,12 @@ def test_the_diary_is_never_overwritten_by_a_passing_remark():
 
 
 def test_words_are_not_added_unless_the_user_asked():
-    """낱말 하나만 쳤는데 모델이 제멋대로 단어장에 넣던 것(71차: 3번 중 2번).
+    """대화에서 들어오는 단어는 **언제나 사용자가 고른다.**
 
-    고르지도 않은 단어가 복습 대기열에 영영 남는다 — 사용자가 처음 보고한 문제가
-    이것이다. 프롬프트로는 여러 번 막아 봤지만 계속 샜다. 서버가 사람의 말을 보고
-    직접 판단하고, 시키지 않았으면 저장 대신 **후보로 돌린다.**
+    처음에는 "시키지 않았으면 넣지 않는다"였다(71차: 낱말 하나만 쳐도 3번 중 2번
+    제멋대로 넣었다). 그런데 시켰을 때도 문제가 남았다 — 모델이 고르는 목록과
+    사용자가 넣고 싶은 것이 달라서, 문장 하나를 물어도 대여섯 개가 통째로
+    들어갔다. 이제 어느 쪽이든 체크 목록을 거친다.
     """
     from backend import vocab_store
     from backend.ai.skill_registry import default_registry
@@ -7971,34 +7988,30 @@ def test_words_are_not_added_unless_the_user_asked():
     u, ctx, st = _todo_ctx("askedadd")
     payload = {"words": [{"word": "perfunctory", "meanings": ["형식적인"]}]}
 
-    ctx.user_message = "perfunctory"          # 그냥 낱말만 쳤다
-    r = reg.dispatch("add_vocab_words", payload, ctx)
-    assert r.ok, r.message
-    assert vocab_store.list_words(u, st) == [], "시키지도 않았는데 넣었다"
-    assert r.data["proposal"][0]["word"] == "perfunctory", r.data
-    assert "저장하지 않았습니다" in r.message, r.message
+    for 말 in ("perfunctory",                      # 그냥 낱말만 쳤다
+               "perfunctory 단어장에 넣어줘",        # 넣어 달라고 했다
+               "add this to my wordbook"):
+        ctx.user_message = 말
+        r = reg.dispatch("add_vocab_words", payload, ctx)
+        assert r.ok, r.message
+        assert r.data["proposal"][0]["word"] == "perfunctory", r.data
+        assert vocab_store.list_words(u, st) == [], f"고르기도 전에 넣었다: {말}"
 
-    # 넣어 달라고 하면 넣는다
-    ctx.user_message = "perfunctory 단어장에 넣어줘"
-    r2 = reg.dispatch("add_vocab_words", payload, ctx)
-    assert r2.ok and [w["word"] for w in vocab_store.list_words(u, st)] == ["perfunctory"]
-
-    # 영어로 말해도 알아듣는다
-    u2, ctx2, st2 = _todo_ctx("askedadd2")
-    ctx2.user_message = "add this to my wordbook"
-    reg.dispatch("add_vocab_words", payload, ctx2)
-    assert [w["word"] for w in vocab_store.list_words(u2, st2)] == ["perfunctory"]
+    # 실제로 넣는 것은 사용자가 고른 뒤 화면이 부르는 /api/vocab/fill 이다
+    vocab_store.add_words(u, st, [{"word": "perfunctory", "meanings": ["형식적인"]}])
+    assert [w["word"] for w in vocab_store.list_words(u, st)] == ["perfunctory"]
 
 
 def test_a_word_with_many_meanings_says_there_are_more():
     """뜻을 넷에서 끊는 것을 알리지 않으면 "뜻 다 알려줘"에 넷만 말한다."""
+    from backend import vocab_store
     from backend.ai.skill_registry import default_registry
 
     reg = default_registry()
-    _u, ctx, _st = _todo_ctx("manymeanings")
-    ctx.user_message = "단어장에 넣어줘"
-    reg.dispatch("add_vocab_words", {"words": [{
-        "word": "set", "meanings": [f"뜻{i}" for i in range(7)]}]}, ctx)
+    u, ctx, st = _todo_ctx("manymeanings")
+    # 대화로 넣는 길은 체크 목록을 거치므로 저장소에 바로 넣는다(여기서 보는 것은
+    # list_vocab 이 뜻을 자를 때 알리는가다)
+    vocab_store.add_words(u, st, [{"word": "set", "meanings": [f"뜻{i}" for i in range(7)]}])
 
     brief = reg.dispatch("list_vocab", {"query": "set"}, ctx).data["items"][0]
     assert len(brief["meanings"]) == 4, brief["meanings"]
@@ -9331,17 +9344,16 @@ def test_paper_notes_appends_do_not_overwrite_each_other():
     assert 남은.endswith("가") and "안 들어간다" not in 남은, "실패했는데 메모가 바뀌었다"
 
 
-def test_the_screens_own_examples_all_offer_vocabulary_candidates():
-    """**화면이 스스로 권하는 물음**에서 단어 후보가 올라와야 한다.
+def test_vocabulary_candidates_only_appear_when_the_user_asks_for_them():
+    """단어 후보 목록은 **넣어 달라고 했을 때만** 뜬다.
 
-    영어 학습 화면은 네 가지를 예시로 띄우고, 그 아래에 "단어·문장을 보내면 …
-    원하면 단어장에 넣어 줍니다"라고 적어 둔다. 그런데 후보를 채우는 조건이
-    '뜻·설명·해석' 같은 말만 보고 있어서, **그 예시 중 둘이 걸리지 않았다**:
-      - "adequate"            — 한글 없이 낱말만 보내는 것이 가장 흔한 물음이다
-      - "이 문장 분석해줘: …"  — '분석'이 조건에 없었다
-    실측: 고치기 전 '분석해줘'는 도구 호출이 아예 0건이었고, 고친 뒤 후보 6개다.
+    예전에는 프롬프트가 "설명한 뒤에는 후보를 올리세요"라고 무조건 시켰고 서버까지
+    나서서 채웠다. 그래서 단어를 물을 때마다 매번 "단어장에 넣을까요?" 목록이
+    답 밑에 붙었다 — 묻지도 않았는데 화면을 차지하고 끄는 방법도 없었다.
+    사용자가 직접 보고한 문제다.
 
-    화면의 예시 목록을 **소스에서 읽어** 확인한다 — 예시를 바꾸면 여기서 걸린다.
+    화면이 권하는 예시(“adequate”, “이 문장 분석해줘: …”)도 마찬가지다 —
+    그것은 **뜻을 물어보는 예시**지 단어장에 넣어 달라는 말이 아니다.
     """
     import pathlib
     import re as _re
@@ -9351,31 +9363,30 @@ def test_the_screens_own_examples_all_offer_vocabulary_candidates():
     답 = "adequate 는 '충분한'이라는 뜻입니다. " * 5   # 길이 조건을 넘기는 답
     ask = lambda m: vocab_suggest.should_suggest("english", m, 답, already=False)  # noqa: E731
 
-    # 화면에 실제로 적힌 예시들
+    # 넣어 달라고 한 말 — 떠야 한다
+    for m in ("방금 말한 단어들 단어장에 넣어줘", "이 단어들 단어장에 추가해 줘",
+              "이거 외울 거니까 저장해줘", "add these to my vocab"):
+        assert ask(m), m
+
+    # 그냥 물어본 말 — 뜨면 안 된다
+    for m in ("perfunctory", "on the fence 가 무슨 뜻이야", "belie 랑 conceal 차이가 뭐야",
+              "이 문단 해석해 줘", "What does 'belie' mean?", "이 문장 분석해줘: The cat sat."):
+        assert not ask(m), m
+
+    # 화면이 권하는 예시도 마찬가지 — 물어보는 말이지 넣어 달라는 말이 아니다
     tsx = (pathlib.Path(__file__).resolve().parent.parent
            / "frontend" / "src" / "pages" / "English.tsx").read_text(encoding="utf-8")
     block = tsx[tsx.index("const SUGGESTIONS"):tsx.index("];", tsx.index("const SUGGESTIONS"))]
     예시 = _re.findall(r'"([^"]+)"', block)
     assert len(예시) >= 4, 예시
-
-    # 낱말·문장에 대한 물음이면 후보가 올라와야 한다
-    묻는것 = [m for m in 예시 if not _re.search(r"퀴즈|글 써|글쓰기", m)]
-    assert 묻는것, 예시
-    안걸린것 = [m for m in 묻는것 if not ask(m)]
-    assert not 안걸린것, f"화면이 권하는데 후보가 안 올라온다: {안걸린것}"
-
-    # 흔한 다른 형태들도
-    for m in ("perfunctory", "on the fence 가 무슨 뜻이야", "belie 랑 conceal 차이가 뭐야",
-              "이 문단 해석해 줘", "What does 'belie' mean?"):
-        assert ask(m), m
+    떠버리는것 = [m for m in 예시 if ask(m)]
+    assert not 떠버리는것, f"묻기만 하는 예시인데 후보가 뜬다: {떠버리는것}"
 
     # 단어장과 상관없는 자리에서는 올리지 않는다
-    assert not vocab_suggest.should_suggest("calendar", "adequate", 답, already=False)
-    assert not vocab_suggest.should_suggest("english", "adequate", 답, already=True)
-    assert not ask("오늘 복습할 단어로 퀴즈 내줘")
-    assert not ask("내일 회의 일정 잡아 줘")
+    assert not vocab_suggest.should_suggest("calendar", "단어장에 넣어줘", 답, already=False)
+    assert not vocab_suggest.should_suggest("english", "단어장에 넣어줘", 답, already=True)
     # 답이 너무 짧으면(되묻기·인사) 뽑을 것이 없다
-    assert not vocab_suggest.should_suggest("english", "adequate", "네?", already=False)
+    assert not vocab_suggest.should_suggest("english", "단어장에 넣어줘", "네?", already=False)
 
 
 def test_the_meeting_screens_own_examples_can_still_make_documents():

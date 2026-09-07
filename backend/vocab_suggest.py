@@ -67,16 +67,20 @@ _PROMPT = """You are picking study-notebook candidates from an assistant's answe
 
 
 def should_suggest(mode: str, user_message: str, answer: str, already: bool) -> bool:
-    """서버가 후보를 채워야 하는 자리인가."""
+    """서버가 후보를 채워야 하는 자리인가.
+
+    **사용자가 단어장에 넣어 달라고 했을 때만이다.** 예전에는 "뜻이 뭐야" 류의
+    물음이면 무엇이든 채웠는데, 그러다 보니 단어를 물을 때마다 매번 "단어장에
+    넣을까요?" 목록이 답 밑에 붙었다 — 묻지도 않았는데 화면을 차지하고 끄는
+    방법도 없었다. 이제 스킬 쪽 규칙(`_asked_for_vocab`)과 같은 것을 쓴다.
+    """
+    from .ai.skills.vocab import _ASK_FOR_VOCAB
+
     if already or mode not in MODES:
         return False
     if len((answer or "").strip()) < MIN_ANSWER_CHARS:
         return False
-    msg = (user_message or "").strip()
-    if _ASKS_MEANING.search(msg):
-        return True
-    # 한글 없이 영어만 보냈다 = 그 말을 묻는 것이다("adequate", "on the fence").
-    return bool(msg) and len(msg) <= _BARE_MAX_CHARS and not _HANGUL.search(msg)
+    return bool(_ASK_FOR_VOCAB.search(user_message or ""))
 
 
 def _parse(text: str) -> list[dict]:

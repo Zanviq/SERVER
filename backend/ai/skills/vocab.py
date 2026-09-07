@@ -1,18 +1,22 @@
 """단어장 스킬 — 영어 학습·논문 화면에서 AI 가 단어를 넣고 찾고 고친다.
 
-사용자가 "adequate 단어장에 넣어줘" 하면 모델이 **사전 내용까지 채워서**
-add_vocab_words 를 부른다(뜻·유사어·영어 해설·예문·변화형·포인트). 서버는
-사전을 갖고 있지 않으므로 채우는 쪽은 모델이다 — 그래서 파라미터 설명이 길다.
+**대화에서 오는 것은 어느 스킬이든 단어장에 바로 쓰지 않는다.** add_vocab_words
+든 propose_vocab_words 든 화면에 체크 목록을 띄우고 끝이다 — 실제로 넣는 것은
+사용자가 고른 뒤 화면이 부르는 /api/vocab/fill 뿐이다.
 
-propose_vocab_words 는 **저장하지 않는다.** 논문을 읽다 사용자가 영어 질문을
-하면 모델이 "이 단어들 단어장에 넣을까요?" 하고 후보를 내미는 용도다. 프런트가
-이 호출을 보고 체크박스 목록을 띄운다. 후보를 모델이 바로 저장해 버리면 논문
-한 편에 단어가 수십 개씩 쌓인다.
+그렇게까지 하는 이유는 사용자가 두 번 겪었기 때문이다.
+  1. 낱말 하나만 쳐도 모델이 제멋대로 넣었다(3번 중 2번, 71차 실측).
+  2. 넣어 달라고 했을 때도 모델이 고른 목록과 사용자가 넣고 싶은 것이 달라서,
+     문장 하나를 물어도 대여섯 개가 통째로 들어갔다.
+고르지도 않은 단어는 복습 대기열에 영영 남는다. 목록을 한 번 누르는 것이
+원치 않는 단어를 하나씩 지우는 것보다 싸다.
 
-고른 뒤에는 **모델을 다시 거치지 않는다.** 프런트가 /api/vocab/fill 로 고른
-목록을 직접 보내고 vocab_fill 이 백그라운드에서 채운다 — 예전처럼 "넣어줘"를
-채팅으로 되돌려 보내면 모델이 직전 대화(후보 전체)를 보고 고르지 않은 것까지
-넣었다.
+또 **후보 목록은 넣어 달라고 했을 때만 뜬다**(`_asked_for_vocab`). 예전에는
+프롬프트가 "설명한 뒤에는 후보를 올리세요"라고 무조건 시켜서, 뜻을 물을 때마다
+목록이 답 밑에 따라붙었다 — 사용자가 직접 보고한 문제다.
+
+사전 내용(뜻·유사어·예문·변화형)은 고른 뒤 vocab_fill 이 채운다. 그래서 모델은
+한 줄 뜻만 주면 된다.
 
 단어장은 **영어 단어 전용이 아니다.** 논문 화면에서는 전문 용어(kind=term)가,
 영어 학습에서는 문장·문법 항목이 함께 들어온다.
@@ -170,29 +174,10 @@ class ListVocabTags(SkillBase):
         return SkillResult(ok=True, message=f"태그 {len(tags)}개", data={"tags": tags})
 
 
-#: "단어장에 넣어 달라"고 실제로 말했는가. 낱말 하나만 쳐도 모델이 제멋대로
-#: 넣어 버리는 일이 잦아서(3번 중 2번, 71차 실측) 서버가 직접 확인한다.
-#: 프롬프트로는 여러 번 막아 봤지만 계속 샜다 — 30·47·60차와 같은 교훈이다.
-_ASK_TO_ADD = re.compile(
-    r"단어장|외울|외워|저장|넣어|넣자|넣을|넣고|추가|담아|담자|등록|모아"
-    r"|\badd\b|\bsave\b|\bstore\b"
-)
-
-
-def _user_asked_to_add(ctx) -> bool:
-    """이번 차례에 사람이 '넣어 달라'고 했는가.
-
-    안 했으면 넣지 않고 **후보로만** 올린다. 잘못 판단해도 손해가 다르다 —
-    잘못 넣으면 고르지도 않은 단어가 복습 대기열에 영영 남고(사용자가 처음
-    보고한 문제가 이것이다), 잘못 안 넣으면 체크 목록에서 한 번 누르면 된다.
-    """
-    return bool(_ASK_TO_ADD.search(str(getattr(ctx, "user_message", "") or "")))
-
-
 def _as_proposal(words: list, ctx) -> SkillResult:
-    """저장 대신 후보 목록으로 돌려준다(add_vocab_words 가 허락 없이 불렸을 때).
+    """저장 대신 **체크 목록**으로 돌려준다.
 
-    화면은 propose_vocab_words 와 같은 모양의 data 를 보고 체크 목록을 그린다.
+    화면은 propose_vocab_words 와 같은 모양의 data 를 보고 목록을 그린다.
     사용자가 고르면 /api/vocab/fill 로 바로 가므로, 여기서 아무것도 저장하지
     않아도 한 번 누르는 것으로 끝난다.
     """
@@ -223,42 +208,26 @@ def _as_proposal(words: list, ctx) -> SkillResult:
         c["exists"] = c["word"].lower() in existing
     return SkillResult(
         ok=True,
-        # "더 넣지 마라"는 **이번 차례에만** 해당한다. 그렇게 적지 않으면 이 말이
-        # 대화 기록에 남아, 다음 차례에 사용자가 "넣어줘"라고 해도 모델이 넣기를
-        # 망설인다(실측: 그 뒤 turn 에서 저장이 0건이 되는 판이 나왔다).
-        message=(f"사용자가 넣어 달라고 하지 않아 **저장하지 않았습니다.** 대신 후보 "
-                 f"{len(clean)}개를 화면에 띄웠습니다. 고른 것만 저장되니 **이번 답에서는** "
-                 "더 넣지 말고 '넣을 것을 골라 주세요' 정도만 짧게 말해라. "
-                 "다음에 사용자가 넣어 달라고 하면 그때는 add_vocab_words 로 넣으면 된다."),
+        # **모델에게 "실패했다"고 들리면 안 된다.** 예전 문구는 "넣어 달라고 하지
+        # 않아 저장하지 않았습니다"였는데, 이제는 넣어 달라고 했을 때도 이 길로
+        # 오므로 앞뒤가 안 맞는다. 실제로 모델이 그 말에 혼란스러워하며 "결과
+        # 메시지가 적절하지 않습니다" 같은 속엣말을 답에 그대로 적었다(실측).
+        #
+        # 지금 일어난 일을 그대로 적는다: 목록을 띄웠고, 고르는 것은 사용자다.
+        message=(f"단어 {len(clean)}개를 화면의 체크 목록으로 띄웠습니다. "
+                 "**아직 아무것도 저장되지 않았습니다** — 사용자가 목록에서 고르면 그때 "
+                 "저장됩니다(사전 내용은 서버가 채웁니다).\\n"
+                 "**'추가했습니다'·'넣었습니다'라고 말하지 마세요. 거짓말이 됩니다.** "
+                 "'아래에서 넣을 것을 골라 주세요' 한 줄이면 충분합니다. "
+                 "이번 답에서 다른 스킬을 더 부르지도 마세요."),
         data={"proposal": clean, "context": "", "tags": list(ctx.vocab_tags or [])},
     )
 
 
-def _is_thin(w: dict) -> bool:
-    """사전 내용이 덜 찬 항목인가. 뜻만 있고 나머지가 비면 카드가 반쪽이다."""
-    return not (w.get("english_def") and w.get("examples") and w.get("synonyms"))
-
-
-def _fill_thin(ctx, saved: list[dict], tags: list[str]) -> None:
-    """덜 찬 항목만 백그라운드로 채운다. 실패해도 저장은 이미 끝났으니 조용히 넘긴다."""
-    if not getattr(ctx.settings, "gemini_api_key", ""):
-        return          # 키가 없으면 채울 방법이 없다. 넣은 것은 그대로 둔다.
-    thin = [{"word": w.get("word", ""), "kind": w.get("kind", ""),
-             "meaning": (w.get("meanings") or [""])[0]}
-            for w in saved if _is_thin(w) and w.get("word")]
-    if not thin:
-        return
-    try:
-        from ... import vocab_fill
-
-        vocab_fill.start_fill(ctx.user, ctx.settings, thin, list(tags))
-    except Exception:  # noqa: BLE001
-        logger.exception("단어장 보강 시작 실패")
-
-
 class AddVocabWords(SkillBase):
-    mutates = "vocab"
-    expose_data = True  # 화면이 "추가됨: …" 칩을 보여 준다
+    # 이 스킬은 이제 **저장하지 않는다**(체크 목록으로 돌려준다) — mutates 를 두면
+    # 화면이 바뀌지도 않은 단어장을 다시 받아 온다.
+    expose_data = True  # 화면이 체크 목록을 그린다
     name = "add_vocab_words"
     description = (
         "단어장에 단어를 넣는다. **사전 내용은 네가 채운다** — 뜻(여러 개)·비슷한 단어·반대말·"
@@ -287,56 +256,58 @@ class AddVocabWords(SkillBase):
         words = args.get("words")
         if not isinstance(words, list) or not words:
             return SkillResult(ok=False, message="넣을 단어가 없습니다.", error_code="invalid")
-        # 사용자가 넣어 달라고 하지 않았으면 **넣지 않고 후보로 돌린다.**
-        # 낱말 하나만 쳐도 모델이 제멋대로 저장하는 일이 잦았다 — 고르지도 않은
-        # 단어가 복습 대기열에 쌓인다. 화면은 이 결과를 체크 목록으로 그린다.
-        if not _user_asked_to_add(ctx):
-            return _as_proposal(words, ctx)
-        tags = args.get("tags") or []
-        if isinstance(tags, str):
-            tags = [tags]
-        # 화면(논문 등)이 정한 기본 태그가 있으면 모델이 뭘 주든 함께 붙는다
-        tags = list(tags) + list(ctx.vocab_tags or [])
-        try:
-            out = vocab_store.add_words(ctx.user, ctx.settings, words, extra_tags=tags)
-        except Exception as e:  # noqa: BLE001
-            return _fail(e)
-        added = [w["word"] for w in out["added"]]
-        merged = [w["word"] for w in out["merged"]]
-        failed = out["failed"]
-        # 모델이 사전 내용을 덜 채워 보내는 일이 있다(실측: 답에는 비슷한 단어를
-        # 적어 놓고 저장할 때는 synonyms 를 비워 보냈다). 화면의 단어 카드가
-        # 반쪽으로 남으므로, 후보에서 고른 항목과 **같은 경로**로 뒤에서 채운다.
-        _fill_thin(ctx, out["added"] + out["merged"], tags)
-        bits = []
-        if added:
-            bits.append(f"추가 {len(added)}개: " + ", ".join(added))
-        if merged:
-            bits.append(f"이미 있어 합침 {len(merged)}개: " + ", ".join(merged))
-        if failed:
-            bits.append(f"실패 {len(failed)}개: " + ", ".join(f"{f['word']}({f['reason']})" for f in failed))
-        ok = bool(added or merged)
-        return SkillResult(
-            ok=ok, message=" / ".join(bits) or "아무것도 넣지 못했습니다.",
-            data={
-                "added": [_row(w) for w in out["added"]],
-                "merged": [_row(w) for w in out["merged"]],
-                "failed": failed,
-                "tags": tags,
-            },
-            error_code="" if ok else "invalid",
-        )
+        # **대화에서 들어오는 것은 언제나 체크 목록을 거친다.**
+        #
+        # 예전에는 사용자가 "넣어줘"라고 하면 모델이 고른 대로 바로 저장했다.
+        # 그런데 모델이 고르는 목록과 사용자가 넣고 싶은 것은 자주 다르다 —
+        # 문장 하나를 물어도 대여섯 개를 통째로 넣어 버리고, 고르지도 않은
+        # 단어가 복습 대기열에 영영 남는다. 어느 것을 넣을지는 사용자가 정한다.
+        #
+        # 손해가 다르다: 목록을 한 번 누르는 것과, 원치 않는 단어를 하나씩
+        # 지우는 것. 사전 내용은 고른 뒤 서버가 채우므로 품질도 같다
+        # (/api/vocab/fill → vocab_fill).
+        return _as_proposal(words, ctx)
+
+
+#: "단어장에 넣어 달라"고 실제로 말했는가.
+#:
+#: 예전에는 프롬프트가 "설명한 뒤에는 후보를 올리세요"라고 무조건 시켰고, 서버까지
+#: 나서서 채웠다(vocab_suggest). 그 결과 **단어를 물을 때마다 매번** "단어장에
+#: 넣을까요?" 목록이 떴다 — 묻지도 않았는데 화면 절반을 차지하고, 끄는 방법도 없었다.
+#: 회의 문서의 `_asked_to_save` 와 같은 자리다: 부탁으로는 양쪽으로 어긋나므로
+#: 서버가 사용자의 말을 직접 본다.
+_ASK_FOR_VOCAB = re.compile(
+    r"단어장|단어 ?장|어휘장|외울|외워|암기"
+    r"|(넣|담|저장|추가|등록)\w*\s*(줘|주세요|해줘|해 줘|하자|할래|해라|해 주|해줄)"
+    r"|넣어|담아|저장해|추가해|등록해"
+    r"|\bvocab\w*\b|add to my? ?(word|vocab)"
+)
+
+
+def _asked_for_vocab(ctx) -> bool:
+    """이번 차례에 사람이 '단어장에 넣어 달라'고 했는가.
+
+    안 했으면 후보를 내밀지 않는다. 잘못 판단해도 손해가 다르다 — 안 내밀면
+    사용자가 "단어장에 넣어줘" 한 번 더 말하면 되고, 잘못 내밀면 물어볼 때마다
+    긴 목록이 답 밑에 따라붙는다(그게 지금까지의 모습이었다).
+
+    화면이 부른 것(user_message 가 비어 있는 경우)은 사용자가 단추를 눌러 시킨
+    일이므로 막지 않는다.
+    """
+    msg = str(getattr(ctx, "user_message", "") or "")
+    return not msg.strip() or bool(_ASK_FOR_VOCAB.search(msg))
 
 
 class ProposeVocabWords(SkillBase):
     expose_data = True  # 화면이 후보 체크 목록을 그린다
     name = "propose_vocab_words"
     description = (
-        "저장하지 않고 '이것들을 단어장에 넣을까요?' 하고 **후보를 내민다.** 사용자가 단어·문장·"
-        "문법·전문 용어를 물었을 때, 답을 다 한 뒤 이 스킬로 그 답에 나온 어려운 것들을 후보로 "
-        "올린다. 화면에 체크 목록이 뜨고 **사용자가 고른 것만** 저장된다(사전 내용은 서버가 "
+        "저장하지 않고 '이것들을 단어장에 넣을까요?' 하고 **후보를 내민다.** "
+        "**사용자가 '단어장에 넣어 줘'라고 말했을 때만 쓴다** — 단어를 설명해 달라는 말은 "
+        "설명해 달라는 뜻이지 단어장에 넣으라는 뜻이 아니다. "
+        "화면에 체크 목록이 뜨고 **사용자가 고른 것만** 저장된다(사전 내용은 서버가 "
         "백그라운드에서 채우므로 너는 한 줄 뜻만 주면 된다). "
-        "사용자가 이미 '넣어줘'라고 분명히 말했으면 이걸 쓰지 말고 add_vocab_words 로 바로 넣는다."
+        "어떤 단어를 넣을지 분명하면 이걸로 후보를 내밀고, 사용자가 고르게 한다."
     )
     parameters = {
         "type": "object",
@@ -364,6 +335,15 @@ class ProposeVocabWords(SkillBase):
         words = args.get("words")
         if not isinstance(words, list) or not words:
             return SkillResult(ok=False, message="후보가 없습니다.", error_code="invalid")
+        if not _asked_for_vocab(ctx):
+            # 사용자는 뜻을 물었을 뿐이다. 목록을 띄우지 않고 **답만** 하게 한다.
+            return SkillResult(
+                ok=True,
+                message=("사용자가 단어장에 넣어 달라고 하지 않아 **후보를 띄우지 않았습니다.** "
+                         "설명만 하고, 단어장 이야기는 꺼내지 마세요. 사용자가 나중에 "
+                         "'단어장에 넣어 줘'라고 하면 그때 이 스킬을 부르면 됩니다."),
+                data={"skipped": True},
+            )
         clean = []
         seen: set[str] = set()
         for w in words:
@@ -394,9 +374,10 @@ class ProposeVocabWords(SkillBase):
             ok=True,
             # "더 넣지 마라"는 이번 차례에만 해당한다 — 이 문장이 대화 기록에 남아
             # 다음 차례의 "넣어줘"까지 막지 않도록 범위를 분명히 적는다.
-            message=f"후보 {len(clean)}개를 화면에 띄웠습니다. **고른 것만** 백그라운드에서 채워 "
-                    "저장되니 **이번 답에서는** 더 넣지 말고, 짧게 '넣을 것을 골라 주세요' 정도만 "
-                    "말하면 된다. 다음에 사용자가 넣어 달라고 하면 그때는 add_vocab_words 로 넣는다.",
+            message=f"후보 {len(clean)}개를 화면의 체크 목록으로 띄웠습니다. "
+                    "**아직 아무것도 저장되지 않았습니다** — 사용자가 고르면 그때 저장됩니다.\\n"
+                    "**'추가했습니다'·'넣었습니다'라고 말하지 마세요. 거짓말이 됩니다.** "
+                    "'아래에서 넣을 것을 골라 주세요' 한 줄이면 충분합니다.",
             data={"proposal": clean, "context": str(args.get("context") or "")[:1000],
                   "tags": list(ctx.vocab_tags or [])},
         )

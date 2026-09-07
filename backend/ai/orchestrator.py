@@ -353,6 +353,7 @@ def run(
     final_text = ""
     executed: list[tuple[str, bool]] = []  # 한도 초과 시 요약용
     mutated = False                        # 이번 차례에 실제로 바꾼 것이 있는가
+    proposed = False                       # 화면에 "고를 목록"을 띄웠는가(단어 후보)
     last_finish = ""                       # 빈 답일 때 왜 멈췄는지가 유일한 단서다
 
     for step in range(max_steps):
@@ -429,6 +430,11 @@ def run(
                 skill_obj = registry.get(name)
                 if skill_result.ok and (skill_result.mutates or getattr(skill_obj, "mutates", "")):
                     mutated = True
+                # 화면에 "고를 목록"을 띄웠는가(단어 후보). 이번 차례에 저장이 없는
+                # 것이 정상인 자리라, 아래의 "아무것도 안 바뀌었다" 경고에서 뺀다.
+                if skill_result.ok and isinstance(skill_result.data, dict) \
+                        and skill_result.data.get("proposal"):
+                    proposed = True
                 ev = {
                     "type": "tool_result",
                     "name": name,
@@ -505,7 +511,14 @@ def run(
     # 말과 실제를 맞춰 본다. "삭제했습니다"라고 해 놓고 아무것도 안 바꾼 적이 있다
     # (list_todos 만 부르고 그렇게 답했다). 사용자는 다 된 줄 알고 넘어간다 —
     # 이 시스템에서 가장 사람을 속이는 실패라, 프롬프트에만 맡기지 않고 여기서 잡는다.
-    if _claims_without_doing(final_text, mutated):
+    #
+    # 다만 **화면에 고를 목록을 띄운 차례는 뺀다.** 단어장은 "고른 것만 저장"이라
+    # 이번 차례에 저장이 없는 것이 정상인데, 모델이 습관처럼 "추가했습니다"라고
+    # 말하면 경고가 붙어 사용자가 두 번 헷갈린다 — 바로 아래에 체크 목록과
+    # "고른 것만 저장됩니다"가 이미 떠 있다.
+    if proposed:
+        pass
+    elif _claims_without_doing(final_text, mutated):
         logger.warning("바꾼 것 없이 완료를 주장했다: %s", final_text[:120])
         final_text += (
             "\n\n⚠️ **실제로는 아무것도 바뀌지 않았습니다.** 위 말과 달리 이번 차례에 "
