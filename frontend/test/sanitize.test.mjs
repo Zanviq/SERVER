@@ -129,15 +129,50 @@ blocked("링크 title 이벤트", '<a href="https://x.example" onclick="alert(1)
 
 console.log("\n덮개 만들기 — class 로도 style 과 같은 일을 할 수 있다");
 {
-  // 이 앱은 Tailwind 유틸리티가 전역에 깔려 있어 class 하나로 화면을 덮을 수 있다
-  const { attrs, values } = collect(render('<div class="fixed inset-0 z-50 bg-white">가짜 화면</div>'));
-  check("div 에 class 가 남지 않는다",
-    !attrs.some((a) => a.toLowerCase() === "classname"), values.join(" | "));
+  // 이 앱은 Tailwind 유틸리티가 전역에 깔려 있어 class 하나로 화면을 덮을 수 있다.
+  //
+  // **"class 속성이 없다"가 아니라 "위험한 class 값이 없다"를 본다.** 수식을
+  // 그리려면 math 표시 클래스 몇 개는 통과시켜야 하는데(math-inline·math-display),
+  // 그때도 지켜야 하는 것은 이쪽이다 — 값이 허용 목록에 없으면 다 떨어진다.
+  for (const html of [
+    '<div class="fixed inset-0 z-50 bg-white">가짜 화면</div>',
+    '<span class="fixed inset-0 z-50 bg-white">가짜 화면</span>',
+    '<code class="fixed inset-0 z-50 bg-white">가짜 화면</code>',
+  ]) {
+    const { values } = collect(render(html));
+    const joined = values.join(" ");
+    check(`${html.slice(1, 5)}… 에 Tailwind class 가 남지 않는다`,
+      !/fixed|inset-0|z-50|bg-white/.test(joined), joined || "(빈 값)");
+  }
 }
 {
   const { values } = collect(render("```python\nprint(1)\n```"));
   check("코드블록 문법 강조 class 는 남는다",
     values.some((v) => v.includes("language-python")), values.join(" | "));
+}
+
+console.log("\n수식 — 살균을 지나야 KaTeX 가 그릴 수 있다");
+{
+  // 이 표시가 지워지면 수식이 **문법 원문 그대로** 보인다(사용자가 겪은 문제).
+  const mathPipeline = unified()
+    .use(remarkParse)
+    .use(remarkGfm)
+    .use((await import("remark-math")).default)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(rehypeRaw)
+    .use(rehypeSanitize, mdSanitizeSchema);
+  const renderMath = (md) => mathPipeline.runSync(mathPipeline.parse(md));
+
+  const inline = collect(renderMath("$E = mc^2$")).values.join(" ");
+  check("인라인 수식 표시가 남는다", /math-inline/.test(inline), inline);
+
+  const block = collect(renderMath("$$\n\\frac{a}{b}\n$$")).values.join(" ");
+  // math-display 가 떨어지면 블록 수식이 문장 속 인라인으로 그려진다
+  check("블록 수식 표시가 남는다", /math-display/.test(block), block);
+
+  const evil = collect(renderMath('<code class="math-inline fixed inset-0 bg-white">x</code>')).values.join(" ");
+  check("수식 표시를 빌미로 Tailwind class 가 끼어들지 못한다",
+    !/fixed|inset-0|bg-white/.test(evil), evil);
 }
 
 console.log("\n각주 — id 와 href 가 맞아야 눌러서 이동한다");

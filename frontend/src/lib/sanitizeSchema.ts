@@ -58,5 +58,19 @@ export const mdSanitizeSchema = {
     // style="position:fixed" 와 결과가 같다). 코드블록의 `language-*` 는 기본
     // 스키마가 code 태그에 한정해 허용하므로 문법 강조는 그대로 동작한다.
     "*": [...(defaultSchema.attributes?.["*"] ?? []), ...SVG_ATTRS],
+    // 수식 표시만 예외로 통과시킨다. remark-math 는 `$…$` 를 `language-math` +
+    // `math-inline`(또는 `math-display`) 클래스를 붙인 <code> 로 바꿔 놓고,
+    // 살균 **뒤에** rehype-katex 가 그것을 보고 그린다.
+    //
+    // `math-display` 를 빠뜨리면 **블록 수식이 인라인으로 그려진다**(가운데 정렬도
+    // 큰 글씨도 없이 문장 속에 끼어든다) — 실제로 그랬다.
+    //
+    // **값을 이름으로 못 박는다.** className 을 통째로 열면 위에서 막은 Tailwind
+    // 문제가 그대로 돌아온다(class 하나로 화면을 덮을 수 있다).
+    code: [["className", /^language-./, "math", "math-inline", "math-display"]],
+    span: [...(defaultSchema.attributes?.span ?? []),
+           ["className", "math", "math-inline", "math-display"]],
+    div: [...(defaultSchema.attributes?.div ?? []),
+          ["className", "math", "math-inline", "math-display"]],
   },
 };

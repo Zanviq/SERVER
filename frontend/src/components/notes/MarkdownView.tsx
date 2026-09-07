@@ -5,6 +5,11 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+// 수식 글꼴·자리잡기. **여기서 가져온다** — 이 화면은 지연 로드되므로 수식을
+// 쓰지 않는 사람은 이 CSS·폰트를 내려받지 않는다.
+import "katex/dist/katex.min.css";
 import type { EmbedResolver } from "../../lib/embeds";
 import { transformWiki } from "../../lib/wikiTransform";
 import { remarkHighlight } from "../../lib/markdownExtras";
@@ -68,9 +73,15 @@ export function MarkdownView({
     <div className="prose-server">
       <ReactMarkdown
         // 단일 엔터 줄바꿈(remarkBreaks) + GFM(표/체크박스/취소선/자동링크)
-        remarkPlugins={[remarkGfm, remarkBreaks, remarkHighlight]}
-        // 인라인 HTML/SVG 파싱(rehypeRaw) 후 살균(rehypeSanitize, svg 허용 스키마)
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema]]}
+        remarkPlugins={[remarkGfm, remarkBreaks, remarkHighlight, remarkMath]}
+        // 인라인 HTML/SVG 파싱(rehypeRaw) 후 살균(rehypeSanitize, svg 허용 스키마).
+        // **수식은 살균 뒤에 그린다**(rehypeKatex). 앞에서 그리면 KaTeX 가 만든
+        // 수백 개의 class 를 살균이 전부 지워 글자만 남고, 통과시키자니 className
+        // 을 통째로 여는 셈이라 위험하다. 뒤에 두면 KaTeX 는 이미 걸러진 수식
+        // 문자열만 받고, 그 출력은 KaTeX 가 만든 것이라 믿을 수 있다
+        // (trust 기본값 false — \href·\htmlClass 같은 것은 그리지 않는다).
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema],
+                        [rehypeKatex, { throwOnError: false, errorColor: "rgb(var(--danger))" }]]}
         components={{
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
           blockquote: ({ children, ...props }) => {
