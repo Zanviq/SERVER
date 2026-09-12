@@ -174,6 +174,32 @@ interface ChatPanelProps {
   placeholder?: string;
 }
 
+/**
+ * 한 답에 달린 단어 후보 목록들 — 겹치는 단어를 뒤 목록에서 뺀다.
+ *
+ * 모델은 함수 호출을 나란히 내보내기 때문에 add_vocab_words 와
+ * propose_vocab_words 를 한 차례에 같이 부르는 일이 있다. 그러면 같은 단어가 두
+ * 목록에 실리고, 사용자가 둘 다 누르면 같은 단어를 두 번 넣는다. 서버도 같은
+ * 것을 거르지만(routers/ai.py `_drop_repeats`), 그 전에 저장된 대화에도 겹친
+ * 목록이 남아 있다.
+ */
+export function dedupeProposals(steps: Step[]): { key: string; data: VocabProposalData }[] {
+  const seen = new Set<string>();
+  const out: { key: string; data: VocabProposalData }[] = [];
+  steps.forEach((s, j) => {
+    if (!s.ok || !s.data || !Array.isArray(s.data.proposal)) return;
+    const rows = (s.data.proposal as VocabProposalData["proposal"]).filter((r) => {
+      const hw = String(r?.word ?? "").trim().toLowerCase();
+      if (!hw || seen.has(hw)) return false;
+      seen.add(hw);
+      return true;
+    });
+    if (rows.length === 0) return;
+    out.push({ key: `p${j}`, data: { ...(s.data as unknown as VocabProposalData), proposal: rows } });
+  });
+  return out;
+}
+
 function fromServer(m: ChatMessage): Msg {
   return {
     id: m.id,
@@ -485,16 +511,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
                 ) : null}
                 {/* 단어 후보: 고른 것만 서버로 바로 가고 백그라운드에서 채워진다.
                     스킬 이름이 아니라 **후보가 들어 있는지**로 본다 — 허락 없이
-                    불린 add_vocab_words 도 저장 대신 후보로 돌아온다. */}
-                {m.steps.map((s, j) =>
-                  s.ok && s.data && Array.isArray(s.data.proposal) ? (
-                    <VocabProposal
-                      key={`p${j}`}
-                      data={s.data as unknown as VocabProposalData}
-                      tags={vocabTags}
-                    />
-                  ) : null,
-                )}
+                    불린 add_vocab_words 도 저장 대신 후보로 돌아온다.
+                    한 답에 목록이 여럿 오면(모델이 함수 호출을 나란히 낸다) 겹치는
+                    단어는 앞 목록에만 남긴다 — 두 목록에서 같은 단어를 두 번 넣게
+                    되는 것을 막는다. */}
+                {dedupeProposals(m.steps).map((p) => (
+                  <VocabProposal key={p.key} data={p.data} tags={vocabTags} space={space} />
+                ))}
               </div>
             </div>
           ),

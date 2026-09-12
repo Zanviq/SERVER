@@ -23,6 +23,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import time
 import uuid
 from datetime import date, timedelta
@@ -141,6 +142,21 @@ def _examples(value) -> list[dict]:
 def headword(word) -> str:
     """표제어 비교용 — 소문자, 앞뒤 공백 제거."""
     return _s(word, MAX_WORD).lower()
+
+
+def proposal_key(words) -> str:
+    """단어 후보 목록 하나를 가리키는 이름.
+
+    "이 목록은 이미 처리했다"를 적어 두는 데 쓴다. 메시지 id 가 아니라 **내용**으로
+    가리키는 이유는, 답이 저장되기 전(스트리밍이 끝나기 전)에도 사용자가 닫기를
+    누를 수 있기 때문이다. 그때는 가리킬 메시지가 아직 없다.
+
+    순서는 무시한다 — 같은 단어들이면 모델이 어떤 차례로 냈든 같은 목록이다.
+    """
+    hws = sorted({h for h in (headword(w) for w in (words or [])) if h})
+    if not hws:
+        return ""
+    return hashlib.sha1("\n".join(hws).encode("utf-8")).hexdigest()[:20]
 
 
 def _kind(value) -> str:

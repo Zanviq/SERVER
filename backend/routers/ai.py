@@ -86,6 +86,11 @@ class ChatRequest(BaseModel):
     selections: list[Selection] = []
 
 
+class VocabProposalDone(BaseModel):
+    """처리한(닫았거나 넣은) 단어 후보 목록. 그 목록에 있던 단어 전부를 준다."""
+    words: list[str] = []
+
+
 @router.get("/status")
 def status(settings: Settings = Depends(get_settings)):
     """AI 사용 가능 여부."""
@@ -106,6 +111,35 @@ def _space_path(space: str, user: SessionUser, settings: Settings) -> Path:
     return context_store.space_path(user, settings, space)
 
 
+def _annotate_proposals(msgs: list[dict], done: set[str],
+                        user: SessionUser, settings: Settings) -> None:
+    """기록 속 단어 후보 목록에 **지금**의 상태를 붙인다.
+
+    두 가지를 고쳐 붙인다.
+      done    사용자가 이미 닫았거나 넣은 목록인가. 그러면 화면은 그리지 않는다.
+      exists  그 단어가 **지금** 단어장에 있는가. 원래는 후보를 만든 시점의 값이
+              그대로 굳어 있었다 — 넣고 나서 새로고침하면 이미 넣은 단어가 다시
+              체크 가능한 상태로 나타나, 한 번 더 넣게 만들었다.
+    """
+    panels = [d for m in msgs
+              for t in ((m.get("meta") or {}).get("tools") or [])
+              for d in [t.get("data")]
+              if isinstance(d, dict) and isinstance(d.get("proposal"), list)]
+    if not panels:
+        return
+    try:
+        existing = {vocab_store.headword(w.get("word")) for w in
+                    vocab_store.list_words(user, settings)}
+    except Exception:  # noqa: BLE001
+        existing = set()
+    for d in panels:
+        rows = [r for r in d["proposal"] if isinstance(r, dict)]
+        if vocab_store.proposal_key([r.get("word") for r in rows]) in done:
+            d["done"] = True
+        for r in rows:
+            r["exists"] = vocab_store.headword(r.get("word")) in existing
+
+
 @router.get("/space/{space}")
 def space_messages(
     space: str,
@@ -113,7 +147,29 @@ def space_messages(
     settings: Settings = Depends(get_settings),
 ):
     """서버에 남은 대화(영어 학습·논문)."""
-    return {"messages": chat_store.load(_space_path(space, user, settings))}
+    path = _space_path(space, user, settings)
+    data = chat_store.load_all(path)
+    _annotate_proposals(data["messages"], set(data["vocab_done"]), user, settings)
+    return {"messages": data["messages"]}
+
+
+@router.post("/space/{space}/vocab-proposal-done")
+def vocab_proposal_done(
+    space: str,
+    body: VocabProposalDone,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """이 후보 목록은 처리했다 — 닫았거나 넣었다. 다시 띄우지 않는다.
+
+    메시지 id 가 아니라 단어 목록으로 가리킨다. 답이 저장되기 전(스트리밍 중)에
+    닫아도 적어 둘 수 있어야 하기 때문이다.
+    """
+    key = vocab_store.proposal_key(body.words)
+    if not key:
+        raise HTTPException(status_code=400, detail="후보 단어가 없습니다.")
+    chat_store.mark_vocab_done(_space_path(space, user, settings), key)
+    return {"ok": True}
 
 
 @router.delete("/space/{space}")
@@ -363,6 +419,25 @@ def _prepare(body: "ChatRequest", user: SessionUser, settings: Settings) -> Prep
     )
 
 
+def _drop_repeats(data: dict, seen: set[str]) -> bool:
+    """이번 차례에 이미 올린 단어를 후보 목록에서 뺀다. 다 빠지면 True.
+
+    모델이 함수 호출을 나란히 내보내기 때문에 한 차례에 후보 목록이 둘 뜨는 일이
+    있다(add_vocab_words + propose_vocab_words). 두 목록에 같은 단어가 실리면
+    사용자는 같은 단어를 두 번 넣게 된다.
+    """
+    rows = [r for r in data.get("proposal") or [] if isinstance(r, dict)]
+    kept = []
+    for r in rows:
+        hw = vocab_store.headword(r.get("word"))
+        if not hw or hw in seen:
+            continue
+        seen.add(hw)
+        kept.append(r)
+    data["proposal"] = kept
+    return not kept
+
+
 def _late_proposal(p: "Prepared", answer: str, notes: list[dict],
                    user: SessionUser, settings: Settings) -> dict | None:
     """모델이 안 올린 단어 후보를 서버가 뽑아 화면에 올린다.
@@ -442,6 +517,7 @@ def chat(
         streamed = ""     # 흘려보낸 조각들 — 중간에 멈췄을 때 화면과 기록을 맞춘다
         errored = False
         tool_notes: list[dict] = []
+        proposed_words: set[str] = set()   # 이번 차례에 이미 올린 단어 후보
         try:
             for ev in orchestrator.run(
                 user, settings, p.full_message, p.today, history=p.history,
@@ -469,6 +545,13 @@ def chat(
                     # add_vocab_words 도 허락 없이 불리면 후보로 돌려준다.
                     data = ev.get("data")
                     if isinstance(data, dict) and isinstance(data.get("proposal"), list):
+                        # 한 차례에 후보 목록이 **여러 개** 나올 수 있다. 모델은 함수
+                        # 호출을 나란히 내보내므로 add_vocab_words 와
+                        # propose_vocab_words 를 같이 부르는 일이 있다. 그러면 같은
+                        # 단어가 두 목록에 실리고, 사용자가 둘 다 누르면 같은 단어를
+                        # 두 번 넣게 된다. 이번 차례에 이미 올린 단어는 뺀다.
+                        if _drop_repeats(data, proposed_words):
+                            continue          # 남는 것이 없으면 목록 자체를 올리지 않는다
                         note["data"] = data
                     tool_notes.append(note)
                 yield orchestrator.sse_format(ev)

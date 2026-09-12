@@ -8,12 +8,16 @@ export interface VocabProposalData {
   proposal: { word: string; kind?: VocabKind; pos?: string; meaning?: string; exists?: boolean }[];
   context?: string;
   tags?: string[];
+  /** 서버가 붙여 준다 — 이미 닫았거나 넣은 목록이면 true. */
+  done?: boolean;
 }
 
 interface Props {
   data: VocabProposalData;
   /** 화면이 정한 태그(논문 제목 등). 후보를 올린 시점이 아니라 **누르는 시점**의 값이다. */
   tags?: string[];
+  /** 서버 대화 공간. 처리했다는 사실을 여기에 적어 둔다(없으면 이번 화면에서만 닫힌다). */
+  space?: string;
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -28,17 +32,29 @@ const KIND_LABEL: Record<string, string> = {
  * 넣는 일이 있었다. 지금은 고른 목록을 서버로 바로 보내고(/api/vocab/fill)
  * 사전 내용은 백그라운드에서 채운다 — 그동안 대화는 계속할 수 있다.
  */
-export function VocabProposal({ data, tags }: Props) {
+export function VocabProposal({ data, tags, space }: Props) {
   const items = data.proposal ?? [];
   const [checked, setChecked] = useState<Set<string>>(
     () => new Set(items.filter((p) => !p.exists).map((p) => p.word)),
   );
   const [sent, setSent] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
-  //: 이 목록만 닫는다. 넣을 것이 없을 때 답을 가리고 있으면 치울 수 있어야 한다
-  //: — 대화 기록에는 남아 있어서 다시 열면 그대로 보인다(영구히 끄는 것이 아니다).
+  //: 이 목록만 닫는다(기능을 끄는 것이 아니다). 다음에 넣어 달라고 하면 새 목록이 뜬다.
   const [closed, setClosed] = useState(false);
   const selectable = items.filter((p) => !p.exists);
+
+  /**
+   * 이 목록은 끝났다고 서버에 적는다 — 닫았든 넣었든.
+   *
+   * 예전에는 닫힘 상태가 이 컴포넌트 안에만 있었다. 새로고침하면 처리한 목록이
+   * 그대로 되살아났고, 되살아난 목록은 체크까지 풀려 있어서 **이미 넣은 단어를
+   * 한 번 더 넣게** 만들었다. 대화가 서버에 있으니 처리 여부도 서버에 있어야 한다.
+   */
+  const markDone = () => {
+    if (!space) return;
+    // 실패해도 사용자를 막지 않는다 — 화면에서는 이미 닫혔다.
+    void api.aiVocabProposalDone(space, items.map((p) => p.word)).catch(() => {});
+  };
 
   const toggle = (w: string) => {
     setChecked((s) => {
@@ -59,6 +75,9 @@ export function VocabProposal({ data, tags }: Props) {
       );
       vocabJobs.track(job);
       setSent(picked.map((p) => p.word));
+      // 넣었으면 이 목록도 끝이다. 지금 화면에서는 "넣는 중"을 보여 주고(누른 것이
+      // 먹혔는지 알아야 한다), 다음에 다시 열면 나오지 않는다.
+      markDone();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "단어장에 넣지 못했습니다");
     } finally {
@@ -66,7 +85,7 @@ export function VocabProposal({ data, tags }: Props) {
     }
   };
 
-  if (items.length === 0 || closed) return null;
+  if (items.length === 0 || closed || data.done) return null;
   const shownTags = tags?.length ? tags : data.tags ?? [];
 
   return (
@@ -79,10 +98,10 @@ export function VocabProposal({ data, tags }: Props) {
             태그: {shownTags.join(", ")}
           </span>
         )}
-        {/* 넣을 것이 없을 때 치울 길. 이 목록 하나만 닫는다 — 다음에 넣어 달라고
-            하면 다시 뜬다(기능을 끄는 것이 아니다). */}
-        <button type="button" onClick={() => setClosed(true)} aria-label="이 목록 닫기"
-          title="이 목록 닫기"
+        {/* 넣을 것이 없을 때 치울 길. **이 목록은 다시 뜨지 않는다**(서버에 적는다).
+            기능을 끄는 것은 아니어서, 다음에 넣어 달라고 하면 새 목록이 뜬다. */}
+        <button type="button" onClick={() => { setClosed(true); markDone(); }}
+          aria-label="이 목록 닫기" title="이 목록 닫기 (다시 뜨지 않습니다)"
           className={`tap grid h-6 w-6 shrink-0 place-items-center rounded text-fg-muted hover:bg-hovered hover:text-fg ${
             shownTags.length > 0 ? "" : "ml-auto"}`}>
           <X size={13} />

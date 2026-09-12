@@ -1768,10 +1768,15 @@ def test_save_does_not_overwrite_md_twin():
     client.delete("/api/notes/delete?path=쌍둥이.md")
 
 
-def test_upload_never_destroys_existing_file():
+def test_upload_never_destroys_existing_file(monkeypatch):
     """업로드가 같은 이름의 문서를 조용히 덮으면 되돌릴 수 없다."""
     import base64 as _b64
 
+    # 상한을 **낮춰서** 넘긴다. 예전에는 진짜 상한(2GB)보다 큰 바이트열을 만들어
+    # 보냈다 — 메모리에 2GB 를 올리고 디스크에 2GB 를 쓴 뒤에야 걸리므로, 디스크가
+    # 모자란 기계에서는 413 대신 "No space left on device"(500)가 났다. 확인하려는
+    # 것은 "상한을 넘으면 거절하고 기존 파일을 건드리지 않는다"이지 2GB 가 아니다.
+    monkeypatch.setattr(get_settings(), "max_upload_bytes", 64 * 1024)
     _login()
     png = _b64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
@@ -2220,7 +2225,7 @@ def test_ai_deletes_go_to_trash():
 
 def test_ai_find_free_slots_robustness():
     """빈 시간 찾기: 시각 표기 흔들림을 견디고, 오늘이면 지난 시간대를 내놓지 않는다."""
-    from datetime import datetime, timedelta
+    from datetime import date, datetime, timedelta
 
     from backend.ai.skill_base import SkillContext
     from backend.ai.skill_registry import default_registry
@@ -2229,14 +2234,21 @@ def test_ai_find_free_slots_robustness():
 
     s = get_settings()
     u = SessionUser(username="slots", display_name="SL", expires_at=0, remaining=0)
-    ctx = SkillContext(user=u, settings=s, today="2026-08-16")
     reg = default_registry()
+
+    # **날짜를 박아 두지 않는다.** 빈 시간 찾기는 지난 시간대를 내놓지 않으므로,
+    # 고정 날짜는 그 날이 지나는 순간 "빈 하루인데 슬롯이 없다"로 바뀐다(실제로
+    # 이 테스트가 그렇게 썩었다). 언제 돌려도 앞날인 이틀을 잡는다.
+    today = date.today()
+    ctx = SkillContext(user=u, settings=s, today=today.isoformat())
+    d1 = (today + timedelta(days=30)).isoformat()
+    d2 = (today + timedelta(days=31)).isoformat()
 
     # 모델이 흔히 주는 표기들 — 전부 받아들여야 한다
     for ws, we in [("09:00", "18:00"), ("9:00", "18:00"), ("09:00:00", "18:00:00")]:
         r = reg.dispatch(
             "find_free_slots",
-            {"date": "2026-09-10", "duration_minutes": 60, "work_start": ws, "work_end": we},
+            {"date": d1, "duration_minutes": 60, "work_start": ws, "work_end": we},
             ctx,
         )
         assert r.ok, f"work_start={ws!r} work_end={we!r} 실패: {r.message}"
@@ -2245,7 +2257,7 @@ def test_ai_find_free_slots_robustness():
     # 종료가 시작보다 빠르면 조용히 이상한 결과 대신 명확히 거절
     bad = reg.dispatch(
         "find_free_slots",
-        {"date": "2026-09-10", "duration_minutes": 60, "work_start": "18:00", "work_end": "09:00"},
+        {"date": d1, "duration_minutes": 60, "work_start": "18:00", "work_end": "09:00"},
         ctx,
     )
     assert not bad.ok and bad.error_code == "invalid", f"뒤집힌 범위는 거절해야 함: {bad}"
@@ -2253,18 +2265,18 @@ def test_ai_find_free_slots_robustness():
     # 근무시간 밖(저녁) 일정이 슬롯 경계를 끌어당기면 안 된다
     reg.dispatch(
         "create_calendar_event",
-        {"title": "저녁약속", "start": "2026-09-11T20:00:00", "end": "2026-09-11T21:00:00"},
+        {"title": "저녁약속", "start": f"{d2}T20:00:00", "end": f"{d2}T21:00:00"},
         ctx,
     )
     r = reg.dispatch(
         "find_free_slots",
-        {"date": "2026-09-11", "duration_minutes": 60, "work_start": "09:00", "work_end": "18:00"},
+        {"date": d2, "duration_minutes": 60, "work_start": "09:00", "work_end": "18:00"},
         ctx,
     )
     assert r.ok
     for slot in r.data["free_slots"]:
-        assert slot["end"] <= "2026-09-11T18:00:00", f"근무시간을 넘는 슬롯: {slot}"
-        assert slot["start"] >= "2026-09-11T09:00:00", f"근무시간 이전 슬롯: {slot}"
+        assert slot["end"] <= f"{d2}T18:00:00", f"근무시간을 넘는 슬롯: {slot}"
+        assert slot["start"] >= f"{d2}T09:00:00", f"근무시간 이전 슬롯: {slot}"
 
     # 오늘 날짜면 이미 지난 시간대는 제안하지 않는다
     now = datetime.now()
@@ -7206,6 +7218,150 @@ def test_english_mode_persists_chat_and_limits_skills(monkeypatch):
     assert len(client.get("/api/ai/space/english").json()["messages"]) == 1
     client.delete("/api/ai/space/english")
     assert client.get("/api/ai/space/english").json()["messages"] == []
+
+
+def _proposals_in(msgs: list[dict]) -> list[dict]:
+    return [t["data"] for m in msgs for t in (m.get("meta") or {}).get("tools") or []
+            if isinstance(t.get("data"), dict) and t["data"].get("proposal")]
+
+
+def test_handled_vocab_proposal_never_comes_back(monkeypatch):
+    """닫았거나 넣은 단어 후보 목록은 다시 뜨지 않는다.
+
+    닫힘 상태가 브라우저 안에만 있던 때는 새로고침 한 번에 처리한 목록이 그대로
+    되살아났다. 되살아난 목록은 체크까지 풀려 있어서 **이미 넣은 단어를 한 번 더
+    넣게** 만들었다 — 사용자가 직접 보고한 문제다.
+    """
+    from backend import vocab_store
+    from backend.ai import orchestrator
+    from backend.ai.orchestrator import LLMResult
+
+    class FakeLLM:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, contents, catalog, system):
+            self.n += 1
+            if self.n == 1:
+                return LLMResult(text="", tool_use={"name": "propose_vocab_words", "args": {
+                    "words": [{"word": "candid", "meaning": "솔직한"},
+                              {"word": "candor", "meaning": "솔직함"}]}})
+            return LLMResult(text="아래에서 넣을 것을 골라 주세요.", tool_use=None)
+
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": FakeLLM())
+    _login()
+    client.delete("/api/ai/space/english")
+    r = client.post("/api/ai/chat",
+                    json={"message": "이 단어들 단어장에 넣어줘", "mode": "english"})
+    assert r.status_code == 200, r.text
+
+    msgs = client.get("/api/ai/space/english").json()["messages"]
+    props = _proposals_in(msgs)
+    assert len(props) == 1 and not props[0].get("done"), props
+
+    # 닫기(또는 넣기) → 처리했다고 적는다. 목록의 단어로 가리키므로 답이 저장되기
+    # 전에 눌러도 된다.
+    assert client.post("/api/ai/space/english/vocab-proposal-done",
+                       json={"words": ["Candor", "candid"]}).status_code == 200
+    props = _proposals_in(client.get("/api/ai/space/english").json()["messages"])
+    assert props[0]["done"] is True, "처리한 목록이 되살아났다"
+
+    # 빈 목록은 거절한다(무엇을 처리했는지 알 수 없다)
+    assert client.post("/api/ai/space/english/vocab-proposal-done",
+                       json={"words": []}).status_code == 400
+
+    # 대화를 비우면 처리 기록도 같이 비운다 — 가리킬 목록이 사라졌다
+    client.delete("/api/ai/space/english")
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    from backend import chat_store
+    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    assert chat_store.vocab_done(chat_store.english_path(u, get_settings())) == set()
+
+    # 키는 순서·대소문자를 타지 않는다(같은 단어들이면 같은 목록이다)
+    assert vocab_store.proposal_key(["b", "A"]) == vocab_store.proposal_key(["a ", "B"])
+    assert vocab_store.proposal_key(["a"]) != vocab_store.proposal_key(["a", "b"])
+    assert vocab_store.proposal_key([]) == ""
+
+
+def test_saved_proposal_shows_words_that_are_now_in_the_notebook(monkeypatch):
+    """기록 속 후보 목록의 '이미 있음'은 **지금** 단어장을 보고 정한다.
+
+    예전에는 후보를 만들던 시점의 값이 그대로 굳어 있었다. 넣고 나서 새로고침하면
+    방금 넣은 단어가 다시 체크 가능한 상태로 나타나 한 번 더 넣게 됐다.
+    """
+    from backend import vocab_store
+    from backend.ai import orchestrator
+    from backend.ai.orchestrator import LLMResult
+
+    class FakeLLM:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, contents, catalog, system):
+            self.n += 1
+            if self.n == 1:
+                return LLMResult(text="", tool_use={"name": "propose_vocab_words", "args": {
+                    "words": [{"word": "laconic", "meaning": "말수가 적은"}]}})
+            return LLMResult(text="골라 주세요.", tool_use=None)
+
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": FakeLLM())
+    _login()
+    client.delete("/api/ai/space/english")
+    client.post("/api/ai/chat", json={"message": "laconic 단어장에 넣어줘", "mode": "english"})
+    props = _proposals_in(client.get("/api/ai/space/english").json()["messages"])
+    assert props[0]["proposal"][0]["exists"] is False
+
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    vocab_store.add_words(u, get_settings(), [{"word": "Laconic", "meanings": ["말수가 적은"]}])
+
+    props = _proposals_in(client.get("/api/ai/space/english").json()["messages"])
+    assert props[0]["proposal"][0]["exists"] is True, "이미 넣은 단어를 또 고르게 둔다"
+    w = vocab_store.find_by_word(u, get_settings(), "laconic")
+    vocab_store.delete_word(u, get_settings(), w["id"])
+    client.delete("/api/ai/space/english")
+
+
+def test_one_answer_never_offers_the_same_word_twice(monkeypatch):
+    """한 차례에 후보 목록이 둘 나와도 같은 단어가 두 번 실리지 않는다.
+
+    모델은 함수 호출을 나란히 내보낸다 — add_vocab_words 와 propose_vocab_words 를
+    같이 부르는 일이 있다. 두 목록에 같은 단어가 실리면 사용자가 둘 다 눌러
+    같은 단어를 두 번 넣게 된다.
+    """
+    from backend.ai import orchestrator
+    from backend.ai.orchestrator import LLMResult
+
+    class FakeLLM:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, contents, catalog, system):
+            self.n += 1
+            if self.n == 1:
+                # 병렬 함수 호출 — Gemini 가 실제로 이렇게 내보낸다
+                return LLMResult(text="", tool_uses=[
+                    {"name": "propose_vocab_words",
+                     "args": {"words": [{"word": "terse", "meaning": "간결한"},
+                                        {"word": "curt", "meaning": "퉁명스러운"}]}},
+                    {"name": "add_vocab_words",
+                     "args": {"words": [{"word": "Terse", "meanings": ["간결한"]},
+                                        {"word": "brusque", "meanings": ["무뚝뚝한"]}]}},
+                ])
+            return LLMResult(text="골라 주세요.", tool_use=None)
+
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": FakeLLM())
+    _login()
+    client.delete("/api/ai/space/english")
+    r = client.post("/api/ai/chat", json={"message": "단어장에 넣어줘", "mode": "english"})
+    assert r.status_code == 200, r.text
+    props = _proposals_in(client.get("/api/ai/space/english").json()["messages"])
+    words = [w["word"].lower() for p in props for w in p["proposal"]]
+    assert sorted(words) == ["brusque", "curt", "terse"], words
+    assert len(words) == len(set(words)), f"같은 단어가 두 목록에 실렸다: {words}"
+    client.delete("/api/ai/space/english")
 
 
 def test_answers_stream_out_word_by_word(monkeypatch):

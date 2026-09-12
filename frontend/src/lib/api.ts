@@ -267,6 +267,14 @@ export const api = {
     req(`/api/ai/space/${encodeURIComponent(space)}`, { method: "DELETE" }),
   aiSpaceDelete: (space: string, mid: string) =>
     req(`/api/ai/space/${encodeURIComponent(space)}/${encodeURIComponent(mid)}`, { method: "DELETE" }),
+  /**
+   * 이 단어 후보 목록은 처리했다(닫았거나 넣었다) — 다시 뜨지 않는다.
+   * 상태를 브라우저에만 두면 새로고침에 되살아나고, 되살아난 목록은 체크가
+   * 풀려 있어 이미 넣은 단어를 한 번 더 넣게 만든다.
+   */
+  aiVocabProposalDone: (space: string, words: string[]) =>
+    req(`/api/ai/space/${encodeURIComponent(space)}/vocab-proposal-done`,
+      jsonInit("POST", { words })),
   /** 지금 이 화면에서 보내면 모델이 실제로 받는 것. 모델은 부르지 않는다. */
   aiPreview: (body: { message: string; mode?: string; paper_id?: string; meeting_id?: string }) =>
     req<AiPreview>("/api/ai/preview", jsonInit("POST", body)),
