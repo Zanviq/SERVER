@@ -7213,11 +7213,239 @@ def test_english_mode_persists_chat_and_limits_skills(monkeypatch):
     msgs = client.get("/api/ai/space/english").json()["messages"]
     assert [m["role"] for m in msgs] == ["user", "assistant"]
     assert not client.get("/api/vocab/words", params={"tag": "영어 학습"}).json(), "고르기도 전에 저장했다"
-    # 한 줄 지우기·비우기
+    # 지우기·비우기. 대화는 나무이므로 **질문을 지우면 그 아래 가지째** 간다 —
+    # 답만 남기면 무엇에 대한 답인지 알 수 없는 조각이 뜬다.
     assert client.delete(f"/api/ai/space/english/{msgs[0]['id']}").status_code == 200
-    assert len(client.get("/api/ai/space/english").json()["messages"]) == 1
+    assert client.get("/api/ai/space/english").json()["messages"] == []
     client.delete("/api/ai/space/english")
     assert client.get("/api/ai/space/english").json()["messages"] == []
+
+
+def tmp_path_for(who: str):
+    """이 테스트만 쓰는 빈 대화 공간 하나."""
+    from backend import chat_store, context_store
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    u = SessionUser(username=who, display_name=who, expires_at=0, remaining=0)
+    path = context_store.space_path(u, get_settings(), "assistant")
+    chat_store.clear(path)
+    return path
+
+
+def test_chat_tree_keeps_branches_apart():
+    """대화는 나무다 — 가지마다 맥락이 따로 간다.
+
+    한 줄 대화에서는 "1번 더 물어보다가 2번으로 돌아가기"가 안 됐다. 2번을 물으면
+    1번 이야기가 맥락에 그대로 남아 답이 섞인다. 가지를 나누면 각 줄기는 갈라진
+    지점까지만 공유한다.
+    """
+    from backend import chat_store
+
+    path = tmp_path_for("tree-branches")
+    root = chat_store.message("user", "1 2 3 을 설명해줘")
+    a0 = chat_store.message("assistant", "1번은…, 2번은…, 3번은…", parent=root["id"])
+    chat_store.append(path, root, a0)
+    assert chat_store.load_all(path)["head"] == a0["id"], "마지막 메시지가 끝자락이 된다"
+
+    # 1번 가지
+    u1 = chat_store.message("user", "1번 더 자세히", parent=a0["id"])
+    a1 = chat_store.message("assistant", "1번은 이러이러합니다", parent=u1["id"])
+    chat_store.append(path, u1, a1)
+
+    # 같은 자리(a0)에서 2번 가지를 낸다
+    u2 = chat_store.message("user", "2번 더 자세히", parent=a0["id"])
+    a2 = chat_store.message("assistant", "2번은 저러저러합니다", parent=u2["id"])
+    chat_store.append(path, u2, a2)
+
+    data = chat_store.load_all(path)
+    left = [m["text"] for m in chat_store.thread(data["messages"], a1["id"])]
+    right = [m["text"] for m in chat_store.thread(data["messages"], a2["id"])]
+    assert "1번은 이러이러합니다" in left and "2번은 저러저러합니다" not in left
+    assert "2번은 저러저러합니다" in right and "1번은 이러이러합니다" not in right
+    assert left[:2] == right[:2], "갈라진 지점까지는 함께 간다"
+
+    # 가지를 갈아탄다
+    assert chat_store.set_head(path, a1["id"]) is True
+    assert chat_store.load_all(path)["head"] == a1["id"]
+    assert chat_store.set_head(path, "없는id") is False
+
+    # 지우면 **그 아래 가지 전체**가 간다 — 반쪽만 남기면 뿌리 없는 가지가 뜬다
+    assert chat_store.delete_message(path, u2["id"]) is True
+    left_ids = {m["id"] for m in chat_store.load_all(path)["messages"]}
+    assert u2["id"] not in left_ids and a2["id"] not in left_ids
+    assert a1["id"] in left_ids, "다른 가지는 건드리지 않는다"
+
+
+def test_old_flat_conversations_read_as_one_branch():
+    """parent 가 없던 옛 파일도 그대로 열린다(한 줄은 가지가 하나인 나무다)."""
+    from backend import chat_store, json_store
+
+    path = tmp_path_for("tree-legacy")
+    json_store.write_atomic(path, {"messages": [
+        {"id": "m1", "role": "user", "text": "안녕", "ts": 1, "meta": {}},
+        {"id": "m2", "role": "assistant", "text": "안녕하세요", "ts": 2, "meta": {}},
+        {"id": "m3", "role": "user", "text": "고마워", "ts": 3, "meta": {}},
+    ]}, create_parents=True)
+
+    data = chat_store.load_all(path)
+    assert [m["parent"] for m in data["messages"]] == [None, "m1", "m2"]
+    assert data["head"] == "m3", "끝자락이 없으면 마지막 메시지를 본다"
+    assert [m["id"] for m in chat_store.thread(data["messages"], data["head"])] == ["m1", "m2", "m3"]
+
+    # 파일을 미리 고쳐 쓰지 않는다 — 다음 저장 때 자연히 새 모양이 된다
+    chat_store.append(path, chat_store.message("assistant", "천만에요", parent="m3"))
+    assert chat_store.load_all(path)["messages"][-1]["parent"] == "m3"
+
+
+def test_memory_link_brings_only_the_other_branch():
+    """기억 연결은 **갈라진 뒤의 이야기만** 끌어온다.
+
+    공통 조상 위쪽은 이미 지금 줄기에 있다. 그대로 다 넣으면 같은 말이 두 번
+    들어가 맥락만 길어진다.
+    """
+    from backend import chat_store
+
+    path = tmp_path_for("tree-links")
+    root = chat_store.message("user", "공통 질문")
+    a0 = chat_store.message("assistant", "공통 답", parent=root["id"])
+    uA = chat_store.message("user", "A 가지 질문", parent=a0["id"])
+    aA = chat_store.message("assistant", "A 가지 답", parent=uA["id"])
+    uB = chat_store.message("user", "B 가지 질문", parent=a0["id"])
+    aB = chat_store.message("assistant", "B 가지 답", parent=uB["id"])
+    chat_store.append(path, root, a0, uA, aA, uB, aB)
+
+    # 같은 줄기끼리는 이을 수 없다 — 이미 맥락이므로 두 번 넣을 뿐이다
+    assert chat_store.connect(path, root["id"], aA["id"], True) is False
+    assert chat_store.connect(path, aA["id"], aA["id"], True) is False
+    # 다른 가지끼리는 이어진다
+    assert chat_store.connect(path, aA["id"], aB["id"], True) is True
+
+    data = chat_store.load_all(path)
+    mems = chat_store.linked_memories(data["messages"], data["links"], aB["id"])
+    assert len(mems) == 1
+    texts = [t["text"] for t in mems[0]["turns"]]
+    assert texts == ["A 가지 질문", "A 가지 답"], texts
+    assert "공통 답" not in texts, "이미 지금 줄기에 있는 것을 또 넣었다"
+
+    # 다른 가지를 보고 있을 때는 끌어오지 않는다(to_id 가 줄기 위에 없다)
+    assert chat_store.linked_memories(data["messages"], data["links"], aA["id"]) == []
+    # 풀면 사라진다
+    assert chat_store.connect(path, aA["id"], aB["id"], False) is True
+    data = chat_store.load_all(path)
+    assert chat_store.linked_memories(data["messages"], data["links"], aB["id"]) == []
+
+
+def test_branch_names_only_where_it_branches():
+    """이름은 **갈라지는 자리**에만 붙는다.
+
+    줄줄이 이어지는 차례는 지도에서 한 줄로 보일 뿐이라 이름이 필요 없다. 반대로
+    갈라지는 질문은 "1번 더 자세히" 처럼 앞말에 기대는 짧은 말이 많아서, 앞부분만
+    보면 어느 갈래가 무슨 이야기였는지 알 수 없다.
+    """
+    from backend import branch_names, chat_store
+    from backend.config import get_settings
+
+    path = tmp_path_for("branchname")
+    root = chat_store.message("user", "1 2 3 을 설명해줘")
+    a0 = chat_store.message("assistant", "1번 역전파, 2번 정규화, 3번 초기화", parent=root["id"])
+    uA = chat_store.message("user", "1번 더 자세히", parent=a0["id"])
+    aA = chat_store.message("assistant", "역전파는 연쇄법칙으로…", parent=uA["id"])
+    uB = chat_store.message("user", "2번 더 자세히", parent=a0["id"])
+    aB = chat_store.message("assistant", "배치 정규화는…", parent=uB["id"])
+    chat_store.append(path, root, a0, uA, aA, uB, aB)
+    msgs = chat_store.load(path)
+
+    starts = branch_names.branch_starts(msgs)
+    assert {m["id"] for m in starts} == {uA["id"], uB["id"]}, "갈라지는 자리만"
+    assert root["id"] not in {m["id"] for m in starts}, "형제가 없는 뿌리에 이름을 붙였다"
+
+    # 이름을 지을 때 **그 아래 내용까지** 보여 준다 — 질문만 보면 구별할 수 없다
+    payload = branch_names.payload_for(msgs, starts)
+    assert "역전파는 연쇄법칙으로" in payload and "배치 정규화는" in payload
+
+    def fake(settings, text, model=""):
+        # 모델이 주지도 않은 id 를 얹어 오는 일이 있다 — 엉뚱한 노드에 붙으면 안 된다
+        return {"names": {uA["id"]: "  역전파 유도  ", uB["id"]: "배치 정규화",
+                          "없는id": "엉뚱한 이름", root["id"]: "붙으면 안 됨"}}
+
+    names = branch_names.name_branches(get_settings(), msgs, asker=fake)
+    assert names == {uA["id"]: "역전파 유도", uB["id"]: "배치 정규화"}, names
+
+    assert chat_store.set_branch_names(path, names) == 2
+    saved = {m["id"]: (m.get("meta") or {}).get("branch_name") for m in chat_store.load(path)}
+    assert saved[uA["id"]] == "역전파 유도"
+    assert saved.get(root["id"]) is None
+
+    # 이미 이름이 있으면 다시 묻지 않는다(지도를 열 때마다 모델을 부르면 안 된다)
+    assert branch_names.branch_starts(chat_store.load(path)) == []
+    # 모델이 엉뚱한 것을 주면 조용히 포기한다 — 이름이 없어도 지도는 열려야 한다
+    assert branch_names.name_branches(get_settings(), msgs, asker=lambda *a, **k: {}) == {}
+
+
+def test_branching_over_the_api(monkeypatch):
+    """화면이 쓰는 길: parent 를 주면 그 자리에서 새 가지가 나고, 맥락도 갈린다."""
+    from backend.ai import orchestrator
+    from backend.ai.orchestrator import LLMResult
+
+    seen = {"contents": []}
+
+    class FakeLLM:
+        def chat(self, contents, catalog, system):
+            seen["contents"] = contents
+            return LLMResult(text="알겠습니다.", tool_use=None)
+
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": FakeLLM())
+    _login()
+    client.delete("/api/ai/space/assistant")
+
+    client.post("/api/ai/chat", json={"message": "1 2 3 을 설명해줘", "mode": "assistant"})
+    r = client.get("/api/ai/space/assistant").json()
+    assert r["head"] == r["messages"][-1]["id"]
+    fork_at = r["messages"][-1]["id"]          # 첫 답
+
+    client.post("/api/ai/chat", json={"message": "1번 더", "mode": "assistant"})
+    first = client.get("/api/ai/space/assistant").json()
+
+    # 같은 자리에서 두 번째 가지
+    r2 = client.post("/api/ai/chat",
+                     json={"message": "2번 더", "mode": "assistant", "parent": fork_at})
+    assert r2.status_code == 200, r2.text
+    texts = [p.get("text", "") for c in seen["contents"] for p in c["parts"]]
+    assert any("1 2 3 을 설명해줘" in t for t in texts), "갈라진 지점까지는 맥락에 있어야 한다"
+    assert not any("1번 더" in t for t in texts), "다른 가지의 이야기가 맥락에 섞였다"
+
+    after = client.get("/api/ai/space/assistant").json()
+    assert len(after["messages"]) == len(first["messages"]) + 2
+    assert after["head"] == after["messages"][-1]["id"], "새 가지가 지금 보는 곳이 된다"
+    # 두 가지가 같은 부모를 공유한다
+    kids = [m["id"] for m in after["messages"] if m["parent"] == fork_at]
+    assert len(kids) == 2, kids
+
+    # 없는 자리에는 가지를 낼 수 없다
+    assert client.post("/api/ai/chat", json={
+        "message": "x", "mode": "assistant", "parent": "없는id"}).status_code == 404
+
+    # **첫 질문을 고쳐 다시 묻기** — 대화 맨 앞에 가지를 낸다.
+    # parent=null 과 parent="" 는 다른 뜻이다. 빈 문자열 하나로 뭉뚱그렸을 때는
+    # "맨 앞에 내기"가 "가지 안 내기"로 읽혀 끝에 이어 붙었다(실측).
+    before = client.get("/api/ai/space/assistant").json()
+    r3 = client.post("/api/ai/chat",
+                     json={"message": "아예 다르게 물어볼게", "mode": "assistant", "parent": None})
+    assert r3.status_code == 200, r3.text
+    texts = [p.get("text", "") for c in seen["contents"] for p in c["parts"]]
+    assert not any("1 2 3 을 설명해줘" in t for t in texts), "맨 앞 가지인데 앞 대화가 딸려 왔다"
+    root = client.get("/api/ai/space/assistant").json()
+    roots = [m for m in root["messages"] if m["parent"] is None]
+    assert len(roots) == 2, f"뿌리가 둘이어야 한다: {[m['text'][:12] for m in roots]}"
+    assert roots[-1]["text"] == "아예 다르게 물어볼게"
+
+    # 빈 문자열은 여전히 "가지 안 냄" — 지금 끝에 이어 붙는다
+    client.post("/api/ai/chat", json={"message": "이어서", "mode": "assistant", "parent": ""})
+    after = client.get("/api/ai/space/assistant").json()
+    assert len([m for m in after["messages"] if m["parent"] is None]) == 2, "빈 문자열이 새 뿌리를 만들었다"
+    assert len(after["messages"]) == len(before["messages"]) + 4
+    client.delete("/api/ai/space/assistant")
 
 
 def _proposals_in(msgs: list[dict]) -> list[dict]:

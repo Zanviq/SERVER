@@ -1,8 +1,9 @@
 import {
-  ReactNode, forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState,
+  ReactNode, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
 } from "react";
 import {
   Bot, Send, Square, Loader2, CheckCircle2, XCircle, Sparkles, X, Quote, ImageIcon, Eraser,
+  ChevronLeft, ChevronRight, GitBranch, Pencil,
 } from "lucide-react";
 import { MarkdownView } from "../notes/LazyMarkdownView";
 import { useNavigate } from "react-router-dom";
@@ -12,6 +13,8 @@ import { toast } from "../../store/toast";
 import { useMediaQuery } from "../../lib/useMediaQuery";
 import { VocabProposal, VocabProposalData } from "./VocabProposal";
 import { skillIcon } from "./skillIcon";
+import { ConversationTree, TreeLink } from "./ConversationTree";
+import { deepestLeaf, siblingsOf, threadOf, TreeMessage } from "../../lib/chatTree";
 
 interface Step {
   name: string;
@@ -28,6 +31,10 @@ interface Msg {
   pending?: boolean;
   /** 도구를 부른 뒤라 다음에 오는 글로 갈아쳐야 하는가(앞의 글은 그때까지 그대로 둔다) */
   rewriting?: boolean;
+  /** 대화 나무에서 매달린 자리. 뿌리는 null. */
+  parent?: string | null;
+  /** AI 가 붙인 가지 이름(갈라지는 자리에만) */
+  branchName?: string;
   /** 사용자 메시지에 같이 보낸 것(논문 화면) — 말풍선 아래 작게 보여 준다 */
   selections?: { text: string; page: number }[];
   attachments?: { label: string }[];
@@ -205,10 +212,62 @@ function fromServer(m: ChatMessage): Msg {
     id: m.id,
     role: m.role,
     text: m.text,
+    parent: m.parent ?? null,
+    branchName: m.meta?.branch_name,
     steps: (m.meta?.tools ?? []).map((t) => ({ name: t.name, ok: t.ok, message: t.message, data: t.data })),
     selections: m.meta?.selections,
     attachments: m.meta?.attachments,
   };
+}
+
+/**
+ * 같은 자리에서 갈라진 가지 사이를 오가는 단추 — `◀ 2/3 ▶`.
+ *
+ * 지도를 열지 않고도 "아까 저쪽으로 물어본 것"으로 돌아갈 수 있어야 한다. 가지가
+ * 하나뿐이면 아무것도 그리지 않는다(없는 선택지를 보여 줄 이유가 없다).
+ */
+function BranchSwitch({ msgs, current, onGo, onEdit, busy }: {
+  msgs: TreeMessage[];
+  current?: string;
+  onGo: (id: string) => void;
+  onEdit: () => void;
+  busy?: boolean;
+}) {
+  const at = msgs.findIndex((m) => m.id === current);
+  if (!current) return null;
+  const many = msgs.length > 1 && at >= 0;
+  return (
+    <div className="flex items-center gap-0.5 pr-0.5 text-[11px] text-fg-muted">
+      {many && (
+        <>
+          <button type="button" aria-label="이전 가지" disabled={at === 0 || busy}
+            className="tap grid h-6 w-6 place-items-center rounded hover:bg-hovered disabled:opacity-30"
+            onClick={() => onGo(msgs[at - 1].id)}>
+            <ChevronLeft size={13} />
+          </button>
+          <span className="tabular-nums">{at + 1}/{msgs.length}</span>
+          <button type="button" aria-label="다음 가지" disabled={at === msgs.length - 1 || busy}
+            className="tap grid h-6 w-6 place-items-center rounded hover:bg-hovered disabled:opacity-30"
+            onClick={() => onGo(msgs[at + 1].id)}>
+            <ChevronRight size={13} />
+          </button>
+        </>
+      )}
+      <button type="button" title="이 질문을 고쳐서 새 가지로 다시 묻기"
+        aria-label="질문 고쳐서 새 가지" disabled={busy} onClick={onEdit}
+        className="tap grid h-6 w-6 place-items-center rounded hover:bg-hovered hover:text-accent disabled:opacity-30">
+        <Pencil size={12} />
+      </button>
+    </div>
+  );
+}
+
+/** 나무 계산에 넘길 최소 모양 — 화면 전용 필드는 뺀다. */
+function asTree(msgs: Msg[]): TreeMessage[] {
+  return msgs.filter((m) => m.id).map((m) => ({
+    id: m.id!, role: m.role, text: m.text, parent: m.parent ?? null,
+    branchName: m.branchName,
+  }));
 }
 
 /** 재사용 가능한 AI 채팅 패널 (AI 비서 · 캘린더 사이드 · 영어 학습 · 논문 공용) */
@@ -238,6 +297,16 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   const [busy, setBusy] = useState(false);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [loadingSpace, setLoadingSpace] = useState(false);
+  //: 대화 나무에서 지금 보고 있는 끝자락. 말풍선에 보이는 것은 여기서 뿌리까지의
+  //: 한 줄기뿐이고, 다음 말도 여기에 붙는다.
+  const [head, setHead] = useState("");
+  const [links, setLinks] = useState<TreeLink[]>([]);
+  const [showTree, setShowTree] = useState(false);
+  //: 다음 한 번만 이 메시지 뒤에 붙인다(과거 질문에서 새 가지를 낼 때).
+  //: id 가 null 이면 **대화 맨 앞**이다 — 첫 질문을 고쳐 다시 묻는 경우다.
+  const [branchFrom, setBranchFrom] = useState<{ id: string | null; label: string } | null>(null);
+  //: 견주어 달라고 고른 가지들(다음 한 번만 실린다)
+  const [compare, setCompare] = useState<string[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);   // 중단 버튼
@@ -254,17 +323,59 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   useEffect(() => {
     if (!space) {
       setMessages([]);
+      setHead("");
+      setLinks([]);
       return;
     }
     let alive = true;
     setLoadingSpace(true);
     setMessages([]);
+    setBranchFrom(null);
+    setCompare([]);
     api.aiSpace(space)
-      .then((r) => { if (alive) setMessages(r.messages.map(fromServer)); })
+      .then((r) => {
+        if (!alive) return;
+        setMessages(r.messages.map(fromServer));
+        setHead(r.head ?? "");
+        setLinks(r.links ?? []);
+      })
       .catch((e) => { if (alive) toast.error(e instanceof Error ? e.message : "대화 기록을 불러오지 못했습니다"); })
       .finally(() => { if (alive) setLoadingSpace(false); });
     return () => { alive = false; };
   }, [space]);
+
+  /**
+   * 말풍선에 보이는 것 — **지금 가지 한 줄기**.
+   *
+   * 서버에 남지 않는 화면(비서 등 space 가 없는 곳)은 메시지가 곧 한 줄이므로
+   * 그대로 쓴다. 스트리밍 중인 말풍선은 아직 id 가 없어 나무에 없으므로 뒤에 붙인다.
+   */
+  const shown = useMemo(() => {
+    if (!space) return messages;
+    const live = messages.filter((m) => !m.id);
+    const tree = asTree(messages);
+    const ids = new Set(threadOf(tree, head).map((m) => m.id));
+    return [...messages.filter((m) => m.id && ids.has(m.id!)), ...live];
+  }, [messages, head, space]);
+
+  /** 이 메시지와 같은 자리에서 갈라진 형제들(말풍선의 ◀ 2/3 ▶). */
+  const branchesOf = useCallback((id?: string) => {
+    if (!space || !id) return [] as TreeMessage[];
+    const sib = siblingsOf(asTree(messages), id);
+    return sib.length > 1 ? sib : [];
+  }, [messages, space]);
+
+  /** 다른 가지로 옮겨 간다. 그 가지의 **끝까지** 따라간다. */
+  const goTo = useCallback(async (id: string) => {
+    if (!space) return;
+    const leaf = deepestLeaf(asTree(messages), id);
+    setHead(leaf);                       // 먼저 화면을 바꾼다(기다릴 이유가 없다)
+    try {
+      await api.aiSpaceHead(space, leaf);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "가지를 옮기지 못했습니다");
+    }
+  }, [messages, space]);
 
   const firstScroll = useRef(true);
   useEffect(() => {
@@ -287,10 +398,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     const text = transformMessage ? transformMessage(raw) : raw;
     setInput("");
     setBusy(true);
-    // 직전까지의 대화(완료된 것만)를 멀티턴 컨텍스트로 전달(모드가 있으면 서버가 무시한다)
-    const history = messages
+    // 직전까지의 대화(완료된 것만)를 멀티턴 컨텍스트로 전달(모드가 있으면 서버가 무시한다).
+    // **보이는 줄기만** 보낸다 — 다른 가지의 이야기가 섞이면 가지를 나눈 의미가 없다.
+    const history = shown
       .filter((m) => m.text)
       .map((m) => ({ role: m.role, text: m.text }));
+    // 이번 한 번만 쓰는 것들: 어디에 붙일지, 어떤 가지들을 견줄지.
+    // 가지를 안 내면 아예 보내지 않는다(undefined 는 JSON 에서 빠진다) — null 은
+    // "맨 앞에 내라"는 **다른 뜻**이라 빈 문자열 하나로 뭉뚱그릴 수 없다.
+    const parent = branchFrom ? branchFrom.id : undefined;
+    const compareIds = compare;
+    setBranchFrom(null);
+    setCompare([]);
     const sent = {
       attachments: attachments.map((a) => ({ mime: a.mime, data: a.data, label: a.label })),
       selections: selections.map((s) => ({ text: s.text, page: s.page })),
@@ -359,7 +478,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
           patchLast((m) => ({ ...m, text: `오류: ${e.message}` }));
           giveBack();
         }
-      }, { mode, paper_id: paperId, meeting_id: meetingId, ...sent, signal: ctrl.signal });
+      }, {
+        mode, paper_id: paperId, meeting_id: meetingId, ...sent,
+        parent, compare: compareIds, signal: ctrl.signal,
+      });
     } catch (err) {
       if (!ctrl.signal.aborted) {   // 중단은 오류가 아니다
         toast.error(err instanceof Error ? err.message : "AI 오류");
@@ -378,8 +500,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
           : m.text,
       }));
       setBusy(false);
+      // 방금 차례가 나무의 **어디에** 붙었는지는 서버가 정한다(id·parent·head).
+      // 다시 받아 와야 지도에 나오고, 가지를 갈아탈 수 있다. 실패해도 화면에
+      // 흘러온 답은 그대로 있으므로 조용히 넘어간다.
+      if (space) {
+        try {
+          const r = await api.aiSpace(space);
+          setMessages(r.messages.map(fromServer));
+          setHead(r.head ?? "");
+          setLinks(r.links ?? []);
+        } catch {
+          /* 화면에 보이는 것은 그대로 둔다 */
+        }
+      }
     }
-  }, [attachments, busy, hasContext, messages, meetingId, mode, onClearContext, onRestoreContext, onToolSuccess, paperId, selections, transformMessage]);
+  }, [attachments, branchFrom, busy, compare, hasContext, meetingId, mode, onClearContext, onRestoreContext, onToolSuccess, paperId, selections, shown, space, transformMessage]);
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
@@ -394,6 +529,56 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   const clear = useCallback(async () => {
     if (space) await api.aiSpaceClear(space);
     setMessages([]);
+    setHead("");
+    setLinks([]);
+    setBranchFrom(null);
+    setCompare([]);
+  }, [space]);
+
+  /** 과거 질문을 고쳐 새 가지로 다시 묻는다 — 그 질문의 **부모**에 붙인다. */
+  const editAndFork = useCallback((userMsgId: string, text: string) => {
+    const me = messages.find((m) => m.id === userMsgId);
+    setBranchFrom({
+      // 첫 질문이면 부모가 없다 → null(= 대화 맨 앞). "" 로 두면 서버가
+      // "가지 안 냄"으로 읽어 끝에 이어 붙인다.
+      id: me?.parent ?? null,
+      label: (text || "").replace(/\s+/g, " ").trim().slice(0, 40),
+    });
+    setInput(text);
+    setShowTree(false);
+    inputRef.current?.focus();
+  }, [messages]);
+
+  /** 갈라지는 가지에 AI 가 한 줄 이름을 붙인다(지도에서 누른다). */
+  const nameBranches = useCallback(async () => {
+    if (!space) return;
+    try {
+      const r = await api.aiSpaceNameBranches(space);
+      const n = Object.keys(r.names ?? {}).length;
+      if (n === 0) {
+        toast.error("이름을 짓지 못했습니다");
+        return;
+      }
+      setMessages((arr) => arr.map((m) => (
+        m.id && r.names[m.id] ? { ...m, branchName: r.names[m.id] } : m
+      )));
+      toast.ok(`가지 ${n}개에 이름을 붙였습니다`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "이름을 짓지 못했습니다");
+    }
+  }, [space]);
+
+  const linkMemory = useCallback(async (fromId: string, toId: string, on: boolean) => {
+    if (!space) return;
+    try {
+      await api.aiSpaceLink(space, fromId, toId, on);
+      const r = await api.aiSpace(space);
+      setLinks(r.links ?? []);
+      toast.ok(on ? "기억을 이었습니다 — 다음 질문부터 이 가지의 이야기가 맥락에 들어갑니다"
+        : "기억 연결을 풀었습니다");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "잇지 못했습니다");
+    }
   }, [space]);
 
   useImperativeHandle(ref, () => ({
@@ -403,6 +588,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   }), [send, clear]);
 
   const canSend = !busy && (!!input.trim() || hasContext);
+  //: 끝자락(잎)이 몇 개인가 = 가지가 몇 갈래인가. 하나뿐이면 지도 단추에 숫자를
+  //: 붙이지 않는다 — 가지가 없는데 "1"이 떠 있으면 무슨 수인지 알 수 없다.
+  const branchCount = useMemo(() => {
+    if (!space) return 0;
+    const tree = asTree(messages);
+    const parents = new Set(tree.map((m) => m.parent ?? "").filter(Boolean));
+    return tree.filter((m) => !parents.has(m.id)).length;
+  }, [messages, space]);
 
   return (
     <div className={`flex min-h-0 flex-col ${className}`}>
@@ -412,8 +605,29 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
         </div>
       )}
 
+      {/* 대화 지도 — 나무 전체를 보고 가지를 갈아탄다. 대화 위에 접혀 들어간다
+          (딴 화면으로 보내면 말풍선과 지도를 나란히 볼 수 없다). */}
+      {space && showTree && (
+        <div className="mb-2 flex h-[min(48vh,380px)] min-h-0 flex-col overflow-hidden rounded-lg border border-line bg-surface">
+          <ConversationTree
+            messages={asTree(messages)} head={head} links={links}
+            onGo={(id) => { void goTo(id); setShowTree(false); }}
+            onEdit={editAndFork}
+            onLink={(a, b, on) => void linkMemory(a, b, on)}
+            onCompare={(ids) => {
+              setCompare(ids);
+              setShowTree(false);
+              inputRef.current?.focus();
+            }}
+            onName={nameBranches}
+            onClose={() => setShowTree(false)}
+            busy={busy}
+          />
+        </div>
+      )}
+
       <div className="flex-1 space-y-4 overflow-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {messages.length === 0 && (
+        {shown.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
             {loadingSpace ? (
               <Loader2 size={20} className="animate-spin text-fg-muted" />
@@ -439,7 +653,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
           </div>
         )}
 
-        {messages.map((m, i) =>
+        {shown.map((m, i) =>
           m.role === "user" ? (
             <div key={m.id ?? i} className="flex flex-col items-end gap-1">
               {(m.selections?.length || m.attachments?.length) ? (
@@ -464,6 +678,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
                   {m.text}
                 </div>
               )}
+              {/* 이 질문에서 갈라진 가지가 여럿이면 여기서 바로 옮겨 다닌다 —
+                  지도를 열지 않고도 "아까 저쪽으로 물어본 것"으로 돌아갈 수 있다. */}
+              <BranchSwitch msgs={branchesOf(m.id)} current={m.id} onGo={goTo}
+                onEdit={() => editAndFork(m.id!, m.text)} busy={busy} />
             </div>
           ) : (
             <div key={m.id ?? i} className="flex gap-2.5">
@@ -526,6 +744,36 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
       </div>
 
       {composerTop && <div className="mt-3">{composerTop}</div>}
+      {/* 이번 한 번만 달라지는 것들 — 어디에 붙는지, 무엇을 견주는지. 보내고 나면
+          사라진다. 보이지 않으면 "왜 여기에 붙었지"를 알 길이 없다. */}
+      {(branchFrom || compare.length > 0) && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {branchFrom && (
+            <span className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-accent/40 bg-accent-muted px-2 py-1 text-[11.5px] text-accent-fg">
+              <GitBranch size={12} className="shrink-0" />
+              <span className="truncate">
+                {branchFrom.label
+                  ? `"${branchFrom.label}" 대신 새 가지로 물어봅니다`
+                  : "여기서 새 가지로 물어봅니다"}
+                {branchFrom.id === null && " (대화 맨 앞)"}
+              </span>
+              <button type="button" onClick={() => setBranchFrom(null)} aria-label="새 가지 취소"
+                className="grid h-5 w-5 shrink-0 place-items-center rounded-full hover:bg-hovered">
+                <X size={12} />
+              </button>
+            </span>
+          )}
+          {compare.length > 0 && (
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-positive/40 bg-positive/10 px-2 py-1 text-[11.5px] text-positive">
+              가지 {compare.length}개를 견줍니다
+              <button type="button" onClick={() => setCompare([])} aria-label="비교 취소"
+                className="grid h-5 w-5 place-items-center rounded-full hover:bg-hovered">
+                <X size={12} />
+              </button>
+            </span>
+          )}
+        </div>
+      )}
       {hasContext && (
         <div className={`${composerTop ? "mt-2" : "mt-3"} flex flex-wrap items-center gap-1.5`}>
           {attachments.map((a) => (
@@ -556,6 +804,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
         </div>
       )}
       <div className={`${composerTop || hasContext ? "mt-2" : "mt-3"} flex items-end gap-2`}>
+        {/* 대화가 서버에 남는 화면에서만 나무가 된다(비서 임시 대화는 새로고침에 사라진다) */}
+        {space && (
+          <button type="button" onClick={() => setShowTree((v) => !v)}
+            aria-label={showTree ? "대화 지도 닫기" : "대화 지도 열기"}
+            title="대화 지도 — 가지를 보고 갈아탄다"
+            className={`btn h-9 shrink-0 px-3 ${showTree ? "btn-primary" : "btn-ghost"}`}>
+            <GitBranch size={15} />
+            {branchCount > 1 && (
+              <span className="text-[11px] tabular-nums">{branchCount}</span>
+            )}
+          </button>
+        )}
         <textarea
           ref={inputRef}
           value={input}

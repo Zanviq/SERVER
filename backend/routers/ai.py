@@ -29,7 +29,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .. import (
-    chat_store, context_store, meeting_store, paper_store, vocab_store, vocab_suggest,
+    branch_names, chat_store, context_store, meeting_store, paper_store, vocab_store,
+    vocab_suggest,
 )
 from ..ai import models as ai_models
 from ..ai import modes, orchestrator
@@ -84,6 +85,31 @@ class ChatRequest(BaseModel):
     meeting_id: str = ""
     attachments: list[Attachment] = []
     selections: list[Selection] = []
+    #: 이 메시지 **뒤에** 새 가지를 낸다. 과거 질문을 고쳐 다시 묻는 것도 이것
+    #: 하나로 된다(그 질문의 부모를 준다).
+    #:
+    #: 세 가지가 다르다.
+    #:   없음/""  가지를 내지 않는다 — 지금 보고 있는 끝에 이어 붙인다
+    #:   null     **대화 맨 앞**에 새 가지를 낸다(첫 질문을 고쳐 다시 물을 때)
+    #:   "<id>"   그 메시지 뒤에 새 가지를 낸다
+    #:
+    #: 빈 문자열 하나로 뭉뚱그리면 "맨 앞에 내기"와 "가지 안 내기"를 구별할 수 없다 —
+    #: 실제로 첫 질문을 고쳐도 새 가지가 안 나고 끝에 붙었다(실측).
+    parent: str | None = ""
+    #: 나란히 견주어 달라고 고른 가지들(각 가지의 끝 메시지 id)
+    compare: list[str] = []
+
+
+class HeadInput(BaseModel):
+    """보고 있는 가지를 옮긴다 — 이 메시지가 끝자락이 된다."""
+    id: str
+
+
+class LinkInput(BaseModel):
+    """가지 사이 기억 연결. from_id 쪽 이야기를 to_id 쪽 맥락으로 끌어온다."""
+    from_id: str
+    to_id: str
+    on: bool = True
 
 
 class VocabProposalDone(BaseModel):
@@ -146,11 +172,65 @@ def space_messages(
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    """서버에 남은 대화(영어 학습·논문)."""
+    """서버에 남은 대화. 나무 전체를 준다 — 화면이 지도를 그려야 한다.
+
+    messages 는 나무의 모든 노드다. 말풍선으로 보이는 것은 그중 head 에서 뿌리까지의
+    한 줄기뿐이고, 그 줄기를 고르는 것은 화면이 한다(백엔드와 같은 규칙).
+    """
     path = _space_path(space, user, settings)
     data = chat_store.load_all(path)
     _annotate_proposals(data["messages"], set(data["vocab_done"]), user, settings)
-    return {"messages": data["messages"]}
+    return {"messages": data["messages"], "head": data["head"], "links": data["links"]}
+
+
+@router.post("/space/{space}/head")
+def space_set_head(
+    space: str,
+    body: HeadInput,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """다른 가지로 옮겨 간다(지도에서 노드를 누른 것)."""
+    if not chat_store.set_head(_space_path(space, user, settings), body.id.strip()):
+        raise HTTPException(status_code=404, detail="그 메시지를 찾을 수 없습니다.")
+    return {"ok": True, "head": body.id.strip()}
+
+
+@router.post("/space/{space}/name-branches")
+def space_name_branches(
+    space: str,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """갈라지는 자리의 가지에 이름을 붙인다(지도에서 누른다).
+
+    갈라지는 질문은 "1번 더 자세히"처럼 앞말에 기대는 짧은 말이 많아서, 앞 18자만
+    보면 어느 갈래가 무슨 이야기였는지 알 수 없다 — 갈래가 여럿일 때 가장 알고
+    싶은 것이 그것인데.
+    """
+    path = _space_path(space, user, settings)
+    msgs = chat_store.load(path)
+    names = branch_names.name_branches(
+        settings, msgs, model=orchestrator._user_ai_prefs(user, settings).get("model", ""))
+    chat_store.set_branch_names(path, names)
+    return {"ok": True, "names": names}
+
+
+@router.post("/space/{space}/link")
+def space_link(
+    space: str,
+    body: LinkInput,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """가지 사이 기억 연결을 걸거나 푼다."""
+    ok = chat_store.connect(_space_path(space, user, settings),
+                            body.from_id.strip(), body.to_id.strip(), body.on)
+    if not ok:
+        raise HTTPException(
+            status_code=400,
+            detail="이을 수 없는 짝입니다 — 같은 줄기 위의 메시지끼리는 이미 맥락입니다.")
+    return {"ok": True}
 
 
 @router.post("/space/{space}/vocab-proposal-done")
@@ -293,6 +373,10 @@ class Prepared:
     vocab_tags: list[str]
     persist_path: Path | None
     user_meta: dict
+    #: 이번 차례를 붙일 자리(가지치기). branching 일 때만 뜻이 있고, 비어 있으면
+    #: **대화 맨 앞**이다. branching 이 아니면 지금 끝자락에 이어 붙인다.
+    parent: str = ""
+    branching: bool = False
 
 
 def _prepare(body: "ChatRequest", user: SessionUser, settings: Settings) -> Prepared:
@@ -368,15 +452,40 @@ def _prepare(body: "ChatRequest", user: SessionUser, settings: Settings) -> Prep
 
     # 대화 기록: 모드가 있으면 서버에 남은 것을, 아니면 브라우저가 보낸 것을 쓴다
     history_note = ""
+    parent = ""
+    branching = False
     if persist_path is not None:
+        # **지금 가지만 본다.** 대화는 나무이고, 맥락은 뿌리에서 지금 자리까지의
+        # 한 줄기다. 다른 가지에서 한 이야기는 들어오지 않는다 — 그게 가지를
+        # 나누는 이유다(필요하면 기억 연결로 골라서 끌어온다).
+        saved = chat_store.load_all(persist_path)
+        # 과거의 어느 메시지에 붙여 달라고 했으면 거기가 이번 차례의 부모다.
+        # null 은 "대화 맨 앞에" 라는 뜻이라 "안 시켰다"(빈 문자열)와 구별한다.
+        parent = (body.parent or "").strip()
+        branching = body.parent is None or bool(parent)
+        if parent and parent not in {m.get("id") for m in saved["messages"]}:
+            raise HTTPException(status_code=404, detail="가지를 낼 메시지를 찾을 수 없습니다.")
+        head = parent if branching else saved["head"]
+        # 맨 앞에 가지를 내면 앞선 맥락이 없다 — 정말로 새로 시작하는 것이다
+        stored = chat_store.thread(saved["messages"], head) if head else []
         # 기본은 '최근 하루'. 그보다 옛날 이야기는 모델이 컨텍스트 스킬로 직접 꺼낸다
         # (전부 넣으면 요금·지연이 늘고 관계없는 옛 대화가 답을 흐린다).
-        stored = chat_store.load(persist_path)
         history = context_store.recent_for_llm(
             stored,
             window_sec=context_store.RECENT_WINDOW_SEC,
             max_turns=MAX_HISTORY_TURNS, max_chars=MAX_HISTORY_CHARS,
         )
+        # 다른 가지에서 끌어오기로 한 기억(사용자가 지도에서 선을 이어 둔 것)
+        for mem in chat_store.linked_memories(saved["messages"], saved["links"], head):
+            block = "\n".join(f"[{'사용자' if t['role'] == 'user' else 'AI'}] {t['text']}"
+                              for t in mem["turns"])
+            history.insert(0, {"role": "user", "text": (
+                f"[다른 가지에서 끌어온 기억 — '{mem['title']}']\n"
+                "아래는 이 대화의 **다른 갈래**에서 오간 이야기입니다. 지금 대화의 맥락으로 "
+                "함께 보되, 방금 한 말처럼 다루지는 마세요.\n\n" + block)})
+        # 여러 가지를 나란히 놓고 견주어 달라고 했을 때(트랙 비교)
+        for t in _tracks_for_compare(saved, body.compare):
+            history.insert(0, {"role": "user", "text": t})
         # 잘렸으면 그 사실과 꺼내는 법을 알려 준다 — 모르면 보이는 앞부분을
         # "대화의 시작"으로 단정한다.
         space_name = spec.name if spec.name in context_store.FIXED_SPACES else (
@@ -416,7 +525,54 @@ def _prepare(body: "ChatRequest", user: SessionUser, settings: Settings) -> Prep
         system=system, history=history, history_note=history_note,
         attachments=attachments, paper_id=paper_id, meeting_id=meeting_id,
         vocab_tags=vocab_tags, persist_path=persist_path, user_meta=user_meta,
+        parent=parent, branching=branching,
     )
+
+
+#: 트랙 비교에 한 번에 담을 수 있는 가지 수와 가지당 글자 수
+MAX_COMPARE_TRACKS = 4
+MAX_COMPARE_CHARS = 6000
+
+
+def _tracks_for_compare(saved: dict, ids: list[str]) -> list[str]:
+    """고른 가지들을 나란히 적어 모델에게 넘길 글로 만든다.
+
+    "A 가지와 B 가지 중 뭐가 나아?" 는 지금 줄기만 보는 모델이 답할 수 없는
+    물음이다. 고른 가지의 끝에서 **갈라진 지점 아래쪽**만 적는다 — 공통 부분은
+    이미 맥락에 있다.
+    """
+    picked = [i for i in dict.fromkeys(ids or []) if i][:MAX_COMPARE_TRACKS]
+    if len(picked) < 2:
+        return []
+    msgs = saved["messages"]
+    by_id = {m.get("id"): m for m in msgs if m.get("id")}
+    threads = {i: chat_store.thread(msgs, i) for i in picked if i in by_id}
+    if len(threads) < 2:
+        return []
+    # 모두가 공유하는 앞부분은 뺀다
+    common = 0
+    lists = list(threads.values())
+    while all(len(t) > common and t[common].get("id") == lists[0][common].get("id")
+              for t in lists):
+        common += 1
+    out = []
+    for n, (mid, t) in enumerate(threads.items()):
+        budget = MAX_COMPARE_CHARS
+        lines = []
+        for m in t[common:]:
+            text = str(m.get("text") or "")
+            if not text.strip() or budget - len(text) < 0:
+                continue
+            budget -= len(text)
+            lines.append(f"[{'사용자' if m.get('role') == 'user' else 'AI'}] {text}")
+        if lines:
+            out.append(f"[비교할 가지 {chr(ord('A') + n)}]\n" + "\n".join(lines))
+    if not out:
+        return []
+    out.append("위 가지들은 같은 대화에서 갈라져 나온 **서로 다른 갈래**입니다. "
+               "이어지는 질문은 이 갈래들을 견주어 달라는 뜻입니다 — 각각이 무엇을 "
+               "말했는지, 어디서 갈라졌는지, 무엇이 다른지를 짚어 답하세요.")
+    return out
 
 
 def _drop_repeats(data: dict, seen: set[str]) -> bool:
@@ -581,9 +737,17 @@ def chat(
                 body = _stopped_note(streamed.strip(), tool_notes)
             if persist_path is not None:
                 try:
-                    msgs = [chat_store.message("user", message, user_meta)]
+                    # 이번 차례는 **가지 끝에 매달린다.** 가지를 내라고 했으면 그
+                    # 자리에서 새 가지가 나고(같은 부모를 둔 형제가 생긴다), 아니면
+                    # 지금 끝자락에 이어 붙는다. 가지를 내는데 자리가 비어 있으면
+                    # 대화 맨 앞이다(첫 질문을 고쳐 다시 물을 때).
+                    at = (p.parent or None) if p.branching else (
+                        chat_store.load_all(persist_path)["head"] or None)
+                    um = chat_store.message("user", message, user_meta, parent=at)
+                    msgs = [um]
                     if body:
-                        msgs.append(chat_store.message("assistant", body, {"tools": tool_notes}))
+                        msgs.append(chat_store.message(
+                            "assistant", body, {"tools": tool_notes}, parent=um["id"]))
                     chat_store.append(persist_path, *msgs)
                 except Exception:  # noqa: BLE001
                     logger.exception("대화 저장 실패")

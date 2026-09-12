@@ -261,8 +261,28 @@ export const api = {
   aiModels: () =>
     req<{ models: { id: string; label: string }[]; server_default: string }>("/api/ai/models"),
   /** 서버에 남는 대화 공간(영어 학습 "english" · 논문 "paper:<id>") */
+  /**
+   * 대화 공간 = **나무 하나**. messages 는 모든 가지의 메시지이고, head 는 지금
+   * 보고 있는 끝자락이다. 말풍선에 보이는 것은 head 에서 뿌리까지의 한 줄기뿐이다.
+   */
   aiSpace: (space: string) =>
-    req<{ messages: ChatMessage[] }>(`/api/ai/space/${encodeURIComponent(space)}`),
+    req<{ messages: ChatMessage[]; head: string; links: { from_id: string; to_id: string }[] }>(
+      `/api/ai/space/${encodeURIComponent(space)}`),
+  /** 다른 가지로 옮겨 간다(지도에서 노드를 누른 것). */
+  aiSpaceHead: (space: string, id: string) =>
+    req<{ ok: boolean; head: string }>(
+      `/api/ai/space/${encodeURIComponent(space)}/head`, jsonInit("POST", { id })),
+  /**
+   * 갈라지는 자리의 가지에 AI 가 이름을 붙인다.
+   * "1번 더 자세히" 같은 질문만 보면 어느 갈래가 무슨 이야기였는지 알 수 없다.
+   */
+  aiSpaceNameBranches: (space: string) =>
+    req<{ ok: boolean; names: Record<string, string> }>(
+      `/api/ai/space/${encodeURIComponent(space)}/name-branches`, { method: "POST" }),
+  /** 가지 사이 기억 연결을 걸거나 푼다. */
+  aiSpaceLink: (space: string, fromId: string, toId: string, on: boolean) =>
+    req<{ ok: boolean }>(`/api/ai/space/${encodeURIComponent(space)}/link`,
+      jsonInit("POST", { from_id: fromId, to_id: toId, on })),
   aiSpaceClear: (space: string) =>
     req(`/api/ai/space/${encodeURIComponent(space)}`, { method: "DELETE" }),
   aiSpaceDelete: (space: string, mid: string) =>
@@ -525,7 +545,11 @@ export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
   ts: number;
+  /** 대화 나무에서 이 메시지가 매달린 자리. 뿌리는 null. */
+  parent?: string | null;
   meta: {
+    /** AI 가 붙인 가지 이름 — 갈라지는 자리의 질문에만 있다. */
+    branch_name?: string;
     selections?: { text: string; page: number }[];
     attachments?: { label: string; mime: string }[];
     /** 스킬 호출 기록. args·result 는 감사용 원문(길면 서버가 자른다). */
@@ -553,6 +577,19 @@ export interface AiChatOptions {
   meeting_id?: string;
   attachments?: AiAttachment[];
   selections?: AiSelection[];
+  /**
+   * 이 메시지 **뒤에** 새 가지를 낸다. 과거 질문을 고쳐 다시 묻는 것도 이것
+   * 하나로 된다(그 질문의 부모를 준다).
+   *
+   *   없음    가지를 내지 않는다 — 지금 보고 있는 끝에 이어 붙는다
+   *   null    **대화 맨 앞**에 새 가지를 낸다(첫 질문을 고쳐 다시 물을 때)
+   *   "<id>"  그 메시지 뒤에 새 가지를 낸다
+   *
+   * 빈 문자열로 뭉뚱그리면 "맨 앞에 내기"와 "가지 안 내기"를 구별할 수 없다.
+   */
+  parent?: string | null;
+  /** 나란히 견주어 달라고 고른 가지들(각 가지의 끝 메시지 id) */
+  compare?: string[];
   /** 중단 버튼용. 끊으면 서버도 스트림을 닫고, 여기까지 흘러온 답을 기록에 남긴다. */
   signal?: AbortSignal;
 }
