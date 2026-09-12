@@ -16,7 +16,7 @@ import { test } from "node:test";
 
 const {
   threadOf, siblingsOf, deepestLeaf, buildTurns, layout, hiddenCount, findTurns, fitLabel,
-  NODE_H, NODE_W, ROW_GAP,
+  NODE_H, NODE_W, ROW_GAP, COL_GAP,
 } = await import("../src/lib/chatTree.ts");
 
 /** u1→a1→u2→a2 로 이어지고, a1 에서 u3→a3 가 갈라진 나무 */
@@ -123,16 +123,18 @@ test("지도의 노드는 겹치지 않는다", () => {
   assert.equal(nodes.length, 1 + 5 + 15);
   assert.equal(edges.length, 5 + 15, "모든 노드는 뿌리 말고 선 하나로 매달린다");
 
-  const byCol = new Map();
+  // 나무는 위에서 아래로 자란다 — 같은 **단**(y)에 있는 것들이 가로로 안 겹쳐야 한다
+  const byRow = new Map();
   for (const n of nodes) {
-    const arr = byCol.get(n.x) ?? [];
+    const arr = byRow.get(n.y) ?? [];
     arr.push(n);
-    byCol.set(n.x, arr);
+    byRow.set(n.y, arr);
   }
-  for (const [x, col] of byCol) {
-    const ys = col.map((n) => n.y).sort((a, b) => a - b);
-    for (let i = 1; i < ys.length; i++) {
-      assert.ok(ys[i] - ys[i - 1] >= NODE_H, `x=${x} 에서 노드가 겹쳤다: ${ys[i - 1]} vs ${ys[i]}`);
+  assert.ok(byRow.size >= 3, "단이 셋(뿌리·가지·잎)은 나와야 한다");
+  for (const [y, row] of byRow) {
+    const xs = row.map((n) => n.x).sort((a, b) => a - b);
+    for (let i = 1; i < xs.length; i++) {
+      assert.ok(xs[i] - xs[i - 1] >= NODE_W, `y=${y} 에서 노드가 겹쳤다: ${xs[i - 1]} vs ${xs[i]}`);
     }
   }
 });
@@ -148,8 +150,10 @@ test("부모는 자식들 한가운데에 선다", () => {
   ];
   const { nodes } = layout(buildTurns(msgs, "a0"));
   const at = (id) => nodes.find((n) => n.id === id);
-  assert.equal(at("a0").y, (at("aA").y + at("aB").y) / 2);
-  assert.equal(at("aB").y - at("aA").y, NODE_H + ROW_GAP);
+  assert.equal(at("a0").x, (at("aA").x + at("aB").x) / 2);
+  assert.equal(at("aB").x - at("aA").x, NODE_W + COL_GAP);
+  assert.ok(at("aA").y > at("a0").y, "자식은 부모보다 아래에 온다");
+  assert.equal(at("aA").y - at("a0").y, NODE_H + ROW_GAP);
 });
 
 test("같은 대화면 언제나 같은 그림이다", () => {
@@ -171,10 +175,10 @@ test("접으면 아래가 사라지고 감춘 개수를 셀 수 있다", () => {
 test("노드 글자는 글자 수가 아니라 **폭**으로 자른다", () => {
   // 한글은 라틴 문자의 두 배 가까이 넓다. 글자 수로 자르면 같은 17자라도 한글만
   // 상자 밖으로 삐져나온다(실제로 그랬다).
-  const size = 11.5;
+  const size = 10.5;
   const px = (s) => [...s].reduce(
     (w, ch) => w + (/[ᄀ-ᇿ⺀-鿿가-힯＀-｠]/.test(ch) ? size : size * 0.52), 0);
-  const 여유 = NODE_W - 22;
+  const 여유 = NODE_W - 10;
 
   const ko = fitLabel("역전파, 정규화, 초기화를 한꺼번에 설명해줘");
   const en = fitLabel("explain backprop and normalization together please");

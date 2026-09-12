@@ -4,7 +4,7 @@ import {
   Scale, Search, Tag, Unlink, X,
 } from "lucide-react";
 import {
-  NODE_H, NODE_W, Placed, TreeMessage, Turn, buildTurns, findTurns, hiddenCount, layout,
+  DOT_R, NODE_H, NODE_W, Placed, TreeMessage, Turn, buildTurns, findTurns, hiddenCount, layout,
 } from "../../lib/chatTree";
 
 export interface TreeLink {
@@ -27,10 +27,14 @@ interface Props {
   /** 갈라지는 가지에 AI 가 이름을 붙인다 */
   onName: () => Promise<void>;
   onClose: () => void;
+  /** 옆에 세워 둔 지도는 닫을 것이 아니다(닫으면 빈 칸만 남는다) */
+  closable?: boolean;
   busy?: boolean;
 }
 
 const PAD = 40;
+//: 처음 맞출 때 이보다 작게 줄이지 않는다 — 더 줄이면 노드 밑의 글을 읽을 수 없다.
+const MIN_FIT = 0.62;
 
 /**
  * 대화 지도 — 나무 전체를 보고, 가지를 갈아타고, 잇고, 견준다.
@@ -46,7 +50,8 @@ const PAD = 40;
  * 더한 것: 접기(+n), 검색, 미니맵, 키보드 이동, 지금 자리로 되돌아오기.
  */
 export function ConversationTree({
-  messages, head, links, onGo, onEdit, onLink, onCompare, onName, onClose, busy,
+  messages, head, links, onGo, onEdit, onLink, onCompare, onName, onClose,
+  closable = true, busy,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 800, h: 420 });
@@ -95,11 +100,19 @@ export function ConversationTree({
   useEffect(() => {
     if (!firstFit.current || nodes.length === 0 || box.w < 10) return;
     firstFit.current = false;
-    // 처음에는 나무 전체가 들어오도록 맞춘다(다 안 들어오면 지금 자리로)
-    const k = Math.min(1, (box.w - PAD * 2) / Math.max(1, width),
+    // 나무 전체가 들어오면 그렇게 맞추고, **너무 작아질 것 같으면 줄이지 않는다.**
+    // 옆에 세운 좁은 칸에서 전체를 우겨 넣으면 글자가 읽을 수 없을 만큼 작아진다
+    // (실측: 380px 칸에 가지 넷이면 0.3배). 그때는 크기를 지키고 지금 자리를 비춘다.
+    const fit = Math.min(1, (box.w - PAD * 2) / Math.max(1, width),
       (box.h - PAD * 2) / Math.max(1, height));
-    setView({ x: PAD, y: PAD, k: Math.max(0.35, k) });
-  }, [nodes.length, box.w, box.h, width, height]);
+    const k = Math.max(MIN_FIT, fit);
+    const cur = [...nodes].reverse().find((n) => n.onPath);
+    setView(fit >= MIN_FIT || !cur
+      // 다 들어오면 한가운데 놓는다(위쪽에 붙이면 아래가 텅 빈다)
+      ? { k, x: (box.w - (width + NODE_W) * k) / 2, y: Math.max(PAD, (box.h - height * k) / 2) }
+      // 다 안 들어오면 **지금 보고 있는 자리**를 비춘다
+      : { k, x: box.w / 2 - (cur.x + NODE_W / 2) * k, y: box.h / 2 - (cur.y + NODE_H / 2) * k });
+  }, [nodes, box.w, box.h, width, height]);
 
   // 끌어서 옮기기(포인터 하나로 마우스·터치 모두).
   //
@@ -176,7 +189,9 @@ export function ConversationTree({
     y: box.h / 2 - (n.y + NODE_H / 2) * v.k,
   }));
 
-  const mini = 130 / Math.max(width + NODE_W, height + NODE_H, 1);
+  //: 미니맵은 칸 폭의 3분의 1을 넘지 않는다 — 좁은 칸에서는 지도를 가린다
+  const miniW = Math.min(130, Math.max(90, box.w / 3));
+  const mini = miniW / Math.max(width + NODE_W, height + NODE_H, 1);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -235,8 +250,10 @@ export function ConversationTree({
             className="tap grid h-7 w-7 place-items-center rounded text-fg-muted hover:bg-hovered"><Plus size={14} /></button>
           <button type="button" onClick={recenter} aria-label="지금 자리로" title="지금 보고 있는 차례로"
             className="tap grid h-7 w-7 place-items-center rounded text-fg-muted hover:bg-hovered"><LocateFixed size={14} /></button>
-          <button type="button" onClick={onClose} aria-label="지도 닫기"
-            className="tap grid h-7 w-7 place-items-center rounded text-fg-muted hover:bg-hovered"><X size={14} /></button>
+          {closable && (
+            <button type="button" onClick={onClose} aria-label="지도 닫기"
+              className="tap grid h-7 w-7 place-items-center rounded text-fg-muted hover:bg-hovered"><X size={14} /></button>
+          )}
         </div>
       </div>
 
@@ -275,19 +292,27 @@ export function ConversationTree({
               zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12,
                 e.clientX - (r?.left ?? 0), e.clientY - (r?.top ?? 0));
             }}>
+            <defs>
+              {/* 별처럼 빛나는 동그라미 — 지금 줄기 위의 노드에만 쓴다 */}
+              <radialGradient id="tree-glow">
+                <stop offset="0%" stopColor="rgb(var(--accent))" stopOpacity="0.55" />
+                <stop offset="100%" stopColor="rgb(var(--accent))" stopOpacity="0" />
+              </radialGradient>
+            </defs>
             <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
               {edges.map((e, i) => {
-                const x1 = e.from.x + NODE_W;
-                const y1 = e.from.y + NODE_H / 2;
-                const x2 = e.to.x;
-                const y2 = e.to.y + NODE_H / 2;
-                const mid = (x1 + x2) / 2;
+                // 위에서 아래로 흐르는 곡선. 동그라미 한가운데끼리 잇는다.
+                const x1 = e.from.x + NODE_W / 2;
+                const y1 = e.from.y + DOT_R;
+                const x2 = e.to.x + NODE_W / 2;
+                const y2 = e.to.y + DOT_R;
+                const mid = (y1 + y2) / 2;
                 const on = e.from.onPath && e.to.onPath;
                 return (
-                  <path key={i} d={`M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2}`}
+                  <path key={i} d={`M${x1},${y1} C${x1},${mid} ${x2},${mid} ${x2},${y2}`}
                     fill="none"
                     stroke={on ? "rgb(var(--accent))" : "rgb(var(--line))"}
-                    strokeWidth={on ? 2 : 1.25} />
+                    strokeWidth={on ? 1.8 : 1.1} opacity={on ? 0.95 : 0.75} />
                 );
               })}
               {/* 기억 연결 — 나무의 선과 헷갈리지 않게 점선에 다른 색 */}
@@ -296,16 +321,16 @@ export function ConversationTree({
                 const b = byId.get(l.to_id);
                 if (!a || !b) return null;
                 const x1 = a.x + NODE_W / 2;
-                const y1 = a.y + NODE_H;
+                const y1 = a.y + DOT_R;
                 const x2 = b.x + NODE_W / 2;
-                const y2 = b.y + NODE_H;
-                const sag = Math.max(40, Math.abs(y2 - y1) * 0.6);
+                const y2 = b.y + DOT_R;
+                const bow = Math.max(50, Math.abs(x2 - x1) * 0.5);
                 return (
                   <g key={`l${i}`}>
-                    <path d={`M${x1},${y1} Q${(x1 + x2) / 2},${Math.max(y1, y2) + sag} ${x2},${y2}`}
-                      fill="none" stroke="rgb(var(--warning))" strokeWidth={1.5}
+                    <path d={`M${x1},${y1} Q${Math.min(x1, x2) - bow},${(y1 + y2) / 2} ${x2},${y2}`}
+                      fill="none" stroke="rgb(var(--warning))" strokeWidth={1.4}
                       strokeDasharray="5 4" opacity={0.85} />
-                    <circle cx={x2} cy={y2} r={3} fill="rgb(var(--warning))" />
+                    <circle cx={x2} cy={y2} r={2.5} fill="rgb(var(--warning))" />
                   </g>
                 );
               })}
@@ -315,34 +340,46 @@ export function ConversationTree({
                 const folded = collapsed.has(n.id);
                 const inCompare = compare.indexOf(n.id);
                 const isHit = hits.has(n.id);
+                const cx = NODE_W / 2;
+                const ring = inCompare >= 0 ? "rgb(var(--positive))"
+                  : isHit ? "rgb(var(--warning))"
+                  : n.onPath ? "rgb(var(--accent))" : "rgb(var(--line))";
                 return (
                   <g key={n.id} data-node transform={`translate(${n.x} ${n.y})`}
                     className="cursor-pointer" onClick={() => t && clickNode(n)}>
-                    <rect width={NODE_W} height={NODE_H} rx={8}
-                      fill={n.onPath ? "rgb(var(--accent-muted))" : "rgb(var(--bg-elevated))"}
-                      stroke={
-                        inCompare >= 0 ? "rgb(var(--positive))"
-                        : isHit ? "rgb(var(--warning))"
-                        : n.onPath ? "rgb(var(--accent))" : "rgb(var(--line))"}
-                      strokeWidth={inCompare >= 0 || isHit || n.onPath ? 2 : 1} />
-                    {/* 자르는 것은 chatTree.fitLabel 이 폭으로 한다 — 글자 수로 자르면
-                        한글이 상자 밖으로 삐져나온다(라틴 문자의 두 배 가까이 넓다). */}
-                    <text x={9} y={NODE_H / 2 + 4} fontSize={11.5}
-                      fill={n.onPath ? "rgb(var(--accent-fg))" : "rgb(var(--fg2))"}>
+                    {/* 빛무리는 지금 줄기에만 — 어디를 보고 있는지가 한눈에 보여야 한다 */}
+                    {n.onPath && (
+                      <circle cx={cx} cy={DOT_R} r={DOT_R * 2.6} fill="url(#tree-glow)" />
+                    )}
+                    {/* 누르기 쉬우라고 보이는 것보다 넓게 잡는다(손가락) */}
+                    <circle cx={cx} cy={DOT_R} r={DOT_R * 2.2} fill="transparent" />
+                    <circle cx={cx} cy={DOT_R} r={DOT_R}
+                      fill={n.onPath ? "rgb(var(--accent))" : "rgb(var(--bg-elevated))"}
+                      stroke={ring} strokeWidth={inCompare >= 0 || isHit ? 2.5 : 1.6} />
+                    {/* 지금 줄기의 노드는 가운데가 밝다(레퍼런스의 별 모양) */}
+                    {n.onPath && (
+                      <circle cx={cx} cy={DOT_R} r={DOT_R * 0.42} fill="rgb(var(--accent-contrast))" />
+                    )}
+                    {n.pending && (
+                      <circle cx={cx + DOT_R} cy={1} r={2.5} fill="rgb(var(--warning))" />
+                    )}
+                    {/* **글은 동그라미 밑에.** 상자 안에 넣으면 지도가 표처럼 보이고,
+                        가지가 갈라지는 모양이 눈에 안 들어온다. 자르는 것은
+                        chatTree.fitLabel 이 폭으로 한다(한글은 두 배 가까이 넓다). */}
+                    <text x={cx} y={DOT_R * 2 + 13} fontSize={10.5} textAnchor="middle"
+                      fill={n.onPath ? "rgb(var(--fg))" : "rgb(var(--fg-muted))"}
+                      fontWeight={n.onPath ? 600 : 400}>
                       {n.label}
                     </text>
-                    {n.pending && (
-                      <circle cx={NODE_W - 8} cy={8} r={3} fill="rgb(var(--warning))" />
-                    )}
                     {inCompare >= 0 && (
-                      <text x={NODE_W - 14} y={NODE_H - 8} fontSize={11} fontWeight={600}
+                      <text x={cx - DOT_R * 2} y={DOT_R + 4} fontSize={11} fontWeight={700}
                         fill="rgb(var(--positive))">{String.fromCharCode(65 + inCompare)}</text>
                     )}
                     {kids > 0 && (
                       <g onClick={(e) => { e.stopPropagation(); toggleFold(n.id); }}>
-                        <circle cx={NODE_W} cy={NODE_H / 2} r={8}
+                        <circle cx={cx + DOT_R + 9} cy={DOT_R + 8} r={7}
                           fill="rgb(var(--bg-elevated))" stroke="rgb(var(--line))" />
-                        <text x={NODE_W} y={NODE_H / 2 + 3.5} fontSize={9} textAnchor="middle"
+                        <text x={cx + DOT_R + 9} y={DOT_R + 11.5} fontSize={8.5} textAnchor="middle"
                           fill="rgb(var(--fg-muted))">
                           {folded ? `+${hiddenCount(t!)}` : "–"}
                         </text>
@@ -358,7 +395,7 @@ export function ConversationTree({
         {/* 미니맵 — 나무가 커지면 지금 어디를 보고 있는지 알 수 없다.
             지금 보고 있는 칸은 **미니맵 안으로 잘라서** 그린다. 자르지 않으면 나무보다
             큰 사각형이 틀 밖으로 뻗어 나가 흰 막대처럼 보였다(실측). */}
-        {nodes.length > 6 && (() => {
+        {nodes.length > 6 && box.w > 260 && (() => {
           const vx = Math.max(0, -view.x / view.k);
           const vy = Math.max(0, -view.y / view.k);
           const vw = Math.min(box.w / view.k, width + NODE_W - vx);
@@ -367,10 +404,10 @@ export function ConversationTree({
             && box.w / view.k >= width + NODE_W && box.h / view.k >= height + NODE_H;
           return (
             <svg className="pointer-events-none absolute bottom-2 right-2 rounded border border-line bg-surface/90"
-              width={140} height={Math.min(110, (height + NODE_H) * mini + 10)}>
+              width={miniW + 10} height={Math.min(110, (height + NODE_H) * mini + 10)}>
               <g transform={`translate(5 5) scale(${mini})`}>
                 {nodes.map((n) => (
-                  <rect key={n.id} x={n.x} y={n.y} width={NODE_W} height={NODE_H} rx={6}
+                  <circle key={n.id} cx={n.x + NODE_W / 2} cy={n.y + DOT_R} r={DOT_R * 1.6}
                     fill={n.onPath ? "rgb(var(--accent))" : "rgb(var(--line))"} />
                 ))}
                 {/* 나무가 통째로 보이는 중이면 틀을 그리지 않는다 — 전부가 곧 지금이다 */}

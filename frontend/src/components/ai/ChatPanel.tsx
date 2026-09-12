@@ -14,6 +14,8 @@ import { useMediaQuery } from "../../lib/useMediaQuery";
 import { VocabProposal, VocabProposalData } from "./VocabProposal";
 import { skillIcon } from "./skillIcon";
 import { ConversationTree, TreeLink } from "./ConversationTree";
+import { ChatSessionList, ChatSessionPicker } from "./ChatSessions";
+import { ChatSession } from "../../lib/api";
 import { deepestLeaf, siblingsOf, threadOf, TreeMessage } from "../../lib/chatTree";
 
 interface Step {
@@ -179,6 +181,15 @@ interface ChatPanelProps {
   emptyTitle?: string;
   emptySubtitle?: string;
   placeholder?: string;
+  /**
+   * 넓은 화면에서 **왼쪽 대화 목록 · 가운데 채팅 · 오른쪽 대화 지도**로 편다
+   * (AI 비서 화면). 좁아지면 저절로 접힌다.
+   *
+   * 다른 화면들(논문·회의·영어·캘린더)에는 이미 제 목록이 왼쪽에 있어서, 대화
+   * 목록까지 사이드바로 두면 화면이 목록으로만 찬다 — 거기서는 채팅 상자 위의
+   * 드롭다운으로 고른다.
+   */
+  sidebars?: boolean;
 }
 
 /**
@@ -291,6 +302,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   emptyTitle = "무엇을 도와드릴까요?",
   emptySubtitle = "파일·노트·일정을 자동으로 처리합니다",
   placeholder,
+  sidebars = false,
 }, ref) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -302,6 +314,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   const [head, setHead] = useState("");
   const [links, setLinks] = useState<TreeLink[]>([]);
   const [showTree, setShowTree] = useState(false);
+  //: 이 공간의 대화 목록. 가지와 달리 세션끼리는 맥락을 나눠 쓰지 않는다.
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeSession, setActiveSession] = useState("");
   //: 다음 한 번만 이 메시지 뒤에 붙인다(과거 질문에서 새 가지를 낼 때).
   //: id 가 null 이면 **대화 맨 앞**이다 — 첫 질문을 고쳐 다시 묻는 경우다.
   const [branchFrom, setBranchFrom] = useState<{ id: string | null; label: string } | null>(null);
@@ -313,10 +328,23 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   const navigate = useNavigate();
   // 화면 폭이 아니라 입력 방식으로 판단한다 — 태블릿 가로처럼 넓어도 소프트 키보드다.
   const touch = useMediaQuery("(pointer: coarse)");
+  // 사이드바는 **자리가 있을 때만** 편다. CSS 로만 숨기면 좁은 화면에서 대화 목록과
+  // 지도에 닿을 길이 아예 사라진다 — 여기서 정해서, 좁으면 드롭다운·접힘으로 돌린다.
+  const roomForList = useMediaQuery("(min-width: 1024px)");
+  const roomForTree = useMediaQuery("(min-width: 1280px)");
   const hasContext = attachments.length > 0 || selections.length > 0;
 
   useEffect(() => {
     api.aiStatus().then((s) => setEnabled(s.enabled)).catch(() => setEnabled(false));
+  }, []);
+
+  /** 서버가 준 공간 한 벌을 통째로 받아 넣는다(기록·가지·세션이 함께 온다). */
+  const soak = useCallback((r: Awaited<ReturnType<typeof api.aiSpace>>) => {
+    setMessages(r.messages.map(fromServer));
+    setHead(r.head ?? "");
+    setLinks(r.links ?? []);
+    setSessions(r.sessions ?? []);
+    setActiveSession(r.active ?? "");
   }, []);
 
   // 서버 공간의 기록. 논문을 바꾸면 그 논문의 대화로 갈아탄다.
@@ -325,6 +353,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
       setMessages([]);
       setHead("");
       setLinks([]);
+      setSessions([]);
       return;
     }
     let alive = true;
@@ -335,9 +364,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     api.aiSpace(space)
       .then((r) => {
         if (!alive) return;
-        setMessages(r.messages.map(fromServer));
-        setHead(r.head ?? "");
-        setLinks(r.links ?? []);
+        soak(r);
       })
       .catch((e) => { if (alive) toast.error(e instanceof Error ? e.message : "대화 기록을 불러오지 못했습니다"); })
       .finally(() => { if (alive) setLoadingSpace(false); });
@@ -505,10 +532,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
       // 흘러온 답은 그대로 있으므로 조용히 넘어간다.
       if (space) {
         try {
-          const r = await api.aiSpace(space);
-          setMessages(r.messages.map(fromServer));
-          setHead(r.head ?? "");
-          setLinks(r.links ?? []);
+          soak(await api.aiSpace(space));
         } catch {
           /* 화면에 보이는 것은 그대로 둔다 */
         }
@@ -533,7 +557,53 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     setLinks([]);
     setBranchFrom(null);
     setCompare([]);
-  }, [space]);
+    // 비우기는 **지금 대화만** 비운다(다른 대화는 그대로) — 목록은 다시 받는다
+    if (space) {
+      try { soak(await api.aiSpace(space)); } catch { /* 화면은 이미 비었다 */ }
+    }
+  }, [space, soak]);
+
+  /** 대화를 갈아타거나 새로 시작한다. 세션은 앞 맥락을 **하나도** 이어받지 않는다. */
+  const runSession = useCallback(async (fn: () => Promise<unknown>) => {
+    if (!space) return;
+    setLoadingSpace(true);
+    setMessages([]);
+    setBranchFrom(null);
+    setCompare([]);
+    setShowTree(false);
+    try {
+      await fn();
+      soak(await api.aiSpace(space));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "대화를 바꾸지 못했습니다");
+      try { soak(await api.aiSpace(space)); } catch { /* 그대로 둔다 */ }
+    } finally {
+      setLoadingSpace(false);
+    }
+  }, [space, soak]);
+
+  const pickSession = useCallback((id: string) => {
+    if (id === activeSession) return;
+    void runSession(() => api.aiSessionUse(space!, id));
+  }, [activeSession, runSession, space]);
+
+  const newSession = useCallback(() => {
+    void runSession(() => api.aiSessionNew(space!));
+  }, [runSession, space]);
+
+  const renameSession = useCallback((id: string, title: string) => {
+    if (!space) return;
+    // 이름만 바꾸는 것이라 대화를 다시 받을 필요가 없다 — 목록만 고친다
+    setSessions((arr) => arr.map((s) => (s.id === id ? { ...s, title: title || "새 대화" } : s)));
+    api.aiSessionRename(space, id, title).catch((e) => {
+      toast.error(e instanceof Error ? e.message : "이름을 바꾸지 못했습니다");
+      void api.aiSpace(space).then(soak).catch(() => {});
+    });
+  }, [space, soak]);
+
+  const dropSession = useCallback((id: string) => {
+    void runSession(() => api.aiSessionDrop(space!, id));
+  }, [runSession, space]);
 
   /** 과거 질문을 고쳐 새 가지로 다시 묻는다 — 그 질문의 **부모**에 붙인다. */
   const editAndFork = useCallback((userMsgId: string, text: string) => {
@@ -597,32 +667,55 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     return tree.filter((m) => !parents.has(m.id)).length;
   }, [messages, space]);
 
-  return (
-    <div className={`flex min-h-0 flex-col ${className}`}>
+  //: 사이드바로 펼 수 있는가 — `sidebars` 를 켠 화면이면서 자리도 있을 때만.
+  const listAside = sidebars && !!space && roomForList;
+  const treeAside = sidebars && !!space && roomForTree;
+
+  const tree = space ? (
+    <ConversationTree
+      messages={asTree(messages)} head={head} links={links}
+      onGo={(id) => { void goTo(id); if (!treeAside) setShowTree(false); }}
+      onEdit={editAndFork}
+      onLink={(a, b, on) => void linkMemory(a, b, on)}
+      onCompare={(ids) => {
+        setCompare(ids);
+        if (!treeAside) setShowTree(false);
+        inputRef.current?.focus();
+      }}
+      onName={nameBranches}
+      onClose={() => setShowTree(false)}
+      closable={!treeAside}
+      busy={busy}
+    />
+  ) : null;
+
+  const sessionProps = {
+    sessions, active: activeSession, onPick: pickSession, onNew: newSession,
+    onRename: renameSession, onDrop: dropSession, busy: busy || loadingSpace,
+  };
+
+  const chat = (
+    <div className={`flex min-h-0 flex-col ${listAside || treeAside ? "min-w-0 flex-1" : className}`}>
       {enabled === false && (
         <div className="mb-3 rounded-md border border-warning/30 bg-warning/10 px-4 py-2.5 text-[13px] text-warning">
           GEMINI_API_KEY가 설정되지 않아 AI가 비활성화되어 있습니다. (.env 확인)
         </div>
       )}
 
-      {/* 대화 지도 — 나무 전체를 보고 가지를 갈아탄다. 대화 위에 접혀 들어간다
-          (딴 화면으로 보내면 말풍선과 지도를 나란히 볼 수 없다). */}
-      {space && showTree && (
+      {/* 대화 고르기 — 사이드바가 없는 화면에서는 채팅 상자 **위**에 접어 둔다.
+          이 화면들에는 이미 왼쪽에 제 목록(논문·회의·단어장)이 있어서, 대화 목록까지
+          사이드바로 두면 화면이 목록으로만 찬다. */}
+      {space && !listAside && (
+        <div className="mb-1.5 border-b border-line pb-1.5">
+          <ChatSessionPicker {...sessionProps} />
+        </div>
+      )}
+
+      {/* 대화 지도 — 좁은 화면에서는 대화 위에 접혀 들어간다(딴 화면으로 보내면
+          말풍선과 지도를 나란히 볼 수 없다). 넓은 화면은 오른쪽에 세워 둔다. */}
+      {space && showTree && !treeAside && (
         <div className="mb-2 flex h-[min(48vh,380px)] min-h-0 flex-col overflow-hidden rounded-lg border border-line bg-surface">
-          <ConversationTree
-            messages={asTree(messages)} head={head} links={links}
-            onGo={(id) => { void goTo(id); setShowTree(false); }}
-            onEdit={editAndFork}
-            onLink={(a, b, on) => void linkMemory(a, b, on)}
-            onCompare={(ids) => {
-              setCompare(ids);
-              setShowTree(false);
-              inputRef.current?.focus();
-            }}
-            onName={nameBranches}
-            onClose={() => setShowTree(false)}
-            busy={busy}
-          />
+          {tree}
         </div>
       )}
 
@@ -804,8 +897,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
         </div>
       )}
       <div className={`${composerTop || hasContext ? "mt-2" : "mt-3"} flex items-end gap-2`}>
-        {/* 대화가 서버에 남는 화면에서만 나무가 된다(비서 임시 대화는 새로고침에 사라진다) */}
-        {space && (
+        {/* 대화가 서버에 남는 화면에서만 나무가 된다(비서 임시 대화는 새로고침에 사라진다).
+            지도를 이미 옆에 세워 둔 화면에서는 이 단추가 필요 없다. */}
+        {space && !treeAside && (
           <button type="button" onClick={() => setShowTree((v) => !v)}
             aria-label={showTree ? "대화 지도 닫기" : "대화 지도 열기"}
             title="대화 지도 — 가지를 보고 갈아탄다"
@@ -853,6 +947,29 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
           </button>
         )}
       </div>
+    </div>
+  );
+
+  if (!listAside && !treeAside) return chat;
+
+  // 넓은 화면: 왼쪽 대화 목록 · 가운데 채팅 · 오른쪽 대화 지도.
+  //
+  // 접고 펴는 것은 **자바스크립트 한 곳에서만** 정한다(listAside/treeAside).
+  // CSS 의 `hidden lg:flex` 로도 숨기면 규칙이 두 벌이 되고, 둘이 어긋나는 폭에서
+  // 대화 목록과 지도에 닿을 길이 통째로 사라진다.
+  return (
+    <div className={`flex min-h-0 gap-3 ${className}`}>
+      {listAside && (
+        <aside className="flex w-[228px] shrink-0 flex-col border-r border-line pr-3">
+          <ChatSessionList {...sessionProps} />
+        </aside>
+      )}
+      {chat}
+      {treeAside && (
+        <aside className="flex w-[380px] shrink-0 flex-col overflow-hidden rounded-lg border border-line bg-surface">
+          {tree}
+        </aside>
+      )}
     </div>
   );
 });

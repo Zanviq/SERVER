@@ -192,8 +192,14 @@ def all_spaces(user: SessionUser, settings: Settings) -> list[str]:
 
 
 def load_space(user: SessionUser, settings: Settings, space: str) -> list[dict]:
+    """그 공간의 **모든 세션**을 시각순으로.
+
+    지금 세션만 보면 다른 세션에서 한 이야기를 영영 못 찾는다 — 세션을 나눈 것이
+    기록을 잃는 일이 되면 안 된다. 여기서 나오는 것은 읽기·검색용이고, 모델에
+    들어가는 맥락은 라우터가 지금 세션의 줄기에서만 고른다.
+    """
     try:
-        return chat_store.load(space_path(user, settings, space))
+        return chat_store.load_every(space_path(user, settings, space))
     except HTTPException:
         return []
 
@@ -254,7 +260,7 @@ def space_rows(user: SessionUser, settings: Settings) -> list[dict]:
     rows = []
     for space in all_spaces(user, settings):
         # 검색과 같은 이유로 색인을 다시 읽지 않는다(사용량 화면도 이 함수를 쓴다)
-        msgs = chat_store.load(_space_file(user, settings, space))
+        msgs = chat_store.load_every(_space_file(user, settings, space))
         times = [float(m.get("ts") or 0) for m in msgs if m.get("ts")]
         rows.append({
             "space": space,
@@ -379,7 +385,7 @@ def search(user: SessionUser, settings: Settings, query: str, *,
     hits: list[dict] = []
     for space in targets:
         # 공간마다 색인을 다시 읽지 않는다 — 그것이 이 검색을 O(n²)로 만들었다.
-        msgs = chat_store.load(_space_file(user, settings, space))
+        msgs = chat_store.load_every(_space_file(user, settings, space))
         sessions = split_sessions(msgs)
         for s in sessions:
             sid = session_id(s)

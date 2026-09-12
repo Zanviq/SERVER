@@ -266,8 +266,26 @@ export const api = {
    * 보고 있는 끝자락이다. 말풍선에 보이는 것은 head 에서 뿌리까지의 한 줄기뿐이다.
    */
   aiSpace: (space: string) =>
-    req<{ messages: ChatMessage[]; head: string; links: { from_id: string; to_id: string }[] }>(
-      `/api/ai/space/${encodeURIComponent(space)}`),
+    req<{
+      messages: ChatMessage[]; head: string; links: { from_id: string; to_id: string }[];
+      sessions: ChatSession[]; active: string;
+    }>(`/api/ai/space/${encodeURIComponent(space)}`),
+  /** 새 대화를 시작한다 — 가지와 달리 앞 맥락을 하나도 이어받지 않는다. */
+  aiSessionNew: (space: string, title = "") =>
+    req<{ ok: boolean; id: string }>(
+      `/api/ai/space/${encodeURIComponent(space)}/sessions`, jsonInit("POST", { title })),
+  aiSessionUse: (space: string, id: string) =>
+    req<{ ok: boolean; active: string }>(
+      `/api/ai/space/${encodeURIComponent(space)}/sessions/${encodeURIComponent(id)}`,
+      { method: "POST" }),
+  aiSessionRename: (space: string, id: string, title: string) =>
+    req<{ ok: boolean }>(
+      `/api/ai/space/${encodeURIComponent(space)}/sessions/${encodeURIComponent(id)}`,
+      jsonInit("PATCH", { title })),
+  aiSessionDrop: (space: string, id: string) =>
+    req<{ ok: boolean }>(
+      `/api/ai/space/${encodeURIComponent(space)}/sessions/${encodeURIComponent(id)}`,
+      { method: "DELETE" }),
   /** 다른 가지로 옮겨 간다(지도에서 노드를 누른 것). */
   aiSpaceHead: (space: string, id: string) =>
     req<{ ok: boolean; head: string }>(
@@ -537,6 +555,18 @@ export interface UsageSummary {
   counts: Record<string, number>;
   context: { spaces: number; turns: number; chars: number };
   generated_at: number;
+}
+
+/**
+ * 한 공간 안의 대화 하나. **가지와 다르다** — 가지는 한 이야기 안에서 갈라지는
+ * 것이고, 세션은 아예 다른 이야기라 앞 맥락을 하나도 쓰지 않는다.
+ */
+export interface ChatSession {
+  id: string;
+  title: string;
+  turns: number;
+  created_at: number;
+  updated_at: number;
 }
 
 /** 서버에 남은 대화 한 줄(영어 학습·논문). */

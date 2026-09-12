@@ -4,11 +4,20 @@
 화면은 다르다 — "지난주에 물어본 단어", "저 논문에서 했던 질문"이 다음 대화의
 맥락이어야 하므로 서버에 남긴다.
 
-한 공간(space) = 파일 하나:
-  {messages: [{id, role, text, ts, meta, parent}], head: "<id>",
-   links: [{from_id, to_id}], vocab_done: ["<키>", …]}
+한 공간(space) = 파일 하나, 그 안에 **대화 세션이 여러 개**:
+  {sessions: [{id, title, created_at, updated_at,
+               messages: [{id, role, text, ts, meta, parent}], head: "<id>",
+               links: [{from_id, to_id}], vocab_done: ["<키>", …]}],
+   active: "<세션 id>"}
   - 영어 학습:  users/<u>/chats/english.json
   - 논문:       users/<u>/papers/<id>/chat.json  (논문 폴더에 두어 휴지통과 함께 움직인다)
+
+**세션과 가지는 다른 것이다.** 가지는 한 이야기 안에서 갈라지는 것이고(맥락을
+나눠 쓴다), 세션은 아예 **다른 이야기**다(맥락을 전혀 안 쓴다). 지난주의 논문
+질문과 오늘의 논문 질문이 한 줄로 이어지면 안 되는 것이 후자다.
+
+옛 파일은 세션 층이 없다(`{messages, head, …}`). 읽을 때 세션 하나로 감싼다 —
+파일을 미리 고쳐 쓰지 않는다.
 
 **대화는 한 줄이 아니라 나무다.** 메시지마다 parent 가 있고, head 는 지금 보고
 있는 끝자락이다. 다음 말은 head 에 붙는다. 과거의 어느 메시지에서든 새 가지를
@@ -22,8 +31,11 @@
   - links 는 가지 사이의 **기억 연결**이다. 다른 가지의 맥락을 지금 가지로 끌어온다
     (from_id 가 있는 줄기를 to_id 차례의 맥락으로 넣는다).
 
-메시지 수는 MAX_MESSAGES 로 자른다(오래된 것부터). 잘려 나간 부모를 가리키던
-메시지는 뿌리가 된다 — 나무가 여럿이 될 수 있고(숲), 화면도 그렇게 그린다.
+메시지 수는 MAX_MESSAGES 로 자른다 — **세션마다가 아니라 공간 전체로** 센다.
+세션을 몇 개 만들어도 파일 크기가 예전과 같아야 한다(한 번에 원자적으로 쓴다).
+오래된 것부터 버리고, 비어 버린 세션은 접는다(지금 보고 있는 세션은 남긴다).
+잘려 나간 부모를 가리키던 메시지는 뿌리가 된다 — 나무가 여럿이 될 수 있고(숲),
+화면도 그렇게 그린다.
 모델에 넣는 것은 그중 최근 일부뿐이고, 나머지는 검색(search)으로 찾는다.
 
 vocab_done 은 **이미 처리한 단어 후보 목록**이다. 사용자가 체크 목록을 닫았거나
@@ -48,6 +60,10 @@ MAX_TEXT = 20000
 MAX_DONE = 400
 #: 가지 사이 기억 연결의 개수 상한
 MAX_LINKS = 200
+#: 한 공간에 둘 수 있는 대화 세션 수
+MAX_SESSIONS = 30
+#: 세션 이름 길이
+MAX_TITLE = 60
 
 
 def english_path(user: SessionUser, settings: Settings) -> Path:
@@ -70,23 +86,28 @@ def _migrate(msgs: list[dict]) -> None:
         prev = m.get("id")
 
 
-def load_all(path: Path) -> dict:
-    """파일 전체(메시지 나무 + 지금 끝자락 + 기억 연결 + 처리한 후보 키)."""
-    data = json_store.read_json_strict(path, None)
-    if not isinstance(data, dict):
-        data = {}
-    raw = data.get("messages")
-    msgs = [m for m in raw if isinstance(m, dict)] if isinstance(raw, list) else []
+def _clean_session(raw: dict, idx: int = 0) -> dict:
+    """세션 하나를 읽을 수 있는 모양으로 맞춘다(나무 모양도 여기서 바로잡는다).
+
+    id 가 없는 옛 세션에는 **자리 번호**로 이름을 준다. 여기서 uuid 를 새로 만들면
+    읽을 때마다 id 가 달라져서, 화면이 방금 받은 id 로 "이 대화로 옮겨 줘"를 보내면
+    404 가 난다(실측).
+    """
+    msgs = [m for m in raw.get("messages") or [] if isinstance(m, dict)]
     _migrate(msgs)
     ids = {m.get("id") for m in msgs}
     # 잘려 나간 부모를 가리키는 것은 뿌리로 만든다(미아를 남기지 않는다)
     for m in msgs:
         if m.get("parent") not in ids:
             m["parent"] = None
-    done = data.get("vocab_done")
-    links = data.get("links")
-    head = str(data.get("head") or "")
+    head = str(raw.get("head") or "")
+    links = raw.get("links")
+    done = raw.get("vocab_done")
     return {
+        "id": str(raw.get("id") or "") or f"s{idx}",
+        "title": str(raw.get("title") or "")[:MAX_TITLE],
+        "created_at": float(raw.get("created_at") or 0) or _first_ts(msgs),
+        "updated_at": float(raw.get("updated_at") or 0) or _last_ts(msgs),
         "messages": msgs,
         # head 가 없거나 가리키는 것이 사라졌으면 마지막 메시지를 본다(옛 파일)
         "head": head if head in ids else (msgs[-1].get("id", "") if msgs else ""),
@@ -99,36 +120,136 @@ def load_all(path: Path) -> dict:
     }
 
 
+def _first_ts(msgs: list[dict]) -> float:
+    return float(next((m.get("ts") or 0 for m in msgs), 0)) or time.time()
+
+
+def _last_ts(msgs: list[dict]) -> float:
+    return float(next((m.get("ts") or 0 for m in reversed(msgs)), 0)) or time.time()
+
+
+def new_session(title: str = "") -> dict:
+    now = time.time()
+    return {"id": uuid.uuid4().hex, "title": str(title or "")[:MAX_TITLE],
+            "created_at": now, "updated_at": now,
+            "messages": [], "head": "", "links": [], "vocab_done": []}
+
+
+def load_space(path: Path) -> dict:
+    """공간 전체 — 세션 목록과 지금 보고 있는 세션.
+
+    옛 파일은 세션 층이 없다(`{messages, head, …}`). 그것을 세션 하나로 감싼다.
+    """
+    data = json_store.read_json_strict(path, None)
+    if not isinstance(data, dict):
+        data = {}
+    raw = data.get("sessions")
+    if isinstance(raw, list) and raw:
+        sessions = [_clean_session(s, i) for i, s in enumerate(raw) if isinstance(s, dict)]
+    elif data.get("messages"):
+        # 옛 파일 — 세션 하나로 감싼다. 파일을 미리 고쳐 쓰지 않는다.
+        sessions = [_clean_session(data, 0)]
+    else:
+        sessions = []
+    if not sessions:
+        sessions = [new_session()]
+    ids = {s["id"] for s in sessions}
+    active = str(data.get("active") or "")
+    return {
+        "sessions": sessions,
+        "active": active if active in ids else sessions[-1]["id"],
+    }
+
+
+def current(path: Path) -> dict:
+    """지금 보고 있는 세션."""
+    space = load_space(path)
+    return next(s for s in space["sessions"] if s["id"] == space["active"])
+
+
+#: 예전 이름 — 지금 세션의 나무를 돌려준다(부르는 곳이 많아 남겨 둔다)
+def load_all(path: Path) -> dict:
+    return current(path)
+
+
 def load(path: Path) -> list[dict]:
-    return load_all(path)["messages"]
+    """지금 세션의 메시지."""
+    return current(path)["messages"]
+
+
+def load_every(path: Path) -> list[dict]:
+    """**모든 세션**의 메시지를 시각순으로.
+
+    검색과 '지난 대화 읽기'가 쓴다. 지금 세션만 보면 다른 세션에서 한 이야기를
+    영영 못 찾는다 — 세션을 나눈 것이 기록을 잃는 일이 되면 안 된다.
+    """
+    out = [m for s in load_space(path)["sessions"] for m in s["messages"]]
+    out.sort(key=lambda m: float(m.get("ts") or 0))
+    return out
 
 
 def vocab_done(path: Path) -> set[str]:
     """사용자가 이미 닫았거나 넣은 후보 목록의 키."""
-    return set(load_all(path)["vocab_done"])
+    return set(current(path)["vocab_done"])
 
 
-def _save(path: Path, data: dict) -> None:
+def _trim(space: dict) -> None:
+    """공간 전체에서 오래된 메시지를 버린다.
+
+    **세션마다 세지 않고 공간 전체로 센다.** 세션을 서른 개 만들어도 파일 크기가
+    예전과 같아야 한다 — 한 번에 원자적으로 쓰는 파일이라 크기가 곧 위험이다.
+    """
+    if len(space["sessions"]) > MAX_SESSIONS:
+        del space["sessions"][:-MAX_SESSIONS]
+    sessions = space["sessions"]
+    total = sum(len(s["messages"]) for s in sessions)
+    over = total - MAX_MESSAGES
+    if over > 0:
+        # 오래된 세션부터 앞에서 깎는다
+        for s in sorted(sessions, key=lambda x: x["updated_at"]):
+            if over <= 0:
+                break
+            cut = min(over, len(s["messages"]))
+            del s["messages"][:cut]
+            over -= cut
+    # 비어 버린 세션은 접는다. 지금 보고 있는 것과 아직 아무 말도 안 한 새 세션은 남긴다
+    keep = [s for s in sessions
+            if s["messages"] or s["id"] == space["active"] or not s["updated_at"]]
+    space["sessions"] = keep or [new_session()]
+    if space["active"] not in {s["id"] for s in space["sessions"]}:
+        space["active"] = space["sessions"][-1]["id"]
+    # 메시지가 깎여 나갔으면 나무·연결·끝자락을 다시 맞춘다
+    for s in space["sessions"]:
+        ids = {m.get("id") for m in s["messages"]}
+        for m in s["messages"]:
+            if m.get("parent") not in ids:
+                m["parent"] = None
+        if s["head"] not in ids:
+            s["head"] = s["messages"][-1].get("id", "") if s["messages"] else ""
+        s["links"] = [l for l in s["links"]
+                      if l["from_id"] in ids and l["to_id"] in ids][-MAX_LINKS:]
+        s["vocab_done"] = s["vocab_done"][-MAX_DONE:]
+
+
+def _save_space(path: Path, space: dict) -> None:
     # **폴더를 만들지 않는다.** 논문·회의 대화는 그 항목 폴더 안에 있어서, 폴더를
     # 만드는 것이 곧 지워진 항목을 되살리는 것이다(목록에도 휴지통에도 없는 미아가
     # 된다). 고정 공간(영어 학습 등)의 chats/ 는 위 경로 함수들이 미리 만든다.
-    msgs = data["messages"][-MAX_MESSAGES:]
-    ids = {m.get("id") for m in msgs}
-    for m in msgs:
-        if m.get("parent") not in ids:
-            m["parent"] = None
-    head = data.get("head") or ""
-    json_store.write_atomic(
-        path,
-        {
-            "messages": msgs,
-            "head": head if head in ids else (msgs[-1].get("id", "") if msgs else ""),
-            "links": [l for l in data.get("links") or []
-                      if l.get("from_id") in ids and l.get("to_id") in ids][-MAX_LINKS:],
-            "vocab_done": (data.get("vocab_done") or [])[-MAX_DONE:],
-        },
-        create_parents=False,
-    )
+    _trim(space)
+    json_store.write_atomic(path, space, create_parents=False)
+
+
+def _save(path: Path, session: dict) -> None:
+    """지금 세션 하나를 제자리에 써 넣는다(나머지 세션은 그대로)."""
+    space = load_space(path)
+    for i, s in enumerate(space["sessions"]):
+        if s["id"] == session["id"]:
+            space["sessions"][i] = session
+            break
+    else:
+        space["sessions"].append(session)
+    space["active"] = session["id"]
+    _save_space(path, space)
 
 
 def message(role: str, text: str, meta: dict | None = None, parent: str | None = None) -> dict:
@@ -166,21 +287,37 @@ def thread(msgs: list[dict], head: str) -> list[dict]:
 
 
 def append(path: Path, *msgs: dict) -> list[dict]:
-    """메시지를 덧붙이고 전체를 돌려준다. 끝자락(head)은 마지막 것으로 옮긴다."""
+    """지금 세션에 메시지를 덧붙인다. 끝자락(head)은 마지막 것으로 옮긴다."""
     with json_store.lock_for(path):
-        data = load_all(path)
+        data = current(path)
         added = [m for m in msgs if m]
         data["messages"].extend(added)
         if added:
             data["head"] = added[-1].get("id", "")
+            data["updated_at"] = time.time()
+            # 이름이 없는 세션은 **첫 질문**으로 이름을 짓는다. 목록에서 골라야
+            # 하는데 전부 "새 대화"라면 고를 수가 없다.
+            if not data["title"]:
+                first = next((m for m in data["messages"] if m.get("role") == "user"), None)
+                if first:
+                    data["title"] = title_from(first.get("text", ""))
         _save(path, data)
         return data["messages"]
+
+
+def title_from(text: str) -> str:
+    """첫 질문에서 세션 이름을 만든다(한 줄, 짧게)."""
+    one = " ".join(str(text or "").split())
+    # 논문 화면은 선택한 글을 인용으로 앞에 붙여 보낸다 — 그건 이름이 아니다
+    if "[질문]" in one:
+        one = one.split("[질문]", 1)[1].strip()
+    return one[:MAX_TITLE] or "새 대화"
 
 
 def set_head(path: Path, mid: str) -> bool:
     """보고 있는 가지를 옮긴다. 없는 메시지면 False."""
     with json_store.lock_for(path):
-        data = load_all(path)
+        data = current(path)
         if mid not in {m.get("id") for m in data["messages"]}:
             return False
         data["head"] = mid
@@ -197,7 +334,7 @@ def connect(path: Path, from_id: str, to_id: str, on: bool) -> bool:
     if not from_id or not to_id or from_id == to_id:
         return False
     with json_store.lock_for(path):
-        data = load_all(path)
+        data = current(path)
         ids = {m.get("id") for m in data["messages"]}
         if from_id not in ids or to_id not in ids:
             return False
@@ -230,7 +367,7 @@ def set_branch_names(path: Path, names: dict[str, str]) -> int:
     if not names:
         return 0
     with json_store.lock_for(path):
-        data = load_all(path)
+        data = current(path)
         n = 0
         for m in data["messages"]:
             name = names.get(str(m.get("id") or ""))
@@ -243,9 +380,96 @@ def set_branch_names(path: Path, names: dict[str, str]) -> int:
 
 
 def clear(path: Path) -> None:
-    # 대화를 비우면 후보 처리 기록·기억 연결도 함께 비운다 — 가리킬 것이 사라졌다.
+    """지금 세션을 비운다(다른 세션은 그대로).
+
+    후보 처리 기록·기억 연결도 함께 비운다 — 가리킬 것이 사라졌다.
+    """
     with json_store.lock_for(path):
-        _save(path, {"messages": [], "head": "", "links": [], "vocab_done": []})
+        data = current(path)
+        _save(path, {**new_session(), "id": data["id"], "created_at": data["created_at"]})
+
+
+# ── 세션 ─────────────────────────────────────────────────────────────
+
+def session_title(s: dict) -> str:
+    """목록에 보일 이름.
+
+    이름이 없으면 **첫 질문**에서 만든다. 세션이 생기기 전부터 있던 대화에는
+    이름이 없는데, 그것들이 전부 "새 대화"로 보이면 고를 수가 없다.
+    """
+    if s["title"]:
+        return s["title"]
+    first = next((m for m in s["messages"] if m.get("role") == "user"), None)
+    return title_from(first.get("text", "")) if first else "새 대화"
+
+
+def sessions_of(path: Path) -> dict:
+    """세션 목록(가벼운 요약)과 지금 보고 있는 세션."""
+    space = load_space(path)
+    return {
+        "active": space["active"],
+        "sessions": [{
+            "id": s["id"],
+            "title": session_title(s),
+            "turns": sum(1 for m in s["messages"] if m.get("role") == "user"),
+            "created_at": s["created_at"],
+            "updated_at": s["updated_at"],
+        } for s in space["sessions"]],
+    }
+
+
+def start_session(path: Path, title: str = "") -> str:
+    """새 대화를 시작하고 그리로 옮겨 간다. 새 세션의 id."""
+    with json_store.lock_for(path):
+        space = load_space(path)
+        cur = next((s for s in space["sessions"] if s["id"] == space["active"]), None)
+        # 아직 아무 말도 안 한 빈 세션이 있으면 그걸 쓴다 — "새 대화"를 여러 번
+        # 눌렀다고 빈 껍데기가 쌓이면 목록이 못 쓰게 된다.
+        if cur and not cur["messages"]:
+            return cur["id"]
+        fresh = new_session(title)
+        space["sessions"].append(fresh)
+        space["active"] = fresh["id"]
+        _save_space(path, space)
+        return fresh["id"]
+
+
+def use_session(path: Path, sid: str) -> bool:
+    """이 세션으로 옮겨 간다. 없으면 False."""
+    with json_store.lock_for(path):
+        space = load_space(path)
+        if sid not in {s["id"] for s in space["sessions"]}:
+            return False
+        space["active"] = sid
+        _save_space(path, space)
+    return True
+
+
+def rename_session(path: Path, sid: str, title: str) -> bool:
+    with json_store.lock_for(path):
+        space = load_space(path)
+        for s in space["sessions"]:
+            if s["id"] == sid:
+                s["title"] = str(title or "").strip()[:MAX_TITLE]
+                _save_space(path, space)
+                return True
+    return False
+
+
+def drop_session(path: Path, sid: str) -> bool:
+    """세션을 통째로 지운다. 마지막 하나는 비우기만 한다(고를 것이 없어지면 안 된다)."""
+    with json_store.lock_for(path):
+        space = load_space(path)
+        keep = [s for s in space["sessions"] if s["id"] != sid]
+        if len(keep) == len(space["sessions"]):
+            return False
+        if not keep:
+            keep = [new_session()]
+        space["sessions"] = keep
+        if space["active"] == sid:
+            space["active"] = keep[-1]["id"]
+        _save_space(path, space)
+    return True
 
 
 def delete_message(path: Path, mid: str) -> bool:
@@ -255,7 +479,7 @@ def delete_message(path: Path, mid: str) -> bool:
     뿌리 없는 가지가 뜬다 — 지우려던 맥락이 사라진 채로 남는 셈이다.
     """
     with json_store.lock_for(path):
-        data = load_all(path)
+        data = current(path)
         cur = data["messages"]
         doomed = {mid}
         changed = True
@@ -284,7 +508,7 @@ def mark_vocab_done(path: Path, key: str) -> None:
     if not key:
         return
     with json_store.lock_for(path):
-        data = load_all(path)
+        data = current(path)
         if key in data["vocab_done"]:
             return
         data["vocab_done"].append(key)

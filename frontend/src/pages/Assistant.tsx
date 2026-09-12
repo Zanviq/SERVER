@@ -13,7 +13,9 @@ export function Assistant() {
   const chat = useRef<ChatPanelHandle>(null);
 
   const clearChat = async () => {
-    if (!confirm("비서와 나눈 대화를 모두 지울까요?")) return;
+    // 대화가 여럿이 됐으므로 **지금 대화만** 비운다고 분명히 말한다 —
+    // "모두 지울까요?"라고 물어 놓고 하나만 비우면 거짓말이 된다.
+    if (!confirm("지금 보고 있는 대화를 비울까요? (다른 대화는 그대로 남습니다)")) return;
     try {
       await chat.current?.clear();
       toast.ok("대화를 비웠습니다");
@@ -31,7 +33,10 @@ export function Assistant() {
         </button>
       }
     >
-      <ChatPanel ref={chat} className="mx-auto h-view-9 max-w-3xl" mode="assistant" space="assistant" />
+      {/* 넓으면 왼쪽 대화 목록 · 가운데 채팅 · 오른쪽 대화 지도로 편다.
+          좁아지면 목록은 채팅 위 드롭다운으로, 지도는 접힘으로 돌아간다. */}
+      <ChatPanel ref={chat} className="mx-auto h-view-9 w-full max-w-[1500px]"
+        mode="assistant" space="assistant" sidebars />
     </Shell>
   );
 }

@@ -105,6 +105,11 @@ class HeadInput(BaseModel):
     id: str
 
 
+class SessionInput(BaseModel):
+    """새 대화를 시작하거나 이름을 바꾼다."""
+    title: str = ""
+
+
 class LinkInput(BaseModel):
     """가지 사이 기억 연결. from_id 쪽 이야기를 to_id 쪽 맥락으로 끌어온다."""
     from_id: str
@@ -178,9 +183,64 @@ def space_messages(
     한 줄기뿐이고, 그 줄기를 고르는 것은 화면이 한다(백엔드와 같은 규칙).
     """
     path = _space_path(space, user, settings)
-    data = chat_store.load_all(path)
+    data = chat_store.current(path)
     _annotate_proposals(data["messages"], set(data["vocab_done"]), user, settings)
-    return {"messages": data["messages"], "head": data["head"], "links": data["links"]}
+    return {
+        "messages": data["messages"], "head": data["head"], "links": data["links"],
+        **chat_store.sessions_of(path),
+    }
+
+
+@router.post("/space/{space}/sessions")
+def space_new_session(
+    space: str,
+    body: SessionInput,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """새 대화를 시작한다(그리로 옮겨 간다).
+
+    가지와는 다른 것이다. 가지는 한 이야기 안에서 갈라지는 것이고, 세션은 아예
+    다른 이야기라 앞 맥락을 하나도 쓰지 않는다.
+    """
+    sid = chat_store.start_session(_space_path(space, user, settings), body.title)
+    return {"ok": True, "id": sid}
+
+
+@router.post("/space/{space}/sessions/{sid}")
+def space_use_session(
+    space: str, sid: str,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """이 대화로 옮겨 간다."""
+    if not chat_store.use_session(_space_path(space, user, settings), sid):
+        raise HTTPException(status_code=404, detail="그 대화를 찾을 수 없습니다.")
+    return {"ok": True, "active": sid}
+
+
+@router.patch("/space/{space}/sessions/{sid}")
+def space_rename_session(
+    space: str, sid: str,
+    body: SessionInput,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    if not chat_store.rename_session(_space_path(space, user, settings), sid, body.title):
+        raise HTTPException(status_code=404, detail="그 대화를 찾을 수 없습니다.")
+    return {"ok": True}
+
+
+@router.delete("/space/{space}/sessions/{sid}")
+def space_drop_session(
+    space: str, sid: str,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """대화를 통째로 지운다. 마지막 하나는 비우기만 한다(고를 것이 없어지면 안 된다)."""
+    if not chat_store.drop_session(_space_path(space, user, settings), sid):
+        raise HTTPException(status_code=404, detail="그 대화를 찾을 수 없습니다.")
+    return {"ok": True}
 
 
 @router.post("/space/{space}/head")

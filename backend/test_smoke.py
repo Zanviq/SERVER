@@ -7277,6 +7277,91 @@ def test_chat_tree_keeps_branches_apart():
     assert a1["id"] in left_ids, "다른 가지는 건드리지 않는다"
 
 
+def test_chat_sessions_are_separate_conversations():
+    """세션은 가지와 다르다 — 아예 **다른 이야기**라 맥락을 하나도 안 쓴다."""
+    from backend import chat_store
+
+    path = tmp_path_for("sessions")
+    chat_store.append(path,
+                      chat_store.message("user", "첫 대화의 질문"),
+                      chat_store.message("assistant", "첫 대화의 답"))
+    one = chat_store.sessions_of(path)
+    assert len(one["sessions"]) == 1
+    # 이름이 없으면 첫 질문으로 짓는다 — 목록이 전부 "새 대화"면 고를 수가 없다
+    assert one["sessions"][0]["title"] == "첫 대화의 질문"
+    assert one["sessions"][0]["turns"] == 1
+
+    sid = chat_store.start_session(path)
+    assert sid != one["active"]
+    assert chat_store.load(path) == [], "새 대화인데 앞 대화가 보인다"
+    chat_store.append(path, chat_store.message("user", "둘째 대화의 질문"))
+
+    two = chat_store.sessions_of(path)
+    assert len(two["sessions"]) == 2 and two["active"] == sid
+    assert [s["title"] for s in two["sessions"]] == ["첫 대화의 질문", "둘째 대화의 질문"]
+
+    # 돌아가면 그 대화가 그대로 있다
+    assert chat_store.use_session(path, one["active"]) is True
+    assert [m["text"] for m in chat_store.load(path)] == ["첫 대화의 질문", "첫 대화의 답"]
+    assert chat_store.use_session(path, "없는id") is False
+
+    # 검색·지난 대화 읽기는 **모든 세션**을 본다 — 세션을 나눈 것이 기록을 잃는
+    # 일이 되면 안 된다
+    every = [m["text"] for m in chat_store.load_every(path)]
+    assert every == ["첫 대화의 질문", "첫 대화의 답", "둘째 대화의 질문"], every
+
+    # 비우기는 **지금 세션만**
+    chat_store.clear(path)
+    assert chat_store.load(path) == []
+    assert len(chat_store.sessions_of(path)["sessions"]) == 2, "다른 세션까지 지웠다"
+
+    # 이름 바꾸기·지우기
+    assert chat_store.rename_session(path, sid, "이름 바꾼 대화") is True
+    assert any(s["title"] == "이름 바꾼 대화" for s in chat_store.sessions_of(path)["sessions"])
+    assert chat_store.drop_session(path, sid) is True
+    assert len(chat_store.sessions_of(path)["sessions"]) == 1
+    assert chat_store.drop_session(path, "없는id") is False
+    # 마지막 하나는 지워도 고를 것이 남아야 한다
+    last = chat_store.sessions_of(path)["sessions"][0]["id"]
+    assert chat_store.drop_session(path, last) is True
+    assert len(chat_store.sessions_of(path)["sessions"]) == 1
+
+
+def test_new_session_does_not_pile_up_empty_shells():
+    """'새 대화'를 여러 번 눌러도 빈 껍데기가 쌓이지 않는다."""
+    from backend import chat_store
+
+    path = tmp_path_for("sessions-empty")
+    a = chat_store.start_session(path)
+    b = chat_store.start_session(path)
+    c = chat_store.start_session(path)
+    assert a == b == c, "아무 말도 안 한 세션을 두고 또 만들었다"
+    assert len(chat_store.sessions_of(path)["sessions"]) == 1
+
+
+def test_sessions_do_not_grow_the_file_past_the_old_limit():
+    """세션을 많이 만들어도 파일 크기는 예전 상한 그대로다.
+
+    한 번에 원자적으로 쓰는 파일이라 크기가 곧 위험이다. 세션마다 600개를 두면
+    서른 개 만들었을 때 18,000개가 된다.
+    """
+    from backend import chat_store
+
+    path = tmp_path_for("sessions-cap")
+    for n in range(4):
+        chat_store.start_session(path)
+        for i in range(200):
+            chat_store.append(path, chat_store.message("user", f"s{n}-{i}"))
+    total = len(chat_store.load_every(path))
+    assert total <= chat_store.MAX_MESSAGES, total
+    # 깎여도 지금 보고 있는 대화는 살아 있고, 나무가 깨지지 않는다
+    cur = chat_store.current(path)
+    assert cur["messages"], "지금 세션이 통째로 날아갔다"
+    ids = {m["id"] for m in cur["messages"]}
+    assert all(m["parent"] is None or m["parent"] in ids for m in cur["messages"]), "부모 잃은 미아"
+    assert cur["head"] in ids
+
+
 def test_old_flat_conversations_read_as_one_branch():
     """parent 가 없던 옛 파일도 그대로 열린다(한 줄은 가지가 하나인 나무다)."""
     from backend import chat_store, json_store
@@ -7288,10 +7373,19 @@ def test_old_flat_conversations_read_as_one_branch():
         {"id": "m3", "role": "user", "text": "고마워", "ts": 3, "meta": {}},
     ]}, create_parents=True)
 
-    data = chat_store.load_all(path)
+    data = chat_store.current(path)
     assert [m["parent"] for m in data["messages"]] == [None, "m1", "m2"]
     assert data["head"] == "m3", "끝자락이 없으면 마지막 메시지를 본다"
     assert [m["id"] for m in chat_store.thread(data["messages"], data["head"])] == ["m1", "m2", "m3"]
+
+    # 세션 층이 없던 파일은 **세션 하나로 감싸서** 읽는다 — 그대로 열려야 한다
+    got = chat_store.sessions_of(path)
+    assert len(got["sessions"]) == 1 and got["sessions"][0]["turns"] == 2
+    # 이름이 없던 옛 대화도 첫 질문으로 이름이 붙는다 — 전부 "새 대화"면 고를 수 없다
+    assert got["sessions"][0]["title"] == "안녕", got["sessions"][0]
+    # 읽을 때마다 id 가 달라지면 "이 대화로 옮겨 줘"가 404 가 된다
+    assert got["active"] == data["id"] == chat_store.sessions_of(path)["active"]
+    assert chat_store.use_session(path, got["active"]) is True
 
     # 파일을 미리 고쳐 쓰지 않는다 — 다음 저장 때 자연히 새 모양이 된다
     chat_store.append(path, chat_store.message("assistant", "천만에요", parent="m3"))
@@ -8967,8 +9061,9 @@ def test_no_store_writes_without_holding_the_lock():
 
     root = pathlib.Path(__file__).resolve().parent
     targets = sorted(root.glob("*_store.py")) + [root / "trash.py", root / "accounts.py"]
-    #: 쓰기만 하는 헬퍼(부른 쪽이 락을 잡는다) — 이름을 적어 두고 그 외는 막는다
-    allowed = {"_save", "write_transcript"}
+    #: 쓰기만 하는 헬퍼(부른 쪽이 락을 잡는다) — 이름을 적어 두고 그 외는 막는다.
+    #: 여기에 이름을 더할 때는 **모든 호출자가 락 안에 있는지** 직접 확인할 것.
+    allowed = {"_save", "_save_space", "write_transcript"}
     #: 손으로 쓰는 것도 센다. 회의 문서가 `tmp.write_text(...)` + `tmp.replace(p)`
     #: 라는 자작 원자쓰기를 하고 있었는데, write_atomic 만 보던 이 검사에 걸리지
     #: 않아 **락 없는 이어 쓰기**가 오래 남아 있었다(실측: 동시 20건 중 1건만 남았다).

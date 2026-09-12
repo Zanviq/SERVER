@@ -109,7 +109,7 @@ export function deepestLeaf(msgs: TreeMessage[], id: string): string {
  */
 const WIDE = /[ᄀ-ᇿ⺀-鿿가-힯＀-｠]/;
 
-export function fitLabel(text: string, px = NODE_W - 22, size = 11.5): string {
+export function fitLabel(text: string, px = NODE_W - 10, size = 10.5): string {
   const one = (text || "").replace(/\s+/g, " ").trim();
   if (!one) return "(빈 메시지)";
   const w = (ch: string) => (WIDE.test(ch) ? size : size * 0.52);
@@ -159,18 +159,28 @@ export function buildTurns(msgs: TreeMessage[], head: string): Turn[] {
   return (kids.get("") ?? []).filter((m) => m.role === "user").map((m) => build(m, 0));
 }
 
-export const NODE_W = 132;
-export const NODE_H = 34;
-export const COL_GAP = 60;
-export const ROW_GAP = 14;
+//: 노드 한 칸이 차지하는 가로 폭. 동그라미는 작지만 **밑에 붙는 글**이 이만큼
+//: 넓어서, 이 값이 칸 사이 간격을 정한다.
+export const NODE_W = 118;
+//: 동그라미 + 아래 글까지의 높이
+export const NODE_H = 42;
+//: 동그라미 반지름(빛무리는 이보다 크게 그린다)
+export const DOT_R = 8;
+//: 세로 한 단 사이
+export const ROW_GAP = 46;
+//: 가로 칸 사이
+export const COL_GAP = 10;
 
 /**
- * 겹치지 않는 나무 배치(왼→오른쪽).
+ * 겹치지 않는 나무 배치(**위→아래**).
  *
- * 잎은 저마다 한 줄을 차지하고, 부모는 제 자식들의 한가운데에 선다. 잎이 줄을
- * 나눠 쓰지 않으므로 **겹칠 수가 없다** — 레퍼런스가 쓰던 물리 시뮬레이션은
+ * 잎은 저마다 한 칸(가로)을 차지하고, 부모는 제 자식들의 한가운데에 선다. 잎이
+ * 칸을 나눠 쓰지 않으므로 **겹칠 수가 없다** — 레퍼런스가 쓰던 물리 시뮬레이션은
  * 노드가 서로 밀며 떨리고, 같은 대화를 다시 열 때마다 모양이 달라져서 어디에
  * 무엇이 있었는지 기억할 수 없었다. 여기서는 같은 대화면 언제나 같은 그림이다.
+ *
+ * (x, y) 는 노드 **칸의 왼쪽 위**다. 동그라미는 칸의 가로 한가운데에, 글은 그
+ * 아래에 놓인다.
  */
 export function layout(roots: Turn[], collapsed: Set<string> = new Set()): {
   nodes: Placed[];
@@ -180,20 +190,20 @@ export function layout(roots: Turn[], collapsed: Set<string> = new Set()): {
 } {
   const nodes: Placed[] = [];
   const edges: { from: Placed; to: Placed }[] = [];
-  let row = 0;
+  let col = 0;
 
   const place = (t: Turn): Placed => {
     const kids = collapsed.has(t.id) ? [] : t.children;
-    let y: number;
+    let x: number;
     let placedKids: Placed[] = [];
     if (kids.length === 0) {
-      y = row * (NODE_H + ROW_GAP);
-      row += 1;
+      x = col * (NODE_W + COL_GAP);
+      col += 1;
     } else {
       placedKids = kids.map(place);
-      y = (placedKids[0].y + placedKids[placedKids.length - 1].y) / 2;
+      x = (placedKids[0].x + placedKids[placedKids.length - 1].x) / 2;
     }
-    const me: Placed = { ...t, x: t.depth * (NODE_W + COL_GAP), y };
+    const me: Placed = { ...t, x, y: t.depth * (NODE_H + ROW_GAP) };
     nodes.push(me);
     for (const k of placedKids) edges.push({ from: me, to: k });
     return me;
