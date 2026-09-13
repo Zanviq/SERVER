@@ -7277,6 +7277,124 @@ def test_chat_tree_keeps_branches_apart():
     assert a1["id"] in left_ids, "다른 가지는 건드리지 않는다"
 
 
+def test_papers_and_meetings_show_up_in_the_document_tree():
+    """논문·회의가 문서 트리에 폴더로 붙고, 거기서 보고 고치고 지울 수 있다.
+
+    파일을 옮기지 않고 **붙여서** 보여 준다(mounts.py 설명 참조). 그래서 여기서
+    한 일이 논문·회의 화면에도 그대로 반영된다 — 같은 파일이기 때문이다.
+    """
+    import base64 as _b64
+
+    _login()
+    png = _b64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+    pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n"
+
+    r = client.post("/api/papers/upload", files={"file": ("내 논문.pdf", pdf, "application/pdf")})
+    assert r.status_code == 200, r.text
+    pid = r.json()["id"]
+
+    r = client.post("/api/meetings/upload",
+                    data={"title": "붙임 시험 회의", "date": "2026-09-14"},
+                    files={"file": ("녹음.webm", b"fake-audio-bytes", "audio/webm")})
+    assert r.status_code == 200, r.text
+    mid = r.json()["id"]
+    client.put(f"/api/meetings/{mid}/docs/회의록", json={"content": "# 회의록\n첫 줄"})
+
+    try:
+        # 폴더 이름은 **항목의 제목**이다(제목이 없으면 파일 이름). 값을 박아 두지
+        # 말고 저장소가 말하는 제목을 그대로 쓴다.
+        paper_title = client.get(f"/api/papers/{pid}").json()["title"]
+        assert paper_title, "논문 제목이 비어 있다 — 폴더 이름을 만들 수 없다"
+
+        tree = client.get("/api/notes/tree").json()
+        # 고정 폴더가 **서버가 정한 차례로** 온다(화면이 이름을 박아 두지 않게)
+        assert tree["pinned"] == ["논문", "회의"], tree["pinned"]
+        assert "논문" in tree["folders"] and "회의" in tree["folders"]
+        assert f"논문/{paper_title}" in tree["folders"], tree["folders"]
+        assert "회의/붙임 시험 회의" in tree["folders"], tree["folders"]
+
+        paths = {n["path"]: n for n in tree["notes"]}
+        pdf_rel = f"논문/{paper_title}/내 논문.pdf"
+        doc_rel = "회의/붙임 시험 회의/회의록.md"
+        assert pdf_rel in paths, [p for p in paths if p.startswith("논문/")]
+        assert doc_rel in paths, [p for p in paths if p.startswith("회의/")]
+        # 원본은 못 고치고, 회의록은 고칠 수 있다
+        assert paths[pdf_rel]["editable"] is False and paths[pdf_rel]["kind"] == "pdf"
+        assert paths[doc_rel]["editable"] is True
+
+        # 읽기: 원본은 /raw 로, 회의록은 /get 으로
+        assert client.get("/api/notes/raw", params={"path": pdf_rel}).status_code == 200
+        got = client.get("/api/notes/get", params={"path": doc_rel})
+        assert got.status_code == 200 and "첫 줄" in got.json()["content"]
+        assert got.json()["path"] == doc_rel, "붙은 자리가 아니라 실제 경로를 돌려줬다"
+
+        # 문서 화면에서 고치면 **회의 화면에도** 반영된다(같은 파일이다)
+        r = client.put("/api/notes/save", json={"path": doc_rel, "content": "# 회의록\n고친 줄"})
+        assert r.status_code == 200, r.text
+        back = client.get(f"/api/meetings/{mid}/docs/회의록").json()
+        assert "고친 줄" in back["content"], back
+
+        # 원본은 여기서 고칠 수 없다
+        assert client.put("/api/notes/save",
+                          json={"path": pdf_rel, "content": "x"}).status_code == 415
+
+        # 이름 바꾸기·옮기기는 막는다 — 그 파일의 정체는 색인이 정한다
+        assert client.post("/api/notes/rename",
+                           json={"path": doc_rel, "new_name": "딴이름"}).status_code == 400
+        assert client.post("/api/notes/move",
+                           json={"path": doc_rel, "target_folder": ""}).status_code == 400
+        # 마운트 이름공간 **안으로** 새로 만드는 것도 막는다(진짜 폴더가 생기면
+        # 이름이 겹쳐 마운트가 통째로 접힌다)
+        assert client.post("/api/notes/folder", json={"path": "논문/새 폴더"}).status_code == 400
+        assert client.put("/api/notes/save",
+                          json={"path": "회의/아무거나.md", "content": "x"}).status_code == 404
+
+        # 회의록을 문서 화면에서 지우면 회의 쪽에서도 사라진다
+        assert client.delete("/api/notes/delete", params={"path": doc_rel}).status_code == 200
+        assert client.get(f"/api/meetings/{mid}/docs/회의록").status_code == 404
+
+        # 항목 폴더를 지우면 그 논문이 지워진다(파일만 지우고 색인에 남기지 않는다)
+        assert client.delete("/api/notes/folder", params={"path": f"논문/{paper_title}"}).status_code == 200
+        assert client.get(f"/api/papers/{pid}").status_code == 404
+        assert f"논문/{paper_title}" not in client.get("/api/notes/tree").json()["folders"]
+    finally:
+        client.delete(f"/api/papers/{pid}")
+        client.delete(f"/api/meetings/{mid}")
+
+
+def test_mounted_folders_never_shadow_a_real_folder():
+    """같은 이름의 진짜 폴더가 이미 있으면 붙이지 않는다.
+
+    이 기능이 생기기 **전에** 만들어 둔 `논문` 폴더가 있을 수 있다. 그 위에 덮어
+    붙이면 사용자 문서가 화면에서 통째로 사라진다 — 기능 하나 켰다고 남의 글이
+    안 보이게 되면 안 된다.
+    """
+    import shutil as _shutil
+
+    from backend import storage
+    from backend.auth import SessionUser
+    from backend.config import get_settings
+
+    _login()
+    # (붙어 있을 때 새로 만드는 길이 막히는 것은 위 테스트가 확인한다. 여기서는
+    #  붙은 것이 없으므로 `논문` 은 그냥 평범한 이름이고 만들 수 있어야 한다.)
+    # 예전부터 있던 폴더를 흉내 낸다 — 디스크에 직접 만든다
+    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    real = storage.user_data_root(u, get_settings()) / "논문"
+    real.mkdir(parents=True, exist_ok=True)
+    (real / "내 글.md").write_text("사용자가 쓴 글", encoding="utf-8")
+    try:
+        tree = client.get("/api/notes/tree").json()
+        assert "논문" not in tree["pinned"], "사용자 폴더를 가리고 마운트했다"
+        paths = {n["path"] for n in tree["notes"]}
+        assert "논문/내 글.md" in paths, "사용자 문서가 사라졌다"
+        got = client.get("/api/notes/get", params={"path": "논문/내 글.md"})
+        assert got.status_code == 200 and got.json()["content"] == "사용자가 쓴 글"
+    finally:
+        _shutil.rmtree(real, ignore_errors=True)
+
+
 def test_chat_sessions_are_separate_conversations():
     """세션은 가지와 다르다 — 아예 **다른 이야기**라 맥락을 하나도 안 쓴다."""
     from backend import chat_store

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   NotebookPen, FolderPlus, FilePlus, Trash2, Save, Link2, Loader2,
-  FileText, Search, X, Folder, ChevronRight, ChevronDown, ChevronLeft, Home, FolderInput, Eye, Pencil, Upload, Download,
+  FileText, Search, X, Folder, FolderLock, ChevronRight, ChevronDown, ChevronLeft, Home, FolderInput, Eye, Pencil, Upload, Download,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { MarkdownView } from "../components/notes/LazyMarkdownView";
@@ -42,7 +42,7 @@ const parentDir = (path: string) => {
   return i >= 0 ? path.slice(0, i) : "";
 };
 
-function buildTree(folders: string[], notes: NoteSummary[]): TreeNode {
+function buildTree(folders: string[], notes: NoteSummary[], pinned: string[] = []): TreeNode {
   const root: TreeNode = { name: "", path: "", children: [], notes: [] };
   const byPath = new Map<string, TreeNode>([["", root]]);
 
@@ -66,7 +66,14 @@ function buildTree(folders: string[], notes: NoteSummary[]): TreeNode {
   });
 
   const sortNode = (node: TreeNode) => {
-    node.children.sort((a, b) => a.name.localeCompare(b.name));
+    // 고정 폴더(논문·회의처럼 다른 화면이 관리하는 것)는 **맨 위에**, 서버가 준
+    // 차례대로. 나머지는 이름순. 이름을 화면에 박아 두지 않는다 — 서버가
+    // pinned 로 알려 준다(mounts.MOUNT_DIRS).
+    const rank = (n: TreeNode) => {
+      const i = pinned.indexOf(n.path);
+      return i < 0 ? pinned.length : i;
+    };
+    node.children.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
     // 화면에 보이는 값(확장자 포함 파일명) 기준으로 정렬해야 순서가 납득된다
     node.notes.sort((a, b) => fileName(a.path).localeCompare(fileName(b.path)));
     node.children.forEach(sortNode);
@@ -78,6 +85,9 @@ function buildTree(folders: string[], notes: NoteSummary[]): TreeNode {
 export function Notes() {
   const prefs = useSettings((st) => st.settings?.notes);
   const [folders, setFolders] = useState<string[]>([]);
+  //: 목록 맨 위에 고정하고 다른 색으로 그릴 폴더 — 논문·회의처럼 **다른 화면이
+  //: 관리하는** 것들이다. 이름을 화면에 박아 두지 않고 서버가 알려 준다.
+  const [pinned, setPinned] = useState<string[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [curFolder, setCurFolder] = useState(""); // 새 노트/폴더가 생성될 위치
@@ -122,13 +132,14 @@ export function Notes() {
   const [params, setParams] = useSearchParams();
 
   const autosaveMs = prefs?.autosave_ms ?? 900;
-  const tree = useMemo(() => buildTree(folders, notes), [folders, notes]);
+  const tree = useMemo(() => buildTree(folders, notes, pinned), [folders, notes, pinned]);
 
   const reloadTree = useCallback(async () => {
     try {
       const t = await api.noteTree();
       setFolders(t.folders);
       setNotes(t.notes);
+      setPinned(t.pinned ?? []);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "목록 실패");
     }
@@ -521,6 +532,9 @@ export function Notes() {
   };
 
   // 재귀 폴더 렌더
+  /** 다른 화면이 관리하는 폴더인가(논문·회의). 서버가 준 목록으로만 판단한다. */
+  const isPinned = (path: string) => pinned.includes(path);
+
   const renderNode = (node: TreeNode, depth: number): JSX.Element[] => {
     const rows: JSX.Element[] = [];
     for (const child of node.children) {
@@ -549,8 +563,15 @@ export function Notes() {
               className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 text-left">
               {isOpen ? <ChevronDown size={13} className="shrink-0 text-fg-muted" />
                 : <ChevronRight size={13} className="shrink-0 text-fg-muted" />}
-              <Folder size={14} className="shrink-0 text-warning" />
-              <span className="truncate font-medium">{child.name}</span>
+              {/* 다른 화면이 관리하는 폴더(논문·회의)는 색과 아이콘을 달리해
+                  한눈에 구분한다. 배경을 바꾸지 않는 까닭은 드래그 강조·현재 폴더
+                  표시가 이미 배경을 쓰고 있어서다(겹치면 드롭 위치가 안 보인다). */}
+              {isPinned(child.path)
+                ? <FolderLock size={14} className="shrink-0 text-accent" />
+                : <Folder size={14} className="shrink-0 text-warning" />}
+              <span className={`truncate font-medium ${isPinned(child.path) ? "text-accent-fg" : ""}`}>
+                {child.name}
+              </span>
             </button>
             {/* 터치 기기엔 hover가 없어 group-hover로만 띄우면 모바일에서
                 폴더 다운로드·삭제를 영영 못 누른다. 좁은 화면은 항상 표시.
@@ -558,17 +579,24 @@ export function Notes() {
                 빠져 키보드만 쓰는 사람은 폴더 삭제에 닿을 길이 없어진다. */}
             {/* 아이콘은 작게 두되 누를 자리는 28px 로 벌린다 — 20px 두 개가 붙어
                 있으면 휴대폰에서 '받기'를 누르려다 '삭제'가 눌린다. */}
-            <a href={api.noteArchiveUrl(child.path)} download
-              onClick={(e) => e.stopPropagation()}
-              className="grid h-7 w-7 shrink-0 place-items-center rounded text-fg-muted transition-opacity hover:text-accent sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
-              title="폴더를 zip으로 내려받기" aria-label="폴더 다운로드">
-              <Download size={13} />
-            </a>
-            <button onClick={() => setDelFolder(child.path)}
-              className="grid h-7 w-7 shrink-0 place-items-center rounded text-fg-muted transition-opacity hover:text-danger sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
-              title="폴더 삭제" aria-label="폴더 삭제">
-              <Trash2 size={13} />
-            </button>
+            {/* 고정 폴더(논문·회의) 자체는 받을 수도 지울 수도 없다 — 실제 폴더가
+                아니라 다른 저장소를 붙여 놓은 자리다. 서버도 거절하므로, 눌러도
+                오류만 나는 단추를 보여 주지 않는다(안의 항목에는 그대로 있다). */}
+            {!isPinned(child.path) && (
+              <>
+                <a href={api.noteArchiveUrl(child.path)} download
+                  onClick={(e) => e.stopPropagation()}
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded text-fg-muted transition-opacity hover:text-accent sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
+                  title="폴더를 zip으로 내려받기" aria-label="폴더 다운로드">
+                  <Download size={13} />
+                </a>
+                <button onClick={() => setDelFolder(child.path)}
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded text-fg-muted transition-opacity hover:text-danger sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
+                  title="폴더 삭제" aria-label="폴더 삭제">
+                  <Trash2 size={13} />
+                </button>
+              </>
+            )}
           </div>
         </li>,
       );

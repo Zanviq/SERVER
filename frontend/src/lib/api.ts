@@ -760,6 +760,11 @@ export interface NotesGraph {
 export interface NotesTree {
   folders: string[];
   notes: NoteSummary[];
+  /**
+   * 목록 맨 위에 고정하고 다른 색으로 그릴 폴더(논문·회의처럼 **다른 화면이
+   * 관리하는** 것). 이름을 화면에 박아 두지 않도록 서버가 알려 준다.
+   */
+  pinned?: string[];
 }
 export interface TrashEntry {
   id: string;

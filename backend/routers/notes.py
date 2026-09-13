@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import archive, doc_cache
+from .. import archive, doc_cache, meeting_store, mounts, paper_store
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..json_store import lock_for, write_text_atomic
@@ -92,6 +92,9 @@ class GraphData(BaseModel):
 class NoteTree(BaseModel):
     folders: list[str]  # 모든 폴더의 상대경로(POSIX)
     notes: list[NoteSummary]
+    #: 목록 맨 위에 고정하고 다른 색으로 그릴 폴더(논문·회의처럼 다른 화면이
+    #: 관리하는 것들). 화면이 이름을 박아 두지 않도록 서버가 알려 준다.
+    pinned: list[str] = []
 
 
 class FolderRequest(BaseModel):
@@ -112,6 +115,41 @@ def _snippet(text: str, q: str, width: int = 60) -> str:
     start = max(0, i - width // 2)
     seg = text[start : start + width].replace("\n", " ").strip()
     return ("…" if start > 0 else "") + seg + ("…" if start + width < len(text) else "")
+
+
+def _on_mount(user: SessionUser, settings: Settings, rel: str) -> bool:
+    """이 경로가 **지금 붙어 있는** 마운트에 속하는가.
+
+    같은 이름의 진짜 폴더가 있어 마운트가 접혀 있으면 `논문/…` 은 평범한 문서
+    경로다. 그때까지 마운트로 다루면 사용자의 진짜 문서를 못 읽는다.
+    """
+    return mounts.head_of(rel) in mounts.active_roots(user, settings)
+
+
+def _mounted(user: SessionUser, settings: Settings, rel: str) -> mounts.MountedFile | None:
+    """이 경로가 논문·회의에서 붙여 온 파일인가.
+
+    붙어 있는 이름공간인데 짝이 없으면 404 로 끝낸다 — 그냥 통과시키면 그 자리에
+    **진짜 폴더**가 생겨 마운트를 가려 버린다.
+    """
+    if not _on_mount(user, settings, rel):
+        return None
+    hit = mounts.find(user, settings, rel)
+    if hit is None and mounts.find_folder(user, settings, rel) is None:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+    return hit
+
+
+def _reject_mount_reshape(user: SessionUser, settings: Settings, rel: str, verb: str) -> None:
+    """붙여 온 파일은 이름을 바꾸거나 옮길 수 없다.
+
+    그 파일이 무엇인지는 논문·회의 **색인**이 정한다. 문서 화면에서 이름만 바꾸면
+    색인과 실물이 어긋나 그 항목이 안 열린다. 이름은 논문·회의 화면에서 바꾼다.
+    """
+    if _on_mount(user, settings, rel):
+        raise HTTPException(
+            status_code=400,
+            detail=f"논문·회의에서 온 파일은 여기서 {verb} 수 없습니다 — 그 화면에서 바꾸세요.")
 
 
 def _existing(root: Path, rel: str) -> Path:
@@ -222,7 +260,26 @@ def list_notes(
     settings: Settings = Depends(get_settings),
 ):
     root = user_data_root(user, settings)
-    return [_summary_of(f.rel, f.stat) for f in walk_files(root)]
+    out = [_summary_of(f.rel, f.stat) for f in walk_files(root)]
+    out += _mounted_summaries(user, settings)
+    return out
+
+
+def _mounted_summaries(user: SessionUser, settings: Settings) -> list[NoteSummary]:
+    """논문·회의에서 붙여 온 파일들을 문서 목록 모양으로."""
+    out: list[NoteSummary] = []
+    for f in mounts.files(mounts.mounts(user, settings)):
+        try:
+            st = f.real.stat()
+        except OSError:
+            continue
+        name = f.rel.rsplit("/", 1)[-1]
+        stem = name[:-3] if name.endswith(".md") else (name.rsplit(".", 1)[0] if "." in name else name)
+        out.append(NoteSummary(
+            path=f.rel, title=stem, modified=st.st_mtime, kind=kind_of(name),
+            size=st.st_size, editable=f.editable,
+        ))
+    return out
 
 
 @router.get("/tree", response_model=NoteTree)
@@ -230,13 +287,23 @@ def notes_tree(
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    """폴더 목록 + 문서 목록(모든 종류). 프런트에서 중첩 트리로 구성."""
+    """폴더 목록 + 문서 목록(모든 종류). 프런트에서 중첩 트리로 구성.
+
+    논문·회의는 제 저장소에 그대로 있고 여기에 **붙여서** 보인다(mounts).
+    옮기지 않는 까닭은 mounts.py 설명에 적어 두었다.
+    """
     root = user_data_root(user, settings)
     # 파일과 폴더를 따로 훑으면 트리를 두 번 걷는다
     files, folders = walk_all(root)
+    ms = mounts.mounts(user, settings)
+    mounted = mounts.folders(ms)
     return NoteTree(
-        folders=folders,
-        notes=[_summary_of(f.rel, f.stat) for f in files],
+        folders=folders + mounted,
+        notes=[_summary_of(f.rel, f.stat) for f in files] + _mounted_summaries(user, settings),
+        # **실제로 붙은 것만** 고정한다. 이름만 보고 늘 고정하면, 같은 이름의 진짜
+        # 폴더가 있어 마운트를 접었을 때 사용자 폴더가 '다른 화면이 관리하는 것'
+        # 처럼 보인다(색도 다르고 맨 위로 올라간다).
+        pinned=[d for d in mounts.MOUNT_DIRS if d in mounted],
     )
 
 
@@ -247,6 +314,7 @@ def create_folder(
     settings: Settings = Depends(get_settings),
 ):
     root = user_data_root(user, settings)
+    mounts.reject_write(user, settings, req.path)
     target = safe_join(root, req.path)
     if target == root:
         raise HTTPException(status_code=400, detail="폴더 이름이 비어 있습니다.")
@@ -265,6 +333,18 @@ def delete_folder(
 ):
     """폴더를 하위 문서와 함께 휴지통으로 이동."""
     root = user_data_root(user, settings)
+    # 항목 폴더(`논문/제목`)를 지우는 것은 그 논문·회의를 지우는 것이다
+    item = mounts.find_folder(user, settings, path)
+    if item is not None:
+        if item.kind == "paper":
+            paper_store.delete_paper(user, settings, item.item_id)
+        else:
+            meeting_store.delete_meeting(user, settings, item.item_id)
+        return {"ok": True}
+    if _on_mount(user, settings, path):
+        raise HTTPException(
+            status_code=400,
+            detail="논문·회의 화면이 관리하는 폴더입니다. 안에 든 항목을 지우세요.")
     target = safe_join(root, path)
     if target == root:
         raise HTTPException(status_code=400, detail="루트는 삭제할 수 없습니다.")
@@ -282,7 +362,8 @@ def get_note(
 ):
     """텍스트 문서의 내용을 읽는다. 이미지·PDF 등은 /raw 를 쓴다."""
     root = user_data_root(user, settings)
-    target = _existing(root, path)
+    hit = _mounted(user, settings, path)
+    target = hit.real if hit else _existing(root, path)
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
     if not is_editable(target.name):
@@ -297,7 +378,9 @@ def get_note(
             detail="UTF-8 로 읽을 수 없는 파일입니다(편집하면 원본이 깨집니다). 내려받아 확인하세요.",
         ) from e
     return NoteDetail(
-        path=to_rel(root, target),
+        # 붙여 온 파일은 **붙은 자리**가 곧 경로다(실제 위치는 문서 루트 밖이라
+        # to_rel 이 쓸 수 없다)
+        path=hit.rel if hit else to_rel(root, target),
         title=target.stem,
         content=content,
         links=parse_wikilinks(content),
@@ -316,7 +399,8 @@ def raw_file(
 ):
     """원본 바이트. 이미지·PDF·미디어는 인라인, 그 외는 다운로드."""
     root = user_data_root(user, settings)
-    target = safe_join(root, path)
+    hit = _mounted(user, settings, path)
+    target = hit.real if hit else safe_join(root, path)
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
     media = None if download else inline_media_type(target.name)
@@ -386,6 +470,7 @@ async def upload(
 ):
     if not file.filename:
         raise HTTPException(status_code=400, detail="파일명이 없습니다.")
+    mounts.reject_write(user, settings, path)
     root = user_data_root(user, settings)
     dest_dir = resolve(path, user, settings)
     safe_name = _sanitize_filename(file.filename)
@@ -440,6 +525,21 @@ def save_note(
     settings: Settings = Depends(get_settings),
 ):
     root = user_data_root(user, settings)
+    # 논문·회의에서 붙여 온 파일은 그 저장소에 그대로 써 넣는다 — 문서 화면에서
+    # 고친 회의록이 회의 화면에도 바로 반영되는 것이 이 마운트의 핵심이다.
+    hit = _mounted(user, settings, req.path)
+    if hit is not None:
+        if not hit.editable:
+            raise HTTPException(status_code=415, detail="원본 파일은 여기서 고칠 수 없습니다.")
+        name = hit.rel.rsplit("/", 1)[-1].removesuffix(".md")
+        # base_modified 를 그대로 넘긴다 — 문서 화면과 회의 화면에서 같은 회의록을
+        # 열어 두면 나중에 저장한 쪽이 앞의 편집을 조용히 지운다.
+        meeting_store.write_doc(user, settings, hit.item_id, name, req.content,
+                                base_modified=req.base_modified or 0.0)
+        st = hit.real.stat()
+        return NoteSummary(path=hit.rel, title=name, modified=st.st_mtime,
+                           kind=kind_of(hit.real.name), size=st.st_size, editable=True)
+    mounts.reject_write(user, settings, req.path)
     # 저장은 **받은 경로 그대로**. 확장자는 만든 사람이 정한다.
     #
     # _existing() 을 쓰면 안 된다. 그건 위키링크를 위해 `회의` → `회의.md` 로
@@ -484,6 +584,18 @@ def delete_note(
     settings: Settings = Depends(get_settings),
 ):
     root = user_data_root(user, settings)
+    # 붙여 온 것은 **그 저장소의 삭제 길**로 보낸다. 파일만 지우면 색인에는
+    # 남아서 논문·회의 목록에 '열리지 않는 항목' 이 뜬다.
+    hit = _mounted(user, settings, path)
+    if hit is not None:
+        if hit.role == "doc":
+            meeting_store.delete_doc(user, settings, hit.item_id,
+                                     hit.rel.rsplit("/", 1)[-1].removesuffix(".md"))
+        elif hit.kind == "paper":
+            paper_store.delete_paper(user, settings, hit.item_id)
+        else:
+            meeting_store.delete_meeting(user, settings, hit.item_id)
+        return {"ok": True}
     target = _existing(root, path)
     if not target.exists():
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
@@ -500,6 +612,7 @@ def rename_note(
 ):
     """같은 폴더 안에서 파일명을 바꾼다(내용·폴더 유지)."""
     root = user_data_root(user, settings)
+    _reject_mount_reshape(user, settings, req.path, "이름을 바꿀")
     src = _existing(root, req.path)
     if not src.exists():
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
@@ -530,6 +643,10 @@ def move_note(
 ):
     """문서를 다른 폴더로 이동한다(파일명 유지)."""
     root = user_data_root(user, settings)
+    _reject_mount_reshape(user, settings, req.path, "옮길")
+    # 마운트 이름공간 **안으로** 옮기는 것도 막는다 — 거기에 진짜 폴더가 생기면
+    # 이름이 겹쳐 마운트가 통째로 접히고 논문·회의가 문서 화면에서 사라진다.
+    mounts.reject_write(user, settings, req.target_folder or "")
     src = _existing(root, req.path)
     if not src.exists():
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
