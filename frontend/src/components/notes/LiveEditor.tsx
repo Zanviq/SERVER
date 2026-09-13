@@ -43,7 +43,9 @@ const mdHighlight = HighlightStyle.define([
   { tag: [t.link, t.url], color: "rgb(var(--accent))", textDecoration: "underline" },
   { tag: t.monospace, fontFamily: "ui-monospace, SFMono-Regular, monospace" },
   { tag: t.quote, color: "rgb(var(--fg-muted))", fontStyle: "italic" },
-  { tag: t.list, color: "rgb(var(--accent))" },
+  // ⚠️ t.list 에 색을 주지 말 것. @lezer/markdown 은 그 태그를 **항목 안 모든
+  // 글자에** 물려주기 때문에, 글머리 기호만이 아니라 본문 전체가 강조색으로
+  // 칠해진다(링크처럼 보였다). 글머리 기호 색은 아래 `.cm-mdbullet` 이 준다.
   { tag: t.processingInstruction, color: "rgb(var(--fg-subtle))" },
   { tag: t.contentSeparator, color: "rgb(var(--fg-subtle))" },
   // 형광펜(==강조==) — 읽기 뷰의 <mark>와 같은 느낌으로
@@ -219,6 +221,33 @@ const exitEmptyQuote = (view: EditorView): boolean => {
 
 const lineDeco = (cls: string) => Decoration.line({ class: cls });
 
+/**
+ * 구문기호 자리에 **보이는 것**을 대신 놓는 작은 조각.
+ *
+ * `- 항목` 의 `-` 를 그냥 숨기면 글이 왼쪽으로 밀려 목록처럼 안 보인다. 같은
+ * 자리에 `•` 를 놓아야 읽기 뷰와 같은 모양이 된다. 체크박스도 마찬가지다.
+ */
+class MarkWidget extends WidgetType {
+  constructor(readonly text: string, readonly cls: string) {
+    super();
+  }
+  eq(o: MarkWidget) {
+    return o.text === this.text && o.cls === this.cls;
+  }
+  toDOM() {
+    const s = document.createElement("span");
+    s.className = this.cls;
+    s.textContent = this.text;
+    return s;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+/** 이 목록 항목이 체크박스인가(`- [ ]`). 그러면 글머리는 체크박스가 대신한다. */
+const TASK_LINE = /^\s*[-*+]\s+\[[ xX]\]/;
+
 function buildDeco(view: EditorView): DecorationSet {
   const ranges: Range<Decoration>[] = [];
   const state = view.state;
@@ -266,8 +295,66 @@ function buildDeco(view: EditorView): DecorationSet {
           }
           return undefined;
         }
+        // 구분선(`---`): 글자 대신 **진짜 줄**로 보여 준다.
+        if (node.name === "HorizontalRule") {
+          const line = state.doc.lineAt(node.from);
+          ranges.push(lineDeco("cm-mdrule").range(line.from));
+          if (!active.has(line.number)) ranges.push(hide.range(node.from, node.to));
+          return false;
+        }
+        // 표: 칸이 눈에 들어오게 고정폭 + 격자. 셀 편집은 tableTools 가 맡는다.
+        if (node.name === "Table") {
+          const a = state.doc.lineAt(node.from).number;
+          const z = state.doc.lineAt(Math.max(node.from, node.to - 1)).number;
+          for (let n = a; n <= z; n++) {
+            const cls = "cm-mdtable"
+              + (n === a ? " cm-mdtable-first" : "")
+              + (n === z ? " cm-mdtable-last" : "");
+            ranges.push(lineDeco(cls).range(state.doc.line(n).from));
+          }
+          return undefined;   // 안쪽(TableDelimiter 등)도 계속 본다
+        }
+        // 글머리 기호: `-`·`*`·`+` 를 `•` 로 바꿔 놓는다. 숫자 목록은 그대로 둔다
+        // (번호 자체가 정보다).
+        if (node.name === "ListMark") {
+          const line = state.doc.lineAt(node.from);
+          if (active.has(line.number)) return undefined;
+          const mark = state.doc.sliceString(node.from, node.to);
+          if (!/^[-*+]$/.test(mark)) return undefined;
+          // 체크박스 항목이면 글머리를 지운다 — `• ☐ 할 일` 은 표시가 둘이다
+          const deco = TASK_LINE.test(line.text)
+            ? hide
+            : Decoration.replace({ widget: new MarkWidget("•", "cm-mdbullet") });
+          ranges.push(deco.range(node.from, node.to));
+          return undefined;
+        }
+        // 체크박스: `[ ]`·`[x]` 를 눌러 보이는 네모로.
+        if (node.name === "TaskMarker") {
+          const line = state.doc.lineAt(node.from);
+          if (active.has(line.number)) return undefined;
+          const done = /x/i.test(state.doc.sliceString(node.from, node.to));
+          ranges.push(Decoration.replace({
+            widget: new MarkWidget(done ? "☑" : "☐", `cm-mdtask${done ? " cm-mdtask-done" : ""}`),
+          }).range(node.from, node.to));
+          return undefined;
+        }
+        // 인용문 왼쪽 띠 — 콜아웃이 아닌 보통 인용문에도 준다(위 Blockquote 분기는
+        // 콜아웃만 처리하고 undefined 로 내려보낸다).
+        if (node.name === "QuoteMark") {
+          const line = state.doc.lineAt(node.from);
+          ranges.push(lineDeco("cm-mdquote").range(line.from));
+          return undefined;
+        }
         if (HIDE.has(node.name)) {
           const ln = state.doc.lineAt(node.from).number;
+          // HeaderMark 는 ATX(`##`)만 숨긴다. Setext 제목의 밑줄(`---`·`===`)도
+          // 같은 이름으로 오는데, 그것까지 숨기면 `글` 다음 줄에 쓴 `---` 이
+          // 화면에서 **통째로 사라지고** 윗줄만 커진다 — 사용자는 구분선을 넣었다고
+          // 생각하는데 아무것도 안 보인다(실측).
+          if (node.name === "HeaderMark"
+              && !state.doc.sliceString(node.from, node.to).startsWith("#")) {
+            return undefined;
+          }
           if (!active.has(ln)) ranges.push(hide.range(node.from, node.to));
         }
         return undefined;
@@ -436,6 +523,43 @@ const editorTheme = EditorView.theme({
     cursor: "pointer",
   },
   ".cm-copy-btn:hover": { color: "rgb(var(--fg))" },
+  // 구분선(`---`) — 글자를 숨기고 그 줄에 실제 선을 긋는다. 테두리는 줄 높이를
+  // 바꾸지 않도록 배경 그라디언트로 그린다(마진 금지 규칙과 같은 이유).
+  ".cm-mdrule": {
+    backgroundImage: "linear-gradient(rgb(var(--line-strong)), rgb(var(--line-strong)))",
+    backgroundSize: "100% 1px",
+    backgroundPosition: "center",
+    backgroundRepeat: "no-repeat",
+  },
+  // 표 — 칸이 눈에 들어오게 고정폭. 파이프가 세로로 줄을 맞춘다.
+  ".cm-mdtable": {
+    fontFamily: "ui-monospace, SFMono-Regular, monospace",
+    fontSize: "13px",
+    backgroundColor: "rgb(var(--bg-subtle) / 0.6)",
+    borderLeft: "1px solid rgb(var(--line))",
+    borderRight: "1px solid rgb(var(--line))",
+  },
+  ".cm-mdtable-first": {
+    borderTop: "1px solid rgb(var(--line))",
+    borderTopLeftRadius: "6px",
+    borderTopRightRadius: "6px",
+    paddingTop: "3px",
+  },
+  ".cm-mdtable-last": {
+    borderBottom: "1px solid rgb(var(--line))",
+    borderBottomLeftRadius: "6px",
+    borderBottomRightRadius: "6px",
+    paddingBottom: "3px",
+  },
+  // 글머리 기호 — 읽기 뷰의 list-disc 와 같은 크기로 보이게
+  ".cm-mdbullet": { color: "rgb(var(--accent))", fontWeight: "700" },
+  ".cm-mdtask": { color: "rgb(var(--accent))" },
+  ".cm-mdtask-done": { color: "rgb(var(--positive))" },
+  // 인용문 왼쪽 띠 — 읽기 뷰(.prose-server blockquote)와 같은 모양
+  ".cm-mdquote": {
+    borderLeft: "2px solid rgb(var(--accent))",
+    paddingLeft: "8px",
+  },
   // 콜아웃 — 읽기 뷰(.callout)와 같은 색. 여기서는 줄 단위라 왼쪽 띠만 준다.
   ".cm-callout": {
     borderLeft: "3px solid rgb(var(--line-strong))",

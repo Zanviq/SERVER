@@ -7,6 +7,10 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import rehypeSlug from "rehype-slug";
+import rehypeHighlight from "rehype-highlight";
+// 코드 색은 앱 테마 변수로 칠한다(index.css 의 .hljs-* 규칙) — 별도 테마 CSS 를
+// 가져오면 다크/라이트를 따라오지 못해 어두운 배경에 검은 글씨가 된다.
 // 수식 글꼴·자리잡기. **여기서 가져온다** — 이 화면은 지연 로드되므로 수식을
 // 쓰지 않는 사람은 이 CSS·폰트를 내려받지 않는다.
 import "katex/dist/katex.min.css";
@@ -73,17 +77,35 @@ export function MarkdownView({
     <div className="prose-server">
       <ReactMarkdown
         // 단일 엔터 줄바꿈(remarkBreaks) + GFM(표/체크박스/취소선/자동링크)
-        remarkPlugins={[remarkGfm, remarkBreaks, remarkHighlight, remarkMath]}
+        // singleTilde:false — 물결 하나(`H~2~O`)를 취소선으로 보지 않는다. 화학식·
+        // 첨자 표기가 통째로 <del> 이 되던 것을 막는다(취소선은 `~~두 개~~` 만).
+        remarkPlugins={[[remarkGfm, { singleTilde: false }], remarkBreaks,
+                        remarkHighlight, remarkMath]}
         // 인라인 HTML/SVG 파싱(rehypeRaw) 후 살균(rehypeSanitize, svg 허용 스키마).
         // **수식은 살균 뒤에 그린다**(rehypeKatex). 앞에서 그리면 KaTeX 가 만든
         // 수백 개의 class 를 살균이 전부 지워 글자만 남고, 통과시키자니 className
         // 을 통째로 여는 셈이라 위험하다. 뒤에 두면 KaTeX 는 이미 걸러진 수식
         // 문자열만 받고, 그 출력은 KaTeX 가 만든 것이라 믿을 수 있다
         // (trust 기본값 false — \href·\htmlClass 같은 것은 그리지 않는다).
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema],
-                        [rehypeKatex, { throwOnError: false, errorColor: "rgb(var(--danger))" }]]}
+        // rehypeSlug 는 살균 **앞**이라도 되지만, 뒤에 두면 살균이 id 를 지운다.
+        // rehypeHighlight 는 살균 뒤다 — 토큰마다 class 를 수백 개 붙이므로 앞에
+        // 두면 살균이 전부 걷어내 색이 사라진다(수식과 같은 이유).
+        rehypePlugins={[rehypeRaw, rehypeSlug, [rehypeSanitize, mdSanitizeSchema],
+                        [rehypeKatex, { throwOnError: false, errorColor: "rgb(var(--danger))" }],
+                        [rehypeHighlight, { detect: false, ignoreMissing: true }]]}
         components={{
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+          // 칸이 많은 표가 화면을 옆으로 밀지 않도록 **감싸서** 그 안에서만 흐르게
+          // 한다. 표 자체를 스크롤 상자로 만들면(display:block) 너비 100%가 먹히지
+          // 않아 좁은 표가 내용만큼 쪼그라든다.
+          table: ({ children, ...props }) => {
+            const { node: _n, ...rest } = props as Record<string, unknown>;
+            return (
+              <div className="table-wrap">
+                <table {...rest}>{children}</table>
+              </div>
+            );
+          },
           blockquote: ({ children, ...props }) => {
             // `> [!NOTE] 제목` 형태면 콜아웃으로 그린다(GitHub·옵시디언과 같은 표기).
             const hit = parseCallout(children);
@@ -94,7 +116,9 @@ export function MarkdownView({
               <div className={`callout callout-${hit.kind}`}>
                 <div className="callout-head">
                   <span aria-hidden="true">{spec.icon}</span>
-                  <span>{hit.title || spec.label}</span>
+                  {/* 제목에 서식(굵게·형광펜·링크)이 있으면 조각으로 온다 —
+                      글자만 쓰면 그 서식이 본문으로 새어 나간다. */}
+                  <span>{hit.titleRest.length > 0 ? hit.titleRest : spec.label}</span>
                 </div>
                 {hit.body.length > 0 && <div className="callout-body">{hit.body}</div>}
               </div>

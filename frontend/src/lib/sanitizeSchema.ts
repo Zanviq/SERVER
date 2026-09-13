@@ -36,7 +36,14 @@ export const mdSanitizeSchema = {
   ...defaultSchema,
   // mark = 형광펜(==강조==), details/summary = 토글.
   // 기본 스키마에 없어 그냥 두면 살균 단계에서 조용히 사라진다.
-  tagNames: [...(defaultSchema.tagNames ?? []), "mark", "details", "summary", ...SVG_TAGS],
+  // mark = 형광펜, u/abbr/small = 흔히 쓰는 서식, figure/figcaption/caption = 그림·표
+  // 설명. 허용 목록에 없으면 **태그만 사라지고 글자는 남아서** 설명이 본문에
+  // 뒤섞인다(그게 더 나쁘다). details/summary 는 기본 스키마에도 있지만, 여기
+  // 적어 두면 기본이 바뀌어도 토글이 살아남는다.
+  tagNames: [...(defaultSchema.tagNames ?? []),
+             "mark", "details", "summary",
+             "u", "abbr", "small", "figure", "figcaption", "caption",
+             ...SVG_TAGS],
   // 각주 id 접두사를 여기서 한 번 더 붙이지 않는다.
   //
   // remark-gfm 이 이미 `user-content-fn-1` 처럼 이름을 붙여 두는데, 살균이 id 에만
@@ -68,6 +75,16 @@ export const mdSanitizeSchema = {
     // **값을 이름으로 못 박는다.** className 을 통째로 열면 위에서 막은 Tailwind
     // 문제가 그대로 돌아온다(class 하나로 화면을 덮을 수 있다).
     code: [["className", /^language-./, "math", "math-inline", "math-display"]],
+    // 제목의 id — rehype-slug 가 붙인다. 없으면 `[가기](#제목)` 이 아무 데도
+    // 닿지 않는다(각주만 동작하고 문서 안 링크는 죽어 있었다).
+    h1: [...(defaultSchema.attributes?.h1 ?? []), "id"],
+    h2: [...(defaultSchema.attributes?.h2 ?? []), "id"],
+    h3: [...(defaultSchema.attributes?.h3 ?? []), "id"],
+    h4: [...(defaultSchema.attributes?.h4 ?? []), "id"],
+    h5: [...(defaultSchema.attributes?.h5 ?? []), "id"],
+    h6: [...(defaultSchema.attributes?.h6 ?? []), "id"],
+    // 약어 설명(`<abbr title="…">`)
+    abbr: [...(defaultSchema.attributes?.abbr ?? []), "title"],
     span: [...(defaultSchema.attributes?.span ?? []),
            ["className", "math", "math-inline", "math-display"]],
     div: [...(defaultSchema.attributes?.div ?? []),

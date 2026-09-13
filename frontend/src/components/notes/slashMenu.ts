@@ -60,7 +60,10 @@ const SNIPPETS: Snippet[] = [
     text: `\`\`\`\n${CURSOR}\n\`\`\``,
     keywords: "code block 코드",
   },
-  { label: "구분선", detail: "가로줄", text: `---\n${CURSOR}`, keywords: "hr divider 구분선" },
+  // 앞에 빈 줄을 **반드시** 둔다. 글 바로 아랫줄의 `---` 은 마크다운 규칙상
+  // 구분선이 아니라 **윗줄을 제목으로 만드는 밑줄**(setext)이라, 메뉴로 넣어도
+  // 구분선이 안 생기고 앞 문단만 커졌다(실측).
+  { label: "구분선", detail: "가로줄", text: `\n---\n\n${CURSOR}`, keywords: "hr divider 구분선" },
   { label: "형광펜", detail: "==강조==", text: `==${CURSOR}==`, keywords: "highlight mark 형광펜 강조" },
   {
     label: "콜아웃(참고)",

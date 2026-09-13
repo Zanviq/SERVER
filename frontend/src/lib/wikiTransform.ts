@@ -7,7 +7,10 @@
  *
  * 컴포넌트에서 떼어 둔 이유는 테스트 때문이다(test/wiki.test.mjs).
  */
-import { EmbedResolver, parseWikiEmbed } from "./embeds";
+// 타입은 `import type` 으로 따로 받는다 — 값과 섞어 두면 타입을 지우는 것만으로
+// 돌리는 환경(노드의 --experimental-strip-types)에서 "그런 export 없다"고 멈춘다.
+import { parseWikiEmbed } from "./embeds";
+import type { EmbedResolver } from "./embeds";
 
 /** 코드가 아닌 구간만 바꾼다. 울타리(```)와 인라인 코드(`…`)는 건드리지 않는다. */
 function mapOutsideCode(text: string, fn: (chunk: string) => string): string {

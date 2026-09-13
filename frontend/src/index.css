@@ -134,6 +134,17 @@
   .prose-server h3 {
     @apply mb-1.5 mt-3 text-base font-semibold text-fg;
   }
+  /* h4~h6 도 제목으로 보여야 한다. 없으면 본문과 똑같은 크기·색이라
+     "#### 을 써도 아무 일도 안 일어난다"가 된다. */
+  .prose-server h4 {
+    @apply mb-1 mt-3 text-[14px] font-semibold text-fg;
+  }
+  .prose-server h5 {
+    @apply mb-1 mt-2.5 text-[13.5px] font-semibold text-fg2;
+  }
+  .prose-server h6 {
+    @apply mb-1 mt-2.5 text-[13px] font-semibold uppercase tracking-wide text-fg-muted;
+  }
   .prose-server p {
     @apply my-2;
   }
@@ -145,6 +156,35 @@
   }
   .prose-server li {
     @apply my-0.5;
+  }
+  /* 중첩 목록은 마커를 바꿔 깊이가 보이게 한다(둘 다 •면 층이 안 보인다). */
+  .prose-server ul ul {
+    @apply my-0 list-[circle];
+  }
+  .prose-server ul ul ul {
+    @apply list-[square];
+  }
+  .prose-server ol ol {
+    @apply my-0 list-[lower-alpha];
+  }
+  /* 느슨한 목록(항목 사이 빈 줄)은 항목마다 <p> 가 생긴다. 그 <p> 에 위아래
+     여백이 그대로 붙으면 목록이 문단처럼 늘어진다. */
+  .prose-server li > p {
+    @apply my-0;
+  }
+  .prose-server li > p + p {
+    @apply mt-1.5;
+  }
+  /* 할 일 목록(- [ ]) — 체크박스 옆에 글머리 점까지 찍히면 표시가 둘이다.
+     GFM 이 붙여 주는 클래스를 그대로 쓴다. */
+  .prose-server ul.contains-task-list {
+    @apply list-none pl-1;
+  }
+  .prose-server li.task-list-item {
+    @apply flex items-start gap-1.5;
+  }
+  .prose-server li.task-list-item > input[type="checkbox"] {
+    @apply mt-[3px] shrink-0 accent-[rgb(var(--accent))];
   }
   .prose-server blockquote {
     @apply my-2 border-l-2 border-accent pl-3 text-fg-muted;
@@ -159,15 +199,90 @@
   .prose-server pre code {
     @apply whitespace-pre-wrap bg-transparent p-0 text-fg2 [overflow-wrap:anywhere];
   }
+  /* 코드 색 — rehype-highlight 가 붙이는 hljs 클래스를 **앱 테마 변수**로 칠한다.
+     highlight.js 테마 CSS 를 가져오면 다크/라이트를 따라오지 못해 어두운 배경에
+     검은 글씨가 된다. 쓰는 이름만 골라 둔다(전부 칠할 필요가 없다). */
+  .prose-server .hljs-keyword,
+  .prose-server .hljs-selector-tag,
+  .prose-server .hljs-literal,
+  .prose-server .hljs-section {
+    color: rgb(var(--accent));
+  }
+  .prose-server .hljs-string,
+  .prose-server .hljs-attr,
+  .prose-server .hljs-regexp,
+  .prose-server .hljs-addition {
+    color: rgb(var(--positive));
+  }
+  .prose-server .hljs-number,
+  .prose-server .hljs-built_in,
+  .prose-server .hljs-symbol {
+    color: rgb(var(--warning));
+  }
+  .prose-server .hljs-title,
+  .prose-server .hljs-name,
+  .prose-server .hljs-type {
+    color: rgb(var(--info));
+  }
+  .prose-server .hljs-comment,
+  .prose-server .hljs-quote,
+  .prose-server .hljs-meta {
+    @apply italic;
+    color: rgb(var(--fg-subtle));
+  }
+  .prose-server .hljs-deletion {
+    color: rgb(var(--danger));
+  }
+  /* 긴 URL·공백 없는 긴 토큰이 칸을 밀고 나가지 않게. 코드블록에만 있던 규칙을
+     본문에도 준다. */
+  .prose-server p,
+  .prose-server li,
+  .prose-server td,
+  .prose-server a {
+    @apply [overflow-wrap:anywhere];
+  }
+  /* 그림·표 설명 */
+  .prose-server figure {
+    @apply my-3;
+  }
+  .prose-server figcaption,
+  .prose-server caption {
+    @apply mt-1 text-center text-[12px] text-fg-muted;
+  }
+  .prose-server u {
+    @apply underline decoration-line-strong underline-offset-2;
+  }
+  .prose-server abbr[title] {
+    @apply cursor-help underline decoration-dotted underline-offset-2;
+  }
+  .prose-server small {
+    @apply text-[12px] text-fg-muted;
+  }
   .prose-server a {
     @apply text-info;
   }
+  /* 칸이 많은 표는 좁은 화면에서 가로로 넘친다. 넘치는 것은 **감싸는 칸**이
+     맡는다(MarkdownView 의 table 컴포넌트) — 표 자체를 block 으로 만들면
+     너비 100%가 먹히지 않아 내용만큼 쪼그라든다(실측). */
+  .prose-server .table-wrap {
+    @apply my-2 max-w-full overflow-x-auto;
+  }
   .prose-server table {
-    @apply my-2 w-full border-collapse text-[13px];
+    @apply w-full border-collapse text-[13px];
+  }
+  .prose-server .table-wrap > table {
+    @apply my-0;
+  }
+  /* 기본은 왼쪽. **align 이 붙은 칸은 건드리지 않는다** — `|:---:|` 로 준 가운데·
+     오른쪽 정렬을 CSS 가 항상 이겨서, 어떤 정렬을 골라도 왼쪽으로 보였다
+     (숫자 표가 특히 읽기 어려웠다). align 은 HTML 힌트라 author 규칙에 진다. */
+  .prose-server th:not([align]),
+  .prose-server td:not([align]) {
+    @apply text-left;
   }
   .prose-server th,
   .prose-server td {
-    @apply border border-line px-2 py-1 text-left;
+    @apply border border-line px-2 py-1;
   }
   .prose-server hr {
     @apply my-4 border-line;
@@ -221,6 +336,46 @@
     @apply mb-2 border-b border-line/60 pb-2;
   }
 
+  /* 각주 — 위첨자 번호와 문서 끝 목록. 살균이 통과시키는 모양 그대로 꾸민다. */
+  .prose-server sup,
+  .prose-server sub {
+    @apply text-[0.75em] leading-none;
+  }
+  .prose-server sup a {
+    @apply rounded px-0.5 no-underline;
+  }
+  .prose-server .footnotes {
+    @apply mt-6 border-t border-line pt-2 text-[12.5px] text-fg-muted;
+  }
+  .prose-server .sr-only {
+    @apply absolute h-px w-px overflow-hidden whitespace-nowrap border-0 p-0;
+    clip: rect(0 0 0 0);
+  }
+  /* 정의 목록 — 마크다운 문법은 없지만 <dl> HTML 은 통과하므로 꾸며 둔다.
+     (`용어` 다음 줄 `: 뜻` 표기는 remark 가 모른다 — 문법을 원하면 플러그인이 필요하다.) */
+  .prose-server dl {
+    @apply my-2;
+  }
+  .prose-server dt {
+    @apply mt-2 font-semibold text-fg;
+  }
+  .prose-server dd {
+    @apply ml-4 text-fg2;
+  }
+  /* 키 표기(<kbd>) — 문서에서 단축키를 설명할 때 쓴다. */
+  .prose-server kbd {
+    @apply rounded border border-line-strong bg-subtle px-1 py-px font-mono text-[11.5px] text-fg;
+  }
+  /* 취소선 — 브라우저 기본선은 본문과 같은 진하기라 잘 안 보인다.
+     지운 글이라는 뜻이 드러나게 색도 한 단계 낮춘다. */
+  .prose-server del {
+    @apply text-fg-muted line-through decoration-fg-subtle;
+  }
+  /* 그림 — 컴포넌트(MarkdownView img)가 같은 모양을 주지만, 원문 HTML 로 넣은
+     <img> 도 있으므로 여기서도 못 박는다(넘치지 않게 + 테두리). */
+  .prose-server img {
+    @apply my-2 h-auto max-w-full rounded-md border border-line;
+  }
   /* 형광펜(==강조==). 편집기의 highlightTag와 같은 색을 쓴다. */
   .prose-server mark {
     background-color: rgb(var(--warning) / 0.3);
