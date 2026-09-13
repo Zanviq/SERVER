@@ -54,7 +54,10 @@ export function ConversationTree({
   closable = true, busy,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [box, setBox] = useState({ w: 800, h: 420 });
+  // **0 으로 시작한다.** 그럴듯한 기본값을 두면 첫 렌더에서 그 값으로 맞춤이
+  // 끝나 버리고(firstFit 은 한 번뿐이다), 실제 칸 크기를 잰 뒤에는 다시 맞추지
+  // 않는다 — 나무가 칸 구석에 치우쳐 붙어 있었다(실측).
+  const [box, setBox] = useState({ w: 0, h: 0 });
   const [view, setView] = useState({ x: PAD, y: PAD, k: 1 });
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [picked, setPicked] = useState<string | null>(null);
@@ -98,20 +101,26 @@ export function ConversationTree({
 
   const firstFit = useRef(true);
   useEffect(() => {
-    if (!firstFit.current || nodes.length === 0 || box.w < 10) return;
+    // 칸을 아직 재지 못했으면(box 0) 기다린다 — 재고 나서 딱 한 번 맞춘다
+    if (!firstFit.current || nodes.length === 0 || box.w < 10 || box.h < 10) return;
     firstFit.current = false;
     // 나무 전체가 들어오면 그렇게 맞추고, **너무 작아질 것 같으면 줄이지 않는다.**
     // 옆에 세운 좁은 칸에서 전체를 우겨 넣으면 글자가 읽을 수 없을 만큼 작아진다
     // (실측: 380px 칸에 가지 넷이면 0.3배). 그때는 크기를 지키고 지금 자리를 비춘다.
-    const fit = Math.min(1, (box.w - PAD * 2) / Math.max(1, width),
-      (box.h - PAD * 2) / Math.max(1, height));
-    const k = Math.max(MIN_FIT, fit);
+    //
+    // 가로·세로를 **따로** 본다. 좁고 긴 칸에서는 폭만 모자란 것이 보통인데,
+    // 하나로 묶어 판단하면 세로로도 괜히 끌려가 나무가 아래에 처박힌다.
+    const k = Math.max(MIN_FIT, Math.min(1,
+      (box.w - PAD * 2) / Math.max(1, width), (box.h - PAD * 2) / Math.max(1, height)));
     const cur = [...nodes].reverse().find((n) => n.onPath);
-    setView(fit >= MIN_FIT || !cur
-      // 다 들어오면 한가운데 놓는다(위쪽에 붙이면 아래가 텅 빈다)
-      ? { k, x: (box.w - (width + NODE_W) * k) / 2, y: Math.max(PAD, (box.h - height * k) / 2) }
-      // 다 안 들어오면 **지금 보고 있는 자리**를 비춘다
-      : { k, x: box.w / 2 - (cur.x + NODE_W / 2) * k, y: box.h / 2 - (cur.y + NODE_H / 2) * k });
+    const fitsW = width * k <= box.w - PAD;
+    const fitsH = height * k <= box.h - PAD;
+    setView({
+      k,
+      x: fitsW || !cur ? (box.w - width * k) / 2 : box.w / 2 - (cur.x + NODE_W / 2) * k,
+      y: fitsH || !cur ? Math.max(PAD, (box.h - height * k) / 2)
+        : box.h / 2 - (cur.y + NODE_H / 2) * k,
+    });
   }, [nodes, box.w, box.h, width, height]);
 
   // 끌어서 옮기기(포인터 하나로 마우스·터치 모두).

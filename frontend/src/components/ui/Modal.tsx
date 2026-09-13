@@ -6,9 +6,23 @@ import { X } from "lucide-react";
 interface ModalProps {
   open: boolean;
   onClose: () => void;
+  /** 화면 낭독기에 읽히는 이름. header 를 끄더라도 **이름은 남는다**. */
   title?: string;
   children: ReactNode;
   width?: string;
+  /** 높이 클래스. 기본은 내용만큼(최대 92vh), 지도처럼 꽉 채울 것은 `h-[92vh]`. */
+  height?: string;
+  /**
+   * 제목줄(제목 + 닫기)을 그릴까. 안쪽 내용이 **제 머리글을 이미 가진** 경우
+   * (대화 지도처럼 검색·확대 단추가 한 줄에 있는 것)에는 끈다 — 두 줄이 겹치고
+   * 닫기 단추가 둘이 된다.
+   */
+  chrome?: boolean;
+  /**
+   * 본문 칸의 클래스. 기본은 스크롤 + 여백이지만, 제 높이를 꽉 채워야 하는
+   * 내용(지도·그래프)은 `flex min-h-0 flex-1 flex-col` 처럼 바꿔 준다.
+   */
+  bodyClass?: string;
 }
 
 /** 대화상자 **밖에서** 마지막으로 포커스를 가졌던 요소.
@@ -32,7 +46,10 @@ if (typeof document !== "undefined") {
   );
 }
 
-export function Modal({ open, onClose, title, children, width = "max-w-lg" }: ModalProps) {
+export function Modal({
+  open, onClose, title, children, width = "max-w-lg",
+  height = "max-h-[92vh]", chrome = true, bodyClass = "overflow-y-auto p-4 sm:p-5",
+}: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   // Esc 닫기 + 배경 스크롤 잠금은 바텀시트와 공유한다
@@ -96,11 +113,11 @@ export function Modal({ open, onClose, title, children, width = "max-w-lg" }: Mo
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`card my-auto flex max-h-[92vh] w-full flex-col ${width} animate-in shadow-lg`}
+        className={`card my-auto flex w-full flex-col ${height} ${width} animate-in shadow-lg`}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={trapTab}
       >
-        {title && (
+        {chrome && title && (
           <header className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
             <h3 className="truncate text-sm font-semibold">{title}</h3>
             <button
@@ -112,7 +129,7 @@ export function Modal({ open, onClose, title, children, width = "max-w-lg" }: Mo
             </button>
           </header>
         )}
-        <div className="overflow-y-auto p-4 sm:p-5">{children}</div>
+        <div className={bodyClass}>{children}</div>
       </div>
     </div>,
     document.body,

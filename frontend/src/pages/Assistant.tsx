@@ -34,8 +34,12 @@ export function Assistant() {
       }
     >
       {/* 넓으면 왼쪽 대화 목록 · 가운데 채팅 · 오른쪽 대화 지도로 편다.
-          좁아지면 목록은 채팅 위 드롭다운으로, 지도는 접힘으로 돌아간다. */}
-      <ChatPanel ref={chat} className="mx-auto h-view-9 w-full max-w-[1500px]"
+          좁아지면 목록은 채팅 위 드롭다운으로, 지도는 팝업으로 돌아간다.
+
+          **폭을 묶지 않는다.** 예전에는 max-w 로 가운데 정렬해 두어서, 화면을
+          축소하면(=CSS 픽셀이 넓어지면) 좌우에 빈 띠가 크게 남았다 — 다른 화면들은
+          모두 꽉 채우는데 여기만 달랐다. */}
+      <ChatPanel ref={chat} className="h-view-9 w-full"
         mode="assistant" space="assistant" sidebars />
     </Shell>
   );

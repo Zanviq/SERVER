@@ -15,6 +15,7 @@ import { VocabProposal, VocabProposalData } from "./VocabProposal";
 import { skillIcon } from "./skillIcon";
 import { ConversationTree, TreeLink } from "./ConversationTree";
 import { ChatSessionList, ChatSessionPicker } from "./ChatSessions";
+import { Modal } from "../ui/Modal";
 import { ChatSession } from "../../lib/api";
 import { deepestLeaf, siblingsOf, threadOf, TreeMessage } from "../../lib/chatTree";
 
@@ -671,6 +672,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   const listAside = sidebars && !!space && roomForList;
   const treeAside = sidebars && !!space && roomForTree;
 
+  /**
+   * 대화 지도를 **한 곳에서만** 엮는다.
+   *
+   * 지도는 두 자리에 나타난다 — 넓은 비서 화면의 오른쪽 칸, 그 밖의 모든
+   * 화면에서 단추로 여는 팝업. 그 둘은 **이 하나의 요소를 받아 담기만 하는 그릇**
+   * 이고, 지도에 무엇을 시킬지(이동·가지치기·기억 연결·비교·이름)는 여기서만
+   * 정한다. 자리마다 따로 엮으면 나중에 기능을 하나 고칠 때 한쪽만 고쳐지고,
+   * "팝업에서는 되는데 사이드바에서는 안 된다"가 생긴다.
+   *
+   * 이 규칙은 `frontend/test/treeHost.test.mjs` 가 지킨다(엮는 자리가 하나인지 센다).
+   */
   const tree = space ? (
     <ConversationTree
       messages={asTree(messages)} head={head} links={links}
@@ -708,14 +720,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
       {space && !listAside && (
         <div className="mb-1.5 border-b border-line pb-1.5">
           <ChatSessionPicker {...sessionProps} />
-        </div>
-      )}
-
-      {/* 대화 지도 — 좁은 화면에서는 대화 위에 접혀 들어간다(딴 화면으로 보내면
-          말풍선과 지도를 나란히 볼 수 없다). 넓은 화면은 오른쪽에 세워 둔다. */}
-      {space && showTree && !treeAside && (
-        <div className="mb-2 flex h-[min(48vh,380px)] min-h-0 flex-col overflow-hidden rounded-lg border border-line bg-surface">
-          {tree}
         </div>
       )}
 
@@ -950,7 +954,34 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     </div>
   );
 
-  if (!listAside && !treeAside) return chat;
+  /**
+   * 지도를 담는 **두 번째 그릇** — 단추로 여는 팝업.
+   *
+   * 오른쪽 칸을 세울 자리가 없는 모든 화면(논문·회의·영어·캘린더, 그리고 좁아진
+   * 비서)에서 이걸로 본다. 안에 들어가는 것은 위에서 엮은 `tree` **그대로**라,
+   * 지도 기능을 고치면 두 자리가 함께 바뀐다.
+   *
+   * 화면을 거의 채운다. 배경을 누르거나 Esc, 지도 제 머리글의 X 로 닫힌다
+   * (Modal 이 배경·Esc·포커스 가두기를 맡고, 제목줄은 지도가 이미 가지고 있으므로
+   * 끈다 — 켜 두면 닫기 단추가 둘이 된다).
+   */
+  const treePopup = space && !treeAside ? (
+    <Modal
+      open={showTree}
+      onClose={() => setShowTree(false)}
+      title="대화 지도"
+      chrome={false}
+      width="max-w-[1500px]"
+      height="h-[92vh]"
+      bodyClass="flex min-h-0 flex-1 flex-col overflow-hidden"
+    >
+      {tree}
+    </Modal>
+  ) : null;
+
+  if (!listAside && !treeAside) {
+    return <>{chat}{treePopup}</>;
+  }
 
   // 넓은 화면: 왼쪽 대화 목록 · 가운데 채팅 · 오른쪽 대화 지도.
   //
@@ -958,18 +989,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   // CSS 의 `hidden lg:flex` 로도 숨기면 규칙이 두 벌이 되고, 둘이 어긋나는 폭에서
   // 대화 목록과 지도에 닿을 길이 통째로 사라진다.
   return (
-    <div className={`flex min-h-0 gap-3 ${className}`}>
-      {listAside && (
-        <aside className="flex w-[228px] shrink-0 flex-col border-r border-line pr-3">
-          <ChatSessionList {...sessionProps} />
-        </aside>
-      )}
-      {chat}
-      {treeAside && (
-        <aside className="flex w-[380px] shrink-0 flex-col overflow-hidden rounded-lg border border-line bg-surface">
-          {tree}
-        </aside>
-      )}
-    </div>
+    <>
+      <div className={`flex min-h-0 gap-3 ${className}`}>
+        {listAside && (
+          <aside className="flex w-[228px] shrink-0 flex-col border-r border-line pr-3">
+            <ChatSessionList {...sessionProps} />
+          </aside>
+        )}
+        {chat}
+        {treeAside && (
+          <aside className="flex w-[380px] shrink-0 flex-col overflow-hidden rounded-lg border border-line bg-surface">
+            {tree}
+          </aside>
+        )}
+      </div>
+      {treePopup}
+    </>
   );
 });
