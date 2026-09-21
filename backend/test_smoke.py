@@ -10175,6 +10175,164 @@ def test_the_server_counts_days_so_the_model_does_not_have_to():
     assert not reg.dispatch("shift_date", {"days": "백"}, ctx).ok
 
 
+def test_link_refs_are_found_but_not_lookalikes():
+    """`[note/…]` 만 링크다. 대괄호를 쓰는 다른 마크다운 문법은 건드리지 않는다.
+
+    위키링크·그림·보통 링크·참조 정의를 링크로 읽으면 사용자가 원하지 않은 문서가
+    모델에게 간다. 코드 안의 것은 링크 문법을 **설명하는** 글이다.
+    """
+    from backend.links import find_refs
+
+    text = (
+        "[note/서버/기록.md] 와 [notes/b.md] 를 비교해 줘. 또 [note/서버/기록.md]\n"
+        "[[note/위키]] ![그림](note/x.png) [글](note/y.md) [글][note/ref] [ ] [x]\n"
+        "`[note/코드.md]` 는 문법 설명이다\n"
+        "```\n[note/블록.md]\n```\n"
+        "[note/ref]: https://example.com\n"
+        "[todo/학교/보고서] [event/2026-09-21/회의] [없는갈래/a] [vocab/]"
+    )
+    assert find_refs(text) == [
+        "note/서버/기록.md", "note/b.md", "todo/학교/보고서", "event/2026-09-21/회의",
+    ], find_refs(text)
+
+    # 세션 이름처럼 마크다운을 안 그리는 자리에는 짧은 이름으로(경로가 폭을 다 먹는다)
+    from backend import chat_store
+    from backend.links import plain
+
+    assert plain("[note/서버/기록.md] 요약해 [event/2026-09-21/회의]") == "기록.md 요약해 2026-09-21 회의"
+    assert chat_store.title_from("[note/서버/기록.md] 요약해 줘") == "기록.md 요약해 줘"
+    assert plain("[[note/위키]] 와 [글](note/a.md)") == "[[note/위키]] 와 [글](note/a.md)", "링크가 아닌 것까지 바꿨다"
+
+
+def test_links_suggest_resolve_and_reach_the_model():
+    """입력칸 후보 → 링크 열기 → 채팅에 내용이 실리는 것까지 한 번에.
+
+    사용자가 `[note/서버/기록.md]` 를 적으면 모델이 그 문서를 **읽은 채로** 답해야
+    한다. 실은 내용은 모델에게만 가고, 화면(후보·열기)에는 이름과 주소만 간다.
+    """
+    from datetime import date as _date
+
+    from backend import calendar_service, diary_store, search_all, todo_store, vocab_store
+    from backend.auth import SessionUser
+
+    _login()
+    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    st = get_settings()
+    body = "# 서버 기록\n링크로 읽힌 본문 LINKBODY-7731"
+    assert client.put("/api/notes/save", json={"path": "서버/기록.md", "content": body}).status_code == 200
+    assert client.put("/api/notes/save",
+                      json={"path": "서버/비밀번호.md", "content": "SECRET-9913"}).status_code == 200
+    cat = todo_store.create_category(u, st, {"name": "링크학교"})
+    todo = todo_store.create_todo(u, st, {"title": "링크 보고서", "category_id": cat["id"],
+                                          "description": "TODO-DESC-5521"})
+    word, _ = vocab_store.add_word(u, st, {"word": "ubiquitous-link", "meanings": ["어디에나 있는"]})
+    today = _date.today().isoformat()
+    # 시험 계정은 내부 달력이어야 한다(구글에 쓰면 안 된다)
+    assert calendar_service.backend_kind(u, st) == "internal"
+    ev = calendar_service.create_event(u, st, {"title": "링크 일정", "start": f"{today}T10:00:00",
+                                               "end": f"{today}T11:00:00"})
+    search_all._EVENT_CACHE.pop("tester", None)
+    diary_store.save_day(u, st, today, {"text": "DIARY-TEXT-4410"})
+    try:
+        def items(q):
+            r = client.get("/api/links/suggest", params={"q": q})
+            assert r.status_code == 200, r.text
+            return [i["path"] for i in r.json()["items"]]
+
+        # 아무것도 안 쳤으면 무엇을 이을 수 있는지(갈래)를 보여 준다
+        assert {"note/", "paper/", "meeting/", "todo/", "event/", "vocab/", "diary/"} <= set(items(""))
+        # 폴더를 따라 내려간다(파일 탐색기처럼)
+        assert "note/서버" in items("note/")
+        inside = items("note/서버/")
+        assert "note/서버/기록.md" in inside and inside.index("note/서버/기록.md") < 5
+        # 갈래 없이 이름만 쳐도 찾는다
+        assert "note/서버/기록.md" in items("기록")
+        assert "todo/링크학교" in items("todo/")
+        assert "todo/링크학교/링크 보고서" in items("todo/링크학교/")
+        assert f"event/{today}/링크 일정" in items(f"event/{today}/")
+        assert f"diary/{today}" in items("diary/")
+        assert "vocab/ubiquitous-link" in items("vocab/ubiq")
+        # 후보에는 본문이 없다(잠긴 일기가 여기로 새면 안 된다)
+        raw = client.get("/api/links/suggest", params={"q": "diary/"}).text
+        assert "DIARY-TEXT-4410" not in raw
+
+        # 링크를 누르면 그 화면으로
+        opened = client.get("/api/links/open", params={"path": "note/서버/기록.md"}).json()
+        assert opened["found"] and opened["href"] == "/notes?path=%EC%84%9C%EB%B2%84%2F%EA%B8%B0%EB%A1%9D.md"
+        assert "content" not in opened
+        assert client.get("/api/links/open",
+                          params={"path": "todo/링크학교/링크 보고서"}).json()["href"] == f"/todo?t={todo['id']}"
+        # 분류를 빼고 적어도(이름이 하나뿐이면) 찾는다
+        assert client.get("/api/links/open", params={"path": "todo/링크 보고서"}).json()["found"]
+        assert not client.get("/api/links/open", params={"path": "note/없는/문서.md"}).json()["found"]
+        # 경로 탈출은 못 찾은 것으로 끝난다(500 이 아니라)
+        esc = client.get("/api/links/open", params={"path": "note/../../etc/hosts"})
+        assert esc.status_code == 200 and not esc.json()["found"]
+
+        # 채팅: 모델이 받는 메시지에 링크 내용이 실린다
+        def sent(msg, mode="assistant"):
+            r = client.post("/api/ai/preview", json={"message": msg, "mode": mode})
+            assert r.status_code == 200, r.text
+            return r.json()
+
+        pv = sent("[note/서버/기록.md] 요약해 줘")
+        assert "LINKBODY-7731" in pv["message"] and pv["message"].rstrip().endswith("요약해 줘")
+        assert "[질문]" in pv["message"]
+        multi = sent("[todo/링크학교/링크 보고서] [vocab/ubiquitous-link] "
+                     f"[event/{today}/링크 일정] [diary/{today}] 정리")["message"]
+        for needle in ("TODO-DESC-5521", "어디에나 있는", "링크 일정", "DIARY-TEXT-4410"):
+            assert needle in multi, needle
+        # 못 찾은 링크는 못 찾았다고 알린다(모델이 지어내지 않게)
+        assert "찾지 못했습니다" in sent("[note/없는/문서.md] 이거 뭐야")["message"]
+        # 민감 문서는 이름만 가고 내용은 안 간다
+        blocked = sent("[note/서버/비밀번호.md] 읽어 줘")["message"]
+        assert "SECRET-9913" not in blocked and "민감" in blocked
+        # 코드로 적은 것은 링크가 아니다
+        assert "LINKBODY-7731" not in sent("`[note/서버/기록.md]` 문법이 뭐야?")["message"]
+        # 폴더 링크는 안에 든 목록
+        assert "note/서버/기록.md" in sent("[note/서버] 에 뭐 있어?")["message"]
+        # 어느 화면에서나 다시 읽는 스킬이 있다
+        for mode in ("assistant", "english", "paper", "meeting", "calendar"):
+            assert "read_link" in sent("안녕", mode)["skills"], mode
+    finally:
+        client.delete("/api/notes/delete", params={"path": "서버/기록.md"})
+        client.delete("/api/notes/delete", params={"path": "서버/비밀번호.md"})
+        todo_store.delete_todo(u, st, todo["id"])
+        todo_store.delete_category(u, st, cat["id"])
+        vocab_store.delete_word(u, st, word["id"])
+        calendar_service.delete_event(u, st, ev["id"])
+        diary_store.save_day(u, st, today, {"text": ""})
+        search_all._EVENT_CACHE.pop("tester", None)
+
+
+def test_read_link_skill_reads_long_bodies_in_pieces():
+    """잘린 본문은 offset 으로 이어 읽는다 — 앞부분만 보고 '없다'고 하지 않게."""
+    from backend import links
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+
+    _login()
+    long_body = "앞" * links.MAX_LINK_CHARS + "TAIL-MARK-3377"
+    assert client.put("/api/notes/save", json={"path": "긴글.md", "content": long_body}).status_code == 200
+    try:
+        pv = client.post("/api/ai/preview", json={"message": "[note/긴글.md] 끝에 뭐 있어?",
+                                                   "mode": "assistant"}).json()["message"]
+        assert "TAIL-MARK-3377" not in pv and "offset=" in pv, "잘렸다는 안내가 없다"
+
+        u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+        reg = default_registry()
+        ctx = SkillContext(user=u, settings=get_settings(), today="2026-09-21")
+        first = reg.dispatch("read_link", {"path": "note/긴글.md"}, ctx)
+        assert first.ok and first.data["truncated"], first.message
+        nxt = first.data["offset"] + len(first.data["content"])
+        rest = reg.dispatch("read_link", {"path": "note/긴글.md", "offset": nxt}, ctx)
+        assert rest.ok and "TAIL-MARK-3377" in rest.data["content"]
+        assert not reg.dispatch("read_link", {"path": "note/없는거.md"}, ctx).ok
+    finally:
+        client.delete("/api/notes/delete", params={"path": "긴글.md"})
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"

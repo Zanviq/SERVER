@@ -23,7 +23,8 @@ _CONTEXT_SKILLS = {"list_context_spaces", "search_context", "read_context"}
 # 찾는 유일한 길**이라 모든 모드에 둔다.
 #: 날짜 셈은 모든 화면에서 필요하다(회의 날짜·마감·"다음 주에 다시 보기").
 #: 모델이 직접 세면 자주 틀린다 — dates.py 참고.
-_COMMON_SKILLS = {"think", "search_everything", "shift_date"} | _CONTEXT_SKILLS
+#: 링크([note/…])는 어느 입력칸에서나 적을 수 있으므로 읽는 길도 모든 모드에 둔다.
+_COMMON_SKILLS = {"think", "search_everything", "shift_date", "read_link"} | _CONTEXT_SKILLS
 _VOCAB_SKILLS = {
     "list_vocab", "list_vocab_tags", "add_vocab_words", "propose_vocab_words",
     "update_vocab_word", "delete_vocab_word",

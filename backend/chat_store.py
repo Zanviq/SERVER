@@ -307,10 +307,14 @@ def append(path: Path, *msgs: dict) -> list[dict]:
 
 def title_from(text: str) -> str:
     """첫 질문에서 세션 이름을 만든다(한 줄, 짧게)."""
+    from . import links  # 늦게 — links 는 저장소들을 두루 가져온다
+
     one = " ".join(str(text or "").split())
     # 논문 화면은 선택한 글을 인용으로 앞에 붙여 보낸다 — 그건 이름이 아니다
     if "[질문]" in one:
         one = one.split("[질문]", 1)[1].strip()
+    # `[note/서버/기록.md] 요약해` → `기록.md 요약해`(목록 폭에 경로가 다 먹는다)
+    one = links.plain(one)
     return one[:MAX_TITLE] or "새 대화"
 
 

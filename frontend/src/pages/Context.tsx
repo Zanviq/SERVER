@@ -430,8 +430,10 @@ function Turn({ msg, onDelete }: { msg: ChatMessage; onDelete: () => void }) {
             ))}
           </div>
         ) : null}
-        <div className="max-w-[80%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-accent px-3.5 py-2 text-[13px] text-accent-contrast">
-          {msg.text}
+        {/* 대화 화면과 같이 마크다운으로(`[note/…]` 링크도 눌린다) */}
+        <div className="md-on-accent max-w-[80%] rounded-lg rounded-br-sm bg-accent px-3.5 py-2 text-[13px] text-accent-contrast">
+          <MarkdownView content={msg.text}
+            onWikiClick={(t) => navigate(`/notes?open=${encodeURIComponent(t)}&create=0`)} />
         </div>
         <TurnFoot ts={msg.ts} onDelete={onDelete} />
       </div>

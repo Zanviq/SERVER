@@ -463,7 +463,32 @@ export const api = {
   searchAll: (query: string, kinds = "", limit = 40) =>
     req<{ hits: SearchHit[]; query: string }>(
       `/api/search?${q({ q: query, kinds, limit: String(limit) })}`),
+  /** 입력칸의 `[` 뒤에 친 글자로 링크 후보를 받는다(이름·주소만, 본문 없음). */
+  linkSuggest: (query: string, limit = 30) =>
+    req<{ query: string; items: LinkItem[] }>(
+      `/api/links/suggest?${q({ q: query, limit: String(limit) })}`),
+  /** 링크 → 그 항목을 여는 화면 주소. */
+  linkOpen: (path: string) => req<LinkBrief>(`/api/links/open?${q({ path })}`),
 };
+
+export interface LinkItem {
+  /** `note/서버/기록.md` — 대괄호 안에 그대로 들어갈 경로 */
+  path: string;
+  kind: string;
+  label: string;
+  detail: string;
+  /** 폴더면 고른 뒤에도 후보가 이어진다(안으로 들어간다) */
+  folder: boolean;
+  href: string;
+}
+
+export interface LinkBrief {
+  path: string;
+  kind: string;
+  title: string;
+  found: boolean;
+  href: string;
+}
 
 export type SearchKind = "note" | "paper" | "meeting" | "vocab" | "todo" | "event" | "chat";
 
@@ -582,6 +607,8 @@ export interface ChatMessage {
     branch_name?: string;
     selections?: { text: string; page: number }[];
     attachments?: { label: string; mime: string }[];
+    /** 메시지에 적은 `[note/…]` 링크를 서버가 풀어 본 결과(본문은 없다) */
+    links?: LinkBrief[];
     /** 스킬 호출 기록. args·result 는 감사용 원문(길면 서버가 자른다). */
     tools?: {
       name: string; ok: boolean; message: string;

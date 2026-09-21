@@ -95,18 +95,30 @@ def _unique(name: str, taken: set[str]) -> str:
     return name
 
 
+def named(items: list[dict], fallback_key: str) -> list[tuple[dict, str]]:
+    """항목마다 트리에 쓸 이름을 붙인다(제목, 겹치면 번호).
+
+    링크(`paper/제목`)도 이 이름을 쓴다. 따로 지으면 문서 트리의 `논문/제목` 과
+    링크의 `paper/제목` 이 같은 논문인데 이름이 어긋난다.
+    """
+    out: list[tuple[dict, str]] = []
+    taken: set[str] = set()
+    for it in items:
+        iid = str(it.get("id") or "")
+        if not iid:
+            continue
+        out.append((it, _unique(_folder_name(it.get("title") or "", it.get(fallback_key) or iid), taken)))
+    return out
+
+
 def _paper_mounts(user: SessionUser, settings: Settings) -> list[Mount]:
     try:
         papers = paper_store.list_papers(user, settings)
     except Exception:  # noqa: BLE001 — 목록을 못 읽어도 문서 트리는 떠야 한다
         return []
     out: list[Mount] = []
-    taken: set[str] = set()
-    for p in papers:
-        pid = str(p.get("id") or "")
-        if not pid:
-            continue
-        folder = _unique(_folder_name(p.get("title") or "", p.get("filename") or pid), taken)
+    for p, folder in named(papers, "filename"):
+        pid = str(p["id"])
         rel_dir = f"{PAPERS_DIR}/{folder}"
         files: list[MountedFile] = []
         pdf = paper_store.paper_dir(user, settings, pid) / paper_store.PDF_NAME
@@ -124,12 +136,8 @@ def _meeting_mounts(user: SessionUser, settings: Settings) -> list[Mount]:
     except Exception:  # noqa: BLE001
         return []
     out: list[Mount] = []
-    taken: set[str] = set()
-    for m in meetings:
-        mid = str(m.get("id") or "")
-        if not mid:
-            continue
-        folder = _unique(_folder_name(m.get("title") or "", m.get("date") or mid), taken)
+    for m, folder in named(meetings, "date"):
+        mid = str(m["id"])
         rel_dir = f"{MEETINGS_DIR}/{folder}"
         files: list[MountedFile] = []
         ext = str(m.get("ext") or "")

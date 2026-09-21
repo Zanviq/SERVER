@@ -11,6 +11,7 @@
 // 돌리는 환경(노드의 --experimental-strip-types)에서 "그런 export 없다"고 멈춘다.
 import { parseWikiEmbed } from "./embeds";
 import type { EmbedResolver } from "./embeds";
+import { transformLinks } from "./links";
 
 /** 코드가 아닌 구간만 바꾼다. 울타리(```)와 인라인 코드(`…`)는 건드리지 않는다. */
 function mapOutsideCode(text: string, fn: (chunk: string) => string): string {
@@ -115,10 +116,13 @@ export function transformWiki(text: string, resolve?: EmbedResolver): string {
       const title = e.width ? `${e.target}|${e.width}` : e.target;
       return `![${title}](${hit.url})`;
     });
-    return withEmbeds.replace(/\[\[([^\[\]]+?)\]\]/g, (_m, inner: string) => {
+    const withWiki = withEmbeds.replace(/\[\[([^\[\]]+?)\]\]/g, (_m, inner: string) => {
       const [target, alias] = inner.split("|");
       const t = target.split("#")[0].trim();
       return `[${(alias ?? target).trim()}](#wiki/${encodeURIComponent(t)})`;
     });
+    // `[note/서버/기록.md]` 같은 항목 링크. 위키링크 **뒤에** 바꾼다 —
+    // `[[note/x]]` 가 먼저 `[note/x](#wiki/…)` 가 되어 여기서는 건드리지 않는다.
+    return transformLinks(withWiki);
   });
 }

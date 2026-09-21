@@ -4,6 +4,7 @@ import { Paper } from "../../lib/api";
 import { formatBytes } from "../../lib/format";
 import { isSubmitEnter } from "../../lib/keys";
 import { paperTitle } from "./PaperList";
+import { LinkTextarea } from "../links/LinkTextarea";
 
 interface Props {
   paper: Paper;
@@ -178,8 +179,8 @@ export function PaperInfo({ paper: p, categories = [], onUpdate, onAsk, onRetry 
         {/* maxLength 는 서버 상한(paper_store MAX_TEXT * 2)과 같아야 한다. 없으면
             더 적을 수 있는 것처럼 보이다가, 저장할 때 서버가 말없이 뒤를 잘라
             **화면에서 글이 사라진다**(저장 뒤 서버 값으로 다시 채우므로). */}
-        <textarea className="input h-auto py-2 text-[12.5px]" rows={5} value={notes} maxLength={MAX_NOTES}
-          placeholder="읽으면서 남길 메모. AI도 이 메모를 본다."
+        <LinkTextarea preview className="input h-auto py-2 text-[12.5px]" rows={5} value={notes} maxLength={MAX_NOTES}
+          placeholder="읽으면서 남길 메모. AI도 이 메모를 본다. (마크다운 · [ 로 문서·회의 연결)"
           onChange={(e) => { editing.current = true; setNotes(e.target.value); }}
           onBlur={() => {
             if (notes !== p.notes) void onUpdate({ notes });

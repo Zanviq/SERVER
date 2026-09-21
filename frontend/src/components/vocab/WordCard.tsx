@@ -1,6 +1,8 @@
 import { ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 import { ChevronDown, ChevronRight, Pencil, Trash2, Tag, Quote } from "lucide-react";
 import { VocabWord } from "../../lib/api";
+import { MarkdownView } from "../notes/LazyMarkdownView";
 import { KIND_LABEL, kindOf } from "./kinds";
 
 /** 복습 단계의 최대치. 서버의 REVIEW_INTERVALS(1·3·7·14·30·60·120일)와 같아야 한다. */
@@ -42,6 +44,7 @@ interface Props {
 export function WordCard({ word: w, open, onToggle, onEdit, onDelete, onTag, activeTag, anchorId }: Props) {
   const due = isDue(w);
   const kind = kindOf(w);
+  const navigate = useNavigate();
   return (
     <li data-word-id={anchorId}
       className={`rounded-md border transition-colors ${open ? "border-line-strong bg-surface" : "border-transparent hover:bg-hovered"}`}>
@@ -114,7 +117,11 @@ export function WordCard({ word: w, open, onToggle, onEdit, onDelete, onTag, act
           )}
           {w.notes && (
             <Section title="포인트">
-              <p className="whitespace-pre-wrap">{w.notes}</p>
+              {/* 고칠 때 마크다운·`[vocab/…]` 링크를 쓸 수 있으므로 그렇게 그린다 */}
+              <div className="md-compact">
+                <MarkdownView content={w.notes}
+                  onWikiClick={(t) => navigate(`/notes?open=${encodeURIComponent(t)}&create=0`)} />
+              </div>
             </Section>
           )}
           {w.context && (

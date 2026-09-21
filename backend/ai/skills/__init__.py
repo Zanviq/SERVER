@@ -31,6 +31,7 @@ from .documents import (
     SearchDocuments,
     WriteDocument,
 )
+from .links import LINK_SKILLS
 from .meetings import MEETING_SKILLS
 from .papers import PAPER_SKILLS
 from .search import SearchEverything
@@ -98,6 +99,8 @@ ALL_SKILLS = [
     *CONTEXT_SKILLS,
     # 화면을 가로지르는 검색 — 어느 화면인지 모를 때 먼저 부른다
     SearchEverything(),
+    # 사용자가 [note/서버/기록.md] 처럼 적은 링크 읽기
+    *LINK_SKILLS,
     # 휴지통(되돌리기)
     ListTrash(),
     RestoreFromTrash(),

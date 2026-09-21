@@ -15,6 +15,7 @@ import { GCAL_COLORS, GCAL_COLOR_NAMES } from "../components/calendar/EventDialo
 import { TodoComposer, TodoDraft, draftToBody } from "../components/todo/TodoComposer";
 import { CategoryDialog, CategoryDraft } from "../components/todo/CategoryDialog";
 import { ListState } from "../components/ui/ListState";
+import { LinkTextarea } from "../components/links/LinkTextarea";
 import { api, Todo as TodoItem, TodoCategory, TodoCounts } from "../lib/api";
 import { toast } from "../store/toast";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -655,11 +656,13 @@ export function Todo() {
 
       <label className="mt-3 block">
         <span className="mb-1 block text-xs text-fg-muted">설명</span>
-        <textarea
+        <LinkTextarea
+          preview
           className="input h-auto py-2"
           rows={5}
           key={`desc-${detail.id}`}
           defaultValue={detail.description}
+          placeholder="마크다운 · [ 로 문서·일정 연결"
           onBlur={(e) => {
             if (e.target.value !== detail.description) patchDetail({ description: e.target.value });
           }}

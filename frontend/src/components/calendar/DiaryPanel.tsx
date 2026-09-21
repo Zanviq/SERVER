@@ -6,6 +6,7 @@ import { useSettings } from "../../store/settings";
 import { isSubmitEnter } from "../../lib/keys";
 import { PendingSave } from "../../lib/pendingSave";
 import { AXES, AXIS_LABEL, SHAPES, SHAPE_LABEL, ShapeIcon } from "./DiaryShapes";
+import { LinkTextarea } from "../links/LinkTextarea";
 
 interface Props {
   /** YYYY-MM-DD */
@@ -316,11 +317,13 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
         {/* 잠긴 날은 입력칸 자리를 통째로 회색이 덮는다. 서버가 글을 아예 안
             보내므로 덮개 뒤에는 볼 것도 없다(가리는 시늉이 아니다). */}
         <div className="relative flex min-h-0 flex-1 flex-col">
-          <textarea
+          <LinkTextarea
+            preview={!locked}
+            wrapClassName="flex min-h-0 flex-1 flex-col"
             value={locked ? "" : text}
             onChange={(e) => onText(e.target.value)}
             readOnly={locked}
-            placeholder={locked ? "" : "오늘 어땠는지 적어 두세요."}
+            placeholder={locked ? "" : "오늘 어땠는지 적어 두세요. (마크다운 · [ 로 문서·일정 연결)"}
             className="input min-h-[120px] flex-1 resize-none leading-relaxed"
           />
           {/* key 에 날짜를 준다 — 잠긴 날에서 잠긴 날로 옮기면 컴포넌트가 그대로

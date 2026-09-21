@@ -19,6 +19,7 @@ import { transformWiki } from "../../lib/wikiTransform";
 import { remarkHighlight } from "../../lib/markdownExtras";
 import { CALLOUTS, parseCallout } from "../../lib/callouts";
 import { mdSanitizeSchema } from "../../lib/sanitizeSchema";
+import { LinkChip } from "../links/LinkChip";
 
 // 코드블록: 뚜렷한 테두리 + 우측 상단 복사 버튼. 버튼은 <pre> 바깥이라 복사 텍스트에 안 섞임.
 function CodeBlock({ children }: { children?: ReactNode }) {
@@ -156,6 +157,10 @@ export function MarkdownView({
             );
           },
           a({ href, children, ...props }) {
+            // `[note/서버/기록.md]` 같은 항목 링크(transformLinks 가 만든 것)
+            if (href?.startsWith("#link/")) {
+              return <LinkChip path={safeDecode(href.slice(6))}>{children}</LinkChip>;
+            }
             if (href?.startsWith("#wiki/")) {
               const title = safeDecode(href.slice(6));
               return (

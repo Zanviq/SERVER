@@ -4,6 +4,7 @@ import { Modal } from "../ui/Modal";
 import { api, VocabExample, VocabInput, VocabKind, VocabWord } from "../../lib/api";
 import { KIND_LABEL } from "./kinds";
 import { toast } from "../../store/toast";
+import { LinkTextarea } from "../links/LinkTextarea";
 
 interface Props {
   open: boolean;
@@ -180,7 +181,8 @@ export function WordEditModal({ open, onClose, word, defaultTags = [], onSaved }
           </div>
           <div>
             <label className="label mb-1 block">포인트</label>
-            <textarea className="input h-auto py-2" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="enough보다 격식체" />
+            {/* 단어 카드에 마크다운으로 보인다 — `[vocab/…]` 로 비슷한 단어를 잇는다 */}
+            <LinkTextarea className="input h-auto py-2" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="enough보다 격식체 · [ 로 연결" />
           </div>
         </div>
         <div>

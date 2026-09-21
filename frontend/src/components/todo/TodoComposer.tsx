@@ -4,6 +4,7 @@ import { Dropdown, DropdownItem } from "../ui/Dropdown";
 import { GCAL_COLORS, GCAL_COLOR_NAMES } from "../calendar/EventDialog";
 import type { Todo, TodoCategory } from "../../lib/api";
 import { isSubmitEnter } from "../../lib/keys";
+import { useLinkSuggest } from "../links/useLinkSuggest";
 
 export interface TodoDraft {
   title: string;
@@ -112,6 +113,8 @@ export function TodoComposer({ cats, selectedCat, busy, onSubmit }: Props) {
   const [draft, setDraft] = useState<TodoDraft>({ ...EMPTY_DRAFT, category_id: selectedCat ?? "" });
   const titleRef = useRef<HTMLInputElement>(null);
   const descRef = useRef<HTMLTextAreaElement>(null);
+  // 좁은 입력줄이라 미리보기 단추는 두지 않는다(설명은 할 일을 열면 미리볼 수 있다)
+  const descLinks = useLinkSuggest(descRef);
 
   // 사이드바에서 카테고리를 바꾸면 초안의 카테고리도 따라간다(아직 손대지 않았을 때)
   useEffect(() => {
@@ -365,7 +368,7 @@ export function TodoComposer({ cats, selectedCat, busy, onSubmit }: Props) {
           <textarea
             ref={descRef}
             className="w-full resize-none bg-transparent px-3 py-2 text-[13px] leading-relaxed text-fg outline-none placeholder:text-fg-subtle"
-            placeholder="설명 (선택)"
+            placeholder="설명 (선택 · 마크다운 · [ 로 문서 연결)"
             aria-label="할 일 설명"
             rows={1}
             value={draft.description}
@@ -378,6 +381,7 @@ export function TodoComposer({ cats, selectedCat, busy, onSubmit }: Props) {
               }
             }}
           />
+          {descLinks}
         </div>
         <button
           type="button"

@@ -18,6 +18,7 @@ import { ChatSessionList, ChatSessionPicker } from "./ChatSessions";
 import { Modal } from "../ui/Modal";
 import { ChatSession } from "../../lib/api";
 import { deepestLeaf, siblingsOf, threadOf, TreeMessage } from "../../lib/chatTree";
+import { useLinkSuggest } from "../links/useLinkSuggest";
 
 interface Step {
   name: string;
@@ -41,6 +42,8 @@ interface Msg {
   /** 사용자 메시지에 같이 보낸 것(논문 화면) — 말풍선 아래 작게 보여 준다 */
   selections?: { text: string; page: number }[];
   attachments?: { label: string }[];
+  /** 적은 링크 중 서버가 **못 찾은 것** — 모델은 그 내용을 못 봤다 */
+  missing?: string[];
 }
 
 // 스킬 이름 -> 사람이 읽는 이름. 여기 없으면 AI 단계에 raw 이름이 그대로 뜬다
@@ -109,6 +112,7 @@ const SKILL_LABEL: Record<string, string> = {
   search_context: "지난 대화 검색",
   read_context: "지난 대화 읽기",
   search_everything: "전체 검색",
+  read_link: "링크 읽기",
   shift_date: "날짜 계산",
   // 폴더·휴지통
   list_folders: "폴더 목록",
@@ -229,6 +233,7 @@ function fromServer(m: ChatMessage): Msg {
     steps: (m.meta?.tools ?? []).map((t) => ({ name: t.name, ok: t.ok, message: t.message, data: t.data })),
     selections: m.meta?.selections,
     attachments: m.meta?.attachments,
+    missing: m.meta?.links?.filter((l) => !l.found).map((l) => l.path),
   };
 }
 
@@ -325,6 +330,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   const [compare, setCompare] = useState<string[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // `[` 를 치면 입력칸 위로 링크 후보(문서·논문·회의·할 일…)가 뜬다
+  const linkPanel = useLinkSuggest(inputRef);
   const abortRef = useRef<AbortController | null>(null);   // 중단 버튼
   const navigate = useNavigate();
   // 화면 폭이 아니라 입력 방식으로 판단한다 — 태블릿 가로처럼 넓어도 소프트 키보드다.
@@ -771,8 +778,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
                 </div>
               ) : null}
               {m.text && (
-                <div className="max-w-[80%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-accent px-4 py-2.5 text-[13.5px] text-accent-contrast">
-                  {m.text}
+                // 사용자가 친 것도 마크다운이다(목록·굵게·`[note/…]` 링크)
+                <div className="md-on-accent max-w-[80%] rounded-lg rounded-br-sm bg-accent px-4 py-2.5 text-[13.5px] text-accent-contrast">
+                  <MarkdownView content={m.text} onWikiClick={openDoc} />
+                </div>
+              )}
+              {m.missing && m.missing.length > 0 && (
+                <div className="max-w-[80%] text-right text-[11px] text-danger">
+                  찾지 못한 링크(AI 가 내용을 못 봤습니다): {m.missing.join(", ")}
                 </div>
               )}
               {/* 이 질문에서 갈라진 가지가 여럿이면 여기서 바로 옮겨 다닌다 —
@@ -939,6 +952,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
           className="input flex-1 resize-none !h-auto min-h-[2.25rem] py-2 leading-relaxed [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           style={{ maxHeight: 160, overflowY: "auto" }}
         />
+        {linkPanel}
         {busy ? (
           // 답이 길거나 엉뚱하게 흘러갈 때 끊을 수 있어야 한다. 여기까지 온 답은
           // 지우지 않고 남긴다(서버도 같은 것을 기록에 넣는다).

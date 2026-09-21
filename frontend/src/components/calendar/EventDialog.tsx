@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { CalEvent } from "../../lib/api";
+import { LinkTextarea } from "../links/LinkTextarea";
 
 export const GCAL_COLORS: Record<string, string> = {
   "1": "#7986cb", "2": "#33b679", "3": "#8e24aa", "4": "#e67c73",
@@ -114,7 +115,9 @@ export function EventDialog({
         </div>
         <div>
           <label className="label mb-1 block">설명</label>
-          <textarea className="input h-auto py-2" rows={2} value={desc} onChange={(e) => setDesc(e.target.value)} />
+          <LinkTextarea preview className="input h-auto py-2" rows={3} value={desc}
+            onChange={(e) => setDesc(e.target.value)}
+            placeholder="마크다운 · [ 로 문서·할 일 연결" />
         </div>
         <label className="flex items-center gap-2 text-[13px]">
           <input

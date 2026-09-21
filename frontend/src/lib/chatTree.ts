@@ -9,6 +9,8 @@
  * 겹침·순서 같은 것은 눈으로 보고 판단할 일이 아니다.
  */
 
+import { plainRefs } from "./links";
+
 export interface TreeMessage {
   id: string;
   role: "user" | "assistant";
@@ -146,7 +148,8 @@ export function buildTurns(msgs: TreeMessage[], head: string): Turn[] {
       userId: userMsg.id,
       // 갈라지는 자리의 질문은 "1번 더 자세히" 처럼 앞말에 기대는 짧은 말이 많다 —
       // 이름이 있으면 그걸 쓴다. 그것이 지도에서 알고 싶은 바로 그 정보다.
-      label: fitLabel(userMsg.branchName?.trim() || userMsg.text),
+      // `[note/서버/기록.md]` 는 지도에서 `기록.md` 로 — 좁은 노드에 경로가 다 먹는다
+      label: fitLabel(userMsg.branchName?.trim() || plainRefs(userMsg.text)),
       named: !!userMsg.branchName?.trim(),
       pending: !reply,
       onPath: onPath.has(endId) || onPath.has(userMsg.id),

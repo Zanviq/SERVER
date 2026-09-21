@@ -22,6 +22,7 @@ from .routers import (
     context,
     diary,
     google,
+    links as links_router,
     meetings,
     notes,
     papers,
@@ -144,6 +145,7 @@ app.include_router(diary.router, dependencies=_PROTECTED)
 app.include_router(meetings.router, dependencies=_PROTECTED)
 app.include_router(context.router, dependencies=_PROTECTED)
 app.include_router(search.router, dependencies=_PROTECTED)
+app.include_router(links_router.router, dependencies=_PROTECTED)
 app.include_router(usage.router, dependencies=_PROTECTED)
 app.include_router(terminal.router, dependencies=_PROTECTED)
 app.include_router(admin.router, dependencies=_OWNER_ONLY)

@@ -29,7 +29,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .. import (
-    branch_names, chat_store, context_store, meeting_store, paper_store, vocab_store,
+    branch_names, chat_store, context_store, links, meeting_store, paper_store, vocab_store,
     vocab_suggest,
 )
 from ..ai import models as ai_models
@@ -356,15 +356,16 @@ def _decode_attachments(items: list[Attachment]) -> list[dict]:
     return out
 
 
-def _compose_message(message: str, selections: list[Selection], attachments: list[dict]) -> str:
-    """선택한 글·영역 이미지가 있으면 메시지 앞에 인용으로 붙인다.
+def _compose_message(message: str, selections: list[Selection], attachments: list[dict],
+                     linked: str = "") -> str:
+    """선택한 글·영역 이미지·링크 내용이 있으면 메시지 앞에 인용으로 붙인다.
 
     모델은 이미지 파트를 직접 보지만, '어느 쪽의 무엇인지'는 글로 알려야 답에
-    쪽수를 붙일 수 있다.
+    쪽수를 붙일 수 있다. 링크(`[note/…]`)는 links.context_block 이 풀어 준 글이다.
     """
-    if not selections and not attachments:
+    if not selections and not attachments and not linked:
         return message
-    lines = []
+    lines = [linked] if linked else []
     for s in selections[:MAX_SELECTIONS]:
         full = (s.text or "").strip()
         txt = full[:MAX_SELECTION_CHARS]
@@ -573,12 +574,16 @@ def _prepare(body: "ChatRequest", user: SessionUser, settings: Settings) -> Prep
             history.append({"role": t.role, "text": text})
         history.reverse()
 
-    full_message = _compose_message(message, body.selections, attachments)
+    # `[note/서버/기록.md]` 같은 링크는 그 내용을 읽어 함께 보낸다(모델에게만)
+    linked, link_briefs = links.context_block(user, settings, message)
+    full_message = _compose_message(message, body.selections, attachments, linked)
     user_meta = {
         "selections": [{"text": (s.text or "")[:MAX_SELECTION_CHARS], "page": s.page}
                        for s in body.selections[:MAX_SELECTIONS]],
         "attachments": [{"label": a.get("label", ""), "mime": a["mime"]} for a in attachments],
     }
+    if link_briefs:
+        user_meta["links"] = link_briefs
 
     return Prepared(
         today=today, mode=mode, message=message, full_message=full_message,

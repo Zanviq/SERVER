@@ -125,6 +125,42 @@
   .prose-server {
     @apply text-[14px] leading-relaxed text-fg2;
   }
+  /* 사용자 말풍선(강조색 바탕) 안의 마크다운. 본문 색(fg2)·링크 색(info)을 그대로
+     두면 강조색 위에서 글자가 묻힌다 — 말풍선 글자색을 따르게 한다. */
+  .md-on-accent .prose-server {
+    @apply text-[13.5px] text-inherit;
+  }
+  .md-on-accent .prose-server :where(h1, h2, h3, h4, h5, h6, blockquote, a, strong, th, td, pre code) {
+    @apply text-inherit;
+  }
+  .md-on-accent .prose-server > :first-child {
+    @apply mt-0;
+  }
+  .md-on-accent .prose-server > :last-child {
+    @apply mb-0;
+  }
+  .md-on-accent .prose-server code {
+    @apply bg-black/15 text-inherit;
+  }
+  .md-on-accent .prose-server pre {
+    @apply border-white/25 bg-black/15;
+  }
+  .md-on-accent .prose-server blockquote {
+    @apply border-white/60;
+  }
+  .md-on-accent .link-chip {
+    @apply bg-white/20 text-inherit hover:bg-white/30;
+  }
+  /* 카드 속 짧은 글(단어 포인트 등) — 둘레 글씨 크기를 따르고 위아래 여백을 없앤다 */
+  .md-compact .prose-server {
+    @apply text-[13px];
+  }
+  .md-compact .prose-server > :first-child {
+    @apply mt-0;
+  }
+  .md-compact .prose-server > :last-child {
+    @apply mb-0;
+  }
   .prose-server h1 {
     @apply mb-2 mt-4 text-xl font-bold text-fg;
   }

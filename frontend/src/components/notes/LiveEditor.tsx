@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { EditorView, keymap, ViewPlugin, Decoration, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
@@ -23,6 +24,8 @@ import { Paperclip } from "lucide-react";
 import { toast } from "../../store/toast";
 import { useMediaQuery } from "../../lib/useMediaQuery";
 import { NOTE_PATH_MIME, isOurDrag } from "./dragTypes";
+import { itemLinks, linkCompletionSource } from "../links/cmLinks";
+import { openLink } from "../links/linkFetch";
 
 /**
  * 옵시디언식 라이브 프리뷰 마크다운 에디터(CodeMirror 6).
@@ -525,6 +528,12 @@ const editorTheme = EditorView.theme({
   ".cm-copy-btn:hover": { color: "rgb(var(--fg))" },
   // 구분선(`---`) — 글자를 숨기고 그 줄에 실제 선을 긋는다. 테두리는 줄 높이를
   // 바꾸지 않도록 배경 그라디언트로 그린다(마진 금지 규칙과 같은 이유).
+  // `[note/…]` 항목 링크 — 읽기 뷰의 링크 칩과 같은 색
+  ".cm-itemlink": {
+    color: "rgb(var(--info))",
+    backgroundColor: "rgb(var(--info) / 0.08)",
+    borderRadius: "3px",
+  },
   ".cm-mdrule": {
     backgroundImage: "linear-gradient(rgb(var(--line-strong)), rgb(var(--line-strong)))",
     backgroundSize: "100% 1px",
@@ -646,11 +655,12 @@ export function LiveEditor({
 }: LiveEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const navigate = useNavigate();
   const cbs = useRef({
-    onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey, onCreateDoc,
+    onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey, onCreateDoc, navigate,
   });
   cbs.current = {
-    onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey, onCreateDoc,
+    onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey, onCreateDoc, navigate,
   };
   const fileRef = useRef<HTMLInputElement>(null);
   // 터치 기기이거나 화면이 좁을 때. 터치엔 드래그앤드롭이 없고, 좁은 창에서는
@@ -884,8 +894,11 @@ export function LiveEditor({
         embedDeco,
         EditorView.lineWrapping,
         closeBrackets(),
+        // `[note/서버/기록.md]` 항목 링크 — 칠하고, Ctrl(⌘)+클릭으로 연다
+        itemLinks((path) => void openLink(path, (href) => cbs.current.navigate(href))),
         autocompletion({
-          override: [wikiComplete, slashSource],
+          // `[` 는 항목 링크 후보, `[[` 는 위키링크 후보(서로 겹치지 않는다)
+          override: [wikiComplete, linkCompletionSource, slashSource],
           // 슬래시 메뉴는 고르는 목록이라 첫 항목이 미리 선택돼 있어야 Enter로 바로 넣는다
           defaultKeymap: true,
         }),

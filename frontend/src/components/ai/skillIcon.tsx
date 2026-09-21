@@ -1,7 +1,7 @@
 import { LucideIcon } from "lucide-react";
 import {
   Activity, AudioLines, BookMarked, CalendarClock, CalendarDays, FileText, FolderOpen,
-  GraduationCap, ListChecks, MessageSquare, NotebookPen, Search, Sparkles, Trash2, Wrench,
+  GraduationCap, Link2, ListChecks, MessageSquare, NotebookPen, Search, Sparkles, Trash2, Wrench,
 } from "lucide-react";
 
 /**
@@ -20,6 +20,8 @@ const RULES: [RegExp, LucideIcon][] = [
   [/^think$/, Sparkles],
   [/^shift_date$/, CalendarClock],
   [/^search_everything$/, Search],
+  // 사용자가 적은 [note/…] 링크 읽기 — 갈래가 링크마다 다르다
+  [/^read_link$/, Link2],
   // 지난 대화 — 논문·회의 대화 검색도 여기다(자료가 아니라 대화를 뒤진다)
   [/context|_chats$/, MessageSquare],
   [/calendar|free_slots/, CalendarDays],
