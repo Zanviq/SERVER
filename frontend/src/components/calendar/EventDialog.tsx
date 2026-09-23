@@ -3,6 +3,7 @@ import { Loader2, Trash2 } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { CalEvent } from "../../lib/api";
 import { LinkTextarea } from "../links/LinkTextarea";
+import { followEnd } from "../../lib/eventTimes";
 
 export const GCAL_COLORS: Record<string, string> = {
   "1": "#7986cb", "2": "#33b679", "3": "#8e24aa", "4": "#e67c73",
@@ -128,8 +129,10 @@ export function EventDialog({
               // 끄면 시각 입력이 필요하다. 날짜만 남아 있으면 datetime-local 이
               // 빈칸으로 보이고 저장도 실패한다 — 기본 시각을 채워 준다.
               if (!e.target.checked) {
-                setStart((v) => withTime(v, "09:00"));
-                setEnd((v) => withTime(v || start, "10:00"));
+                const s = withTime(start, "09:00");
+                setStart(s);
+                // 시각이 생겼으니 종료도 시각을 갖는다 — 길이는 한 시간
+                setEnd(followEnd(s, "", end, false));
               }
             }}
           />
@@ -142,9 +145,15 @@ export function EventDialog({
               type={allDay ? "date" : "datetime-local"}
               className="input"
               value={allDay ? start.slice(0, 10) : start}
-              onChange={(e) =>
-                setStart(allDay ? `${e.target.value}T${start.slice(11) || "09:00"}` : e.target.value)
-              }
+              onChange={(e) => {
+                const next = allDay
+                  ? `${e.target.value}T${start.slice(11) || "09:00"}`
+                  : e.target.value;
+                setStart(next);
+                // 시작을 옮기면 종료도 따라온다(원래 길이 유지, 모르면 한 시간).
+                // 손으로 다시 맞추는 일이 매번 생겼다.
+                setEnd((prev) => followEnd(next, start, prev, allDay));
+              }}
             />
           </div>
           <div>

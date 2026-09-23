@@ -10305,6 +10305,135 @@ def test_links_suggest_resolve_and_reach_the_model():
         search_all._EVENT_CACHE.pop("tester", None)
 
 
+class _FakeReq:
+    def __init__(self, calls, kind, kw, result):
+        self._calls, self._kind, self._kw, self._result = calls, kind, kw, result
+
+    def execute(self):
+        self._calls.append((self._kind, self._kw))
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+
+class _FakeEvents:
+    def __init__(self, calls, resource, patch_result=None):
+        self._calls, self._resource, self._patch = calls, resource, patch_result
+
+    def get(self, **kw):
+        return _FakeReq(self._calls, "get", kw, self._resource)
+
+    def patch(self, **kw):
+        return _FakeReq(self._calls, "patch", kw,
+                        self._patch if self._patch is not None else {**self._resource, **kw["body"]})
+
+    def insert(self, **kw):
+        return _FakeReq(self._calls, "insert", kw, {**self._resource, **kw["body"]})
+
+
+class _FakeSvc:
+    def __init__(self, calls, resource, patch_result=None):
+        self._e = _FakeEvents(calls, resource, patch_result)
+
+    def events(self):
+        return self._e
+
+
+_TIMED = {
+    "id": "e1", "summary": "회의", "description": "",
+    "start": {"dateTime": "2026-09-24T10:00:00+09:00", "timeZone": "Asia/Seoul"},
+    "end": {"dateTime": "2026-09-24T11:00:00+09:00", "timeZone": "Asia/Seoul"},
+}
+_ALLDAY = {
+    "id": "e2", "summary": "휴가", "description": "",
+    "start": {"date": "2026-09-24"}, "end": {"date": "2026-09-25"},
+}
+
+
+def _ui_payload(**over):
+    """편집창이 저장할 때 보내는 그대로(라우터는 None 만 걸러 낸다)."""
+    p = {"title": "바뀐 제목", "description": "", "allDay": False,
+         "start": "2026-09-24T14:00:00", "end": "2026-09-24T15:00:00", "color": "2",
+         "recurrence": "none", "interval": 1, "recur_until": "", "remind_minutes": 0}
+    p.update(over)
+    return p
+
+
+def test_google_all_day_toggle_clears_the_other_time_field():
+    """'하루 종일'을 켜고 끄는 수정이 구글에서 거절당하지 않아야 한다.
+
+    events.patch 는 중첩 객체를 **필드 단위로 합친다.** 종일 일정(`start.date`)에
+    `start.dateTime` 만 얹으면 둘이 함께 남아 구글이 400 `Invalid start time` 으로
+    거절했고, 그게 그대로 500 `internal server error` 로 나갔다(실측 — 임시
+    캘린더로 재현). 안 쓰는 쪽을 null 로 지워 보내야 한다.
+    """
+    from backend.calendar_google import GoogleCalendar
+
+    # 시각 있는 일정 → 종일로
+    calls: list = []
+    GoogleCalendar(_FakeSvc(calls, _TIMED), "cid").update(
+        "e1", _ui_payload(allDay=True, start="2026-09-24", end="2026-09-24"))
+    body = [kw["body"] for kind, kw in calls if kind == "patch"][0]
+    assert body["start"] == {"date": "2026-09-24", "dateTime": None}, body["start"]
+    assert body["end"] == {"date": "2026-09-25", "dateTime": None}, body["end"]
+
+    # 종일 → 시각 있는 일정으로
+    calls.clear()
+    GoogleCalendar(_FakeSvc(calls, _ALLDAY), "cid").update("e2", _ui_payload())
+    body = [kw["body"] for kind, kw in calls if kind == "patch"][0]
+    assert body["start"] == {"dateTime": "2026-09-24T14:00:00", "timeZone": "Asia/Seoul",
+                             "date": None}, body["start"]
+    assert body["end"]["date"] is None and body["end"]["dateTime"] == "2026-09-24T15:00:00"
+
+    # 만들 때는 한쪽만 보낸다 — 여기에 null 을 넣으면 구글이 거절한다
+    calls.clear()
+    GoogleCalendar(_FakeSvc(calls, _TIMED), "cid").create(_ui_payload())
+    body = [kw["body"] for kind, kw in calls if kind == "insert"][0]
+    assert "date" not in body["start"] and "date" not in body["end"], body
+
+
+def test_google_rejection_says_why_instead_of_500():
+    """구글이 거절하면 **이유가 보여야** 한다 — 화면에도, AI 에게도.
+
+    예전에는 HttpError 가 그대로 올라가 500 `internal server error` 가 됐다.
+    사용자는 무엇이 잘못됐는지 알 수 없었고, AI 는 재시도 여부도 판단 못 했다.
+    """
+    from fastapi import HTTPException
+    from googleapiclient.errors import HttpError
+
+    from backend.calendar_google import GoogleCalendar
+
+    def _err(status: int, message: str) -> HttpError:
+        resp = type("R", (), {"status": status, "reason": message})()
+        body = json.dumps({"error": {"code": status, "message": message}}).encode()
+        return HttpError(resp, body)
+
+    calls: list = []
+    gc = GoogleCalendar(_FakeSvc(calls, _TIMED, patch_result=_err(400, "Invalid start time.")), "cid")
+    try:
+        gc.update("e1", _ui_payload())
+        raise AssertionError("거절인데 그냥 지나갔다")
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+        assert "Invalid start time." in e.detail, e.detail
+
+    # 구글 쪽 장애(5xx)·자격증명(401)은 그대로 흘리지 않는다 — 401 을 그대로 주면
+    # 화면이 **사용자를 로그아웃**시킨다(구글 문제일 뿐인데).
+    for status in (401, 500, 503):
+        gc = GoogleCalendar(_FakeSvc([], _TIMED, patch_result=_err(status, "boom")), "cid")
+        try:
+            gc.update("e1", _ui_payload())
+            raise AssertionError("거절인데 그냥 지나갔다")
+        except HTTPException as e:
+            assert e.status_code == 502, (status, e.status_code)
+
+    # AI 는 이 상태코드로 '다시 해볼 것인가'를 정한다
+    from backend.ai.skills.calendar import _service_error
+
+    assert _service_error(HTTPException(status_code=400, detail="x")).error_code == "invalid"
+    assert _service_error(HTTPException(status_code=502, detail="x")).error_code == "error"
+
+
 def test_read_link_skill_reads_long_bodies_in_pieces():
     """잘린 본문은 offset 으로 이어 읽는다 — 앞부분만 보고 '없다'고 하지 않게."""
     from backend import links

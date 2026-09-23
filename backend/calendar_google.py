@@ -11,10 +11,50 @@ import os
 import threading
 from datetime import date, timedelta
 
+from fastapi import HTTPException
+
 from .calendar_store import merge_event
 from .config import Settings
 
 logger = logging.getLogger("server.gcal")
+
+#: 구글이 4xx 로 거절한 것은 그 뜻 그대로 올린다. 401 은 예외 — 우리 클라이언트에
+#: 401 을 주면 화면이 **사용자를 로그아웃시킨다**(구글 자격증명 문제일 뿐인데).
+_PASS_THROUGH = {400, 403, 404, 409, 410, 412, 429}
+
+
+def _google_detail(e: Exception) -> str:
+    """HttpError 안의 사람 말(`Invalid start time.`)만 꺼낸다."""
+    body = getattr(e, "content", b"") or b""
+    try:
+        err = json.loads(body.decode("utf-8", "replace")).get("error", {})
+        msg = str(err.get("message") or "").strip()
+        if msg:
+            return msg
+    except Exception:  # noqa: BLE001 — 형식이 다르면 원문으로
+        pass
+    return str(e)[:200]
+
+
+def _execute(req, what: str):
+    """구글 요청 하나를 보내고, 거절당하면 **왜인지** 담아 올린다.
+
+    예전에는 HttpError 가 그대로 올라가 500 `internal server error` 가 됐다.
+    화면에는 이유가 한 글자도 안 남고(사용자는 '계속 서버 오류'만 본다), AI 도
+    다시 시도할지 판단할 수 없다 — 실제로 '하루 종일' 전환 실패가 이렇게 묻혔다.
+    """
+    from googleapiclient.errors import HttpError
+
+    try:
+        return req.execute()
+    except HttpError as e:
+        status = int(getattr(getattr(e, "resp", None), "status", 0) or 0)
+        detail = _google_detail(e)
+        logger.warning("구글 캘린더 %s 실패(%s): %s", what, status, detail)
+        raise HTTPException(
+            status_code=status if status in _PASS_THROUGH else 502,
+            detail=f"구글 캘린더가 {what} 요청을 거절했습니다 — {detail}",
+        ) from e
 
 
 def _shift_date(d: str, days: int) -> str:
@@ -164,15 +204,30 @@ def _to_google(p: dict) -> dict:
     return body
 
 
-def _time_fields(p: dict) -> dict:
-    """시작·종료만 구글 형식으로."""
+def _time_fields(p: dict, *, clear_other: bool = False) -> dict:
+    """시작·종료만 구글 형식으로.
+
+    `clear_other=True`(patch 전용)면 **쓰지 않는 쪽을 null 로 지운다.**
+    events.patch 는 중첩 객체를 필드 단위로 합치므로, 종일 일정(`start.date`)에
+    `start.dateTime` 만 얹으면 둘이 함께 남고 구글이 400 `Invalid start time` 으로
+    거절한다(실측). '하루 종일'을 켜거나 끄는 수정이 전부 이것 때문에 500 이 됐다.
+    만들 때(insert)는 한쪽만 보내면 되므로 붙이지 않는다.
+    """
     if bool(p.get("allDay")):
         # 내부 모델의 종료일은 '포함' → 구글엔 '배타적'(+1일)으로 보냄
         inc_end = (p.get("end") or p["start"])[:10]
-        return {"start": {"date": p["start"][:10]},
-                "end": {"date": _shift_date(inc_end, 1)}}
-    return {"start": {"dateTime": p["start"], "timeZone": "Asia/Seoul"},
-            "end": {"dateTime": p.get("end") or p["start"], "timeZone": "Asia/Seoul"}}
+        start: dict = {"date": p["start"][:10]}
+        end: dict = {"date": _shift_date(inc_end, 1)}
+        if clear_other:
+            start["dateTime"] = None
+            end["dateTime"] = None
+        return {"start": start, "end": end}
+    start = {"dateTime": p["start"], "timeZone": "Asia/Seoul"}
+    end = {"dateTime": p.get("end") or p["start"], "timeZone": "Asia/Seoul"}
+    if clear_other:
+        start["date"] = None
+        end["date"] = None
+    return {"start": start, "end": end}
 
 
 def _to_google_partial(p: dict) -> dict:
@@ -271,7 +326,7 @@ class GoogleCalendar:
         items: list[dict] = []
         page = 0
         while True:
-            resp = self._svc.events().list(**params).execute()
+            resp = _execute(self._svc.events().list(**params), "일정 조회")
             items.extend(resp.get("items", []))
             token = resp.get("nextPageToken")
             page += 1
@@ -281,7 +336,8 @@ class GoogleCalendar:
         return [_to_internal(g) for g in items]
 
     def create(self, payload: dict) -> dict:
-        g = self._svc.events().insert(calendarId=self._cid, body=_to_google(payload)).execute()
+        g = _execute(self._svc.events().insert(calendarId=self._cid, body=_to_google(payload)),
+                     "일정 생성")
         return _to_internal(g)
 
     def create_many(self, payloads: list) -> tuple:
@@ -324,23 +380,24 @@ class GoogleCalendar:
 
         raw = None
         if touches_time or touches_recur:
-            raw = self._svc.events().get(calendarId=self._cid, eventId=eid).execute()
+            raw = _execute(self._svc.events().get(calendarId=self._cid, eventId=eid), "일정 조회")
             merged = merge_event(payload, _to_internal(raw))
             if touches_time:
-                body.update(_time_fields(merged))
+                body.update(_time_fields(merged, clear_other=True))
             if touches_recur:
                 rule = _rrule(merged)
                 # 반복을 없애라고 한 경우도 명시적으로 비운다
                 body["recurrence"] = [rule] if rule else []
 
-        g = self._svc.events().patch(calendarId=self._cid, eventId=eid, body=body).execute()
+        g = _execute(self._svc.events().patch(calendarId=self._cid, eventId=eid, body=body),
+                     "일정 수정")
         # 구글은 patch에 전체 리소스를 돌려주지만, 얇게 오는 경우도 방어한다
         return _to_internal(g if g.get("start") else {**(raw or {}), **g})
 
     def get(self, eid: str) -> dict:
         """일정 하나. 반복 인스턴스 id(`시리즈_20260305T100000Z`)도 그대로 받는다."""
         return _to_internal(
-            self._svc.events().get(calendarId=self._cid, eventId=eid).execute()
+            _execute(self._svc.events().get(calendarId=self._cid, eventId=eid), "일정 조회")
         )
 
     def patch_many(self, items: list[tuple[str, dict, dict]]) -> tuple[list[str], list[tuple[str, str]]]:
@@ -384,7 +441,7 @@ class GoogleCalendar:
         return ok, fail
 
     def delete(self, eid: str) -> None:
-        self._svc.events().delete(calendarId=self._cid, eventId=eid).execute()
+        _execute(self._svc.events().delete(calendarId=self._cid, eventId=eid), "일정 삭제")
 
 
 def _rfc3339(s: str, *, end: bool = False) -> str:
