@@ -619,6 +619,8 @@ export interface ChatMessage {
     attachments?: { label: string; mime: string }[];
     /** 메시지에 적은 `[note/…]` 링크를 서버가 풀어 본 결과(본문은 없다) */
     links?: LinkBrief[];
+    /** (질문에만) 답을 못 받은 까닭. 오류로 끝난 답은 저장되지 않으므로 까닭을 질문에 남긴다. */
+    failed?: string;
     /** 스킬 호출 기록. args·result 는 감사용 원문(길면 서버가 자른다). */
     tools?: {
       name: string; ok: boolean; message: string;

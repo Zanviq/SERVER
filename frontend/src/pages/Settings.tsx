@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useId, useState } from "react";
 import { User, Bot, CalendarDays, NotebookPen, Palette, Info, Loader2, RefreshCw, Users } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { ThemeToggle } from "../components/layout/ThemeToggle";
@@ -23,12 +23,18 @@ const BASE_TABS = [
 // 계정 관리는 서버 주인(.env 계정)에게만 보인다(백엔드도 403으로 막는다)
 const ADMIN_TAB = { id: "members", label: "계정 관리", icon: Users };
 
+/** 설정 한 줄. 이름표와 설명을 조작(선택 상자·단추)에 **이어 준다** — 눈으로는 옆에 붙어
+ *  있어도 화면 읽기 프로그램에는 "선택 상자" 로만 읽혔다(9차 실측: 이름 없는 입력칸).
+ *  <label> 로 감싸지 않는 것은 한 줄에 단추가 여럿인 경우(색 고르기) 이름표를 누르면 첫
+ *  단추가 눌리기 때문이다 — 무리(group)로 묶고 이름·설명을 가리킨다. */
 function Row({ label, desc, children }: { label: string; desc?: string; children: ReactNode }) {
+  const id = useId();
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-line py-3">
+    <div role="group" aria-labelledby={`${id}-l`} aria-describedby={desc ? `${id}-d` : undefined}
+      className="flex items-center justify-between gap-4 border-b border-line py-3">
       <div className="min-w-0">
-        <p className="text-[13.5px] font-medium">{label}</p>
-        {desc && <p className="text-[12px] text-fg-muted">{desc}</p>}
+        <p id={`${id}-l`} className="text-[13.5px] font-medium">{label}</p>
+        {desc && <p id={`${id}-d`} className="text-[12px] text-fg-muted">{desc}</p>}
       </div>
       <div className="shrink-0">{children}</div>
     </div>

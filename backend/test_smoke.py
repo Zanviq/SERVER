@@ -1900,6 +1900,46 @@ def test_backlinks_after_a_save_reread_only_the_changed_note(monkeypatch):
     assert reads == ["N7.md"], f"바뀐 노트 하나만 읽어야 한다: {reads}"
 
 
+def test_a_failed_answer_leaves_its_reason_on_the_question(monkeypatch):
+    """AI 호출이 실패한 차례는 질문에 까닭을 남긴다 — 다시 읽어 와도, 새로 열어도 보인다.
+
+    오류로 끝난 답은 일부러 저장하지 않는다(반쪽 답을 다음 차례가 흉내 낸다). 그런데
+    까닭도 함께 사라져서, 화면이 다시 읽어 오는 순간 오류 말풍선이 없어지고 답 없는
+    질문만 남았다. 지도는 그 차례를 '기다리는 중'으로 영원히 돌렸다(9차, 틀린 키로 실측).
+    """
+    from backend.ai import orchestrator
+
+    class Broken:
+        def chat(self, contents, catalog, system):
+            return orchestrator.LLMResult(text="", tool_use=None, error="API key not valid (400)")
+
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": Broken())
+    _login()
+    client.post("/api/ai/space/assistant/sessions", json={"title": "실패 까닭"})
+    r = client.post("/api/ai/chat", json={"message": "오늘 날씨 어때?", "mode": "assistant"})
+    assert '"type": "error"' in r.text
+    msgs = client.get("/api/ai/space/assistant").json()["messages"]
+    q = next(m for m in msgs if m["text"] == "오늘 날씨 어때?")
+    assert q["meta"].get("failed"), f"질문에 까닭이 없다: {q['meta']}"
+    assert not any(m.get("parent") == q["id"] for m in msgs), "오류 답이 저장됐다(흉내 낼 반쪽 답)"
+    # 까닭은 모델에게 가지 않는다(다음 차례의 대화 이력은 글만 싣는다)
+    from backend import chat_store
+
+    hist = chat_store.history_for_llm(msgs, max_turns=10, max_chars=5000)
+    assert all("failed" not in str(h) for h in hist)
+
+    # 성공한 차례에는 붙지 않는다
+    class Fine:
+        def chat(self, contents, catalog, system):
+            return orchestrator.LLMResult(text="맑아요.")
+
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": Fine())
+    client.post("/api/ai/chat", json={"message": "내일은?", "mode": "assistant"})
+    msgs = client.get("/api/ai/space/assistant").json()["messages"]
+    ok = next(m for m in msgs if m["text"] == "내일은?")
+    assert "failed" not in ok["meta"]
+
+
 def test_ai_does_not_make_documents_nobody_asked_for():
     """부탁하지 않은 새 문서는 만들지 않고, "남길까요?" 에 "네" 라고 하면 만든다.
 

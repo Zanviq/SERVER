@@ -152,6 +152,7 @@ export function Analytics() {
             </button>
           )}
           <select
+            aria-label="볼 달"
             className="input h-8 w-32 text-[12px]"
             value={data?.month ?? ""}
             onChange={(e) => setParams((p) => {

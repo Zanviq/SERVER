@@ -93,7 +93,24 @@ test("답이 아직 없는 차례도 노드로 남는다(끊긴 대화)", () => 
   ];
   const [t] = buildTurns(msgs, "u1");
   assert.equal(t.id, "u1");
-  assert.equal(t.pending, true, "답이 없다는 것이 보여야 끊긴 줄 안다");
+  assert.equal(t.unanswered, true, "답이 없다는 것이 보여야 끊긴 줄 안다");
+  // 답이 없는 것과 **기다리는 중**은 다르다 — 예전에는 둘을 한 값으로 써서, 실패한
+  // 질문이 새로 열어도 지도에서 영원히 '기다리는 중'으로 돌았다(9차 실측).
+  assert.equal(t.pending, false, "오지 않을 답을 기다리는 것처럼 그렸다");
+});
+
+test("답을 받아 적는 중인 차례만 기다리는 중이다 · 실패한 까닭은 따라간다", () => {
+  const live = buildTurns([
+    { id: "u1", role: "user", text: "질문", parent: null },
+    { id: "tmp-a1", role: "assistant", text: "", parent: "u1", pending: true },
+  ], "tmp-a1")[0];
+  assert.equal(live.pending, true);
+  assert.equal(live.unanswered, false);
+  const failed = buildTurns([
+    { id: "u1", role: "user", text: "질문", parent: null, failed: "AI 키가 올바르지 않습니다" },
+  ], "u1")[0];
+  assert.equal(failed.pending, false);
+  assert.equal(failed.failed, "AI 키가 올바르지 않습니다");
 });
 
 test("부모를 잃은 옛 메시지는 뿌리가 된다(숲을 그린다)", () => {

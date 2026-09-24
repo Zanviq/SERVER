@@ -173,6 +173,13 @@
       animation: none;
     }
   }
+  /* 지도의 노드·접기 단추를 키보드로 옮겨 다닐 때 지금 어디인지 보인다 */
+  [data-node]:focus-visible,
+  [data-node] [role="button"]:focus-visible {
+    outline: 2px solid rgb(var(--accent));
+    outline-offset: 3px;
+    border-radius: 6px;
+  }
   /* 카드 속 짧은 글(단어 포인트 등) — 둘레 글씨 크기를 따르고 위아래 여백을 없앤다 */
   .md-compact .prose-server {
     @apply text-[13px];

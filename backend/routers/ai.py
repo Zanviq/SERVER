@@ -762,6 +762,7 @@ def chat(
         final_text = ""
         streamed = ""     # 흘려보낸 조각들 — 중간에 멈췄을 때 화면과 기록을 맞춘다
         errored = False
+        error_text = ""   # 답을 못 받은 까닭 — 질문 옆에 남겨 다시 열어도 보이게 한다
         tool_notes: list[dict] = []
         proposed_words: set[str] = set()   # 이번 차례에 이미 올린 단어 후보
         try:
@@ -779,6 +780,7 @@ def chat(
                     streamed = ""   # 도구를 쓰면 모델이 답을 처음부터 다시 쓴다
                 elif ev.get("type") == "error":
                     errored = True
+                    error_text = str(ev.get("message") or "")
                 elif ev.get("type") == "tool_result":
                     # 인자·결과까지 남긴다 — 나중에 "AI 가 뭘 했지"를 되짚으려면
                     # 이름과 한 줄 요약만으로는 알 수 없다(컨텍스트 화면이 이걸 보여준다).
@@ -816,6 +818,7 @@ def chat(
             # 내부 예외 문자열을 사용자에게 그대로 흘리지 않는다(경로·키가 섞일 수 있다).
             logger.exception("AI 스트림 실패")
             detail = str(e) if settings.debug else "처리 중 오류가 발생했습니다."
+            errored, error_text = True, detail
             yield orchestrator.sse_format({"type": "error", "message": detail})
         finally:
             # 화면을 닫아도(스트림이 끊겨도) 사용자 메시지와 받은 데까지는 남긴다.
@@ -833,7 +836,12 @@ def chat(
                     # 대화 맨 앞이다(첫 질문을 고쳐 다시 물을 때).
                     at = (p.parent or None) if p.branching else (
                         chat_store.load_all(persist_path)["head"] or None)
-                    um = chat_store.message("user", message, user_meta, parent=at)
+                    # 오류로 끝난 답은 남기지 않는다(위). 그러면 까닭도 함께 사라져서, 화면이
+                    # 다시 읽어 오는 순간 오류 말풍선이 없어지고 새로 열면 답 없는 질문만
+                    # 남았다(9차 실측). 질문에 까닭을 붙여 둔다 — 모델에게는 가지 않는다.
+                    meta = ({**(user_meta or {}), "failed": (error_text or "답을 받지 못했습니다.")[:300]}
+                            if errored and not body else user_meta)
+                    um = chat_store.message("user", message, meta, parent=at)
                     msgs = [um]
                     if body:
                         msgs.append(chat_store.message(

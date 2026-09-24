@@ -369,6 +369,17 @@ export function ConversationTree({
         return (
           <g key={n.id} data-node transform={`translate(${n.x} ${n.y})`}
             className={linking || compareMode ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"}
+            // 키보드로도 고른다(Tab 으로 옮겨 Enter·Space). 예전에는 노드가 포커스를
+            // 받지 않아 지도는 마우스로만 쓸 수 있었다(9차 실측).
+            tabIndex={t ? 0 : -1} role="button"
+            aria-label={`${n.label}${n.onPath ? " — 지금 줄기" : ""}${n.pending ? " — 답을 기다리는 중"
+              : n.unanswered ? ` — 답을 받지 못함${n.failed ? `: ${n.failed}` : ""}` : ""}`}
+            aria-pressed={isPicked || inCompare >= 0}
+            onKeyDown={(e) => {
+              if (!t || (e.key !== "Enter" && e.key !== " ")) return;
+              e.preventDefault();
+              clickNode(n);
+            }}
             onPointerDown={(e) => t && startNodeDrag(e, n)}
             // 고르는 중(기억 연결·비교)에는 끌지 않고 **누르는 것**만 받는다.
             // 끌기로 옮기면서 이 길이 빠져 비교 모드에서 아무것도 골라지지 않았다.
@@ -397,6 +408,13 @@ export function ConversationTree({
                 stroke="rgb(var(--accent))" strokeWidth={1.2} strokeDasharray="3 5"
                 className="tree-pending" style={{ transformOrigin: `${cx}px ${DOT_R}px` }} />
             )}
+            {/* 답을 못 받은 차례 — 돌지 않는 점선(기다려도 오지 않는다) */}
+            {!n.pending && n.unanswered && (
+              <circle data-unanswered cx={cx} cy={DOT_R} r={DOT_R + 4.5} fill="none"
+                stroke="rgb(var(--danger))" strokeWidth={1.1} strokeDasharray="2 3" opacity={0.8}>
+                <title>{n.failed ? `답을 받지 못했습니다 — ${n.failed}` : "답을 받지 못했습니다"}</title>
+              </circle>
+            )}
             {/* **글은 동그라미 밑에.** 상자 안에 넣으면 지도가 표처럼 보이고,
                 가지가 갈라지는 모양이 눈에 안 들어온다. 격자·선 위에서도 읽히도록
                 바탕색으로 한 번 두르고 그 위에 글자를 얹는다(paint-order). */}
@@ -417,7 +435,14 @@ export function ConversationTree({
             {/* 접기 단추는 **오른쪽 옆**에. 예전에는 비스듬히 아래에 있어서 글자와
                 선 위에 겹쳐 앉았다. */}
             {kids > 0 && (
-              <g className="cursor-pointer"
+              <g className="cursor-pointer" tabIndex={0} role="button"
+                aria-label={folded ? `펼치기 — 숨은 ${hiddenCount(t!)}개` : "접기"}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" && e.key !== " ") return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  toggleFold(n.id);
+                }}
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => { e.stopPropagation(); toggleFold(n.id); }}>
                 <circle cx={cx + DOT_R + 11} cy={DOT_R} r={6.5}

@@ -49,6 +49,8 @@ interface Msg {
   attachments?: { label: string }[];
   /** 적은 링크 중 서버가 **못 찾은 것** — 모델은 그 내용을 못 봤다 */
   missing?: string[];
+  /** (질문에만) 답을 못 받은 까닭 — 서버가 질문에 붙여 둔다 */
+  failed?: string;
 }
 
 // 스킬 이름 -> 사람이 읽는 이름. 여기 없으면 AI 단계에 raw 이름이 그대로 뜬다
@@ -239,6 +241,7 @@ function fromServer(m: ChatMessage): Msg {
     selections: m.meta?.selections,
     attachments: m.meta?.attachments,
     missing: m.meta?.links?.filter((l) => !l.found).map((l) => l.path),
+    failed: m.role === "user" ? m.meta?.failed : undefined,
   };
 }
 
@@ -290,7 +293,7 @@ function asTree(msgs: Msg[]): TreeMessage[] {
   // 보이고, 답이 흐르는 동안 그 노드가 '기다리는 중'으로 돈다.
   return msgs.filter((m) => m.id || m.tempId).map((m) => ({
     id: (m.id ?? m.tempId)!, role: m.role, text: m.text, parent: m.parent ?? null,
-    branchName: m.branchName, pending: m.pending,
+    branchName: m.branchName, pending: m.pending, failed: m.failed,
   }));
 }
 
@@ -860,6 +863,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
               {m.missing && m.missing.length > 0 && (
                 <div className="max-w-[80%] text-right text-[11px] text-danger">
                   찾지 못한 링크(AI 가 내용을 못 봤습니다): {m.missing.join(", ")}
+                </div>
+              )}
+              {/* 답을 못 받은 질문 — 까닭을 남긴다. 오류 말풍선은 저장되지 않아서, 예전에는
+                  다시 읽어 오는 순간 사라지고 답 없는 질문만 남았다. */}
+              {m.failed && (
+                <div role="note" className="max-w-[80%] text-right text-[11px] text-danger">
+                  답을 받지 못했습니다 — {m.failed} (✎ 로 다시 물을 수 있습니다)
                 </div>
               )}
               {/* 이 질문에서 갈라진 가지가 여럿이면 여기서 바로 옮겨 다닌다 —

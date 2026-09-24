@@ -21,6 +21,8 @@ export interface TreeMessage {
   branchName?: string;
   /** 아직 받아 적는 중인 답. 지도에서 '기다리는 중'으로 돈다. */
   pending?: boolean;
+  /** (질문에만) 답을 못 받은 까닭 — 서버가 질문에 붙여 둔다(meta.failed). */
+  failed?: string;
 }
 
 /** 한 '차례'(질문 + 답). 지도의 노드 하나. */
@@ -33,8 +35,12 @@ export interface Turn {
   label: string;
   /** 그 한 줄이 AI 가 지은 가지 이름인가(아니면 질문 앞부분) */
   named: boolean;
-  /** 답이 아직 없는 차례(끊겼거나 실패) */
+  /** 답을 받아 적는 **중**인 차례. 이것만 지도에서 돈다. */
   pending: boolean;
+  /** 답이 없는 차례(끊겼거나 실패). 기다려도 오지 않는다 — 돌리지 않는다. */
+  unanswered: boolean;
+  /** 답을 못 받은 까닭(서버가 남겼으면) */
+  failed?: string;
   /** 지금 보고 있는 줄기 위에 있는가 */
   onPath: boolean;
   depth: number;
@@ -153,8 +159,11 @@ export function buildTurns(msgs: TreeMessage[], head: string): Turn[] {
       // `[note/서버/기록.md]` 는 지도에서 `기록.md` 로 — 좁은 노드에 경로가 다 먹는다
       label: fitLabel(userMsg.branchName?.trim() || plainRefs(userMsg.text)),
       named: !!userMsg.branchName?.trim(),
-      // 답이 아직 없거나, 있어도 받아 적는 중이면 '기다리는 중'이다
-      pending: !reply || !!reply.pending,
+      // '기다리는 중'은 답을 받아 적는 중일 때뿐이다. 예전에는 답이 **없는** 차례도
+      // 기다리는 중으로 그려서, 실패한 질문이 새로 열어도 영원히 돌았다(9차 실측).
+      pending: !!reply?.pending,
+      unanswered: !reply,
+      failed: reply ? undefined : userMsg.failed,
       onPath: onPath.has(endId) || onPath.has(userMsg.id),
       depth,
       children: next.filter((m) => m.role === "user").map((m) => build(m, depth + 1)),
