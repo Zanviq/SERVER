@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import date, datetime
+from datetime import date
 
 from . import json_store
 from .auth import SessionUser
@@ -287,18 +287,3 @@ def summary(user, settings: Settings, ym: str = "") -> dict:
         "context": _context(user, settings),
         "generated_at": time.time(),
     }
-
-
-def last_seen(user, settings: Settings) -> float:
-    """마지막으로 화면을 본 시각(epoch). 자료가 없으면 0."""
-    ms = months(user, settings)
-    if not ms:
-        return 0.0
-    data = _read(user, settings, ms[0])
-    days = [d for d in data["days"] if isinstance(d, str)]
-    if not days:
-        return 0.0
-    try:
-        return datetime.fromisoformat(max(days)).timestamp()
-    except ValueError:
-        return 0.0

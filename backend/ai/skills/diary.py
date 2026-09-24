@@ -24,7 +24,6 @@ SHAPE_WORDS = {
 }
 _WORD_TO_SHAPE = {w: s for s, words in SHAPE_WORDS.items() for w in words}
 _AXIS_LABEL = {"body": "육체", "heart": "마음", "mind": "정신"}
-_LABEL_TO_AXIS = {v: k for k, v in _AXIS_LABEL.items()}
 
 
 def _to_shape(v) -> str:
