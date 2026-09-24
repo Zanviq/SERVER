@@ -114,13 +114,15 @@ app = FastAPI(
 
 settings = get_settings()
 
-# CORS: 자격증명(쿠키)을 쓰므로 와일드카드 금지.
-_origins = [o for o in settings.cors_origins if o != "*"]
+# 이 앱 밖에서 쿠키를 싣고 부를 수 있는 출처. CORS 와 CSRF 막기가 **같은 목록**을 쓴다 —
+# 따로 적으면 한쪽만 고쳐 "읽기는 되는데 쓰기는 403" 같은 어긋남이 생긴다.
+# 자격증명(쿠키)을 쓰므로 와일드카드는 뺀다.
 if "*" in settings.cors_origins:
     logger.warning("CORS_ORIGINS에 '*'는 자격증명과 함께 쓸 수 없어 무시됩니다.")
+_ALLOWED_ORIGINS = [o for o in settings.cors_origins if o != "*"] or ["http://localhost:5173"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_origins or ["http://localhost:5173"],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["Content-Type", "Authorization"],
@@ -128,7 +130,7 @@ app.add_middleware(
 # CSRF: 쓰기 요청은 같은 출처(또는 위에서 연 출처)에서 온 것만. SameSite=Lax 쿠키는
 # 형제 서브도메인(*.zanviq.dev)의 요청에도 실린다 — 자세한 까닭은 same_origin.py.
 # 가장 바깥에 둔다(마지막에 더한 미들웨어가 가장 먼저 받는다).
-app.add_middleware(SameOriginWrites, allowed_origins=_origins or ["http://localhost:5173"])
+app.add_middleware(SameOriginWrites, allowed_origins=_ALLOWED_ORIGINS)
 
 # 공개 라우터(인증 불필요)
 app.include_router(auth.router)
