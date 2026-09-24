@@ -1,5 +1,6 @@
 import { api } from "../../lib/api";
 import type { LinkItem } from "../../lib/api";
+import { moreNote } from "../../lib/moreNote";
 import { toast } from "../../store/toast";
 
 /** 후보 한 번의 답 — 보여 줄 것과, 상한에 걸려 안 보인 수. */
@@ -30,9 +31,9 @@ export async function fetchLinkPage(query: string): Promise<LinkPage> {
   return page;
 }
 
-/** "N개 더" 한 줄. 입력칸과 편집기가 같은 문구를 쓴다. */
-export function moreNote(more: number): string {
-  return `… ${more}개 더 있습니다 — 이름을 더 쳐서 좁히세요`;
+/** 링크 후보의 "N개 더" 한 줄. 입력칸과 편집기가 같은 문구를 쓴다. */
+export function linkMoreNote(more: number): string {
+  return moreNote(more, "이름을 더 쳐서 좁히세요");
 }
 
 /**

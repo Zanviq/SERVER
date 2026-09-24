@@ -12,7 +12,7 @@ import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { linkQueryAt, refRegex, splitLink } from "../../lib/links";
 import { linkDecorations } from "./cmLinkDeco";
 import type { LinkOpeners } from "./cmLinkDeco";
-import { fetchLinkPage, moreNote } from "./linkFetch";
+import { fetchLinkPage, linkMoreNote } from "./linkFetch";
 
 /** `[` 뒤에 친 글자로 후보를 받는다. `[[`(위키링크)는 건드리지 않는다. */
 export async function linkCompletionSource(ctx: CompletionContext): Promise<CompletionResult | null> {
@@ -56,7 +56,7 @@ export async function linkCompletionSource(ctx: CompletionContext): Promise<Comp
     // 자동완성 틀에는 꼬리말 자리가 없어서 맨 끝 한 줄로 알린다. 골라도 아무것도 넣지 않는다.
     options.push({
       label: q.query,
-      displayLabel: moreNote(more),
+      displayLabel: linkMoreNote(more),
       type: "text",
       boost: -99,
       apply: () => {},

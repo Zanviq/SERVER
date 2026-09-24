@@ -6,7 +6,7 @@ import { applyPick, linkQueryAt } from "../../lib/links";
 import { continueList } from "../../lib/mdInput";
 import type { LinkQuery } from "../../lib/links";
 import { linkIcon } from "./LinkChip";
-import { cachedLinkPage, fetchLinkPage, moreNote } from "./linkFetch";
+import { cachedLinkPage, fetchLinkPage, linkMoreNote } from "./linkFetch";
 import type { LinkPage } from "./linkFetch";
 
 /** 접어 둔 채로 두었으면 다음에도 접힌 채로 뜬다(가리는 게 싫은 사람은 계속 싫다). */
@@ -376,7 +376,7 @@ export function useMarkdownInput(ref: RefObject<Field>, opts: InputOptions = {})
           {/* 목록 밖(늘 보이는 자리)에 둔다 — 목록 끝에 두면 끝까지 내려야 보인다 */}
           {more > 0 && items.length > 0 && (
             <div data-link-more className="shrink-0 border-t border-line px-2.5 py-1 text-[11px] text-fg-muted">
-              {moreNote(more)}
+              {linkMoreNote(more)}
             </div>
           )}
           <div className="shrink-0 border-t border-line px-2.5 py-1 text-[10.5px] text-fg-subtle">

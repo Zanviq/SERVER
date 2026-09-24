@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { api, SearchHit, SearchKind } from "../../lib/api";
 import { isSubmitEnter } from "../../lib/keys";
+import { moreNote } from "../../lib/moreNote";
 
 /** 검색창을 열어 달라는 신호. 상태 저장소를 새로 만들 만한 일이 아니다. */
 export const OPEN_SEARCH = "twoems:open-search";
@@ -212,7 +213,7 @@ export function SearchPalette() {
                 })}
                 {(more[kind] ?? 0) > 0 && (
                   <div data-search-more className="px-4 pb-1.5 pl-11 text-[11.5px] text-fg-muted">
-                    … {more[kind]}개{atLeast.includes(kind) ? " 넘게" : ""} 더 있습니다 — 검색어를 좁혀 보세요
+                    {moreNote(more[kind], "검색어를 좁혀 보세요", atLeast.includes(kind))}
                   </div>
                 )}
               </div>
