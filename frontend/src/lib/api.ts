@@ -273,9 +273,11 @@ export const api = {
       layout: Record<string, [number, number]>;
     }>(`/api/ai/space/${encodeURIComponent(space)}`),
   /** 지도에서 옮긴 노드 자리를 저장한다. null 이면 그 자리를 지운다(자동 배치로). */
-  aiSpaceLayout: (space: string, positions: Record<string, [number, number] | null>) =>
+  aiSpaceLayout: (space: string, positions: Record<string, [number, number] | null>,
+                  keepalive = false) =>
     req<{ ok: boolean; layout: Record<string, [number, number]> }>(
-      `/api/ai/space/${encodeURIComponent(space)}/layout`, jsonInit("POST", { positions })),
+      `/api/ai/space/${encodeURIComponent(space)}/layout`,
+      { ...jsonInit("POST", { positions }), keepalive }),
   /** 새 대화를 시작한다 — 가지와 달리 앞 맥락을 하나도 이어받지 않는다. */
   aiSessionNew: (space: string, title = "") =>
     req<{ ok: boolean; id: string }>(
@@ -371,8 +373,9 @@ export const api = {
   },
   /** PDF 원본 URL(inline). pdf.js 가 fetch 로 받는다 — 세션 쿠키가 실린다. */
   paperFileUrl: (id: string) => `${BASE}/api/papers/${encodeURIComponent(id)}/file`,
-  paperUpdate: (id: string, body: Partial<Paper>) =>
-    req<Paper>(`/api/papers/${encodeURIComponent(id)}`, jsonInit("PUT", body)),
+  /** keepalive: 페이지가 닫히는 중에 보내는 저장(읽던 쪽 등) */
+  paperUpdate: (id: string, body: Partial<Paper>, keepalive = false) =>
+    req<Paper>(`/api/papers/${encodeURIComponent(id)}`, { ...jsonInit("PUT", body), keepalive }),
   paperDelete: (id: string) =>
     req<{ ok: boolean; id: string }>(`/api/papers/${encodeURIComponent(id)}`, { method: "DELETE" }),
   paperExtract: (id: string) =>

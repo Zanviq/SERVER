@@ -17,8 +17,13 @@ type Timers = {
   clear: (id: number) => void;
 };
 
+/** 어떻게 보내는가. keepalive 면 페이지가 닫혀도 브라우저가 요청을 끝까지 보낸다. */
+export interface SendHow {
+  keepalive: boolean;
+}
+
 /** 저장 한 건. `false` 를 돌려주거나 던지면 **실패**로 보고 다시 시도한다. */
-type SaveJob = () => unknown;
+type SaveJob = (how: SendHow) => unknown;
 
 const REAL: Timers = {
   set: (fn, ms) => window.setTimeout(fn, ms),
@@ -43,7 +48,7 @@ export class PendingSave {
     this.job = job;
     this.id = this.timers.set(() => {
       this.id = null;
-      void this.run();
+      void this.run({ keepalive: false });
     }, ms);
   }
 
@@ -54,12 +59,12 @@ export class PendingSave {
    * 타이머는 이미 소진됐고 다음 자동저장은 새 입력이 있어야 걸리므로, 잠깐
    * 끊겼다 돌아온 사이에 친 마지막 문단이 통째로 사라진다.
    */
-  private async run(): Promise<boolean> {
+  private async run(how: SendHow): Promise<boolean> {
     const job = this.job;
     if (!job) return true;
     let ok = false;
     try {
-      ok = (await job()) !== false;
+      ok = (await job(how)) !== false;
     } catch {
       ok = false;
     }
@@ -69,12 +74,12 @@ export class PendingSave {
 
   /** 기다리지 않고 **지금** 저장한다. 문서를 옮기기 전에 부른다.
    *  돌려주는 값은 "이제 안 남았는가" — false 면 저장에 실패한 것이다. */
-  async flush(): Promise<boolean> {
+  async flush(how: SendHow = { keepalive: false }): Promise<boolean> {
     if (this.id !== null) {
       this.timers.clear(this.id);
       this.id = null;
     }
-    return this.run();
+    return this.run(how);
   }
 
   /** 대기 중인 저장을 **버린다**. 문서를 지운 뒤에 부른다. */
@@ -85,6 +90,27 @@ export class PendingSave {
     this.job = null;
     return had;
   }
+}
+
+/**
+ * 페이지가 숨겨지면(새로고침·탭 닫기·앱 전환) 남은 저장을 **keepalive 로** 보낸다.
+ *
+ * 화면을 떠날 때의 정리 코드(useEffect cleanup)는 앱 **안에서** 옮겨 갈 때만 돈다.
+ * 새로고침이나 탭 닫기에서는 돌지 않고, 돌더라도 보통 요청은 페이지와 함께 끊긴다 —
+ * 지도에서 노드를 끌고 곧바로 새로고침하면 옮긴 자리가 사라졌다(실측). keepalive
+ * 요청은 페이지가 닫혀도 브라우저가 끝까지 보낸다(본문 64KB 까지).
+ *
+ * 돌려주는 함수를 부르면 떼어 낸다(useEffect 의 정리로 쓴다).
+ */
+export function flushWhenPageHides(pending: PendingSave): () => void {
+  const onHide = () => { void pending.flush({ keepalive: true }); };
+  const onVisibility = () => { if (document.visibilityState === "hidden") onHide(); };
+  window.addEventListener("pagehide", onHide);
+  document.addEventListener("visibilitychange", onVisibility);
+  return () => {
+    window.removeEventListener("pagehide", onHide);
+    document.removeEventListener("visibilitychange", onVisibility);
+  };
 }
 
 /**

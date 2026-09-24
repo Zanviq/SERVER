@@ -11,6 +11,7 @@ import { PaperInfo } from "../components/papers/PaperInfo";
 import { VocabPanel } from "../components/vocab/VocabPanel";
 import { api, Paper } from "../lib/api";
 import { isSubmitEnter } from "../lib/keys";
+import { PendingSave, flushWhenPageHides } from "../lib/pendingSave";
 import { toast } from "../store/toast";
 
 const SUGGESTIONS = [
@@ -156,10 +157,10 @@ export function Papers() {
   };
 
   // 읽던 쪽 저장 — 스크롤마다 쓰지 않고 멈춘 뒤 한 번
-  const readTimer = useRef<number>(0);
+  const readSave = useRef(new PendingSave());
   const onPageChange = useCallback((page: number, total: number) => {
     // 먼저 취소한다 — 열자마자 1쪽이 잡혔다가 읽던 쪽으로 튀는데, 그 1쪽 저장이 남으면 안 된다
-    window.clearTimeout(readTimer.current);
+    readSave.current.cancel();
     // 쪽수는 보통 추출할 때 pypdf 가 채우지만, **스캔본처럼 pypdf 가 못 여는 PDF 는
     // 0 으로 남는다.** 뷰어는 실제 쪽수를 알고 있으니 한 번 알려 준다 —
     // 0 이면 목록에서 읽은 진도를 계산할 수 없다.
@@ -169,11 +170,16 @@ export function Papers() {
         .catch(() => {});
     }
     if (!selected || selected.read_page === page) return;
-    readTimer.current = window.setTimeout(() => {
-      api.paperUpdate(selected.id, { read_page: page }).then((n) => patch(selected.id, { read_page: n.read_page })).catch(() => {});
-    }, 1500);
+    const id = selected.id;
+    readSave.current.schedule(1500, ({ keepalive }) =>
+      api.paperUpdate(id, { read_page: page }, keepalive)
+        .then((n) => patch(id, { read_page: n.read_page })));
   }, [selected]);
-  useEffect(() => () => window.clearTimeout(readTimer.current), []);
+  // 다른 논문으로 옮기거나 화면을 떠날 때 **보내고** 떠난다. 예전에는 타이머를 지워서,
+  // 읽다가 1.5초 안에 다른 논문을 누르면 읽던 쪽이 저장되지 않았다.
+  useEffect(() => () => { void readSave.current.flush(); }, [selected?.id]);
+  // 읽다가 탭을 닫아도(정리 코드가 돌지 않는다) keepalive 로 보낸다
+  useEffect(() => flushWhenPageHides(readSave.current), []);
 
   // 좁은 화면에서는 AI 칸이 숨어 있다. 글을 얹거나 영역을 오리면 그 칸으로
   // 데려가야 한다 — 그러지 않으면 눌러도 아무 일도 안 일어난 것처럼 보인다.

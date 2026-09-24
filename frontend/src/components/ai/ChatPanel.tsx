@@ -19,6 +19,7 @@ import { Modal } from "../ui/Modal";
 import { ChatSession } from "../../lib/api";
 import { deepestLeaf, siblingsOf, threadOf, TreeMessage } from "../../lib/chatTree";
 import { useMarkdownInput } from "../links/useMarkdownInput";
+import { PendingSave, flushWhenPageHides } from "../../lib/pendingSave";
 
 interface Step {
   name: string;
@@ -370,7 +371,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
    * 떼기도 전에 열 번씩 날아간다.
    */
   const saveSpots = useRef<Record<string, [number, number] | null>>({});
-  const saveTimer = useRef(0);
+  const spotSave = useRef(new PendingSave());
   const moveNodes = useCallback((patch: Record<string, [number, number] | null>) => {
     setTreeSpots((cur) => {
       const next = { ...cur };
@@ -381,14 +382,29 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     });
     if (!space) return;
     saveSpots.current = { ...saveSpots.current, ...patch };
-    window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => {
+    // PendingSave: 실패하면 버리지 않고 다음에 다시 보낸다. 모아 둔 것은 **보낼 때**
+    // 읽으므로 그 사이 더 옮긴 것도 함께 간다.
+    spotSave.current.schedule(400, async ({ keepalive }) => {
       const send = saveSpots.current;
-      saveSpots.current = {};
-      api.aiSpaceLayout(space, send).catch(() => toast.error("노드 자리를 저장하지 못했습니다."));
-    }, 400);
+      if (!Object.keys(send).length) return true;
+      try {
+        await api.aiSpaceLayout(space, send, keepalive);
+      } catch {
+        toast.error("노드 자리를 저장하지 못했습니다. 다시 시도합니다.");
+        return false;
+      }
+      // 보내는 사이 새로 옮긴 것은 남긴다(같은 값일 때만 지운다)
+      for (const k of Object.keys(send)) {
+        if (saveSpots.current[k] === send[k]) delete saveSpots.current[k];
+      }
+      return true;
+    });
   }, [space]);
-  useEffect(() => () => window.clearTimeout(saveTimer.current), []);
+  // 떠날 때(화면을 옮기거나 다른 논문의 대화로 갈아탈 때) **보내고** 떠난다. 예전에는
+  // 여기서 타이머를 지워, 끌자마자 다른 화면으로 가면 옮긴 자리가 사라졌다.
+  useEffect(() => () => { void spotSave.current.flush(); }, [space]);
+  // 새로고침·탭 닫기에서도(정리 코드가 돌지 않는다) keepalive 로 보낸다
+  useEffect(() => flushWhenPageHides(spotSave.current), []);
 
   // 서버 공간의 기록. 논문을 바꾸면 그 논문의 대화로 갈아탄다.
   useEffect(() => {
@@ -622,6 +638,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   /** 대화를 갈아타거나 새로 시작한다. 세션은 앞 맥락을 **하나도** 이어받지 않는다. */
   const runSession = useCallback(async (fn: () => Promise<unknown>) => {
     if (!space) return;
+    // 세션을 바꾸기 **전에** 모아 둔 노드 자리를 보낸다. 서버는 받은 자리를 '지금
+    // 세션'에 붙이므로, 바꾼 뒤에 보내면 엉뚱한 세션으로 가서 버려진다.
+    await spotSave.current.flush();
     setLoadingSpace(true);
     setMessages([]);
     setBranchFrom(null);
