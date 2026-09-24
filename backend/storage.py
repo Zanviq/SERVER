@@ -53,12 +53,18 @@ class WalkedFile:
     """순회로 찾은 파일 하나. stat 은 디렉터리를 읽을 때 딸려온 값이라 공짜다."""
 
     rel: str          # 루트 기준 상대경로(POSIX)
-    path: Path
+    abspath: str      # OS 경로 문자열
     stat: os.stat_result
 
     @property
     def name(self) -> str:
         return self.rel.rsplit("/", 1)[-1]
+
+    @property
+    def path(self) -> Path:
+        """Path 는 **쓸 때** 만든다. 순회가 파일마다 미리 만들면 그것만으로 순회 시간의
+        40%였다(노트 2천 개 91ms 중 약 40ms). 트리·목록은 rel·stat 만 쓴다."""
+        return Path(self.abspath)
 
 
 def walk_files(root: Path, *, sort: bool = True) -> list[WalkedFile]:
@@ -120,7 +126,7 @@ def _walk(root: Path, *, want_files: bool, want_dirs: bool):
                                 dirs.append(child)
                             stack.append((child, e.path))
                         elif want_files:
-                            files.append(WalkedFile(child, Path(e.path), e.stat()))
+                            files.append(WalkedFile(child, e.path, e.stat()))
                     except OSError:
                         continue
         except OSError:

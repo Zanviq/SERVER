@@ -55,7 +55,7 @@ def clear_cache() -> None:
 
 def _links_of(f: WalkedFile) -> tuple[str, ...]:
     """이 노트의 위키링크. 지난번과 mtime·크기가 같으면 읽지도 파싱하지도 않는다."""
-    key = str(f.path)
+    key = f.abspath
     fp = (f.stat.st_mtime_ns, f.stat.st_size)
     with _links_lock:
         hit = _LINKS.get(key)
