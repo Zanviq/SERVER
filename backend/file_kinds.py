@@ -62,6 +62,18 @@ def split_ext(name: str) -> tuple[str, str]:
     return (name[: len(name) - len(tail) + m.start()], tail[m.start():]) if m else (name, "")
 
 
+def doc_title(name: str) -> str:
+    """문서 이름에서 확장자만 뗀 것 — 목록·트리·열기·검색이 보여 주고 `[[제목]]` 자동완성이
+    넣는 제목이다.
+
+    예전에는 "마지막 점 뒤를 뗀다"(`rsplit(".", 1)`, `Path.stem`)였다. 확장자 없이 만든
+    `2026.08 회고` 가 **"2026"**, `v1.2 계획` 이 "v1" 이 되었고, `2026.09 회고` 도 "2026"
+    이라 `[[2026]]` 이 어느 쪽을 여는지 알 수 없었다(새 노트는 적은 이름 그대로 만들어지므로
+    날짜를 이름에 넣으면 바로 겪는다). 확장자 판단은 split_ext 한 곳의 규칙을 따른다.
+    """
+    return split_ext(name.rsplit("/", 1)[-1])[0]
+
+
 class BadName(ValueError):
     """사용자가 준 새 이름을 쓸 수 없다(빈 이름·경로 조각)."""
 

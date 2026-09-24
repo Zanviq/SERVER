@@ -1900,6 +1900,37 @@ def test_backlinks_after_a_save_reread_only_the_changed_note(monkeypatch):
     assert reads == ["N7.md"], f"바뀐 노트 하나만 읽어야 한다: {reads}"
 
 
+def test_dotted_names_keep_their_whole_title():
+    """확장자 없이 점이 든 이름의 제목이 첫/마지막 점에서 잘리지 않는다.
+
+    새 노트는 적은 이름 그대로 만들어진다. `2026.08 회고` 의 제목이 목록·트리·열기·검색
+    어디서나 **"2026"** 이었고, 그 제목이 `[[` 자동완성에 그대로 올라 `[[2026]]` 이 들어갔다
+    (`2026.09 회고` 도 "2026" 이라 어느 쪽이 열릴지 모른다). 실측(로컬 서버).
+    """
+    from backend import file_kinds
+    from backend.routers import notes as notes_router
+
+    _login()
+    box = "점든제목시험"
+    want = {"2026.08 회고": "2026.08 회고", "v1.2 계획": "v1.2 계획", "예산 1.5": "예산 1.5",
+            "사진 2026.08.txt": "사진 2026.08", "보통.md": "보통", "a.b.md": "a.b"}
+    for name in want:
+        assert client.put("/api/notes/save", json={
+            "path": f"{box}/{name}", "content": f"{name} 점제목본문"}).status_code == 200
+
+    def titles(rows):
+        return {r["path"].split("/")[-1]: r["title"] for r in rows if r["path"].startswith(box + "/")}
+
+    assert titles(client.get("/api/notes/list").json()) == want
+    assert titles(client.get("/api/notes/tree").json()["notes"]) == want
+    assert titles(client.get("/api/notes/search", params={"q": "점제목본문"}).json()) == want
+    for name, title in want.items():
+        got = client.get("/api/notes/get", params={"path": f"{box}/{name}"}).json()
+        assert got["title"] == title, (name, got["title"])
+    # 규칙은 한 곳이다(복사본이 다시 생기면 목록·열기가 또 어긋난다)
+    assert notes_router.doc_title is file_kinds.doc_title
+
+
 def test_big_lists_skip_the_event_loop_encoder(monkeypatch):
     """항목 수에 비례해 커지는 GET 응답은 이벤트 루프 위의 jsonable_encoder 를 거치지 않는다.
 

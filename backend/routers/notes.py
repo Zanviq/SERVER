@@ -29,7 +29,8 @@ from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..json_store import lock_for, write_text_atomic
 from ..file_kinds import (
-    BadName, inline_media_type, is_editable, kind_of, looks_like_extension, renamed, split_ext,
+    BadName, doc_title, inline_media_type, is_editable, kind_of, looks_like_extension, renamed,
+    split_ext,
 )
 from ..notes_graph import backlinks_for, build_graph, parse_wikilinks
 from ..security_paths import safe_join, to_rel
@@ -179,7 +180,7 @@ def _summary(root: Path, p: Path) -> NoteSummary:
 def _summary_of(rel: str, st) -> NoteSummary:
     """순회에서 받아 둔 stat 으로 만든다 — 파일마다 다시 stat 하지 않는다."""
     name = rel.rsplit("/", 1)[-1]
-    stem = name[:-3] if name.endswith(".md") else (name.rsplit(".", 1)[0] if "." in name else name)
+    stem = doc_title(name)
     return NoteSummary(
         path=rel,
         title=stem,
@@ -274,7 +275,7 @@ def _mounted_summaries(user: SessionUser, settings: Settings) -> list[NoteSummar
         except OSError:
             continue
         name = f.rel.rsplit("/", 1)[-1]
-        stem = name[:-3] if name.endswith(".md") else (name.rsplit(".", 1)[0] if "." in name else name)
+        stem = doc_title(name)
         out.append(NoteSummary(
             path=f.rel, title=stem, modified=st.st_mtime, kind=kind_of(name),
             size=st.st_size, editable=f.editable,
@@ -381,10 +382,10 @@ def get_note(
         # 붙여 온 파일은 **붙은 자리**가 곧 경로다(실제 위치는 문서 루트 밖이라
         # to_rel 이 쓸 수 없다)
         path=hit.rel if hit else to_rel(root, target),
-        title=target.stem,
+        title=doc_title(target.name),
         content=content,
         links=parse_wikilinks(content),
-        backlinks=backlinks_for(root, target.stem),
+        backlinks=backlinks_for(root, doc_title(target.name)),
         kind=kind_of(target.name),
         modified=target.stat().st_mtime,
     )
@@ -710,7 +711,7 @@ def search_notes(
     hits: list[SearchHit] = []
     for f in walk_files(root):
         p, name = f.path, f.name
-        title = name[:-3] if name.endswith(".md") else (name.rsplit(".", 1)[0] if "." in name else name)
+        title = doc_title(name)
         title_hit = ql in title.lower()
         if not is_editable(name):
             # 이미지·PDF 등은 파일명으로만 찾는다

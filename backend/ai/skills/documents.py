@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from ... import doc_cache, mounts
-from ...file_kinds import BadName, is_editable, kind_of, looks_like_extension, renamed
+from ...file_kinds import BadName, doc_title, is_editable, kind_of, looks_like_extension, renamed
 from ...json_store import lock_for, write_text_atomic
 from ...notes_graph import backlinks_for
 from ...security_paths import safe_join, to_rel
@@ -702,9 +702,7 @@ class DocumentBacklinks(SkillBase):
                 message=f"'{args['path']}' 문서를 찾을 수 없습니다.",
                 error_code="not_found",
             )
-        title = target.name
-        if title.endswith(".md"):
-            title = title[:-3]
+        title = doc_title(target.name)
         links = backlinks_for(root, title)
         return SkillResult(
             ok=True,
