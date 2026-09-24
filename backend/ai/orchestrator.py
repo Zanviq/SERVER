@@ -311,6 +311,7 @@ def run(
     vocab_tags: list[str] | None = None,
     meeting_id: str = "",
     history_note: str = "",
+    user_said: str | None = None,
 ) -> Iterator[dict]:
     """ReAct 루프 실행. 이벤트 dict를 순차적으로 yield.
 
@@ -319,13 +320,22 @@ def run(
     mode 를 주면(english/paper) 그 화면의 스킬 부분집합만 모델에 보이고, system 은
     호출한 쪽이 만든 프롬프트로 바꾼다. attachments 는 [{mime, data(bytes)}] —
     논문 화면에서 드래그한 영역 이미지가 마지막 사용자 메시지에 함께 실린다.
+
+    user_said 는 **사람이 친 말만**이다. message 에는 고른 논문 문단·링크한 문서 본문이
+    인용으로 붙어 있을 수 있는데, 스킬이 "사람이 이걸 시켰나"(문서로 남겨 달라·단어장에
+    넣어 달라)를 그걸로 보면 인용된 글의 낱말까지 부탁으로 읽는다 — 영어 논문 문단에는
+    write·file·save 가 흔하고, 문서에 적힌 지시문도 부탁이 된다. 없으면 message 를 쓴다.
     """
     from .modes import get_mode
 
     registry = registry or default_registry()
+    prev_answer = next((str(t.get("text") or "") for t in reversed(history or [])
+                        if t.get("role") == "assistant"), "")
     ctx = SkillContext(user=user, settings=settings, today=today,
                        mode=mode, paper_id=paper_id, vocab_tags=list(vocab_tags or []),
-                       meeting_id=meeting_id, user_message=message)
+                       meeting_id=meeting_id,
+                       user_message=message if user_said is None else user_said,
+                       prev_answer=prev_answer)
     spec = get_mode(mode) if mode else None
     catalog = [s for s in registry.build_catalog() if spec is None or spec.allows(s["name"])]
 
@@ -428,7 +438,12 @@ def run(
                 skill_result = registry.dispatch(name, args, ctx)
                 executed.append((name, skill_result.ok))
                 skill_obj = registry.get(name)
-                if skill_result.ok and (skill_result.mutates or getattr(skill_obj, "mutates", "")):
+                # 쓰기 스킬이 "부탁받지 않아 안 만들었다"(not_saved)고 돌려준 것은 바꾼 것이
+                # 아니다. 바꾼 것으로 세면, 모델이 그 뒤에 "저장했습니다"라고 해도 아래의
+                # '말만 하고 안 한 것' 경고가 붙지 않는다.
+                not_saved = isinstance(skill_result.data, dict) and bool(skill_result.data.get("not_saved"))
+                changes = "" if not_saved else (skill_result.mutates or getattr(skill_obj, "mutates", "") or "")
+                if skill_result.ok and changes:
                     mutated = True
                 # 화면에 "고를 목록"을 띄웠는가(단어 후보). 이번 차례에 저장이 없는
                 # 것이 정상인 자리라, 아래의 "아무것도 안 바뀌었다" 경고에서 뺀다.
@@ -442,7 +457,7 @@ def run(
                     "message": skill_result.message,
                     # 무엇이 바뀌었는지 스킬이 직접 알려준다 → 프런트가 해당 화면만 새로고침
                     # 결과가 직접 알린 값이 우선(휴지통 복원처럼 실행 후에야 갈래를 안다)
-                    "mutates": skill_result.mutates or getattr(skill_obj, "mutates", "") or "",
+                    "mutates": changes,
                     # 감사 기록용. 나중에 "AI 가 뭘 했지"를 되짚으려면 인자와 결과가
                     # 남아야 한다. 스트림에 통째로 실으면 커지므로 잘라서 보낸다.
                     "args": _clip(args),

@@ -23,7 +23,7 @@ from ...security_paths import safe_join, to_rel
 from ...storage import user_data_root, walk_all, walk_dirs, walk_files
 from ...trash import move_to_trash
 from ..skill_base import SkillBase, SkillResult
-from ._common import _MAX_READ, _is_sensitive
+from ._common import _MAX_READ, _is_sensitive, asked_to_save
 
 #: 한 번에 모델에게 보여줄 문서·폴더 수 상한
 _MAX_DOCS = 200
@@ -355,6 +355,28 @@ class ReadDocument(SkillBase):
         )
 
 
+def _unasked_new_doc(ctx, target: Path, args: dict) -> SkillResult | None:
+    """사람이 문서로 남겨 달라고 하지 않았는데 **새** 문서를 만들려 하는가.
+
+    실측(실모델): "파이썬으로 피보나치 함수 써줘" 에 2번 중 2번, "1부터 300까지 숫자만
+    써줘" 에도 새 문서를 만들었다 — 사용자 문서 목록에 만든 적 없는 파일이 쌓인다.
+    회의 문서에서 이미 겪고 구조로 막은 일이다(asked_to_save). 이미 있는 문서를 고치는
+    것은 그 문서를 짚어 시킨 것이므로 막지 않는다.
+
+    만들지 않고 본문을 돌려준다 — 모델은 그것을 말로 답하고 "문서로 남길까요?" 라고
+    묻는다. 사람이 "네" 라고 하면 그때 만든다(asked_to_save 가 그 대답을 알아본다).
+    """
+    if target.exists() or asked_to_save(ctx):
+        return None
+    return SkillResult(
+        ok=True,
+        message=("사용자가 문서로 남겨 달라고 하지 않아 **만들지 않았습니다.** "
+                 "아래 내용을 그대로 답으로 말하고, 끝에 '문서로 남길까요?' 라고 "
+                 "한 줄만 물어보세요. **이번 답에서는** 다시 만들려고 하지 마세요."),
+        data={"not_saved": True, "path": args.get("path", ""), "content": args.get("content", "")},
+    )
+
+
 class WriteDocument(SkillBase):
     mutates = "documents"
     name = "write_document"
@@ -394,6 +416,9 @@ class WriteDocument(SkillBase):
             if not target.exists():
                 what += f" '{target.name}' 대신 .md 나 .txt 로 이름을 지어 주세요."
             return SkillResult(ok=False, message=what, error_code="unsupported")
+        unasked = _unasked_new_doc(ctx, target, args)
+        if unasked:
+            return unasked
         target.parent.mkdir(parents=True, exist_ok=True)
 
         # 빈 문서를 만들지 않는다. 모델이 "먼저 빈 파일을 만들고 나중에 채우겠다"
@@ -478,6 +503,9 @@ class AppendDocument(SkillBase):
             if not target.exists():
                 what += f" '{target.name}' 대신 .md 나 .txt 로 이름을 지어 주세요."
             return SkillResult(ok=False, message=what, error_code="unsupported")
+        unasked = _unasked_new_doc(ctx, target, args)
+        if unasked:
+            return unasked
         target.parent.mkdir(parents=True, exist_ok=True)
         title = args["path"].rsplit("/", 1)[-1]
         # 읽고-고쳐-쓰기라 락이 없으면 동시에 들어온 덧붙이기가 서로를 덮어쓴다

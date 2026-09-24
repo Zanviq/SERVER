@@ -769,7 +769,7 @@ def chat(
                 user, settings, p.full_message, p.today, history=p.history,
                 mode=p.mode, system=p.system, attachments=p.attachments,
                 paper_id=p.paper_id, vocab_tags=p.vocab_tags, meeting_id=p.meeting_id,
-                history_note=p.history_note,
+                history_note=p.history_note, user_said=p.message,
             ):
                 if ev.get("type") == "text":
                     final_text = str(ev.get("text") or "")

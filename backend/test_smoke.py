@@ -1900,6 +1900,95 @@ def test_backlinks_after_a_save_reread_only_the_changed_note(monkeypatch):
     assert reads == ["N7.md"], f"바뀐 노트 하나만 읽어야 한다: {reads}"
 
 
+def test_ai_does_not_make_documents_nobody_asked_for():
+    """부탁하지 않은 새 문서는 만들지 않고, "남길까요?" 에 "네" 라고 하면 만든다.
+
+    실측(실모델): "파이썬으로 피보나치 함수 써줘" 에 2번 중 2번, "1부터 300까지 숫자만
+    써줘" 에도 새 문서를 만들었다(사용자 노트에 numbers.md 가 생겼다). 회의 문서에서
+    이미 겪고 막은 일인데 노트의 write_document·append_document 에는 없었다.
+    그리고 막힌 뒤 비서가 "문서로 남길까요?" 라고 물으면 사람의 "네" 에는 저장을 뜻하는
+    낱말이 없어 또 막혔다 — 물어 놓고 대답을 받을 수 없는 막다른 길이었다.
+    """
+    from backend.ai import orchestrator
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.storage import user_data_root
+
+    s = get_settings()
+    u = SessionUser(username="askfirst", display_name="A", expires_at=0, remaining=0)
+    root = user_data_root(u, s)
+    reg = default_registry()
+
+    def ctx(msg: str, prev: str = "") -> SkillContext:
+        return SkillContext(user=u, settings=s, today="2026-09-25", user_message=msg, prev_answer=prev)
+
+    def made(name: str) -> bool:
+        return (root / f"{name}.md").exists()
+
+    for i, msg in enumerate(("파이썬으로 피보나치 함수 써줘", "1부터 300까지 숫자만 써줘",
+                             "봄에 대한 짧은 시 한 편 써줘")):
+        for skill in ("write_document", "append_document"):
+            r = reg.dispatch(skill, {"path": f"안물은{i}{skill}", "content": "본문"}, ctx(msg))
+            assert r.ok and r.data.get("not_saved") is True, (msg, skill, r.message)
+            assert r.data["content"] == "본문", "말로 답할 내용은 돌려줘야 한다"
+            assert not made(f"안물은{i}{skill}"), f"{msg} 에 {skill} 가 문서를 만들었다"
+
+    for i, msg in enumerate(("피보나치 함수를 '피보' 문서로 저장해줘", "이거 노트에 남겨줘", "",
+                             "계획 노트 만들고 일정 잡아줘", "이 내용 메모해 둬", "회의 결과 적어 둬")):
+        r = reg.dispatch("write_document", {"path": f"물은{i}", "content": "본문"}, ctx(msg))
+        assert r.ok and not r.data.get("not_saved"), (msg, r.message)
+        assert made(f"물은{i}"), msg
+
+    # 비서가 저장을 물었으면 거절이 아닌 짧은 대답은 부탁이다 — "네" 도, 되물은 이름도.
+    offer = "def fib(n): ...\n\n문서로 남길까요?"
+    named = "어떤 이름으로 문서를 저장할까요? 기본값은 '피보나치 함수'입니다."
+    for i, (said, prev) in enumerate((("네", offer), ("응", offer), ("좋아요!", offer),
+                                      ("ㅇㅇ", offer), ("ok", offer), ("그래 해줘", offer),
+                                      ("피보나치로", named), ("저장해 드릴까요?", ""))):
+        prev = prev or "이 코드를 저장해 드릴까요?"
+        r = reg.dispatch("write_document", {"path": f"대답{i}", "content": "본문"}, ctx(said, prev))
+        assert made(f"대답{i}"), (said, prev, r.message)
+    # 묻지 않았는데 "네"(다른 물음에 대한 대답), 거절, 딴 이야기는 아니다
+    for i, (said, prev) in enumerate((("네", "재귀와 반복 두 가지를 알려드릴까요?"),
+                                      ("아니 괜찮아", offer), ("아뇨", named), ("no thanks", offer),
+                                      ("그건 됐고 재귀랑 반복 중에 뭐가 더 빨라? 시간 복잡도로 비교해서 "
+                                       "자세히 설명해 줄래? 예시도 들어서", offer))):
+        reg.dispatch("write_document", {"path": f"아직{i}", "content": "본문"}, ctx(said, prev))
+        assert not made(f"아직{i}"), (said, prev)
+
+    # 이미 있는 문서를 고치는 것은 그 문서를 짚어 시킨 것이다
+    (root / "있던것.md").write_text("옛 글", encoding="utf-8")
+    r = reg.dispatch("write_document", {"path": "있던것", "content": "새 글"}, ctx("더 짧게 고쳐줘"))
+    assert r.ok and (root / "있던것.md").read_text(encoding="utf-8") == "새 글"
+
+    # 안 만든 것을 '바꿨다'고 세지 않는다 — 모델이 "저장했습니다" 라고 하면 경고가 붙는다
+    class _Claims:
+        n = 0
+
+        def chat(self, contents, catalog, system):
+            self.n += 1
+            if self.n == 1:
+                return orchestrator.LLMResult(text="", tool_uses=[
+                    {"name": "write_document", "args": {"path": "피보", "content": "def fib"}}])
+            return orchestrator.LLMResult(text="피보 문서로 저장했습니다.")
+
+    evs = list(orchestrator.run(u, s, "파이썬으로 피보나치 함수 써줘", "2026-09-25",
+                                llm=_Claims(), registry=reg))
+    result = next(e for e in evs if e["type"] == "tool_result")
+    assert result["mutates"] == "", "안 만든 것을 바꾼 것으로 알렸다(화면이 괜히 새로 읽는다)"
+    final = next(e["text"] for e in evs if e["type"] == "text")
+    assert "실제로는 아무것도 바뀌지 않았습니다" in final, final
+    assert not made("피보")
+
+    # 스킬이 보는 '사람의 말'에 인용(고른 논문 문단·링크한 문서)이 섞이지 않는다.
+    # 영어 논문 문단에는 write·file·save 가 흔하다 — 그게 부탁으로 읽혔다.
+    quoted = "[3쪽에서 선택한 글]\nWe save the file and write the doc.\n\n[질문]\n이 문단 설명해줘"
+    evs = list(orchestrator.run(u, s, quoted, "2026-09-25", llm=_Claims(), registry=reg,
+                                user_said="이 문단 설명해줘"))
+    assert not made("피보"), "인용된 논문 문단의 'save the file' 을 저장 부탁으로 읽었다"
+
+
 def test_sibling_subdomain_cannot_write_with_our_cookie():
     """형제 서브도메인(같은 사이트)의 페이지가 쿠키를 실어 보낸 쓰기 요청은 거절한다.
 
