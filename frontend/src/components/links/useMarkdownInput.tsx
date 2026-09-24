@@ -6,7 +6,8 @@ import { applyPick, linkQueryAt } from "../../lib/links";
 import { continueList } from "../../lib/mdInput";
 import type { LinkQuery } from "../../lib/links";
 import { linkIcon } from "./LinkChip";
-import { cachedLinkItems, fetchLinkItems } from "./linkFetch";
+import { cachedLinkPage, fetchLinkPage, moreNote } from "./linkFetch";
+import type { LinkPage } from "./linkFetch";
 
 /** 접어 둔 채로 두었으면 다음에도 접힌 채로 뜬다(가리는 게 싫은 사람은 계속 싫다). */
 const COLLAPSE_KEY = "links.suggest.collapsed";
@@ -48,6 +49,8 @@ export interface InputOptions {
 export function useMarkdownInput(ref: RefObject<Field>, opts: InputOptions = {}): ReactNode {
   const [q, setQ] = useState<LinkQuery | null>(null);
   const [items, setItems] = useState<LinkItem[]>([]);
+  // 상한에 걸려 안 보인 후보 수("N개 더" 한 줄로 알린다)
+  const [more, setMore] = useState(0);
   /** items 가 어느 글자에 대한 답인가. 새로 묻는 동안에는 옛 목록을 그대로 보여
    *  주지만(깜빡이지 않게) 키보드로는 고르지 않는다 — 옛 답을 넣게 된다. */
   const [itemsFor, setItemsFor] = useState<string | null>(null);
@@ -226,8 +229,9 @@ export function useMarkdownInput(ref: RefObject<Field>, opts: InputOptions = {})
       return;
     }
     const my = ++seq.current;
-    const receive = (got: LinkItem[]) => {
+    const receive = ({ items: got, more: rest }: LinkPage) => {
       setItems(got);
+      setMore(rest);
       setItemsFor(query);
       setActive(0);
       if (!pendingPick.current) return;
@@ -235,7 +239,7 @@ export function useMarkdownInput(ref: RefObject<Field>, opts: InputOptions = {})
       const cur = live.current.q;
       if (got.length && cur && cur.query === query) pick(got[0], cur);
     };
-    const hit = cachedLinkItems(query);
+    const hit = cachedLinkPage(query);
     if (hit) {
       receive(hit);
       setLoading(false);
@@ -243,12 +247,12 @@ export function useMarkdownInput(ref: RefObject<Field>, opts: InputOptions = {})
     }
     setLoading(true);
     const t = window.setTimeout(() => {
-      fetchLinkItems(query)
+      fetchLinkPage(query)
         .then((got) => {
           if (my === seq.current) receive(got);
         })
         .catch(() => {
-          if (my === seq.current) receive([]);
+          if (my === seq.current) receive({ items: [], more: 0 });
         })
         .finally(() => {
           if (my === seq.current) setLoading(false);
@@ -369,6 +373,12 @@ export function useMarkdownInput(ref: RefObject<Field>, opts: InputOptions = {})
               </li>
             )}
           </ul>
+          {/* 목록 밖(늘 보이는 자리)에 둔다 — 목록 끝에 두면 끝까지 내려야 보인다 */}
+          {more > 0 && items.length > 0 && (
+            <div data-link-more className="shrink-0 border-t border-line px-2.5 py-1 text-[11px] text-fg-muted">
+              {moreNote(more)}
+            </div>
+          )}
           <div className="shrink-0 border-t border-line px-2.5 py-1 text-[10.5px] text-fg-subtle">
             ↑↓ 고르기 · Enter/Tab 넣기 · 폴더는 안으로 들어감 · Esc 닫기
           </div>

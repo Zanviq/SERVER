@@ -10999,6 +10999,60 @@ def test_read_link_skill_reads_long_bodies_in_pieces():
         client.delete("/api/notes/delete", params={"path": "긴글.md"})
 
 
+def test_link_suggestions_say_how_many_more_there_are():
+    """후보 상한(30)에 걸려 안 보이는 것이 있으면 그 수를 알린다.
+
+    실측: 파일 45개가 든 폴더를 `[note/큰폴더/` 로 열면 30개만 오고 나머지 15개는
+    **둘러봐서는 닿을 수 없었다** — 더 있다는 말도 없었다. 낱말 찾기도 45개 중 30개.
+    """
+    _login()
+    box = "후보상한시험"
+    for i in range(45):
+        client.put("/api/notes/save", json={"path": f"{box}/회의록 {i:02d}.md", "content": "x"})
+    r = client.get("/api/links/suggest", params={"q": f"note/{box}/"}).json()
+    assert len(r["items"]) == 30 and r["more"] == 15, (len(r["items"]), r.get("more"))
+    # 좁히면 다 보이고 더 없다고 한다
+    r = client.get("/api/links/suggest", params={"q": f"note/{box}/회의록 4"}).json()
+    assert len(r["items"]) == 5 and r["more"] == 0, r
+    # 낱말로 찾아도 센다
+    r = client.get("/api/links/suggest", params={"q": "회의록 ", "limit": 10}).json()
+    assert len(r["items"]) == 10 and r["more"] >= 35, r.get("more")
+    # 빈 물음은 목록이 아니라 시작점이다
+    assert client.get("/api/links/suggest", params={"q": ""}).json()["more"] == 0
+
+
+def test_every_linked_document_says_whether_it_was_carried():
+    """링크마다 본문이 실렸거나, 못 실었다고 적혀 있다 — 제목 줄만 남는 링크가 없다.
+
+    링크 본문은 전체 예산(MAX_TOTAL_CHARS)을 나눠 쓴다. 앞 링크들이 예산을 다 쓰면 뒤
+    링크의 본문이 빈 문자열이 되는데, 그때 **잘렸다는 안내까지** 함께 빠졌다(안내를
+    본문 뒤에 붙이고 본문이 있을 때만 실었다). 긴 문서 5개를 이으면 다섯 번째가 제목
+    줄만 남아 모델은 빈 문서로 읽었다(실측). 정말 빈 문서와도 구별돼야 한다.
+    """
+    from backend import links
+    from backend.auth import SessionUser
+
+    u = SessionUser(username="linkbudget", display_name="L", expires_at=0, remaining=0)
+    s = get_settings()
+    from backend.storage import user_data_root
+
+    root = user_data_root(u, s)
+    n = links.MAX_TOTAL_CHARS // links.MAX_LINK_CHARS + 1
+    for i in range(1, n + 1):
+        (root / f"긴{i}.md").write_text("가" * (links.MAX_LINK_CHARS + 100), encoding="utf-8")
+    (root / "빈.md").write_text("", encoding="utf-8")
+    msg = " ".join(f"[note/긴{i}.md]" for i in range(1, n + 1)) + " [note/빈.md] 비교해줘"
+    block, briefs = links.context_block(u, s, msg)
+    sections = block.split("[링크 ")[1:]
+    assert len(sections) == n + 1, len(sections)
+    for sec in sections:
+        body = sec.split("\n", 1)[1] if "\n" in sec else ""
+        assert body.strip(), f"제목 줄만 남았다: {sec[:60]!r}"
+    last_long = sections[n - 1]
+    assert "read_link" in last_long and "싣지 못했습니다" in last_long, last_long[:200]
+    assert "(내용 없음)" in sections[n], sections[n]
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"

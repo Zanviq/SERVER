@@ -21,7 +21,9 @@ def suggest(
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    return {"query": q, "items": links.suggest(user, settings, q, limit)}
+    items, more = links.suggest(user, settings, q, limit)
+    # more: 상한에 걸려 안 보인 후보 수 — 화면이 "N개 더, 더 쳐서 좁히세요"를 띄운다
+    return {"query": q, "items": items, "more": more}
 
 
 @router.get("/open")

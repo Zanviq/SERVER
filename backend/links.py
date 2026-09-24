@@ -325,12 +325,16 @@ def _root_entries() -> list[Entry]:
     return [Entry(f"{k}/", k, f"{k}/", LABELS[k], folder=True) for k in KINDS]
 
 
-def suggest(user: SessionUser, settings: Settings, q: str, limit: int = 30) -> list[dict]:
-    """입력칸에서 `[` 뒤에 친 글자로 후보를 고른다.
+def suggest(user: SessionUser, settings: Settings, q: str,
+            limit: int = 30) -> tuple[list[dict], int]:
+    """입력칸에서 `[` 뒤에 친 글자로 후보를 고른다. (후보, 상한에 걸려 안 보인 수).
 
     - 아무것도 안 쳤으면 갈래 목록 + 최근 문서
     - `note/서버/` 처럼 갈래를 골랐으면 그 폴더 안(파일 탐색기처럼)
     - 갈래 없이 낱말만 쳤으면(`기록`) 모든 갈래에서 이름으로 찾는다
+
+    두 번째 값을 화면이 "N개 더"로 알린다. 예전에는 상한(30)에서 말없이 잘라서, 파일이
+    45개인 폴더를 열면 30개만 보이고 나머지 15개는 **둘러보아서는 닿을 수 없었다**(실측).
     """
     q = str(q or "").lstrip("[").strip()
     limit = max(1, min(int(limit or 30), 60))
@@ -338,14 +342,15 @@ def suggest(user: SessionUser, settings: Settings, q: str, limit: int = 30) -> l
     kind = canon_kind(head) if sep else None
 
     if kind is not None:
-        return [e.public() for e in _rank(entries(user, settings, kind), rest, limit)]
+        return _page(_rank(entries(user, settings, kind), rest), limit)
 
     roots = [e for e in _root_entries()
              if not q or e.kind.startswith(q.lower()) or LABELS[e.kind].startswith(q)]
     if not q:
+        # 빈 물음은 목록이 아니라 시작점(갈래 + 최근 몇 개)이다 — 더 있다고 알릴 것이 없다
         recent = sorted((e for e in entries(user, settings, "note") if not e.folder),
                         key=lambda e: e.order)[:6]
-        return [e.public() for e in roots + recent]
+        return [e.public() for e in roots + recent], 0
     ql = q.lower()
     hits: list[tuple[int, float, Entry]] = []
     for k in KINDS:
@@ -361,12 +366,19 @@ def suggest(user: SessionUser, settings: Settings, q: str, limit: int = 30) -> l
             elif ql in nl:
                 hits.append((1, e.order, e))
     hits.sort(key=lambda h: (h[0], h[1], h[2].path))
-    # 자른 **다음에** 응답 모양으로 바꾼다. public() 은 주소를 만들며(quote) 항목마다
-    # 값이 든다 — 먼저 바꾸면 흔한 낱말 하나에 맞은 천여 개를 모두 바꾸고 30개만 썼다.
-    return [e.public() for e in (roots + [h[2] for h in hits])[:limit]]
+    return _page(roots + [h[2] for h in hits], limit)
 
 
-def _rank(items: list[Entry], sub: str, limit: int) -> list[Entry]:
+def _page(ranked: list[Entry], limit: int) -> tuple[list[dict], int]:
+    """앞 limit 개를 응답 모양으로 + 남은 수.
+
+    자른 **다음에** 응답 모양으로 바꾼다. public() 은 주소를 만들며(quote) 항목마다
+    값이 든다 — 먼저 바꾸면 흔한 낱말 하나에 맞은 천여 개를 모두 바꾸고 30개만 썼다.
+    """
+    return [e.public() for e in ranked[:limit]], max(0, len(ranked) - limit)
+
+
+def _rank(items: list[Entry], sub: str) -> list[Entry]:
     """폴더 안 탐색 + 깊은 곳 찾기.
 
     `서버/기` 면 `서버` 폴더 바로 아래에서 `기` 로 시작하는 것이 먼저, 그다음
@@ -392,7 +404,7 @@ def _rank(items: list[Entry], sub: str, limit: int) -> list[Entry]:
             continue
         scored.append((s, 0 if e.folder else 1, e.order, rel.lower(), e))
     scored.sort(key=lambda t: t[:4])
-    return [t[4] for t in scored[:limit]]
+    return [t[4] for t in scored]
 
 
 # ── 풀기 ─────────────────────────────────────────────────────────────
@@ -652,17 +664,24 @@ def context_block(user: SessionUser, settings: Settings, text: str) -> tuple[str
             continue
         body = r.content
         room = min(MAX_LINK_CHARS, budget)
-        cut = ""
-        if len(body) > room:
-            cut = (f"\n[…{room}자까지만 실었습니다(전체 {len(body)}자). 뒷부분은 "
-                   f"read_link(path=\"{r.path}\", offset={room}) 로 읽으세요.]")
-            body = body[:room]
-        budget -= len(body)
         parts = [head]
         if r.note:
             parts.append(r.note)
-        if body:
-            parts.append(body + cut)
+        if len(body) > room and room > 0:
+            parts.append(body[:room] + f"\n[…{room}자까지만 실었습니다(전체 {len(body)}자). 뒷부분은 "
+                         f"read_link(path=\"{r.path}\", offset={room}) 로 읽으세요.]")
+            budget -= room
+        elif len(body) > room:
+            # 앞 링크들이 자리를 다 썼다. 예전에는 본문과 함께 **잘렸다는 안내까지** 빠져
+            # 제목 줄만 남았다 — 모델은 빈 문서로 읽는다(링크 5개 중 다섯 번째가 그랬다).
+            parts.append(f"[앞 링크들로 실을 자리가 다 차서 본문을 싣지 못했습니다(전체 {len(body)}자). "
+                         f"read_link(path=\"{r.path}\") 로 읽으세요.]")
+        elif body:
+            parts.append(body)
+            budget -= len(body)
+        elif not r.note:
+            # 정말 빈 것과 못 실은 것을 모델이 구별할 수 있어야 한다
+            parts.append("(내용 없음)")
         blocks.append("\n".join(parts))
     if len(paths) > MAX_REFS:
         blocks.append(f"[안내] 링크가 {len(paths)}개인데 앞 {MAX_REFS}개만 풀었습니다. "

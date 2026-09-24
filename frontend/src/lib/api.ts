@@ -475,7 +475,7 @@ export const api = {
       `/api/search?${q({ q: query, kinds, limit: String(limit) })}`),
   /** 입력칸의 `[` 뒤에 친 글자로 링크 후보를 받는다(이름·주소만, 본문 없음). */
   linkSuggest: (query: string, limit = 30) =>
-    req<{ query: string; items: LinkItem[] }>(
+    req<{ query: string; items: LinkItem[]; more?: number }>(
       `/api/links/suggest?${q({ q: query, limit: String(limit) })}`),
   /** 링크 → 그 항목을 여는 화면 주소. */
   linkOpen: (path: string) => req<LinkBrief>(`/api/links/open?${q({ path })}`),
