@@ -4401,7 +4401,8 @@ def test_system_stats_not_leaked_via_ai_skill():
 
 def test_archive_survives_bad_files():
     """압축 불가 파일 하나가 전체 내보내기를 실패시키거나 임시파일을 흘리면 안 된다."""
-    import os, time as _t
+    import os
+    import time as _t
     from backend.config import get_settings
 
     st = get_settings()
@@ -4421,7 +4422,8 @@ def test_archive_survives_bad_files():
 
     r = c.get("/api/notes/archive?path=오래된")
     assert r.status_code == 200, r.text          # 한 파일 때문에 전체가 죽지 않는다
-    import zipfile as _z, io as _io
+    import zipfile as _z
+    import io as _io
     names = _z.ZipFile(_io.BytesIO(r.content)).namelist()
     assert "정상.md" in names                     # 나머지는 정상 포함
     # 이어받기를 제안하면 서로 다른 zip이 이어 붙어 조용히 깨진다
@@ -6157,7 +6159,7 @@ def test_unexpected_skill_errors_do_not_leak_internals():
     """
     from fastapi import HTTPException
 
-    from backend.ai.skill_base import SkillBase, SkillContext, SkillResult
+    from backend.ai.skill_base import SkillBase, SkillContext
     from backend.ai.skill_registry import SkillRegistry
     from backend.auth import SessionUser
     from backend.config import get_settings
@@ -7600,11 +7602,7 @@ def test_papers_and_meetings_show_up_in_the_document_tree():
     파일을 옮기지 않고 **붙여서** 보여 준다(mounts.py 설명 참조). 그래서 여기서
     한 일이 논문·회의 화면에도 그대로 반영된다 — 같은 파일이기 때문이다.
     """
-    import base64 as _b64
-
     _login()
-    png = _b64.b64decode(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
     pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n"
 
     r = client.post("/api/papers/upload", files={"file": ("내 논문.pdf", pdf, "application/pdf")})
@@ -9721,7 +9719,6 @@ def test_a_just_started_event_stays_in_the_reminder_list():
     """
     from datetime import datetime, timedelta
 
-    from backend import calendar_store
 
     _login()
     now = datetime.now().replace(microsecond=0)
@@ -10162,7 +10159,7 @@ def test_two_people_using_the_ai_at_the_same_moment_never_see_each_other(monkeyp
     """
     from concurrent.futures import ThreadPoolExecutor
 
-    from backend import accounts, meeting_store, paper_store
+    from backend import accounts, meeting_store
     from backend.ai import orchestrator
     from backend.ai.orchestrator import LLMResult
     from backend.auth import SessionUser
@@ -10789,7 +10786,7 @@ def test_links_suggest_resolve_and_reach_the_model():
     """
     from datetime import date as _date
 
-    from backend import calendar_service, diary_store, search_all, todo_store, vocab_store
+    from backend import calendar_service, diary_store, todo_store, vocab_store
     from backend.auth import SessionUser
 
     _login()

@@ -21,7 +21,6 @@ kind 가 없는 예전 엔트리는 문서로 본다(기존 휴지통이 비지 
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import time
 import uuid

@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from ... import calendar_service, user_settings
-from ...calendar_colors import COLOR_NAMES, BadColor, resolve_color, strict_color
+from ...calendar_colors import COLOR_NAMES, BadColor, strict_color
 from ...calendar_ids import base_id as calendar_base_id
 from ...calendar_ids import is_instance
 from ...datetimes import BadDateTime

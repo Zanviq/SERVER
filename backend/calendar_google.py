@@ -181,7 +181,6 @@ def _to_internal(g: dict) -> dict:
 
 
 def _to_google(p: dict) -> dict:
-    all_day = bool(p.get("allDay"))
     body: dict = {
         "summary": p.get("title", ""),
         "description": p.get("description", ""),
@@ -372,7 +371,6 @@ class GoogleCalendar:
         시각을 바꿀 때는 기존 값이 필요하다(“3시로 옮겨줘”처럼 start만 주면
         원래 길이를 유지해야 한다). 그때만 get으로 읽는다.
         """
-        from .calendar_store import merge_event
 
         body = _to_google_partial(payload)
         touches_time = any(k in payload for k in ("start", "end", "allDay"))

@@ -14,15 +14,12 @@ import logging
 import os
 import re
 import uuid
-import tempfile
-import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from starlette.background import BackgroundTask
 
 from .. import archive, doc_cache, meeting_store, mounts, moved, paper_store
 from ..auth import SessionUser, require_session

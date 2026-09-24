@@ -304,7 +304,7 @@ def create_many(
 
 def _base_id(eid: str) -> str:
     """규칙은 calendar_ids 한 곳에서만 정한다."""
-    from .calendar_ids import is_instance, base_id
+    from .calendar_ids import base_id
 
     return base_id(eid)
 
