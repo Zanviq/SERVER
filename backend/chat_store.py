@@ -210,11 +210,6 @@ def current(path: Path) -> dict:
     return next(s for s in space["sessions"] if s["id"] == space["active"])
 
 
-#: 예전 이름 — 지금 세션의 나무를 돌려준다(부르는 곳이 많아 남겨 둔다)
-def load_all(path: Path) -> dict:
-    return current(path)
-
-
 def load(path: Path) -> list[dict]:
     """지금 세션의 메시지."""
     return current(path)["messages"]

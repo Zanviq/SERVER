@@ -7660,7 +7660,7 @@ def test_chat_tree_keeps_branches_apart():
     root = chat_store.message("user", "1 2 3 을 설명해줘")
     a0 = chat_store.message("assistant", "1번은…, 2번은…, 3번은…", parent=root["id"])
     chat_store.append(path, root, a0)
-    assert chat_store.load_all(path)["head"] == a0["id"], "마지막 메시지가 끝자락이 된다"
+    assert chat_store.current(path)["head"] == a0["id"], "마지막 메시지가 끝자락이 된다"
 
     # 1번 가지
     u1 = chat_store.message("user", "1번 더 자세히", parent=a0["id"])
@@ -7672,7 +7672,7 @@ def test_chat_tree_keeps_branches_apart():
     a2 = chat_store.message("assistant", "2번은 저러저러합니다", parent=u2["id"])
     chat_store.append(path, u2, a2)
 
-    data = chat_store.load_all(path)
+    data = chat_store.current(path)
     left = [m["text"] for m in chat_store.thread(data["messages"], a1["id"])]
     right = [m["text"] for m in chat_store.thread(data["messages"], a2["id"])]
     assert "1번은 이러이러합니다" in left and "2번은 저러저러합니다" not in left
@@ -7681,12 +7681,12 @@ def test_chat_tree_keeps_branches_apart():
 
     # 가지를 갈아탄다
     assert chat_store.set_head(path, a1["id"]) is True
-    assert chat_store.load_all(path)["head"] == a1["id"]
+    assert chat_store.current(path)["head"] == a1["id"]
     assert chat_store.set_head(path, "없는id") is False
 
     # 지우면 **그 아래 가지 전체**가 간다 — 반쪽만 남기면 뿌리 없는 가지가 뜬다
     assert chat_store.delete_message(path, u2["id"]) is True
-    left_ids = {m["id"] for m in chat_store.load_all(path)["messages"]}
+    left_ids = {m["id"] for m in chat_store.current(path)["messages"]}
     assert u2["id"] not in left_ids and a2["id"] not in left_ids
     assert a1["id"] in left_ids, "다른 가지는 건드리지 않는다"
 
@@ -8177,7 +8177,7 @@ def test_old_flat_conversations_read_as_one_branch():
 
     # 파일을 미리 고쳐 쓰지 않는다 — 다음 저장 때 자연히 새 모양이 된다
     chat_store.append(path, chat_store.message("assistant", "천만에요", parent="m3"))
-    assert chat_store.load_all(path)["messages"][-1]["parent"] == "m3"
+    assert chat_store.current(path)["messages"][-1]["parent"] == "m3"
 
 
 def test_memory_link_brings_only_the_other_branch():
@@ -8203,7 +8203,7 @@ def test_memory_link_brings_only_the_other_branch():
     # 다른 가지끼리는 이어진다
     assert chat_store.connect(path, aA["id"], aB["id"], True) is True
 
-    data = chat_store.load_all(path)
+    data = chat_store.current(path)
     mems = chat_store.linked_memories(data["messages"], data["links"], aB["id"])
     assert len(mems) == 1
     texts = [t["text"] for t in mems[0]["turns"]]
@@ -8214,7 +8214,7 @@ def test_memory_link_brings_only_the_other_branch():
     assert chat_store.linked_memories(data["messages"], data["links"], aA["id"]) == []
     # 풀면 사라진다
     assert chat_store.connect(path, aA["id"], aB["id"], False) is True
-    data = chat_store.load_all(path)
+    data = chat_store.current(path)
     assert chat_store.linked_memories(data["messages"], data["links"], aB["id"]) == []
 
 

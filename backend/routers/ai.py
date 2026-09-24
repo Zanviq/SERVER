@@ -548,7 +548,7 @@ def _prepare(body: "ChatRequest", user: SessionUser, settings: Settings) -> Prep
         # **지금 가지만 본다.** 대화는 나무이고, 맥락은 뿌리에서 지금 자리까지의
         # 한 줄기다. 다른 가지에서 한 이야기는 들어오지 않는다 — 그게 가지를
         # 나누는 이유다(필요하면 기억 연결로 골라서 끌어온다).
-        saved = chat_store.load_all(persist_path)
+        saved = chat_store.current(persist_path)
         session_id = saved["id"]
         # 과거의 어느 메시지에 붙여 달라고 했으면 거기가 이번 차례의 부모다.
         # null 은 "대화 맨 앞에" 라는 뜻이라 "안 시켰다"(빈 문자열)와 구별한다.
@@ -841,7 +841,7 @@ def chat(
                     # 대화 맨 앞이다(첫 질문을 고쳐 다시 물을 때).
                     # 끝자락은 **물어본 세션의** 것이다(그 사이 다른 세션으로 옮겨 갔을 수 있다).
                     asked_in = (chat_store.session_by_id(persist_path, p.session_id)
-                                if p.session_id else chat_store.load_all(persist_path)) or {}
+                                if p.session_id else chat_store.current(persist_path)) or {}
                     at = (p.parent or None) if p.branching else (asked_in.get("head") or None)
                     # 오류로 끝난 답은 남기지 않는다(위). 그러면 까닭도 함께 사라져서, 화면이
                     # 다시 읽어 오는 순간 오류 말풍선이 없어지고 새로 열면 답 없는 질문만
