@@ -274,6 +274,10 @@ def update_meta(user: SessionUser, settings: Settings, mid: str, patch: dict) ->
             m["title"] = _s(patch["title"]) or m.get("title") or "회의"
         if "category" in patch and patch["category"] is not None:
             m["category"] = _s(patch["category"], 60)
+        if patch.get("filename"):
+            # 보이는 이름만 바꾼다(디스크의 녹음 파일은 언제나 audio.<ext> 다).
+            # 확장자는 녹음 형식이 정한다 — 이름으로 형식을 바꿀 수는 없다.
+            m["filename"] = sanitize_filename(str(patch["filename"]))
         if "date" in patch and patch["date"] is not None:
             m["date"] = check_date(patch["date"])
         if "summary" in patch and patch["summary"] is not None:

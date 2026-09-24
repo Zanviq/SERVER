@@ -62,6 +62,27 @@ def split_ext(name: str) -> tuple[str, str]:
     return (name[: len(name) - len(tail) + m.start()], tail[m.start():]) if m else (name, "")
 
 
+class BadName(ValueError):
+    """사용자가 준 새 이름을 쓸 수 없다(빈 이름·경로 조각)."""
+
+
+def renamed(old_name: str, new_name: str) -> str:
+    """이름 바꾸기의 **결과 이름**. 문서 화면과 AI 스킬이 이것 하나를 쓴다.
+
+    - 확장자를 적지 않았으면 **원래 확장자**를 붙인다(`사진.png` → `고양이` = `고양이.png`).
+    - 확장자 판정은 split_ext 다. `Path.suffix` 를 쓰면 `v1.2 notes` 의 가짜 꼬리
+      `.2 notes` 를 확장자로 보고 새 이름에 통째로 붙였다 — AI 스킬이 실제로 그렇게
+      `요약.2 notes` 를 만들었다(문서 화면은 이미 고쳐져 있었는데 두 곳이 따로 놀았다).
+    - 폴더를 넘나드는 이름(`/`·`\\`·`..`)은 받지 않는다 — 이름 바꾸기는 같은 폴더 안이다.
+    """
+    new = (new_name or "").strip()
+    if not new or "/" in new or "\\" in new or ".." in new:
+        raise BadName("잘못된 이름입니다.")
+    if looks_like_extension(new):
+        return new
+    return f"{new}{split_ext(old_name)[1]}"
+
+
 def kind_of(name: str) -> str:
     """'md' | 'text' | 'image' | 'pdf' | 'video' | 'audio' | 'other'."""
     # Path.suffix 가 아니라 split_ext 를 쓴다. `2026.08 회고` 를 suffix 로 보면

@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ... import doc_cache
-from ...file_kinds import is_editable, kind_of, looks_like_extension
+from ...file_kinds import BadName, is_editable, kind_of, looks_like_extension, renamed
 from ...json_store import lock_for, write_text_atomic
 from ...notes_graph import backlinks_for
 from ...security_paths import safe_join, to_rel
@@ -525,14 +525,12 @@ class RenameDocument(SkillBase):
             return _folder_result(e)
         if src is None:
             return SkillResult(ok=False, message="문서를 찾을 수 없습니다.", error_code="not_found")
-        new = (args["new_name"] or "").strip()
-        if not new or "/" in new or ".." in new:
-            return SkillResult(ok=False, message="잘못된 이름입니다.", error_code="invalid")
-        # Path(...).suffix를 쓰면 '월간정리 2026.08'의 '.08'을 확장자로 봐서
-        # 원래 .md를 안 붙인다 → kind가 'other'가 되어 이름만 바꿔도 못 읽는
-        # 문서가 된다. 쓰기 경로와 같은 판정을 쓴다.
-        if not _has_extension(new):
-            new = f"{new}{src.suffix}"
+        # 결과 이름은 문서 화면과 **같은 함수**로 정한다. 여기서 따로 `src.suffix`
+        # 를 붙이던 때는 `v1.2 notes` 를 '요약'으로 바꾸면 `요약.2 notes` 가 됐다.
+        try:
+            new = renamed(src.name, args.get("new_name") or "")
+        except BadName as e:
+            return SkillResult(ok=False, message=str(e), error_code="invalid")
         dst = src.parent / new
         if dst.exists():
             return SkillResult(ok=False, message="같은 이름의 문서가 이미 있습니다.", error_code="exists")

@@ -29,7 +29,7 @@ from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..json_store import lock_for, write_text_atomic
 from ..file_kinds import (
-    inline_media_type, is_editable, kind_of, looks_like_extension, split_ext,
+    BadName, inline_media_type, is_editable, kind_of, looks_like_extension, renamed, split_ext,
 )
 from ..notes_graph import backlinks_for, build_graph, parse_wikilinks
 from ..security_paths import safe_join, to_rel
@@ -612,19 +612,20 @@ def rename_note(
 ):
     """같은 폴더 안에서 파일명을 바꾼다(내용·폴더 유지)."""
     root = user_data_root(user, settings)
-    _reject_mount_reshape(user, settings, req.path, "이름을 바꿀")
+    # 논문·회의에서 붙여 온 파일은 **그 저장소의 이름 바꾸기 길**로 보낸다. 예전에는
+    # 통째로 막아서, 문서 화면에서 회의록 이름을 바꾸면 늘 400 이었다 — 보고·고치고·
+    # 지우기는 되는데 이름만 안 되니 "적용이 안 된다"로 보였다.
+    hit = _mounted(user, settings, req.path)
+    if hit is not None:
+        return _rename_mounted(user, settings, hit, req.new_name)
     src = _existing(root, req.path)
     if not src.exists():
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
-    new_name = (req.new_name or "").strip()
-    if not new_name or "/" in new_name or "\\" in new_name or ".." in new_name:
-        raise HTTPException(status_code=400, detail="잘못된 이름입니다.")
-    # 확장자를 안 적었으면 원래 것을 유지한다(.png를 .png.md로 만들지 않도록).
-    # Path(...).suffix는 '2026.08'의 '.08'도 확장자로 보므로 쓰지 않는다.
-    if not _looks_like_extension(new_name):
-        # 붙이는 쪽도 같은 규칙이어야 한다. src.suffix 를 쓰면 `2026.08 회고` 의
-        # 가짜 꼬리 `.08 회고` 가 새 이름에 통째로 따라붙었다.
-        new_name = f"{new_name}{split_ext(src.name)[1]}"
+    # 결과 이름은 AI 스킬과 **같은 함수**로 정한다(따로 두었다가 어긋났다)
+    try:
+        new_name = renamed(src.name, req.new_name)
+    except BadName as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     rel_dir = src.parent.relative_to(root).as_posix()
     dst_rel = new_name if rel_dir in ("", ".") else f"{rel_dir}/{new_name}"
     dst = safe_join(root, dst_rel)
@@ -633,6 +634,42 @@ def rename_note(
     with _fs_errors_are_bad_requests("이름 변경"):
         src.rename(dst)
     return _summary(root, dst)
+
+
+def _rename_mounted(user: SessionUser, settings: Settings, hit: mounts.MountedFile,
+                    new_name: str) -> NoteSummary:
+    """붙여 온 파일의 이름 바꾸기. 파일의 정체는 그 저장소의 색인이 정하므로
+    이름도 **그 색인을 통해** 바꾼다(파일만 옮기면 색인과 어긋나 안 열린다).
+
+    확장자는 바꿀 수 없다 — 회의록은 마크다운, 논문 원본은 PDF, 녹음은 그 형식이다.
+    이름으로 형식을 바꾸면 그 화면이 파일을 못 연다.
+    """
+    old = hit.rel.rsplit("/", 1)[-1]
+    try:
+        new = renamed(old, new_name)
+    except BadName as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    stem, ext = split_ext(new)
+    if ext.lower() != split_ext(old)[1].lower():
+        raise HTTPException(
+            status_code=400,
+            detail=f"논문·회의에서 온 파일은 확장자를 바꿀 수 없습니다({split_ext(old)[1]} 를 유지하세요).")
+    if hit.role == "doc":
+        meeting_store.rename_doc(user, settings, hit.item_id, split_ext(old)[0], stem)
+    elif hit.kind == "paper":
+        paper_store.update_meta(user, settings, hit.item_id, {"filename": new})
+    else:
+        meeting_store.update_meta(user, settings, hit.item_id, {"filename": new})
+    # 새 자리는 마운트를 다시 만들어 찾는다(이름을 짓는 규칙이 mounts 한 곳에 있다).
+    # 폴더로 좁히지 않는다 — 제목 없는 논문은 파일 이름이 곧 제목이라 폴더도 바뀐다.
+    for f in mounts.files(mounts.mounts(user, settings)):
+        if f.item_id == hit.item_id and f.role == hit.role \
+                and (hit.role != "doc" or split_ext(f.rel.rsplit("/", 1)[-1])[0] == stem):
+            st = f.real.stat()
+            return NoteSummary(path=f.rel, title=split_ext(f.rel.rsplit("/", 1)[-1])[0],
+                               modified=st.st_mtime, kind=kind_of(f.rel), size=st.st_size,
+                               editable=f.editable)
+    raise HTTPException(status_code=500, detail="이름은 바꿨지만 새 자리를 찾지 못했습니다.")
 
 
 @router.post("/move", response_model=NoteSummary)

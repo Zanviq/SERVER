@@ -7339,9 +7339,29 @@ def test_papers_and_meetings_show_up_in_the_document_tree():
         assert client.put("/api/notes/save",
                           json={"path": pdf_rel, "content": "x"}).status_code == 415
 
-        # 이름 바꾸기·옮기기는 막는다 — 그 파일의 정체는 색인이 정한다
-        assert client.post("/api/notes/rename",
-                           json={"path": doc_rel, "new_name": "딴이름"}).status_code == 400
+        # 이름 바꾸기는 **그 저장소의 길로** 된다(문서 화면에서 바꾸면 회의 화면에도).
+        # 예전에는 통째로 막아서 늘 400 이었다 — 사용자에게는 "적용이 안 된다"였다.
+        r = client.post("/api/notes/rename", json={"path": doc_rel, "new_name": "안건 정리"})
+        assert r.status_code == 200, r.text
+        assert r.json()["path"] == "회의/붙임 시험 회의/안건 정리.md", r.json()
+        assert client.get(f"/api/meetings/{mid}/docs/안건 정리").status_code == 200
+        # 확장자는 못 바꾼다(회의록은 마크다운이어야 회의 화면이 연다)
+        assert client.post("/api/notes/rename", json={
+            "path": "회의/붙임 시험 회의/안건 정리.md", "new_name": "안건 정리.txt"}).status_code == 400
+        client.post("/api/notes/rename",
+                    json={"path": "회의/붙임 시험 회의/안건 정리.md", "new_name": "회의록"})
+        # 논문 원본의 보이는 이름도 바뀐다(색인의 filename)
+        r = client.post("/api/notes/rename", json={"path": pdf_rel, "new_name": "읽을 논문"})
+        assert r.status_code == 200, r.text
+        assert client.get(f"/api/papers/{pid}").json()["filename"] == "읽을 논문.pdf"
+        pdf_rel = r.json()["path"]
+        # 녹음도 — 확장자는 녹음 형식이 정하므로 이름만 바뀐다
+        r = client.post("/api/notes/rename",
+                        json={"path": "회의/붙임 시험 회의/녹음.webm", "new_name": "첫 녹음"})
+        assert r.status_code == 200, r.text
+        assert r.json()["path"] == "회의/붙임 시험 회의/첫 녹음.webm", r.json()
+        assert client.get("/api/notes/raw", params={"path": r.json()["path"]}).status_code == 200
+        # 옮기기는 여전히 막는다 — 그 파일의 자리는 색인이 정한다
         assert client.post("/api/notes/move",
                            json={"path": doc_rel, "target_folder": ""}).status_code == 400
         # 마운트 이름공간 **안으로** 새로 만드는 것도 막는다(진짜 폴더가 생기면
@@ -7393,6 +7413,58 @@ def test_mounted_folders_never_shadow_a_real_folder():
         assert got.status_code == 200 and got.json()["content"] == "사용자가 쓴 글"
     finally:
         _shutil.rmtree(real, ignore_errors=True)
+
+
+def test_rename_gives_same_name_from_screen_and_ai():
+    """문서 화면과 AI 가 같은 이름 바꾸기에 **같은 결과**를 낸다.
+
+    둘이 따로 확장자를 붙이던 때, AI 는 `Path.suffix` 를 써서 `v1.2 notes` 를 '요약'
+    으로 바꾸면 `요약.2 notes` 를 만들었다(문서 화면은 `요약`). 같은 요청이 어디서
+    했느냐에 따라 다른 파일이 되면 안 된다.
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.storage import user_data_root
+
+    _login()
+    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    root = user_data_root(u, get_settings())
+    reg = default_registry()
+    ctx = SkillContext(user=u, settings=get_settings(), today="2026-09-25")
+    cases = [
+        ("v1.2 notes", "요약", "요약"),               # 이름의 점은 확장자가 아니다
+        ("2026.08 회고.md", "8월 회고", "8월 회고.md"),  # 확장자를 안 적으면 원래 것
+        ("메모.md", "메모.txt", "메모.txt"),           # 확장자를 적으면 그것
+        ("사진.png", "고양이", "고양이.png"),
+    ]
+    for i, (src, new, want) in enumerate(cases):
+        for via in ("screen", "ai"):
+            folder = root / f"rename-parity-{i}-{via}"
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / src).write_bytes(b"x")
+            rel = f"{folder.name}/{src}"
+            if via == "screen":
+                r = client.post("/api/notes/rename", json={"path": rel, "new_name": new})
+                assert r.status_code == 200, (src, r.text)
+            else:
+                got = reg.dispatch("rename_document", {"path": rel, "new_name": new}, ctx)
+                assert got.ok, (src, got.message)
+            names = sorted(p.name for p in folder.iterdir())
+            assert names == [want], f"{via}: {src!r} → {new!r} 가 {names} 가 됐다(기대 {want!r})"
+            (folder / want).unlink()
+            folder.rmdir()
+
+    # 쓸 수 없는 이름은 두 길 모두 거절한다(한쪽만 막으면 그쪽으로 돌아 들어간다)
+    (root / "rename-bad.md").write_text("x", encoding="utf-8")
+    try:
+        for bad in ("a/b", "..", "a\\b", "  "):
+            assert client.post("/api/notes/rename",
+                               json={"path": "rename-bad.md", "new_name": bad}).status_code == 400, bad
+            assert not reg.dispatch("rename_document",
+                                    {"path": "rename-bad.md", "new_name": bad}, ctx).ok, bad
+    finally:
+        (root / "rename-bad.md").unlink(missing_ok=True)
 
 
 def test_map_remembers_where_nodes_were_dragged():
