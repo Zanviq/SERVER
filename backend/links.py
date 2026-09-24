@@ -361,7 +361,9 @@ def suggest(user: SessionUser, settings: Settings, q: str, limit: int = 30) -> l
             elif ql in nl:
                 hits.append((1, e.order, e))
     hits.sort(key=lambda h: (h[0], h[1], h[2].path))
-    return [e.public() for e in roots + [h[2] for h in hits]][:limit]
+    # 자른 **다음에** 응답 모양으로 바꾼다. public() 은 주소를 만들며(quote) 항목마다
+    # 값이 든다 — 먼저 바꾸면 흔한 낱말 하나에 맞은 천여 개를 모두 바꾸고 30개만 썼다.
+    return [e.public() for e in (roots + [h[2] for h in hits])[:limit]]
 
 
 def _rank(items: list[Entry], sub: str, limit: int) -> list[Entry]:
