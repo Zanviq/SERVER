@@ -52,6 +52,13 @@ export interface Placed extends Turn {
   y: number;
 }
 
+/** 지도 노드를 소리로 읽을 이름 — 한 줄 + 지금 줄기인가 + 답의 상태. */
+export function describeTurn(t: Turn): string {
+  const state = t.pending ? "답을 기다리는 중"
+    : t.unanswered ? `답을 받지 못함${t.failed ? `: ${t.failed}` : ""}` : "";
+  return [t.label, t.onPath ? "지금 줄기" : "", state].filter(Boolean).join(" — ");
+}
+
 /** 지금 보고 있는 줄기 — head 에서 뿌리까지 거슬러 올라간 뒤 시간순으로. */
 export function threadOf(msgs: TreeMessage[], head: string): TreeMessage[] {
   const byId = new Map(msgs.map((m) => [m.id, m]));

@@ -16,7 +16,7 @@ import { test } from "node:test";
 
 const {
   threadOf, siblingsOf, deepestLeaf, buildTurns, layout, hiddenCount, findTurns, fitLabel,
-  NODE_H, NODE_W, ROW_GAP, COL_GAP, MIN_ROW, clampY,
+  NODE_H, NODE_W, ROW_GAP, COL_GAP, MIN_ROW, clampY, describeTurn,
 } = await import("../src/lib/chatTree.ts");
 
 /** u1→a1→u2→a2 로 이어지고, a1 에서 u3→a3 가 갈라진 나무 */
@@ -111,6 +111,8 @@ test("답을 받아 적는 중인 차례만 기다리는 중이다 · 실패한 
   ], "u1")[0];
   assert.equal(failed.pending, false);
   assert.equal(failed.failed, "AI 키가 올바르지 않습니다");
+  assert.equal(describeTurn({ ...failed, onPath: true }), "질문 — 지금 줄기 — 답을 받지 못함: AI 키가 올바르지 않습니다");
+  assert.equal(describeTurn({ ...live, onPath: false }), "질문 — 답을 기다리는 중");
 });
 
 test("부모를 잃은 옛 메시지는 뿌리가 된다(숲을 그린다)", () => {

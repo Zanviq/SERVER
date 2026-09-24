@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import {
   DOT_R, FixedSpots, NODE_H, NODE_W, Placed, TreeMessage, Turn,
-  buildTurns, clampY, findTurns, hiddenCount, layout,
+  buildTurns, clampY, describeTurn, findTurns, hiddenCount, layout,
 } from "../../lib/chatTree";
 
 export interface TreeLink {
@@ -48,6 +48,17 @@ const DEAD_ZONE = 4;
 /** 격자 한 칸. 많이 줄였을 때는 성글게 — 안 그러면 선이 뭉쳐 회색 판이 된다. */
 function gridCell(k: number): number {
   return k >= 0.9 ? 24 : k >= 0.45 ? 48 : 96;
+}
+
+/** SVG 안의 '단추'(노드·접기)를 Enter·Space 로 누른다. 진짜 <button> 이 아니라 브라우저가
+ *  대신해 주지 않는다. 바깥(노드)으로 번지지 않게 막는다 — 접기를 누르면 노드까지 골라졌다. */
+function onActivate(fn: () => void) {
+  return (e: React.KeyboardEvent) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    e.stopPropagation();
+    fn();
+  };
 }
 
 /**
@@ -372,14 +383,9 @@ export function ConversationTree({
             // 키보드로도 고른다(Tab 으로 옮겨 Enter·Space). 예전에는 노드가 포커스를
             // 받지 않아 지도는 마우스로만 쓸 수 있었다(9차 실측).
             tabIndex={t ? 0 : -1} role="button"
-            aria-label={`${n.label}${n.onPath ? " — 지금 줄기" : ""}${n.pending ? " — 답을 기다리는 중"
-              : n.unanswered ? ` — 답을 받지 못함${n.failed ? `: ${n.failed}` : ""}` : ""}`}
+            aria-label={describeTurn(n)}
             aria-pressed={isPicked || inCompare >= 0}
-            onKeyDown={(e) => {
-              if (!t || (e.key !== "Enter" && e.key !== " ")) return;
-              e.preventDefault();
-              clickNode(n);
-            }}
+            onKeyDown={onActivate(() => t && clickNode(n))}
             onPointerDown={(e) => t && startNodeDrag(e, n)}
             // 고르는 중(기억 연결·비교)에는 끌지 않고 **누르는 것**만 받는다.
             // 끌기로 옮기면서 이 길이 빠져 비교 모드에서 아무것도 골라지지 않았다.
@@ -437,12 +443,7 @@ export function ConversationTree({
             {kids > 0 && (
               <g className="cursor-pointer" tabIndex={0} role="button"
                 aria-label={folded ? `펼치기 — 숨은 ${hiddenCount(t!)}개` : "접기"}
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter" && e.key !== " ") return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  toggleFold(n.id);
-                }}
+                onKeyDown={onActivate(() => toggleFold(n.id))}
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => { e.stopPropagation(); toggleFold(n.id); }}>
                 <circle cx={cx + DOT_R + 11} cy={DOT_R} r={6.5}

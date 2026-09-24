@@ -18,7 +18,7 @@ test("지도 노드는 Tab 으로 가고 Enter·Space 로 고른다", () => {
   assert.match(node, /tabIndex=\{/, "노드가 포커스를 받지 않는다");
   assert.match(node, /role="button"/);
   assert.match(node, /aria-label=\{/, "노드에 이름이 없다");
-  assert.match(node, /onKeyDown=\{/, "키보드로 고를 수 없다");
+  assert.match(node, /onKeyDown=\{onActivate\(/, "키보드로 고를 수 없다");
   assert.match(node, /clickNode\(n\)/, "키보드와 마우스가 같은 길(clickNode)을 타야 한다");
 });
 
