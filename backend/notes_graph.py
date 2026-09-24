@@ -8,9 +8,12 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import threading
+from collections import OrderedDict
 from pathlib import Path
 
-from .storage import walk_all, walk_files
+from . import doc_cache
+from .storage import WalkedFile, walk_all, walk_files
 
 logger = logging.getLogger("server.graph")
 
@@ -28,12 +31,54 @@ _CACHE: dict[tuple, tuple] = {}
 _CACHE_MAX = 32
 
 
+#: 노트 하나의 위키링크 — 열쇠(경로) -> (mtime_ns, size, 링크들).
+#:
+#: 그래프 캐시(_CACHE)는 **벌트 전체**가 한 단위라, 노트 하나만 저장해도 통째로
+#: 무효가 된다. 그러면 다음 열기의 백링크가 바뀌지 않은 노트까지 전부 다시 읽고
+#: 파싱했다 — 노트 2천 개에서 "저장 뒤 첫 열기" 1.6초(그다음 열기는 0.19초).
+#: 자동저장이 돌 때마다 그 1.6초를 문서를 옮길 때 치렀다. 노트마다 링크를 담아
+#: 두면 바뀐 노트만 다시 읽는다.
+#:
+#: 무효화는 doc_cache 와 같다 — mtime·크기가 그대로면 같은 내용으로 본다(저장은
+#: os.replace 로 갈아 끼우므로 내용이 바뀌면 mtime 이 반드시 바뀐다).
+_LINKS: "OrderedDict[str, tuple[int, int, tuple[str, ...]]]" = OrderedDict()
+#: 담아 둘 노트 수. 넘으면 오래 안 쓴 것부터 버린다(지운 노트가 남아도 여기서 멈춘다).
+_LINKS_MAX = 50_000
+_links_lock = threading.Lock()
+
+
 def clear_cache() -> None:
     _CACHE.clear()
+    with _links_lock:
+        _LINKS.clear()
 
 
-def _tree_fingerprint(base: Path) -> tuple:
-    """base 하위를 1회 순회한 값싼 지문(.md수·디렉터리수·최대mtime·총크기·이름들).
+def _links_of(f: WalkedFile) -> tuple[str, ...]:
+    """이 노트의 위키링크. 지난번과 mtime·크기가 같으면 읽지도 파싱하지도 않는다."""
+    key = str(f.path)
+    fp = (f.stat.st_mtime_ns, f.stat.st_size)
+    with _links_lock:
+        hit = _LINKS.get(key)
+        if hit is not None and (hit[0], hit[1]) == fp:
+            _LINKS.move_to_end(key)
+            return hit[2]
+    # 본문은 검색과 같은 캐시로 읽는다(같은 파일을 두 번 읽지 않게).
+    text = doc_cache.text_of(f.path, f.stat)
+    if text is None:
+        return ()
+    # 전에는 read_text 로 읽었다 — 줄바꿈을 모두 \n 으로 바꿔 준다. 코드 구간 판정
+    # (빈 줄은 못 넘는다)이 \n 만 보므로, CRLF 문서에서 결과가 달라지지 않게 맞춘다.
+    found = tuple(parse_wikilinks(text.replace("\r\n", "\n").replace("\r", "\n")))
+    with _links_lock:
+        _LINKS.pop(key, None)
+        _LINKS[key] = (fp[0], fp[1], found)
+        while len(_LINKS) > _LINKS_MAX:
+            _LINKS.popitem(last=False)
+    return found
+
+
+def _fingerprint(files: list[WalkedFile], dirs: list[str]) -> tuple:
+    """순회 결과의 값싼 지문(.md수·디렉터리수·최대mtime·총크기·이름들).
 
     본문을 읽지 않으므로 read_text 그래프 빌드보다 훨씬 싸다. 저장 시 mtime이
     바뀌므로 지문이 바뀌어 캐시가 자연히 무효화된다.
@@ -42,12 +87,9 @@ def _tree_fingerprint(base: Path) -> tuple:
     바꾸지 않아서(옮겨진 파일의 mtime 은 그대로다), 그것만으로는 지문이 같아
     그래프와 백링크가 다음 저장이 있을 때까지 낡은 채로 남았다.
 
-    순회는 walk_all(scandir)로 **한 번만** 한다 — 캐시가 맞아떨어져도 이 지문은
-    매번 계산하므로, 여기가 느리면 캐시의 이득이 사라진다.
+    캐시가 맞아떨어져도 이 지문은 매번 계산하므로, 순회는 **한 번만** 한다 —
+    build_graph 는 지문을 낸 그 순회 결과로 그래프까지 만든다.
     """
-    if not base.exists():
-        return (0, 0, 0, 0, "")
-    files, dirs = walk_all(base)
     md = 0
     mx = total = 0
     h = hashlib.blake2b(digest_size=16)
@@ -165,7 +207,8 @@ def build_graph(
     # 열쇠는 **해석한 경로**로. 요청이 준 folder 문자열을 쓰면 없는 폴더 이름을
     # 바꿔 가며 부르는 것만으로 같은 그래프 사본이 무한히 쌓인다.
     cache_key = (str(notes_dir), str(base), mode)
-    fp = _tree_fingerprint(base)
+    files, dirs = walk_all(base) if base.exists() else ([], [])
+    fp = _fingerprint(files, dirs)
     cached = _CACHE.get(cache_key)
     if cached and cached[0] == fp:
         return cached[1]  # 변경 없음 → 캐시 반환(전체 파일 읽기·파싱 스킵)
@@ -175,10 +218,11 @@ def build_graph(
         _remember(cache_key, fp, result)
         return result
 
-    notes = [f.path for f in walk_files(base) if f.rel.endswith(".md")]
+    notes = [f for f in files if f.rel.endswith(".md")]
     by_key: dict[str, str] = {}
     nodes = []
-    for p in notes:
+    for f in notes:
+        p = f.path
         stem = p.stem
         by_key.setdefault(stem.lower(), stem)
         nodes.append(
@@ -192,13 +236,9 @@ def build_graph(
 
     links = []
     seen = set()
-    for p in notes:
-        src = p.stem
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for target in parse_wikilinks(text):
+    for f in notes:
+        src = f.path.stem
+        for target in _links_of(f):
             tgt = by_key.get(target.lower())
             if tgt and tgt != src:
                 key = (src, tgt)
@@ -272,23 +312,19 @@ def _folder_graph(notes_dir: Path, base: Path) -> dict:
         return "f:" + (base / rel_parts[0]).relative_to(notes_dir).as_posix()
 
     # 전체 스템 → 경로 (base 하위만) 로 위키링크 대상 해석
-    all_notes = [f.path for f in walk_files(base, sort=False) if f.rel.endswith(".md")]
+    all_notes = [f for f in walk_files(base, sort=False) if f.rel.endswith(".md")]
     by_key: dict[str, Path] = {}
-    for p in all_notes:
-        by_key.setdefault(p.stem.lower(), p)
+    for f in all_notes:
+        by_key.setdefault(f.path.stem.lower(), f.path)
 
     valid_ids = {n["id"] for n in nodes}
     links = []
     seen = set()
-    for p in all_notes:
-        g_src = group_of(p)
+    for f in all_notes:
+        g_src = group_of(f.path)
         if g_src not in valid_ids:
             continue
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for target in parse_wikilinks(text):
+        for target in _links_of(f):
             tp = by_key.get(target.lower())
             if not tp:
                 continue

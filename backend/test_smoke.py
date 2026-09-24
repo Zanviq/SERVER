@@ -1864,6 +1864,42 @@ def test_notes_graph_cache():
     assert g3 is not g1 and len(g3["nodes"]) == 3  # 지문 변경 → 재계산
 
 
+def test_backlinks_after_a_save_reread_only_the_changed_note(monkeypatch):
+    """노트 하나를 저장한 뒤 백링크를 구할 때, 바뀌지 않은 노트는 다시 읽지 않는다.
+
+    백링크는 벌트 전체 그래프에서 구하고, 그 캐시는 벌트 전체가 한 단위라 저장 한 번에
+    통째로 무효가 된다. 그런데 다시 만들 때 **모든 노트를 읽고 파싱**했다 — 노트 2천
+    개에서 "저장 뒤 첫 열기" 1.6초(그다음 열기 0.19초). 자동저장 뒤 다른 노트로 옮길
+    때마다 치르는 값이었다.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from backend import doc_cache, notes_graph
+
+    d = Path(tempfile.mkdtemp(prefix="ngraph_reads_"))
+    notes_graph.clear_cache()
+    doc_cache.clear()
+    for i in range(30):
+        (d / f"N{i}.md").write_text(f"다음 [[N{(i + 1) % 30}]]", encoding="utf-8")
+    (d / "CRLF.md").write_bytes("`열림\r\n\r\n[[N5]] 닫힘`\r\n".encode("utf-8"))
+    # CRLF 문서의 빈 줄도 코드 구간을 끊는다(예전 read_text 와 같은 결과)
+    assert sorted(notes_graph.backlinks_for(d, "N5")) == ["CRLF", "N4"]
+
+    reads: list[str] = []
+    for name in ("read_bytes", "read_text"):
+        real = getattr(Path, name)
+
+        def counting(self, *a, _real=real, **k):
+            reads.append(self.name)
+            return _real(self, *a, **k)
+
+        monkeypatch.setattr(Path, name, counting)
+    (d / "N7.md").write_text("[[N5]] 로 새로 잇는다", encoding="utf-8")
+    assert sorted(notes_graph.backlinks_for(d, "N5")) == ["CRLF", "N4", "N7"]
+    assert reads == ["N7.md"], f"바뀐 노트 하나만 읽어야 한다: {reads}"
+
+
 def test_calendar_recurrence_and_reminders():
     _login()
     # 매일 반복 이벤트 (알림 30분 전)
