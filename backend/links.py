@@ -253,9 +253,9 @@ def _unique(name: str, where: str, taken: set[str]) -> str:
 
 def _event_entries(user: SessionUser, settings: Settings, *, fetch: bool = True) -> list[Entry]:
     """fetch=False 면 받아 둔 것만 본다(없으면 빈 목록) — 구글은 한 번에 1초쯤 걸린다."""
-    from .search_all import cached_events, warm_events
+    from . import event_cache
 
-    events = cached_events(user, settings) if fetch else (warm_events(user) or [])
+    events = event_cache.events(user, settings) if fetch else (event_cache.warm(user) or [])
     out: list[Entry] = []
     days: dict[str, int] = {}
     taken: set[str] = set()
@@ -580,9 +580,9 @@ def _todo_text(user: SessionUser, settings: Settings, e: Entry) -> str:
 
 
 def _event_text(user: SessionUser, settings: Settings, e: Entry) -> str:
-    from .search_all import cached_events
+    from . import event_cache
 
-    ev = next((x for x in cached_events(user, settings) if str(x.get("id") or "") == e.ident), {})
+    ev = next((x for x in event_cache.events(user, settings) if str(x.get("id") or "") == e.ident), {})
     lines = [f"일정: {ev.get('title') or e.label}",
              f"시작: {ev.get('start') or e.when}", f"끝: {ev.get('end') or ''}"]
     for key, label in (("location", "장소"), ("description", "설명")):

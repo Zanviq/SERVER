@@ -7224,6 +7224,13 @@ def test_english_mode_persists_chat_and_limits_skills(monkeypatch):
     assert client.get("/api/ai/space/english").json()["messages"] == []
 
 
+def _forget_events(username: str) -> None:
+    """일정 캐시를 비운다 — 앞 테스트가 받아 둔 목록이 다음 테스트로 새지 않게."""
+    from backend import event_cache
+
+    event_cache._CACHE.pop(username, None)
+
+
 def tmp_path_for(who: str):
     """이 테스트만 쓰는 빈 대화 공간 하나."""
     from backend import chat_store, context_store
@@ -8139,7 +8146,7 @@ def test_global_search_finds_the_same_word_across_every_screen():
     vocab_store.add_words(u, st, [{"word": seed, "meanings": ["빛을 내는 물질"]}])
     calendar_store.create_event(u, st, {"title": f"{seed} 세미나", "start": "2026-09-10",
                                         "allDay": True})
-    search_all._EVENT_CACHE.pop(u.username, None)   # 앞 테스트의 30초 캐시를 비운다
+    _forget_events(u.username)   # 앞 테스트의 30초 캐시를 비운다
 
     hits = search_all.search(u, st, seed)
     kinds = {h["kind"] for h in hits}
@@ -8981,7 +8988,7 @@ def test_search_hit_ids_are_what_each_screen_needs():
     path.write_text(_json.dumps({"messages": [
         {"id": "m1", "role": "user", "text": f"{seed} 이야기", "ts": _time.time()},
     ]}, ensure_ascii=False), encoding="utf-8")
-    search_all._EVENT_CACHE.pop(u.username, None)
+    _forget_events(u.username)
 
     by_kind = {}
     for h in search_all.search(u, st, seed):
@@ -9013,7 +9020,7 @@ def test_recurring_events_appear_once_in_search():
     calendar_store.create_event(u, st, {
         "title": "생일 축하합니다", "start": "2020-11-12", "allDay": True,
         "recurrence": "yearly", "interval": 1})
-    search_all._EVENT_CACHE.pop(u.username, None)
+    _forget_events(u.username)
 
     hits = [h for h in search_all.search(u, st, "생일") if h["kind"] == "event"]
     assert len(hits) == 1, [h["when"] for h in hits]
@@ -10456,7 +10463,7 @@ def test_links_suggest_resolve_and_reach_the_model():
     assert calendar_service.backend_kind(u, st) == "internal"
     ev = calendar_service.create_event(u, st, {"title": "링크 일정", "start": f"{today}T10:00:00",
                                                "end": f"{today}T11:00:00"})
-    search_all._EVENT_CACHE.pop("tester", None)
+    _forget_events("tester")
     diary_store.save_day(u, st, today, {"text": "DIARY-TEXT-4410"})
     try:
         def items(q):
@@ -10527,7 +10534,7 @@ def test_links_suggest_resolve_and_reach_the_model():
         vocab_store.delete_word(u, st, word["id"])
         calendar_service.delete_event(u, st, ev["id"])
         diary_store.save_day(u, st, today, {"text": ""})
-        search_all._EVENT_CACHE.pop("tester", None)
+        _forget_events("tester")
 
 
 class _FakeReq:

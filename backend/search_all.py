@@ -236,48 +236,12 @@ def _todos(user: SessionUser, settings: Settings, q: str) -> list[dict]:
     return out
 
 
-_EVENT_CACHE: dict[str, tuple[float, list[dict]]] = {}
-_EVENT_TTL = 30.0     # 초. 타자 한 번에 구글을 한 번씩 두드리지 않기 위한 것뿐이다.
-_EVENT_WINDOW = 365   # 일. 앞뒤로 이만큼만 본다(반복 일정이 무한히 펼쳐진다).
-
-
-def cached_events(user: SessionUser, settings: Settings) -> list[dict]:
-    """오늘 앞뒤 1년치 일정. 30초 동안은 같은 것을 돌려준다.
-
-    일정은 저장소가 둘이다 — 내부 JSON 이거나 구글이다. `calendar_store` 만 보면
-    구글을 쓰는 사용자에게는 늘 0건이 된다(실제로 그렇게 짰다가 걸렸다). 그래서
-    서비스 계층을 거치되, 구글이면 호출이 요금·지연을 부르므로 잠깐 재사용한다.
-    검색과 링크 후보는 타자마다 불리기 때문이다.
-    """
-    import datetime
-    import time
-
-    from backend import calendar_service
-
-    now = time.time()
-    cached = _EVENT_CACHE.get(user.username)
-    if cached and now - cached[0] < _EVENT_TTL:
-        return cached[1]
-    today = datetime.date.today()
-    span = datetime.timedelta(days=_EVENT_WINDOW)
-    events = calendar_service.list_events(
-        user, settings, (today - span).isoformat(), (today + span).isoformat())
-    _EVENT_CACHE[user.username] = (now, events)
-    return events
-
-
-def warm_events(user: SessionUser) -> list[dict] | None:
-    """받아 둔 일정이 아직 쓸 만하면 그것, 아니면 None(구글에 묻지 않는다)."""
-    import time
-
-    cached = _EVENT_CACHE.get(user.username)
-    return cached[1] if cached and time.time() - cached[0] < _EVENT_TTL else None
-
-
 def _events(user: SessionUser, settings: Settings, q: str) -> list[dict]:
     import datetime
 
-    events = cached_events(user, settings)
+    from backend import event_cache
+
+    events = event_cache.events(user, settings)
     ql = q.lower()
     today_s = datetime.date.today().isoformat()
     # 반복 일정은 창 안에서 여러 번 펼쳐진다. "생일"을 찾으면 같은 줄이 스무 개
