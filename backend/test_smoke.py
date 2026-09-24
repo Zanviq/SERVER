@@ -7395,6 +7395,39 @@ def test_mounted_folders_never_shadow_a_real_folder():
         _shutil.rmtree(real, ignore_errors=True)
 
 
+def test_map_remembers_where_nodes_were_dragged():
+    """지도에서 옮겨 둔 노드 자리는 **서버에 남는다.**
+
+    브라우저에만 두면 지도를 닫았다 열 때마다 손으로 맞춰 둔 그림이 사라진다.
+    지워진 메시지·이상한 좌표는 들어오면 안 된다 — 한 번 들어가면 지도를 열 때마다
+    나무가 화면 밖으로 날아간다.
+    """
+    from backend import chat_store
+
+    path = tmp_path_for("layout")
+    u = chat_store.message("user", "질문")
+    a = chat_store.message("assistant", "답", parent=u["id"])
+    chat_store.append(path, u, a)
+
+    chat_store.move_nodes(path, {a["id"]: [120.25, 60.5]})
+    assert chat_store.current(path)["layout"] == {a["id"]: [120.2, 60.5]}
+
+    # 없는 메시지·수가 아닌 값·터무니없이 먼 좌표는 버린다
+    chat_store.move_nodes(path, {
+        "없는id": [10, 10], u["id"]: ["x", 1], a["id"]: [1e9, 0],
+    })
+    assert chat_store.current(path)["layout"] == {}, "걸러지지 않았다"
+
+    # 준 것만 바꾸고 나머지는 그대로. null 은 자리를 지운다('정렬')
+    chat_store.move_nodes(path, {u["id"]: [0, 0], a["id"]: [5, 90]})
+    chat_store.move_nodes(path, {a["id"]: None})
+    assert chat_store.current(path)["layout"] == {u["id"]: [0.0, 0.0]}
+
+    # 메시지가 지워지면 그 자리도 사라진다(가리킬 점이 없다)
+    chat_store.delete_message(path, u["id"])
+    assert chat_store.current(path)["layout"] == {}
+
+
 def test_chat_sessions_are_separate_conversations():
     """세션은 가지와 다르다 — 아예 **다른 이야기**라 맥락을 하나도 안 쓴다."""
     from backend import chat_store

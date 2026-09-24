@@ -16,7 +16,7 @@ import { test } from "node:test";
 
 const {
   threadOf, siblingsOf, deepestLeaf, buildTurns, layout, hiddenCount, findTurns, fitLabel,
-  NODE_H, NODE_W, ROW_GAP, COL_GAP,
+  NODE_H, NODE_W, ROW_GAP, COL_GAP, MIN_ROW, clampY,
 } = await import("../src/lib/chatTree.ts");
 
 /** u1→a1→u2→a2 로 이어지고, a1 에서 u3→a3 가 갈라진 나무 */
@@ -199,4 +199,35 @@ test("검색은 질문과 답을 모두 본다", () => {
   assert.deepEqual([...findTurns(turns, forked(), "저러저러")], ["a3"], "답에서도 찾아야 한다");
   assert.deepEqual([...findTurns(turns, forked(), "2번 더")], ["a3"]);
   assert.equal(findTurns(turns, forked(), "   ").size, 0, "빈 검색어는 전부 걸리면 안 된다");
+});
+
+test("손으로 옮긴 자리를 쓰되, 부모는 언제나 자식보다 위다", () => {
+  const msgs = forked();
+  const turns = buildTurns(msgs, "a2");
+  // a1(첫 차례) 을 옆으로 끌어다 놓았다
+  const moved = layout(turns, new Set(), { a1: [400, 0] });
+  const spot = (id) => moved.nodes.find((n) => n.id === id);
+  assert.deepEqual([spot("a1").x, spot("a1").y], [400, 0]);
+  // 자리를 정하지 않은 자식들은 **부모가 움직인 만큼** 따라온다(선이 늘어지지 않게)
+  const auto = layout(turns);
+  const at = (r, id) => r.nodes.find((n) => n.id === id);
+  const shift = 400 - at(auto, "a1").x;
+  assert.equal(at(moved, "a2").x - at(auto, "a2").x, shift);
+  assert.equal(at(moved, "a3").x - at(auto, "a3").x, shift, "다른 가지도 함께 따라온다");
+
+  // 자식을 부모 위로 끌어 올려도 그림은 뒤집히지 않는다
+  const upside = layout(turns, new Set(), { a1: [0, 300], a2: [0, 10] });
+  const parentY = upside.nodes.find((n) => n.id === "a1").y;
+  const childY = upside.nodes.find((n) => n.id === "a2").y;
+  assert.ok(childY >= parentY + MIN_ROW, `자식(${childY})이 부모(${parentY}) 위로 올라갔다`);
+});
+
+test("끌 때 자리는 부모와 자식 사이로 가둔다", () => {
+  // 부모가 100 에 있으면 그 아래로만
+  assert.equal(clampY(0, 100), 100 + MIN_ROW);
+  // 자식이 300 에 있으면 그 위로만
+  assert.equal(clampY(400, 100, [300]), 300 - MIN_ROW);
+  assert.equal(clampY(200, 100, [300]), 200, "사이에 있으면 그대로 둔다");
+  // 부모와 자식이 붙어 있어 들어갈 틈이 없으면 부모 아래를 지킨다
+  assert.equal(clampY(0, 100, [110]), 100 + MIN_ROW);
 });

@@ -151,6 +151,16 @@
   .md-on-accent .link-chip {
     @apply bg-white/20 text-inherit hover:bg-white/30;
   }
+  /* 대화 지도에서 답을 기다리는 노드 — 점선 테가 천천히 돈다.
+     움직임을 줄여 달라는 설정에서는 돌지 않고 그대로 서 있는다(테는 남는다). */
+  .tree-pending {
+    animation: treeSpin 2.4s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tree-pending {
+      animation: none;
+    }
+  }
   /* 카드 속 짧은 글(단어 포인트 등) — 둘레 글씨 크기를 따르고 위아래 여백을 없앤다 */
   .md-compact .prose-server {
     @apply text-[13px];
@@ -585,6 +595,14 @@
     .fc-server .fc-popover .fc-daygrid-event .fc-event-title {
       display: inline;
     }
+  }
+}
+
+/* 대화 지도의 '기다리는 중' 점선 테. @layer 밖에 둔다 — keyframes 는 레이어 안에
+   있으면 Tailwind 가 쓰지 않는 것으로 보고 빌드에서 지운다. */
+@keyframes treeSpin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

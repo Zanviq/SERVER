@@ -122,6 +122,14 @@ class VocabProposalDone(BaseModel):
     words: list[str] = []
 
 
+class LayoutInput(BaseModel):
+    """지도에서 손으로 옮긴 노드 자리. `{메시지 id: [x, y]}`.
+
+    값이 null 이면 그 노드의 자리를 지운다(다시 자동 배치). '정렬'이 그렇게 쓴다.
+    """
+    positions: dict[str, list[float] | None] = {}
+
+
 @router.get("/status")
 def status(settings: Settings = Depends(get_settings)):
     """AI 사용 가능 여부."""
@@ -187,6 +195,8 @@ def space_messages(
     _annotate_proposals(data["messages"], set(data["vocab_done"]), user, settings)
     return {
         "messages": data["messages"], "head": data["head"], "links": data["links"],
+        # 지도에서 손으로 옮겨 둔 노드 자리(없는 것은 나무 모양대로 그린다)
+        "layout": data.get("layout") or {},
         **chat_store.sessions_of(path),
     }
 
@@ -291,6 +301,20 @@ def space_link(
             status_code=400,
             detail="이을 수 없는 짝입니다 — 같은 줄기 위의 메시지끼리는 이미 맥락입니다.")
     return {"ok": True}
+
+
+@router.post("/space/{space}/layout")
+def space_layout(
+    space: str,
+    body: LayoutInput,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """지도에서 옮겨 둔 노드 자리를 저장한다(브라우저에만 두면 닫을 때 사라진다)."""
+    if len(body.positions) > chat_store.MAX_LAYOUT:
+        raise HTTPException(status_code=400, detail="한 번에 저장할 수 있는 자리 수를 넘었습니다.")
+    saved = chat_store.move_nodes(_space_path(space, user, settings), body.positions)
+    return {"ok": True, "layout": saved}
 
 
 @router.post("/space/{space}/vocab-proposal-done")

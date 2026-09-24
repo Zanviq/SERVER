@@ -29,6 +29,9 @@ interface Step {
 }
 interface Msg {
   id?: string;
+  /** 서버가 아직 id 를 주기 전의 임시 이름. **지도에 노드를 바로 세우기 위한 것**이다
+   *  — 답을 다 받은 뒤에 노드가 생기면, 기다리는 동안 지도가 텅 비어 보인다. */
+  tempId?: string;
   role: "user" | "assistant";
   text: string;
   steps: Step[];
@@ -281,9 +284,11 @@ function BranchSwitch({ msgs, current, onGo, onEdit, busy }: {
 
 /** 나무 계산에 넘길 최소 모양 — 화면 전용 필드는 뺀다. */
 function asTree(msgs: Msg[]): TreeMessage[] {
-  return msgs.filter((m) => m.id).map((m) => ({
-    id: m.id!, role: m.role, text: m.text, parent: m.parent ?? null,
-    branchName: m.branchName,
+  // 아직 서버 id 가 없는 차례도 **임시 이름으로 나무에 세운다** — 보내자마자 노드가
+  // 보이고, 답이 흐르는 동안 그 노드가 '기다리는 중'으로 돈다.
+  return msgs.filter((m) => m.id || m.tempId).map((m) => ({
+    id: (m.id ?? m.tempId)!, role: m.role, text: m.text, parent: m.parent ?? null,
+    branchName: m.branchName, pending: m.pending,
   }));
 }
 
@@ -319,6 +324,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   //: 한 줄기뿐이고, 다음 말도 여기에 붙는다.
   const [head, setHead] = useState("");
   const [links, setLinks] = useState<TreeLink[]>([]);
+  //: 지도에서 손으로 옮겨 둔 노드 자리(서버에 남는다). 지도를 어디에 띄우든 같은 것을 본다.
+  const [treeSpots, setTreeSpots] = useState<Record<string, [number, number]>>({});
   const [showTree, setShowTree] = useState(false);
   //: 이 공간의 대화 목록. 가지와 달리 세션끼리는 맥락을 나눠 쓰지 않는다.
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -353,7 +360,34 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     setLinks(r.links ?? []);
     setSessions(r.sessions ?? []);
     setActiveSession(r.active ?? "");
+    setTreeSpots(r.layout ?? {});
   }, []);
+
+  /**
+   * 지도에서 손으로 옮겨 둔 노드 자리. 화면이 먼저 반영하고(끌자마자 보여야 한다)
+   * 서버에는 잠깐 모았다가 한 번에 보낸다 — 한 번 끌 때마다 요청을 보내면 손을
+   * 떼기도 전에 열 번씩 날아간다.
+   */
+  const saveSpots = useRef<Record<string, [number, number] | null>>({});
+  const saveTimer = useRef(0);
+  const moveNodes = useCallback((patch: Record<string, [number, number] | null>) => {
+    setTreeSpots((cur) => {
+      const next = { ...cur };
+      for (const [id, spot] of Object.entries(patch)) {
+        if (spot) next[id] = spot; else delete next[id];
+      }
+      return next;
+    });
+    if (!space) return;
+    saveSpots.current = { ...saveSpots.current, ...patch };
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      const send = saveSpots.current;
+      saveSpots.current = {};
+      api.aiSpaceLayout(space, send).catch(() => toast.error("노드 자리를 저장하지 못했습니다."));
+    }, 400);
+  }, [space]);
+  useEffect(() => () => window.clearTimeout(saveTimer.current), []);
 
   // 서버 공간의 기록. 논문을 바꾸면 그 논문의 대화로 갈아탄다.
   useEffect(() => {
@@ -392,6 +426,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     const ids = new Set(threadOf(tree, head).map((m) => m.id));
     return [...messages.filter((m) => m.id && ids.has(m.id!)), ...live];
   }, [messages, head, space]);
+
+  /** 답을 기다리는 동안에는 **그 임시 노드**가 지금 자리다(지도가 거기를 비춘다). */
+  const liveHead = useMemo(() => {
+    const live = [...messages].reverse().find((m) => m.tempId && m.role === "assistant");
+    return live?.tempId ?? head;
+  }, [messages, head]);
 
   /** 이 메시지와 같은 자리에서 갈라진 형제들(말풍선의 ◀ 2/3 ▶). */
   const branchesOf = useCallback((id?: string) => {
@@ -449,13 +489,20 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
       attachments: attachments.map((a) => ({ mime: a.mime, data: a.data, label: a.label })),
       selections: selections.map((s) => ({ text: s.text, page: s.page })),
     };
+    // 지도에 **지금 바로** 설 노드. 서버 id 는 답이 끝난 뒤에야 오는데, 그때까지
+    // 지도가 비어 있으면 "보낸 게 맞나" 싶어진다. 자리는 나무 모양으로 정해지므로
+    // 나중에 진짜 id 로 갈아끼워도 그림이 흔들리지 않는다.
+    const stamp = Date.now();
+    const uTemp = `tmp-u${stamp}`;
+    const aTemp = `tmp-a${stamp}`;
+    const at = branchFrom ? branchFrom.id : head || null;
     setMessages((m) => [
       ...m,
       {
-        role: "user", text, steps: [],
+        role: "user", text, steps: [], tempId: uTemp, parent: at,
         selections: sent.selections, attachments: sent.attachments.map((a) => ({ label: a.label })),
       },
-      { role: "assistant", text: "", steps: [], pending: true },
+      { role: "assistant", text: "", steps: [], pending: true, tempId: aTemp, parent: uTemp },
     ]);
     // 보낸 첨부는 칩에서 내린다(클로드처럼) — 다음 질문에 또 실리면 안 된다.
     // "sent" 라고 알려 두면 실패했을 때 부모가 되돌려 준다.
@@ -692,7 +739,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
    */
   const tree = space ? (
     <ConversationTree
-      messages={asTree(messages)} head={head} links={links}
+      messages={asTree(messages)} head={liveHead} links={links}
+      positions={treeSpots} onMove={moveNodes}
       onGo={(id) => { void goTo(id); if (!treeAside) setShowTree(false); }}
       onEdit={editAndFork}
       onLink={(a, b, on) => void linkMemory(a, b, on)}

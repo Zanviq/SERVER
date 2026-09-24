@@ -19,6 +19,8 @@ export interface TreeMessage {
   ts?: number;
   /** AI 가 붙인 가지 이름. 갈라지는 자리에만 있다(있으면 질문 앞부분 대신 쓴다). */
   branchName?: string;
+  /** 아직 받아 적는 중인 답. 지도에서 '기다리는 중'으로 돈다. */
+  pending?: boolean;
 }
 
 /** 한 '차례'(질문 + 답). 지도의 노드 하나. */
@@ -151,7 +153,8 @@ export function buildTurns(msgs: TreeMessage[], head: string): Turn[] {
       // `[note/서버/기록.md]` 는 지도에서 `기록.md` 로 — 좁은 노드에 경로가 다 먹는다
       label: fitLabel(userMsg.branchName?.trim() || plainRefs(userMsg.text)),
       named: !!userMsg.branchName?.trim(),
-      pending: !reply,
+      // 답이 아직 없거나, 있어도 받아 적는 중이면 '기다리는 중'이다
+      pending: !reply || !!reply.pending,
       onPath: onPath.has(endId) || onPath.has(userMsg.id),
       depth,
       children: next.filter((m) => m.role === "user").map((m) => build(m, depth + 1)),
@@ -174,6 +177,13 @@ export const ROW_GAP = 46;
 //: 가로 칸 사이
 export const COL_GAP = 10;
 
+//: 부모와 자식 사이에 최소한 이만큼은 둔다. 손으로 끌어다 놓을 때도 이 선을 넘지
+//: 못한다 — 부모가 자식보다 **항상 위**여야 대화가 흐르는 방향이 보인다.
+export const MIN_ROW = 44;
+
+/** 손으로 옮겨 둔 자리(서버에 남는다). `{메시지 id: [x, y]}` */
+export type FixedSpots = Record<string, [number, number] | undefined>;
+
 /**
  * 겹치지 않는 나무 배치(**위→아래**).
  *
@@ -185,37 +195,76 @@ export const COL_GAP = 10;
  * (x, y) 는 노드 **칸의 왼쪽 위**다. 동그라미는 칸의 가로 한가운데에, 글은 그
  * 아래에 놓인다.
  */
-export function layout(roots: Turn[], collapsed: Set<string> = new Set()): {
+export function layout(
+  roots: Turn[],
+  collapsed: Set<string> = new Set(),
+  fixed: FixedSpots = {},
+): {
   nodes: Placed[];
   edges: { from: Placed; to: Placed }[];
   width: number;
   height: number;
 } {
-  const nodes: Placed[] = [];
-  const edges: { from: Placed; to: Placed }[] = [];
+  const auto = new Map<string, { x: number; y: number }>();
   let col = 0;
 
-  const place = (t: Turn): Placed => {
+  // 1) 나무 모양만으로 정하는 자리 — 손댄 것이 없으면 이게 그대로 쓰인다
+  const measure = (t: Turn): { x: number; y: number } => {
     const kids = collapsed.has(t.id) ? [] : t.children;
     let x: number;
-    let placedKids: Placed[] = [];
     if (kids.length === 0) {
       x = col * (NODE_W + COL_GAP);
       col += 1;
     } else {
-      placedKids = kids.map(place);
-      x = (placedKids[0].x + placedKids[placedKids.length - 1].x) / 2;
+      const spots = kids.map(measure);
+      x = (spots[0].x + spots[spots.length - 1].x) / 2;
     }
-    const me: Placed = { ...t, x, y: t.depth * (NODE_H + ROW_GAP) };
-    nodes.push(me);
-    for (const k of placedKids) edges.push({ from: me, to: k });
-    return me;
+    const spot = { x, y: t.depth * (NODE_H + ROW_GAP) };
+    auto.set(t.id, spot);
+    return spot;
   };
+  roots.forEach(measure);
 
-  for (const r of roots) place(r);
-  const width = nodes.reduce((w, n) => Math.max(w, n.x + NODE_W), 0);
-  const height = nodes.reduce((h, n) => Math.max(h, n.y + NODE_H), 0);
+  // 2) 손으로 옮긴 자리를 얹는다. 자리를 정하지 않은 자식은 **부모가 옮겨 간 만큼**
+  //    따라간다 — 안 그러면 끌어다 놓은 가지에 새 차례가 붙을 때 저 혼자 제자리에
+  //    나타나 선이 길게 늘어진다.
+  const nodes: Placed[] = [];
+  const edges: { from: Placed; to: Placed }[] = [];
+  const walk = (t: Turn, parent: Placed | null, dx: number, dy: number) => {
+    const a = auto.get(t.id) ?? { x: 0, y: 0 };
+    const spot = fixed[t.id];
+    let x = spot ? spot[0] : a.x + dx;
+    let y = spot ? spot[1] : a.y + dy;
+    // 부모보다 위로 올라갈 수 없다(옛 파일·다른 기기에서 온 자리도 여기서 바로잡는다)
+    if (parent && y < parent.y + MIN_ROW) y = parent.y + MIN_ROW;
+    if (!parent && y < 0) y = 0;
+    const me: Placed = { ...t, x, y };
+    nodes.push(me);
+    if (parent) edges.push({ from: parent, to: me });
+    const kids = collapsed.has(t.id) ? [] : t.children;
+    for (const k of kids) walk(k, me, x - a.x, y - a.y);
+  };
+  roots.forEach((r) => walk(r, null, 0, 0));
+
+  const left = nodes.reduce((v, n) => Math.min(v, n.x), 0);
+  const top = nodes.reduce((v, n) => Math.min(v, n.y), 0);
+  const width = nodes.reduce((w, n) => Math.max(w, n.x + NODE_W), 0) - left;
+  const height = nodes.reduce((h, n) => Math.max(h, n.y + NODE_H), 0) - top;
   return { nodes, edges, width, height };
+}
+
+/**
+ * 이 노드를 여기로 옮겨도 되는가 — 부모와 자식 사이로 가둔다.
+ *
+ * 화면에서 위가 부모다. 자식이 부모 위로 올라가면 대화가 거꾸로 흐르는 그림이 된다.
+ */
+export function clampY(y: number, parentY?: number, childYs: number[] = []): number {
+  const lo = parentY === undefined ? -Infinity : parentY + MIN_ROW;
+  const hi = childYs.length ? Math.min(...childYs) - MIN_ROW : Infinity;
+  // 부모와 자식이 이미 붙어 있어 들어갈 틈이 없으면 **부모 아래**를 지킨다.
+  // (그 자식들은 그릴 때 다시 아래로 밀린다 — layout 의 같은 규칙이 한 번 더 돈다)
+  if (hi < lo) return lo;
+  return Math.min(Math.max(y, lo), hi);
 }
 
 /** 접힌 노드 밑에 가려진 차례 수 — "+3" 처럼 보여 준다. */

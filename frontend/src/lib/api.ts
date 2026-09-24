@@ -269,7 +269,13 @@ export const api = {
     req<{
       messages: ChatMessage[]; head: string; links: { from_id: string; to_id: string }[];
       sessions: ChatSession[]; active: string;
+      /** 지도에서 손으로 옮겨 둔 노드 자리 `{메시지 id: [x, y]}` */
+      layout: Record<string, [number, number]>;
     }>(`/api/ai/space/${encodeURIComponent(space)}`),
+  /** 지도에서 옮긴 노드 자리를 저장한다. null 이면 그 자리를 지운다(자동 배치로). */
+  aiSpaceLayout: (space: string, positions: Record<string, [number, number] | null>) =>
+    req<{ ok: boolean; layout: Record<string, [number, number]> }>(
+      `/api/ai/space/${encodeURIComponent(space)}/layout`, jsonInit("POST", { positions })),
   /** 새 대화를 시작한다 — 가지와 달리 앞 맥락을 하나도 이어받지 않는다. */
   aiSessionNew: (space: string, title = "") =>
     req<{ ok: boolean; id: string }>(

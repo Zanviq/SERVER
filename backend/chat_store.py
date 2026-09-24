@@ -62,6 +62,10 @@ MAX_DONE = 400
 MAX_LINKS = 200
 #: 한 공간에 둘 수 있는 대화 세션 수
 MAX_SESSIONS = 30
+#: 손으로 옮겨 둔 노드 자리의 개수 상한(지도에서 끌어다 놓은 것)
+MAX_LAYOUT = 400
+#: 자리 좌표의 허용 범위. 화면 밖 아주 먼 곳으로 밀어 두면 다시 찾을 수 없다.
+LAYOUT_LIMIT = 100_000
 #: 세션 이름 길이
 MAX_TITLE = 60
 
@@ -117,7 +121,34 @@ def _clean_session(raw: dict, idx: int = 0) -> dict:
             and l.get("from_id") in ids and l.get("to_id") in ids
         ] if isinstance(links, list) else [],
         "vocab_done": [str(k) for k in done if k] if isinstance(done, list) else [],
+        # 지도에서 손으로 옮겨 둔 노드 자리. 없으면 나무 모양대로 자동 배치한다.
+        "layout": clean_layout(raw.get("layout"), ids),
     }
+
+
+def clean_layout(raw, ids: set) -> dict[str, list[float]]:
+    """{메시지 id: [x, y]} 만 남긴다.
+
+    사라진 메시지의 자리는 버린다(나무에 없는 점은 그릴 수도 없다). 수가 아닌 값·
+    NaN·터무니없이 먼 좌표는 받지 않는다 — 한 번 들어가면 지도를 열 때마다 나무가
+    화면 밖으로 날아간다.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, list[float]] = {}
+    for key, val in raw.items():
+        if not isinstance(val, (list, tuple)) or len(val) != 2 or str(key) not in ids:
+            continue
+        try:
+            x, y = float(val[0]), float(val[1])
+        except (TypeError, ValueError):
+            continue
+        if x != x or y != y or abs(x) > LAYOUT_LIMIT or abs(y) > LAYOUT_LIMIT:
+            continue
+        out[str(key)] = [round(x, 1), round(y, 1)]
+        if len(out) >= MAX_LAYOUT:
+            break
+    return out
 
 
 def _first_ts(msgs: list[dict]) -> float:
@@ -132,7 +163,7 @@ def new_session(title: str = "") -> dict:
     now = time.time()
     return {"id": uuid.uuid4().hex, "title": str(title or "")[:MAX_TITLE],
             "created_at": now, "updated_at": now,
-            "messages": [], "head": "", "links": [], "vocab_done": []}
+            "messages": [], "head": "", "links": [], "vocab_done": [], "layout": {}}
 
 
 def load_space(path: Path) -> dict:
@@ -229,6 +260,7 @@ def _trim(space: dict) -> None:
         s["links"] = [l for l in s["links"]
                       if l["from_id"] in ids and l["to_id"] in ids][-MAX_LINKS:]
         s["vocab_done"] = s["vocab_done"][-MAX_DONE:]
+        s["layout"] = clean_layout(s.get("layout"), ids)
 
 
 def _save_space(path: Path, space: dict) -> None:
@@ -381,6 +413,27 @@ def set_branch_names(path: Path, names: dict[str, str]) -> int:
         if n:
             _save(path, data)
         return n
+
+
+def move_nodes(path: Path, positions: dict) -> dict[str, list[float]]:
+    """지도에서 손으로 옮겨 둔 노드 자리를 저장한다(준 것만 바꾼다).
+
+    값이 None 인 id 는 자리를 **지운다** — 그 노드는 다시 나무 모양대로 자동
+    배치된다('정렬'이 이걸로 전부 지운다). 브라우저에만 두면 지도를 닫았다 열
+    때마다 옮겨 둔 것이 사라진다.
+    """
+    with json_store.lock_for(path):
+        data = current(path)
+        ids = {str(m.get("id")) for m in data["messages"]}
+        merged = dict(data.get("layout") or {})
+        for key, val in (positions or {}).items():
+            if val is None:
+                merged.pop(str(key), None)
+            else:
+                merged[str(key)] = val
+        data["layout"] = clean_layout(merged, ids)
+        _save(path, data)
+    return data["layout"]
 
 
 def clear(path: Path) -> None:
