@@ -166,6 +166,18 @@ def new_session(title: str = "") -> dict:
             "messages": [], "head": "", "links": [], "vocab_done": [], "layout": {}}
 
 
+#: 아직 아무것도 저장되지 않은 공간의 첫 세션 id. uuid 로 지으면 **읽을 때마다** 달라져서,
+#: 요청을 받을 때 본 세션과 답을 붙일 때 찾는 세션이 서로 다른 것이 된다 — 차례를 물어본
+#: 세션에 붙이게 하자(append 의 session_id) 새 공간의 첫 차례가 버려질 뻔했다(12차, 시험이
+#: 잡았다). 옛 세션에 자리 번호로 id 를 주는 것(_clean_session)과 같은 교훈이다.
+_FIRST_ID = "first"
+
+
+def _placeholder() -> dict:
+    """아직 저장되지 않은 빈 세션 — 몇 번을 읽어도 같은 id."""
+    return {**new_session(), "id": _FIRST_ID}
+
+
 def load_space(path: Path) -> dict:
     """공간 전체 — 세션 목록과 지금 보고 있는 세션.
 
@@ -183,7 +195,7 @@ def load_space(path: Path) -> dict:
     else:
         sessions = []
     if not sessions:
-        sessions = [new_session()]
+        sessions = [_placeholder()]
     ids = {s["id"] for s in sessions}
     active = str(data.get("active") or "")
     return {
@@ -246,7 +258,7 @@ def _trim(space: dict) -> None:
     # 비어 버린 세션은 접는다. 지금 보고 있는 것과 아직 아무 말도 안 한 새 세션은 남긴다
     keep = [s for s in sessions
             if s["messages"] or s["id"] == space["active"] or not s["updated_at"]]
-    space["sessions"] = keep or [new_session()]
+    space["sessions"] = keep or [_placeholder()]
     if space["active"] not in {s["id"] for s in space["sessions"]}:
         space["active"] = space["sessions"][-1]["id"]
     # 메시지가 깎여 나갔으면 나무·연결·끝자락을 다시 맞춘다
@@ -318,10 +330,26 @@ def thread(msgs: list[dict], head: str) -> list[dict]:
     return out
 
 
-def append(path: Path, *msgs: dict) -> list[dict]:
-    """지금 세션에 메시지를 덧붙인다. 끝자락(head)은 마지막 것으로 옮긴다."""
+def session_by_id(path: Path, sid: str) -> dict | None:
+    """그 세션(없으면 None — 그 사이 지웠을 수 있다)."""
+    return next((s for s in load_space(path)["sessions"] if s["id"] == sid), None)
+
+
+def append(path: Path, *msgs: dict, session_id: str | None = None) -> list[dict]:
+    """세션에 메시지를 덧붙인다. 끝자락(head)은 마지막 것으로 옮긴다.
+
+    session_id 를 주면 **그 세션에** 붙이고, 지금 보고 있는 세션은 바꾸지 않는다. 답이
+    오는 동안 사용자가 새 대화로 옮겨 가도 이 차례는 **물어본 세션**에 남아야 한다 —
+    예전에는 답이 끝날 때의 지금 세션에 붙어서, A 에서 물은 것이 방금 연 B 에 들어갔다
+    (12차 실측). 그 세션이 그 사이 지워졌으면 붙이지 않는다(지운 것을 되살리지 않는다).
+    주지 않으면 지금 세션이다.
+    """
     with json_store.lock_for(path):
-        data = current(path)
+        space = load_space(path)
+        sid = session_id or space["active"]
+        data = next((s for s in space["sessions"] if s["id"] == sid), None)
+        if data is None:
+            return []
         added = [m for m in msgs if m]
         data["messages"].extend(added)
         if added:
@@ -333,7 +361,7 @@ def append(path: Path, *msgs: dict) -> list[dict]:
                 first = next((m for m in data["messages"] if m.get("role") == "user"), None)
                 if first:
                     data["title"] = title_from(first.get("text", ""))
-        _save(path, data)
+        _save_space(path, space)
         return data["messages"]
 
 
@@ -521,7 +549,7 @@ def drop_session(path: Path, sid: str) -> bool:
         if len(keep) == len(space["sessions"]):
             return False
         if not keep:
-            keep = [new_session()]
+            keep = [_placeholder()]
         space["sessions"] = keep
         if space["active"] == sid:
             space["active"] = keep[-1]["id"]

@@ -463,6 +463,9 @@ class Prepared:
     #: **대화 맨 앞**이다. branching 이 아니면 지금 끝자락에 이어 붙인다.
     parent: str = ""
     branching: bool = False
+    #: 물어본 세션. 답이 끝날 때는 사용자가 다른 세션으로 옮겨 갔을 수 있다 — 거기가 아니라
+    #: 여기에 붙인다(chat_store.append 의 session_id).
+    session_id: str = ""
 
 
 def _prepare(body: "ChatRequest", user: SessionUser, settings: Settings) -> Prepared:
@@ -540,11 +543,13 @@ def _prepare(body: "ChatRequest", user: SessionUser, settings: Settings) -> Prep
     history_note = ""
     parent = ""
     branching = False
+    session_id = ""
     if persist_path is not None:
         # **지금 가지만 본다.** 대화는 나무이고, 맥락은 뿌리에서 지금 자리까지의
         # 한 줄기다. 다른 가지에서 한 이야기는 들어오지 않는다 — 그게 가지를
         # 나누는 이유다(필요하면 기억 연결로 골라서 끌어온다).
         saved = chat_store.load_all(persist_path)
+        session_id = saved["id"]
         # 과거의 어느 메시지에 붙여 달라고 했으면 거기가 이번 차례의 부모다.
         # null 은 "대화 맨 앞에" 라는 뜻이라 "안 시켰다"(빈 문자열)와 구별한다.
         parent = (body.parent or "").strip()
@@ -615,7 +620,7 @@ def _prepare(body: "ChatRequest", user: SessionUser, settings: Settings) -> Prep
         system=system, history=history, history_note=history_note,
         attachments=attachments, paper_id=paper_id, meeting_id=meeting_id,
         vocab_tags=vocab_tags, persist_path=persist_path, user_meta=user_meta,
-        parent=parent, branching=branching,
+        parent=parent, branching=branching, session_id=session_id,
     )
 
 
@@ -834,8 +839,10 @@ def chat(
                     # 자리에서 새 가지가 나고(같은 부모를 둔 형제가 생긴다), 아니면
                     # 지금 끝자락에 이어 붙는다. 가지를 내는데 자리가 비어 있으면
                     # 대화 맨 앞이다(첫 질문을 고쳐 다시 물을 때).
-                    at = (p.parent or None) if p.branching else (
-                        chat_store.load_all(persist_path)["head"] or None)
+                    # 끝자락은 **물어본 세션의** 것이다(그 사이 다른 세션으로 옮겨 갔을 수 있다).
+                    asked_in = (chat_store.session_by_id(persist_path, p.session_id)
+                                if p.session_id else chat_store.load_all(persist_path)) or {}
+                    at = (p.parent or None) if p.branching else (asked_in.get("head") or None)
                     # 오류로 끝난 답은 남기지 않는다(위). 그러면 까닭도 함께 사라져서, 화면이
                     # 다시 읽어 오는 순간 오류 말풍선이 없어지고 새로 열면 답 없는 질문만
                     # 남았다(9차 실측). 질문에 까닭을 붙여 둔다 — 모델에게는 가지 않는다.
@@ -846,7 +853,7 @@ def chat(
                     if body:
                         msgs.append(chat_store.message(
                             "assistant", body, {"tools": tool_notes}, parent=um["id"]))
-                    chat_store.append(persist_path, *msgs)
+                    chat_store.append(persist_path, *msgs, session_id=p.session_id or None)
                 except Exception:  # noqa: BLE001
                     logger.exception("대화 저장 실패")
 

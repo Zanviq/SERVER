@@ -1945,6 +1945,56 @@ def test_backlinks_after_a_save_reread_only_the_changed_note(monkeypatch):
     assert reads == ["N7.md"], f"바뀐 노트 하나만 읽어야 한다: {reads}"
 
 
+def test_a_turn_stays_in_the_session_it_was_asked_in(monkeypatch):
+    """답을 받는 도중에 새 대화로 옮겨 가도, 그 차례는 **물어본 세션**에 남는다.
+
+    서버는 답이 끝날 때 차례를 붙이는데, 그때의 '지금 세션'에 붙였다. 실측(격리 서버,
+    실모델): 세션 A 에서 묻고 답이 오는 동안 새 대화 B 를 열자 그 차례가 **B 에** 들어갔다.
+    A 에는 이어지는 말이 사라지고, 새로 시작한 B 는 남의 맥락으로 시작했다(다음 답의
+    이력에도 들어간다). 다른 탭·기기에서 세션을 바꿔도 같다. 붙일 때 지금 보고 있는
+    세션을 A 로 되돌려서도 안 된다.
+    """
+    from backend import chat_store, context_store
+    from backend.ai import orchestrator
+    from backend.auth import SessionUser
+
+    _login()
+    u = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    path = context_store.space_path(u, get_settings(), "assistant")
+    a = client.post("/api/ai/space/assistant/sessions", json={"title": "세션A"}).json()["id"]
+    chat_store.append(path, chat_store.message("user", "앞선 말"),
+                      session_id=a)
+    b_id: list[str] = []
+
+    class SwitchesMidway:
+        def chat(self, contents, catalog, system):
+            # 답이 오는 도중에 사용자가 새 대화를 연다
+            b_id.append(chat_store.start_session(path, "세션B"))
+            return orchestrator.LLMResult(text="A 에 대한 답")
+
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": SwitchesMidway())
+    client.post("/api/ai/chat", json={"message": "A 에서 묻는 말", "mode": "assistant"})
+
+    in_a = [m["text"] for m in chat_store.session_by_id(path, a)["messages"]]
+    in_b = [m["text"] for m in chat_store.session_by_id(path, b_id[0])["messages"]]
+    assert "A 에서 묻는 말" in in_a and "A 에 대한 답" in in_a, in_a
+    assert in_b == [], f"물어본 세션이 아닌 곳에 들어갔다: {in_b}"
+    assert chat_store.load_space(path)["active"] == b_id[0], "사용자를 물어본 세션으로 끌고 갔다"
+    # 그 사이 물어본 세션을 지웠으면 되살리지 않는다
+    assert chat_store.append(path, chat_store.message("user", "x"), session_id="없는세션") == []
+
+    # 아직 아무것도 저장되지 않은 새 공간: 읽을 때마다 첫 세션 id 가 같아야 한다 —
+    # 다르면 물을 때 본 세션을 붙일 때 못 찾아 **첫 차례가 버려진다**(고치다 시험이 잡았다)
+    import tempfile as _tf
+    from pathlib import Path as _P
+
+    fresh = _P(_tf.mkdtemp(prefix="chatfresh_")) / "space.json"
+    sid = chat_store.load_space(fresh)["active"]
+    assert chat_store.load_space(fresh)["active"] == sid, "빈 공간의 첫 세션 id 가 읽을 때마다 바뀐다"
+    assert chat_store.append(fresh, chat_store.message("user", "첫 말"), session_id=sid)
+    assert [m["text"] for m in chat_store.load(fresh)] == ["첫 말"]
+
+
 def test_a_failed_answer_leaves_its_reason_on_the_question(monkeypatch):
     """AI 호출이 실패한 차례는 질문에 까닭을 남긴다 — 다시 읽어 와도, 새로 열어도 보인다.
 
