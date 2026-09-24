@@ -6728,7 +6728,7 @@ def test_asking_for_a_summary_does_not_create_a_meeting_document():
     from backend import meeting_store
     from backend.ai.skill_base import SkillContext
     from backend.ai.skill_registry import default_registry
-    from backend.ai.skills.meetings import _asked_to_save
+    from backend.ai.skills._common import asked_to_save as _asked_to_save
     from backend.auth import SessionUser
     from backend.config import get_settings
 
@@ -10447,7 +10447,7 @@ def test_the_meeting_screens_own_examples_can_still_make_documents():
     import pathlib
     import re as _re
 
-    from backend.ai.skills.meetings import _asked_to_save
+    from backend.ai.skills._common import asked_to_save as _asked_to_save
     from backend.ai.skill_base import SkillContext
     from backend.auth import SessionUser
     from backend.config import get_settings
