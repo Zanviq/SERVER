@@ -19,7 +19,7 @@ import { Modal } from "../ui/Modal";
 import { ChatSession } from "../../lib/api";
 import { deepestLeaf, siblingsOf, threadOf, TreeMessage } from "../../lib/chatTree";
 import { useMarkdownInput } from "../links/useMarkdownInput";
-import { PendingSave, flushWhenPageHides } from "../../lib/pendingSave";
+import { usePendingSave } from "../../lib/usePendingSave";
 
 interface Step {
   name: string;
@@ -371,7 +371,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
    * 떼기도 전에 열 번씩 날아간다.
    */
   const saveSpots = useRef<Record<string, [number, number] | null>>({});
-  const spotSave = useRef(new PendingSave());
+  // 떠날 때·다른 공간으로 옮길 때·새로고침할 때 보낸다(usePendingSave)
+  const spotSave = usePendingSave([space]);
   const moveNodes = useCallback((patch: Record<string, [number, number] | null>) => {
     setTreeSpots((cur) => {
       const next = { ...cur };
@@ -384,7 +385,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     saveSpots.current = { ...saveSpots.current, ...patch };
     // PendingSave: 실패하면 버리지 않고 다음에 다시 보낸다. 모아 둔 것은 **보낼 때**
     // 읽으므로 그 사이 더 옮긴 것도 함께 간다.
-    spotSave.current.schedule(400, async ({ keepalive }) => {
+    spotSave.schedule(400, async ({ keepalive }) => {
       const send = saveSpots.current;
       if (!Object.keys(send).length) return true;
       try {
@@ -399,12 +400,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
       }
       return true;
     });
-  }, [space]);
-  // 떠날 때(화면을 옮기거나 다른 논문의 대화로 갈아탈 때) **보내고** 떠난다. 예전에는
-  // 여기서 타이머를 지워, 끌자마자 다른 화면으로 가면 옮긴 자리가 사라졌다.
-  useEffect(() => () => { void spotSave.current.flush(); }, [space]);
-  // 새로고침·탭 닫기에서도(정리 코드가 돌지 않는다) keepalive 로 보낸다
-  useEffect(() => flushWhenPageHides(spotSave.current), []);
+  }, [space, spotSave]);
 
   // 서버 공간의 기록. 논문을 바꾸면 그 논문의 대화로 갈아탄다.
   useEffect(() => {
@@ -640,7 +636,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     if (!space) return;
     // 세션을 바꾸기 **전에** 모아 둔 노드 자리를 보낸다. 서버는 받은 자리를 '지금
     // 세션'에 붙이므로, 바꾼 뒤에 보내면 엉뚱한 세션으로 가서 버려진다.
-    await spotSave.current.flush();
+    await spotSave.flush();
     setLoadingSpace(true);
     setMessages([]);
     setBranchFrom(null);
