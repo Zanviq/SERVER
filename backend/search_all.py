@@ -348,12 +348,38 @@ _SOURCES = {
 }
 
 
+def _for_model(kind: str, found: list[dict], q: str) -> list[dict]:
+    """모델에게 넘길 결과에서 **민감 문서의 내용**을 뺀다.
+
+    이름이 검색어와 맞은 것만 남기고(발췌 없이), 본문으로 걸린 것은 통째로 버린다.
+    "그 문서에 이 낱말이 있다"는 사실도 내용이다 — search_documents·read_document 와
+    같은 규칙(backend/sensitive.py)이다. 이 규칙 없이 발췌를 모델에 넘겨서, 막아 둔
+    민감 문서를 전체 검색으로 우회해 읽을 수 있었다.
+    """
+    if kind != "note":
+        return found
+    from .sensitive import is_sensitive
+
+    ql = q.lower()
+    out = []
+    for h in found:
+        if not is_sensitive(h["id"]):
+            out.append(h)
+        elif ql in h["title"].lower():
+            out.append({**h, "snippet": ""})
+    return out
+
+
 def search(user: SessionUser, settings: Settings, query: str,
-           kinds: tuple[str, ...] = KINDS, limit: int = 40) -> list[dict]:
+           kinds: tuple[str, ...] = KINDS, limit: int = 40, *,
+           for_model: bool = False) -> list[dict]:
     """모든 갈래를 훑어 점수순으로 돌려준다.
 
     한 갈래가 통째로 실패해도(파일이 깨졌거나 아직 없거나) 나머지는 내놓는다 —
     검색이 전부 아니면 아무것도가 되면 쓸 수 없다.
+
+    for_model=True 면 결과가 외부 모델로 나간다(AI 스킬). 그때는 민감 문서의 내용을
+    뺀다(_for_model). 사용자 자신의 화면 검색은 그대로 찾는다.
     """
     q = (query or "").strip()
     if not q:
@@ -370,6 +396,8 @@ def search(user: SessionUser, settings: Settings, query: str,
 
             logging.getLogger("server.search").exception("검색 실패: %s", kind)
             return []
+        if for_model:
+            found = _for_model(kind, found, q)
         found.sort(key=lambda h: -h["score"])
         return found[:PER_KIND]
 

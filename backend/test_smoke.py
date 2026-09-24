@@ -7418,6 +7418,123 @@ def test_mounted_folders_never_shadow_a_real_folder():
         _shutil.rmtree(real, ignore_errors=True)
 
 
+def test_global_search_never_hands_sensitive_text_to_the_model():
+    """민감 문서의 내용은 **어느 검색 길로도** 모델에게 가지 않는다.
+
+    read_document 와 search_documents 는 민감 문서(`비밀번호.md` 등)의 본문을 막는데,
+    전체 검색(search_everything)은 그 규칙 없이 본문을 뒤져 발췌까지 모델에 넘겼다 —
+    막아 둔 문을 옆길로 우회한 셈이다. 발췌뿐 아니라 '그 문서에 이 낱말이 있다'는
+    사실도 내용이므로, 본문으로 걸린 것은 아예 돌려주지 않는다.
+    사용자 자신의 화면 검색(/api/search)은 그대로 찾는다 — 그건 밖으로 나가지 않는다.
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+
+    _login()
+    token = "SECRET-TOKEN-7719"
+    assert client.put("/api/notes/save", json={
+        "path": "개인/은행 비밀번호.md", "content": f"국민은행 {token}"}).status_code == 200
+    assert client.put("/api/notes/save", json={
+        "path": "개인/장보기.md", "content": f"우유, 계란 {token}-평범"}).status_code == 200
+    try:
+        u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+        ctx = SkillContext(user=u, settings=get_settings(), today="2026-09-25")
+        got = default_registry().dispatch("search_everything", {"query": token}, ctx)
+        assert got.ok, got.message
+        seen = str(got.data)
+        assert "국민은행" not in seen and "은행 비밀번호" not in seen, f"민감 문서가 모델로 샜다: {seen}"
+        # 평범한 문서는 그대로 찾는다(막는 범위가 넓어지면 검색이 쓸모없어진다)
+        assert "장보기" in seen, seen
+
+        # 사용자 화면의 검색은 자기 것이므로 둘 다 찾는다
+        mine = client.get("/api/search", params={"q": token}).json()["hits"]
+        assert {h["title"] for h in mine} >= {"은행 비밀번호", "장보기"}, mine
+    finally:
+        client.delete("/api/notes/folder", params={"path": "개인"})
+
+
+def test_new_endpoints_stay_inside_their_own_user():
+    """링크 열기·후보·지도 자리 저장은 **자기 것만** 본다.
+
+    새로 붙인 엔드포인트들이다. 경로·공간 이름을 받는 곳은 다른 사용자의 것을
+    가리키는 이름을 줘도 그 사용자의 것에 닿으면 안 된다.
+    """
+    from fastapi.testclient import TestClient
+
+    _login()
+    token = "OTHER-USER-MARK-5531"
+    assert client.put("/api/notes/save", json={"path": "경계/남의 문서.md",
+                                               "content": token}).status_code == 200
+    pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n"
+    pid = client.post("/api/papers/upload",
+                      files={"file": ("경계 논문.pdf", pdf, "application/pdf")}).json()["id"]
+    other = TestClient(app)
+    assert other.post("/api/auth/login",
+                      json={"username": "tester2", "password": "pw456"}).status_code == 200
+    try:
+        # 링크: 다른 사람의 문서는 없는 것이다(열기·후보 모두)
+        opened = other.get("/api/links/open", params={"path": "note/경계/남의 문서.md"}).json()
+        assert not opened["found"], opened
+        items = other.get("/api/links/suggest", params={"q": "남의"}).json()["items"]
+        assert not any("남의 문서" in i["path"] for i in items), items
+        # 다른 사람 논문의 대화 공간 — 읽기도 자리 저장도 닿지 않는다
+        space = f"paper:{pid}"
+        assert other.get(f"/api/ai/space/{space}").status_code in (400, 404)
+        r = other.post(f"/api/ai/space/{space}/layout", json={"positions": {"x": [1, 2]}})
+        assert r.status_code in (400, 404), r.text
+        # 모델에게 가는 길(미리보기)에도 남의 문서가 실리지 않는다
+        pv = other.post("/api/ai/preview", json={"message": "[note/경계/남의 문서.md] 뭐야",
+                                                 "mode": "assistant"}).json()
+        assert token not in pv["message"], "다른 사용자의 문서가 모델에게 갔다"
+    finally:
+        client.delete("/api/notes/folder", params={"path": "경계"})
+        client.delete(f"/api/papers/{pid}")
+
+
+def test_ai_cannot_collapse_the_meeting_and_paper_folders():
+    """AI 가 `회의/…`·`논문/…` 에 써도 붙여 둔 폴더가 **사라지지 않는다.**
+
+    문서 화면은 붙여 둔 이름공간에 새로 만드는 것을 막는데(mounts.reject_write),
+    AI 문서 스킬에는 그 문이 없었다. `회의/정리.md` 를 쓰면 진짜 `회의` 폴더가
+    생기고, 같은 이름의 진짜 폴더가 있으면 붙이지 않는다는 규칙 때문에 **회의 전체가
+    문서 트리에서 사라졌다.** 링크(`[note/회의/…]`)로 경로를 본 모델이 그 자리에
+    쓰려 하는 것은 자연스러운 일이다.
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+    from backend.storage import user_data_root
+
+    _login()
+    r = client.post("/api/meetings/upload", data={"title": "경계 시험 회의", "date": "2026-09-25"},
+                    files={"file": ("녹음.webm", b"fake-audio", "audio/webm")})
+    assert r.status_code == 200, r.text
+    mid = r.json()["id"]
+    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    ctx = SkillContext(user=u, settings=get_settings(), today="2026-09-25")
+    reg = default_registry()
+    root = user_data_root(u, get_settings())
+    try:
+        assert "회의" in client.get("/api/notes/tree").json()["pinned"]
+        for name, args in (
+            ("write_document", {"path": "회의/정리", "content": "요약"}),
+            ("append_document", {"path": "회의/경계 시험 회의/메모", "content": "한 줄"}),
+            ("create_folder", {"path": "회의/새 폴더"}),
+        ):
+            got = reg.dispatch(name, args, ctx)
+            assert not got.ok, f"{name} 가 붙여 둔 폴더 안에 썼다: {got.message}"
+            # 회의록은 회의 스킬로 쓰라고 알려 준다(막다른 길이 되지 않게)
+            assert "회의" in got.message, got.message
+        assert not (root / "회의").exists(), "진짜 회의 폴더가 생겼다"
+        assert "회의" in client.get("/api/notes/tree").json()["pinned"], "회의 폴더가 사라졌다"
+    finally:
+        client.delete(f"/api/meetings/{mid}")
+        import shutil as _sh
+
+        _sh.rmtree(root / "회의", ignore_errors=True)
+
+
 def test_rename_gives_same_name_from_screen_and_ai():
     """문서 화면과 AI 가 같은 이름 바꾸기에 **같은 결과**를 낸다.
 

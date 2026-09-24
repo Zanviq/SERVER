@@ -53,8 +53,10 @@ class SearchEverything(SkillBase):
         except (TypeError, ValueError):
             limit = 20
         try:
+            # 결과가 모델로 나간다 — 민감 문서의 내용은 빼라고 알린다
             hits = search_all.search(ctx.user, ctx.settings, q,
-                                     picked or search_all.KINDS, max(1, min(limit, 50)))
+                                     picked or search_all.KINDS, max(1, min(limit, 50)),
+                                     for_model=True)
         except Exception as e:  # noqa: BLE001
             return _fail(e)
         rows = [{

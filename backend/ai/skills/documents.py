@@ -13,7 +13,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ... import doc_cache
+from fastapi import HTTPException
+
+from ... import doc_cache, mounts
 from ...file_kinds import BadName, is_editable, kind_of, looks_like_extension, renamed
 from ...json_store import lock_for, write_text_atomic
 from ...notes_graph import backlinks_for
@@ -193,6 +195,22 @@ def _backup_before_overwrite(root: Path, target: Path, ctx) -> None:
 _has_extension = looks_like_extension
 
 
+def _mount_guard(ctx, rel: str) -> SkillResult | None:
+    """붙여 둔 폴더(논문·회의) 안에 **새로 만들려는가** — 그러면 막고 갈 길을 알려 준다.
+
+    문서 화면과 같은 문(mounts.reject_write)이다. 여기에 없어서, AI 가 `회의/정리.md`
+    를 쓰면 진짜 `회의` 폴더가 생겨 회의 전체가 문서 트리에서 접혀 사라졌다.
+    """
+    try:
+        mounts.reject_write(ctx.user, ctx.settings, rel)
+    except HTTPException as e:
+        return SkillResult(
+            ok=False, error_code="forbidden",
+            message=(f"{e.detail} 회의록은 write_meeting_doc·append_meeting_doc, "
+                     "논문 메모는 set_paper_notes 로 쓰세요."))
+    return None
+
+
 def _target_for_write(root: Path, ident: str) -> Path:
     """쓰기 대상 — 기존 문서가 있으면 그 위치, 없으면 준 경로에 새로 만든다."""
     # 쓰기 후보는 편집 가능한 문서만. 예전에는 `사진/여행.png` 하나 때문에
@@ -365,6 +383,9 @@ class WriteDocument(SkillBase):
             return _ambiguous_result(e)
         except _IsFolder as e:
             return _folder_result(e)
+        blocked = _mount_guard(ctx, to_rel(root, target))
+        if blocked:
+            return blocked
         if not is_editable(target.name):
             # 있는 파일만 보던 검사였다. 그러면 `보고서.xyz` 처럼 모르는 확장자로
             # **새로** 만드는 것은 통과해서, 다시 읽지도 덧붙이지도 못하는 문서를
@@ -446,6 +467,9 @@ class AppendDocument(SkillBase):
             return _ambiguous_result(e)
         except _IsFolder as e:
             return _folder_result(e)
+        blocked = _mount_guard(ctx, to_rel(root, target))
+        if blocked:
+            return blocked
         if not is_editable(target.name):
             # 있는 파일만 보던 검사였다. 그러면 `보고서.xyz` 처럼 모르는 확장자로
             # **새로** 만드는 것은 통과해서, 다시 읽지도 덧붙이지도 못하는 문서를
@@ -564,6 +588,9 @@ class MoveDocument(SkillBase):
         if src is None:
             return SkillResult(ok=False, message="문서를 찾을 수 없습니다.", error_code="not_found")
         folder = (args.get("target_folder") or "").strip().strip("/")
+        blocked = _mount_guard(ctx, folder)
+        if blocked:
+            return blocked
         dst = safe_join(root, f"{folder}/{src.name}" if folder else src.name)
         if dst == src:
             return SkillResult(ok=True, message="이미 그 위치입니다.", data={"path": _ident(root, src)})
@@ -589,6 +616,9 @@ class CreateFolder(SkillBase):
         target = safe_join(root, args["path"])
         if target == root:
             return SkillResult(ok=False, message="폴더 이름이 비어 있습니다.", error_code="invalid")
+        blocked = _mount_guard(ctx, to_rel(root, target))
+        if blocked:
+            return blocked
         if target.exists():
             return SkillResult(ok=False, message="이미 존재합니다.", error_code="exists")
         target.mkdir(parents=True)
