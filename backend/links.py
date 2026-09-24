@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -26,9 +27,15 @@ from urllib.parse import quote
 
 from fastapi import HTTPException
 
-from . import mounts
+from . import (diary_store, event_cache, meeting_store, mounts, paper_store, todo_store,
+               vocab_store)
 from .auth import SessionUser
 from .config import Settings
+from .doc_cache import text_of
+from .file_kinds import is_editable, kind_of, looks_like_extension
+from .security_paths import safe_join, to_rel
+from .sensitive import is_sensitive as _is_sensitive
+from .storage import user_data_root, walk_all
 
 KINDS = ("note", "paper", "meeting", "todo", "event", "vocab", "diary")
 #: 복수형·다른 이름도 받는다(`notes/…`). 저장하거나 보여 줄 때는 KINDS 이름을 쓴다.
@@ -170,7 +177,6 @@ def _days_from_today(day: str) -> float:
 
 
 def _note_entries(user: SessionUser, settings: Settings) -> list[Entry]:
-    from .storage import user_data_root, walk_all
 
     root = user_data_root(user, settings)
     files, dirs = walk_all(root)
@@ -192,7 +198,6 @@ def _parent(rel: str) -> str:
 
 
 def _paper_entries(user: SessionUser, settings: Settings) -> list[Entry]:
-    from . import paper_store
 
     return [Entry(f"paper/{segment(name)}", "paper", segment(name),
                   " · ".join(x for x in (str(p.get("year") or ""), str(p.get("category") or "")) if x),
@@ -201,7 +206,6 @@ def _paper_entries(user: SessionUser, settings: Settings) -> list[Entry]:
 
 
 def _meeting_entries(user: SessionUser, settings: Settings) -> list[Entry]:
-    from . import meeting_store
 
     return [Entry(f"meeting/{segment(name)}", "meeting", segment(name),
                   " · ".join(x for x in (str(m.get("date") or ""), str(m.get("category") or "")) if x),
@@ -212,7 +216,6 @@ def _meeting_entries(user: SessionUser, settings: Settings) -> list[Entry]:
 
 def _todo_entries(user: SessionUser, settings: Settings) -> list[Entry]:
     """할 일은 분류가 폴더다. 분류는 중첩될 수 있다(부모를 따라 올라가며 잇는다)."""
-    from . import todo_store
 
     cats = todo_store.list_categories(user, settings)
     by_id = {str(c.get("id")): c for c in cats}
@@ -253,7 +256,6 @@ def _unique(name: str, where: str, taken: set[str]) -> str:
 
 def _event_entries(user: SessionUser, settings: Settings, *, fetch: bool = True) -> list[Entry]:
     """fetch=False 면 받아 둔 것만 본다(없으면 빈 목록) — 구글은 한 번에 1초쯤 걸린다."""
-    from . import event_cache
 
     events = event_cache.events(user, settings) if fetch else (event_cache.warm(user) or [])
     out: list[Entry] = []
@@ -276,7 +278,6 @@ def _event_entries(user: SessionUser, settings: Settings, *, fetch: bool = True)
 
 
 def _vocab_entries(user: SessionUser, settings: Settings) -> list[Entry]:
-    from . import vocab_store
 
     out: list[Entry] = []
     taken: set[str] = set()
@@ -289,7 +290,6 @@ def _vocab_entries(user: SessionUser, settings: Settings) -> list[Entry]:
 
 def _diary_entries(user: SessionUser, settings: Settings) -> list[Entry]:
     """일기가 있는 날짜만. 글은 싣지 않는다(잠금은 화면이 지킨다)."""
-    from . import diary_store
 
     rows = diary_store.list_range(user, settings, "1900-01-01", "2999-12-31")
     return [Entry(f"diary/{r['date']}", "diary", r["date"],
@@ -312,7 +312,6 @@ def entries(user: SessionUser, settings: Settings, kind: str) -> list[Entry]:
     except HTTPException:
         return []
     except Exception:  # noqa: BLE001 — 구글 연결 끊김 등
-        import logging
 
         logging.getLogger("server.links").warning("링크 후보를 못 읽음: %s", kind, exc_info=True)
         return []
@@ -475,11 +474,6 @@ def _listing(items: list[Entry]) -> str:
 
 
 def _resolve_note(user: SessionUser, settings: Settings, rel: str) -> Resolved:
-    from .doc_cache import text_of
-    from .sensitive import is_sensitive as _is_sensitive
-    from .file_kinds import is_editable, kind_of, looks_like_extension
-    from .security_paths import safe_join, to_rel
-    from .storage import user_data_root
 
     path = f"note/{rel}"
     # 요청 문자열로 먼저 — 없는 경로라도 막아서 존재 여부를 흘리지 않는다
@@ -518,7 +512,6 @@ def _resolve_note(user: SessionUser, settings: Settings, rel: str) -> Resolved:
 
 def _resolve_mounted(user: SessionUser, settings: Settings, rel: str) -> Resolved:
     """`note/논문/…`·`note/회의/…`. 원본(PDF·녹음)은 뽑아 둔 글로 대신 읽는다."""
-    from .doc_cache import text_of
 
     path = f"note/{rel}"
     clean = rel.strip("/")
@@ -540,7 +533,6 @@ def _resolve_mounted(user: SessionUser, settings: Settings, rel: str) -> Resolve
 
 
 def _paper_text(user: SessionUser, settings: Settings, e: Entry) -> str:
-    from . import paper_store
 
     p = paper_store.get_paper(user, settings, e.ident)
     lines = [f"제목: {p.get('title') or ''}"]
@@ -561,7 +553,6 @@ def _paper_text(user: SessionUser, settings: Settings, e: Entry) -> str:
 
 
 def _meeting_text(user: SessionUser, settings: Settings, e: Entry) -> str:
-    from . import meeting_store
 
     m = meeting_store.get_meeting(user, settings, e.ident)
     lines = [f"제목: {m.get('title') or ''}", f"날짜: {m.get('date') or ''}"]
@@ -581,7 +572,6 @@ def _meeting_text(user: SessionUser, settings: Settings, e: Entry) -> str:
 
 
 def _todo_text(user: SessionUser, settings: Settings, e: Entry) -> str:
-    from . import todo_store
 
     t = todo_store.get_todo(user, settings, e.ident) or {}
     lines = [f"할 일: {t.get('title') or e.label}",
@@ -594,7 +584,6 @@ def _todo_text(user: SessionUser, settings: Settings, e: Entry) -> str:
 
 
 def _event_text(user: SessionUser, settings: Settings, e: Entry) -> str:
-    from . import event_cache
 
     ev = next((x for x in event_cache.events(user, settings) if str(x.get("id") or "") == e.ident), {})
     lines = [f"일정: {ev.get('title') or e.label}",
@@ -606,7 +595,6 @@ def _event_text(user: SessionUser, settings: Settings, e: Entry) -> str:
 
 
 def _vocab_text(user: SessionUser, settings: Settings, e: Entry) -> str:
-    from . import vocab_store
 
     w = vocab_store.get_word(user, settings, e.ident) or {}
     lines = [f"단어: {w.get('word') or e.label}"]
@@ -625,10 +613,8 @@ def _vocab_text(user: SessionUser, settings: Settings, e: Entry) -> str:
 
 
 def _diary_text(user: SessionUser, settings: Settings, e: Entry) -> str:
-    from . import diary_store
-    from .ai.skills.diary import _row
 
-    row = _row(diary_store.get_day(user, settings, e.when))
+    row = diary_store.readable(diary_store.get_day(user, settings, e.when))
     return "\n".join(f"{k}: {v}" for k, v in row.items() if v)
 
 

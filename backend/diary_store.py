@@ -24,6 +24,31 @@ from .config import Settings
 
 SHAPES = ("star", "circle", "triangle", "square", "pentagon")
 AXES = ("body", "heart", "mind")
+
+#: 도형 ↔ 사람 말. 첫 말이 대표(읽을 때 쓰는 말)이고, 나머지는 AI 스킬이 알아듣는 다른 말.
+#: 저장소에 둔다 — 기록을 사람 말로 읽는 곳이 AI 스킬만이 아니다(링크 본문도 쓴다).
+SHAPE_WORDS = {
+    "star": ("매우 좋음", "아주 좋음", "최고", "너무 좋음"),
+    "circle": ("좋음", "괜찮음", "좋았음", "무난히 좋음"),
+    "triangle": ("보통", "그저 그럼", "평범"),
+    "square": ("힘듦", "나쁨", "안 좋음", "힘들었음", "지침"),
+    "pentagon": ("매우 힘듦", "아주 힘듦", "최악", "너무 힘듦"),
+}
+
+
+def readable(e: dict) -> dict:
+    """한 날의 기록을 사람 말로 — 모양은 '좋음(circle)' 처럼, 없으면 '(없음)'."""
+    def word(axis: str) -> str:
+        sh = e.get(axis) or ""
+        return f"{SHAPE_WORDS[sh][0]}({sh})" if sh in SHAPE_WORDS else "(없음)"
+
+    return {
+        "date": e.get("date", ""),
+        "육체": word("body"),
+        "마음": word("heart"),
+        "정신": word("mind"),
+        "일기": str(e.get("text") or ""),
+    }
 MAX_TEXT = 20000
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 

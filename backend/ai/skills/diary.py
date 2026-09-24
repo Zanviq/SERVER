@@ -11,17 +11,10 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from ... import diary_store
+from ...diary_store import SHAPE_WORDS
 from ..skill_base import SkillBase, SkillResult
 from .todo import _fail
 
-#: 도형 ↔ 사람 말. 모델이 어느 쪽으로 주든 받는다.
-SHAPE_WORDS = {
-    "star": ("매우 좋음", "아주 좋음", "최고", "너무 좋음"),
-    "circle": ("좋음", "괜찮음", "좋았음", "무난히 좋음"),
-    "triangle": ("보통", "그저 그럼", "평범"),
-    "square": ("힘듦", "나쁨", "안 좋음", "힘들었음", "지침"),
-    "pentagon": ("매우 힘듦", "아주 힘듦", "최악", "너무 힘듦"),
-}
 _WORD_TO_SHAPE = {w: s for s, words in SHAPE_WORDS.items() for w in words}
 _AXIS_LABEL = {"body": "육체", "heart": "마음", "mind": "정신"}
 
@@ -34,20 +27,6 @@ def _to_shape(v) -> str:
     if s in diary_store.SHAPES:
         return s
     return _WORD_TO_SHAPE.get(str(v).strip(), "")
-
-
-def _row(e: dict) -> dict:
-    def word(axis: str) -> str:
-        sh = e.get(axis) or ""
-        return f"{SHAPE_WORDS[sh][0]}({sh})" if sh in SHAPE_WORDS else "(없음)"
-
-    return {
-        "date": e.get("date", ""),
-        "육체": word("body"),
-        "마음": word("heart"),
-        "정신": word("mind"),
-        "일기": str(e.get("text") or ""),
-    }
 
 
 class GetDiary(SkillBase):
@@ -73,13 +52,13 @@ class GetDiary(SkillBase):
                 end = date.today()
                 start = end - timedelta(days=days - 1)
                 rows = diary_store.list_range(ctx.user, ctx.settings, start.isoformat(), end.isoformat())
-                out = [_row(e) for e in rows]
+                out = [diary_store.readable(e) for e in rows]
                 return SkillResult(ok=True, message=f"기록 {len(out)}일치", data={"days": out})
             day = str(args.get("date") or "").strip() or date.today().isoformat()
             e = diary_store.get_day(ctx.user, ctx.settings, day)
         except Exception as ex:  # noqa: BLE001
             return _fail(ex)
-        return SkillResult(ok=True, message=f"{e['date']} 기록", data=_row(e))
+        return SkillResult(ok=True, message=f"{e['date']} 기록", data=diary_store.readable(e))
 
 
 class SetDiary(SkillBase):
@@ -135,7 +114,7 @@ class SetDiary(SkillBase):
                 if e.get(a) in SHAPE_WORDS]
         if e.get("text"):
             bits.append(f"일기 {len(e['text'])}자")
-        return SkillResult(ok=True, message=f"{day} 기록 — " + (", ".join(bits) or "비움"), data=_row(e))
+        return SkillResult(ok=True, message=f"{day} 기록 — " + (", ".join(bits) or "비움"), data=diary_store.readable(e))
 
 
 DIARY_SKILLS: list[SkillBase] = [GetDiary(), SetDiary()]
