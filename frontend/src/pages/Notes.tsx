@@ -450,6 +450,22 @@ export function Notes() {
   useEffect(() => {
     const open = params.get("open");
     const path = params.get("path");
+    const folder = params.get("folder");
+    if (folder !== null) {
+      // 폴더 링크(`[note/서버]`)로 들어왔다 — 그 폴더를 펼치고 새 문서의 자리로 삼는다.
+      // 예전에는 이 값을 아무도 읽지 않아서, 링크를 눌러도 문서 화면만 뜨고 아무 일도
+      // 없었다(막다른 길). 조상 폴더까지 펼쳐야 트리에서 실제로 보인다.
+      const clean = folder.replace(/^\/+|\/+$/g, "");
+      setCurFolder(clean);
+      setExpanded((s) => {
+        const n = new Set(s);
+        const parts = clean.split("/").filter(Boolean);
+        for (let i = 1; i <= parts.length; i++) n.add(parts.slice(0, i).join("/"));
+        return n;
+      });
+      params.delete("folder");
+      setParams(params, { replace: true });
+    }
     if (path) {
       // 정확한 상대경로로 열기(URL 진입·그래프 클릭 등) — openNote와 같은 동작이다
       openNote(path);
@@ -975,6 +991,8 @@ export function Notes() {
               onDropFiles={onDropFiles}
               onDropPath={onDropPath}
               onCreateDoc={onCreateDoc}
+              // 읽기 뷰와 같은 동작 — 편집 화면에서도 `[[제목]]` 을 누르면 연다
+              onOpenTitle={openByTitle}
             />
           )}
           {/* current도 본다 — 닫은 뒤 늦게 도착한 save 응답이 detail을 다시 채울 수 있다 */}

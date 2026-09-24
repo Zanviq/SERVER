@@ -7,11 +7,11 @@
  */
 import { startCompletion } from "@codemirror/autocomplete";
 import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
-import {
-  Decoration, EditorView, MatchDecorator, ViewPlugin,
-} from "@codemirror/view";
+import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { linkQueryAt, refRegex, splitLink } from "../../lib/links";
+import { linkDecorations } from "./cmLinkDeco";
+import type { LinkOpeners } from "./cmLinkDeco";
 import { fetchLinkItems } from "./linkFetch";
 
 /** `[` 뒤에 친 글자로 후보를 받는다. `[[`(위키링크)는 건드리지 않는다. */
@@ -55,23 +55,19 @@ export async function linkCompletionSource(ctx: CompletionContext): Promise<Comp
   return { from, to: ctx.pos, options, filter: false };
 }
 
-const linkMark = Decoration.mark({
-  class: "cm-itemlink",
-  attributes: { title: "Ctrl(⌘)+클릭으로 열기" },
-});
-
-const matcher = new MatchDecorator({ regexp: refRegex(), decoration: () => linkMark });
-
-/** 링크 글자를 링크처럼 칠하고, Ctrl(⌘)+클릭으로 연다. */
-export function itemLinks(open: (path: string) => void) {
+/** 링크를 칩으로 그리고(누르면 연다), 원문일 때는 Ctrl(⌘)+클릭으로 연다. */
+export function itemLinks(open: LinkOpeners) {
   const deco = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
       constructor(view: EditorView) {
-        this.decorations = matcher.createDeco(view);
+        this.decorations = linkDecorations(view.state, view.visibleRanges, open);
       }
       update(u: ViewUpdate) {
-        this.decorations = matcher.updateDeco(u, this.decorations);
+        // 커서가 줄을 옮기면 칩↔원문이 바뀌어야 한다(selectionSet)
+        if (u.docChanged || u.viewportChanged || u.selectionSet) {
+          this.decorations = linkDecorations(u.state, u.view.visibleRanges, open);
+        }
       }
     },
     { decorations: (v) => v.decorations },
@@ -88,7 +84,7 @@ export function itemLinks(open: (path: string) => void) {
         const { kind, rest } = splitLink(m[1]);
         if (!kind || !rest) return false;
         e.preventDefault();
-        open(`${kind}/${rest}`);
+        open.item(`${kind}/${rest}`);
         return true;
       }
       return false;

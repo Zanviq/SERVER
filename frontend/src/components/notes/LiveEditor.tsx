@@ -534,6 +534,24 @@ const editorTheme = EditorView.theme({
     backgroundColor: "rgb(var(--info) / 0.08)",
     borderRadius: "3px",
   },
+  // 커서가 없는 줄의 링크 칩(누르면 연다). 위키링크는 강조색, 항목 링크는 정보색 —
+  // 읽기 뷰와 같은 구분이다.
+  ".cm-linkchip": {
+    cursor: "pointer",
+    borderRadius: "4px",
+    padding: "0 4px",
+    fontWeight: "500",
+  },
+  ".cm-linkchip-item": {
+    color: "rgb(var(--info))",
+    backgroundColor: "rgb(var(--info) / 0.1)",
+  },
+  ".cm-linkchip-item:hover": { backgroundColor: "rgb(var(--info) / 0.2)" },
+  ".cm-linkchip-wiki": {
+    color: "rgb(var(--accent-fg))",
+    backgroundColor: "rgb(var(--accent-muted))",
+  },
+  ".cm-linkchip-wiki:hover": { backgroundColor: "rgb(var(--accent-soft))" },
   ".cm-mdrule": {
     backgroundImage: "linear-gradient(rgb(var(--line-strong)), rgb(var(--line-strong)))",
     backgroundSize: "100% 1px",
@@ -640,6 +658,8 @@ export interface LiveEditorProps {
   onDropPath?: (path: string) => string;
   /** `/` 메뉴의 "새 문서 만들어 링크" — 만든 문서 제목을 돌려준다(취소면 null) */
   onCreateDoc?: () => Promise<string | null>;
+  /** `[[제목]]` 칩을 눌렀을 때. 없으면 위키링크는 칩으로 바꾸지 않는다. */
+  onOpenTitle?: (title: string) => void;
 }
 
 export function LiveEditor({
@@ -652,15 +672,18 @@ export function LiveEditor({
   onDropFiles,
   onDropPath,
   onCreateDoc,
+  onOpenTitle,
 }: LiveEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const navigate = useNavigate();
   const cbs = useRef({
     onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey, onCreateDoc, navigate,
+    onOpenTitle,
   });
   cbs.current = {
     onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey, onCreateDoc, navigate,
+    onOpenTitle,
   };
   const fileRef = useRef<HTMLInputElement>(null);
   // 터치 기기이거나 화면이 좁을 때. 터치엔 드래그앤드롭이 없고, 좁은 창에서는
@@ -895,7 +918,11 @@ export function LiveEditor({
         EditorView.lineWrapping,
         closeBrackets(),
         // `[note/서버/기록.md]` 항목 링크 — 칠하고, Ctrl(⌘)+클릭으로 연다
-        itemLinks((path) => void openLink(path, (href) => cbs.current.navigate(href))),
+        itemLinks({
+          item: (path) => void openLink(path, (href) => cbs.current.navigate(href)),
+          // 위키링크 칩은 여는 곳이 있을 때만(회의록 편집기 등은 문서를 열 자리가 없다)
+          wiki: onOpenTitle ? (t) => cbs.current.onOpenTitle?.(t) : undefined,
+        }),
         autocompletion({
           // `[` 는 항목 링크 후보, `[[` 는 위키링크 후보(서로 겹치지 않는다)
           override: [wikiComplete, linkCompletionSource, slashSource],
