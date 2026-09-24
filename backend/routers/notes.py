@@ -514,10 +514,6 @@ async def upload(
     return _summary(root, dest)
 
 
-#: 확장자 판정은 file_kinds 한 곳에서만 한다(복사본이 갈라져 사고가 났다)
-_looks_like_extension = looks_like_extension
-
-
 @router.put("/save", response_model=NoteSummary)
 def save_note(
     req: SaveNote,

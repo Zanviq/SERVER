@@ -461,8 +461,8 @@ def _listing(items: list[Entry]) -> str:
 
 
 def _resolve_note(user: SessionUser, settings: Settings, rel: str) -> Resolved:
-    from .ai.skills._common import _is_sensitive
     from .doc_cache import text_of
+    from .sensitive import is_sensitive as _is_sensitive
     from .file_kinds import is_editable, kind_of, looks_like_extension
     from .security_paths import safe_join, to_rel
     from .storage import user_data_root

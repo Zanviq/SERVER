@@ -1195,14 +1195,17 @@ def test_extension_rule_lives_in_one_place():
     `.08 회고` 로 보고 이름을 망가뜨렸다.
     """
     from backend.ai.skills import documents as doc_skill
-    from backend.file_kinds import looks_like_extension, split_ext
+    from backend.file_kinds import looks_like_extension, renamed, split_ext
     from backend.routers import notes as notes_router
     from backend import trash as trash_mod
 
     # 같은 함수를 가리켜야 한다(복사본이 다시 생기면 여기서 걸린다)
-    assert notes_router._looks_like_extension is looks_like_extension
+    assert notes_router.looks_like_extension is looks_like_extension
     assert doc_skill._has_extension is looks_like_extension
     assert trash_mod._split_ext is split_ext
+    # 이름 바꾸기의 결과 이름도 한 곳이다(화면·AI 가 따로 정하다 어긋났다)
+    assert notes_router.renamed is renamed
+    assert doc_skill.renamed is renamed
 
     for name, ext in (("문서.md", ".md"), ("2026.08 회고", ""), ("v1.2", ""),
                       ("사진.jpeg", ".jpeg"), ("폴더", ""), ("예산 1.5", "")):
