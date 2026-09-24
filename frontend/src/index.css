@@ -143,7 +143,19 @@
     @apply bg-black/15 text-inherit;
   }
   .md-on-accent .prose-server pre {
-    @apply border-white/25 bg-black/15;
+    /* 좁은 말풍선에서는 오른쪽 위 복사 단추가 첫 줄 코드를 가렸다 — 단추 자리만큼 띄운다 */
+    @apply border-white/25 bg-black/15 pt-9;
+  }
+  /* 표: 제목 칸의 밝은 바탕(bg-subtle) 위에 흰 글씨가 얹혀 제목이 보이지 않았다 */
+  .md-on-accent .prose-server th {
+    @apply bg-white/20;
+  }
+  .md-on-accent .prose-server :where(th, td) {
+    @apply border-white/30;
+  }
+  /* 글머리 점이 강조색이라 보라 바탕 위에서 흐렸다 — 글자색을 따른다 */
+  .md-on-accent .prose-server li::marker {
+    color: inherit;
   }
   .md-on-accent .prose-server blockquote {
     @apply border-white/60;

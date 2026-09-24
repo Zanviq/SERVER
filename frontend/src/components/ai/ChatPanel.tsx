@@ -337,12 +337,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   const [compare, setCompare] = useState<string[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  // `[` 를 치면 입력칸 위로 링크 후보(문서·논문·회의·할 일…)가 뜬다
-  const linkPanel = useLinkSuggest(inputRef);
   const abortRef = useRef<AbortController | null>(null);   // 중단 버튼
   const navigate = useNavigate();
   // 화면 폭이 아니라 입력 방식으로 판단한다 — 태블릿 가로처럼 넓어도 소프트 키보드다.
   const touch = useMediaQuery("(pointer: coarse)");
+  // `[` 를 치면 입력칸 위로 링크 후보(문서·논문·회의·할 일…)가 뜬다. 목록은 줄을 바꿀 때
+  // 이어진다 — 이 칸은 Enter 가 '보내기'라 줄바꿈 키는 Shift+Enter(터치는 Enter)다.
+  const linkPanel = useLinkSuggest(inputRef, { newline: touch ? "enter" : "shift+enter" });
   // 사이드바는 **자리가 있을 때만** 편다. CSS 로만 숨기면 좁은 화면에서 대화 목록과
   // 지도에 닿을 길이 아예 사라진다 — 여기서 정해서, 좁으면 드롭다운·접힘으로 돌린다.
   const roomForList = useMediaQuery("(min-width: 1024px)");

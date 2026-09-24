@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight, ChevronUp, Link2, X } from "lucide-react";
 import type { LinkItem } from "../../lib/api";
 import { applyPick, linkQueryAt } from "../../lib/links";
+import { continueList } from "../../lib/mdInput";
 import type { LinkQuery } from "../../lib/links";
 import { linkIcon } from "./LinkChip";
 import { cachedLinkItems, fetchLinkItems } from "./linkFetch";
@@ -37,7 +38,12 @@ function setNativeValue(el: Field, value: string) {
  * 후보가 화면을 가릴 수 있으므로 접기(얇은 띠로)·닫기(이 괄호에서는 다시 안 뜸)를
  * 둔다. 접은 상태는 기억한다.
  */
-export function useLinkSuggest(ref: RefObject<Field>): ReactNode {
+export interface InputOptions {
+  /** 이 칸에서 줄을 바꾸는 키. 채팅처럼 Enter 가 '보내기'인 칸은 "shift+enter". */
+  newline?: "enter" | "shift+enter";
+}
+
+export function useLinkSuggest(ref: RefObject<Field>, opts: InputOptions = {}): ReactNode {
   const [q, setQ] = useState<LinkQuery | null>(null);
   const [items, setItems] = useState<LinkItem[]>([]);
   /** items 가 어느 글자에 대한 답인가. 새로 묻는 동안에는 옛 목록을 그대로 보여
@@ -115,8 +121,9 @@ export function useLinkSuggest(ref: RefObject<Field>): ReactNode {
   }, [ref]);
 
   // 이벤트 처리기는 매번 새 값을 봐야 한다. 입력칸에는 한 번만 걸고 이 ref 로 부른다.
-  const live = useRef({ q, items, itemsFor, active, collapsed, sync, pick, dismiss });
-  live.current = { q, items, itemsFor, active, collapsed, sync, pick, dismiss };
+  const newline = opts.newline ?? "enter";
+  const live = useRef({ q, items, itemsFor, active, collapsed, sync, pick, dismiss, newline });
+  live.current = { q, items, itemsFor, active, collapsed, sync, pick, dismiss, newline };
 
   const el = ref.current;
   useEffect(() => {
@@ -128,44 +135,68 @@ export function useLinkSuggest(ref: RefObject<Field>): ReactNode {
     // 사라졌다(실측). onChange 가 끝난 뒤에 보면 그런 일이 없다.
     const onInput = () => window.setTimeout(() => live.current.sync(), 0);
     const onBlur = () => setQ(null);
-    const onKey = (ev: Event) => {
-      const e = ev as KeyboardEvent;
+    /** 링크 후보가 이 키를 먹었는가(먹었으면 true — 뒤의 처리는 하지 않는다) */
+    const linkKeys = (e: KeyboardEvent): boolean => {
       const s = live.current;
-      // 한글 조합 중의 Enter 는 글자를 끝내는 것이다 — 가로채면 마지막 글자가 사라진다
-      if (!s.q || e.isComposing || e.keyCode === 229) return;
+      if (!s.q) return false;
       const stop = () => {
         e.preventDefault();
         e.stopPropagation();
+        return true;
       };
       if (e.key === "Escape") {
         s.dismiss();
-        stop();
-        return;
+        return stop();
       }
-      if (s.collapsed) return;
+      if (s.collapsed) return false;
       const pickKey = (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey)
                       || (e.key === "Tab" && !e.shiftKey);
       if (s.itemsFor !== s.q.query) {
         // 아직 이 글자에 대한 답이 없다. 여기서 Enter 를 흘려보내면 채팅에서는
         // 치다 만 `[note/서` 가 그대로 **보내진다**. 붙잡아 뒀다가 답이 오면 넣는다.
-        if (pickKey) {
-          pendingPick.current = true;
-          stop();
-        }
-        return;
+        if (!pickKey) return false;
+        pendingPick.current = true;
+        return stop();
       }
       const n = s.items.length;
-      if (n === 0) return;
+      if (n === 0) return false;
       if (e.key === "ArrowDown") {
         setActive((a) => (a + 1) % n);
-        stop();
-      } else if (e.key === "ArrowUp") {
-        setActive((a) => (a - 1 + n) % n);
-        stop();
-      } else if (pickKey) {
-        s.pick(s.items[Math.min(s.active, n - 1)], s.q);
-        stop();
+        return stop();
       }
+      if (e.key === "ArrowUp") {
+        setActive((a) => (a - 1 + n) % n);
+        return stop();
+      }
+      if (pickKey) {
+        s.pick(s.items[Math.min(s.active, n - 1)], s.q);
+        return stop();
+      }
+      return false;
+    };
+
+    /** 목록·인용 줄에서 줄을 바꾸면 표시를 잇는다(문서 편집기와 같은 규칙) */
+    const listKeys = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || e.ctrlKey || e.metaKey || e.altKey) return;
+      // 이 칸에서 '줄바꿈'인 키에서만 — 채팅은 Enter 가 보내기라 Shift+Enter 다
+      if (live.current.newline === "shift+enter" ? !e.shiftKey : e.shiftKey) return;
+      const el = ref.current;
+      if (!el || el.readOnly || el.disabled || el.selectionStart !== el.selectionEnd) return;
+      const next = continueList(el.value, el.selectionStart ?? 0);
+      if (!next) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setNativeValue(el, next.text);
+      el.setSelectionRange(next.caret, next.caret);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+
+    const onKey = (ev: Event) => {
+      const e = ev as KeyboardEvent;
+      // 한글 조합 중의 Enter 는 글자를 끝내는 것이다 — 가로채면 마지막 글자가 사라진다
+      if (e.isComposing || e.keyCode === 229) return;
+      if (linkKeys(e)) return;
+      listKeys(e);
     };
     node.addEventListener("keydown", onKey);
     node.addEventListener("input", onInput);
