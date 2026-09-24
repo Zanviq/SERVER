@@ -56,6 +56,15 @@ class SessionInfo(BaseModel):
     origin: str = "signup"
 
 
+def _too_many(wait: int) -> HTTPException:
+    """로그인 한도에 걸렸다는 429 — IP 몫이든 아이디 잠금이든 같은 말·같은 Retry-After."""
+    return HTTPException(
+        status_code=429,
+        detail=f"로그인 시도가 너무 많습니다. {wait}초 후 다시 시도해 주세요.",
+        headers={"Retry-After": str(wait or 1)},
+    )
+
+
 @router.post("/login", response_model=SessionInfo)
 async def login(
     req: LoginRequest,
@@ -75,15 +84,10 @@ async def login(
     # 비밀번호를 보기 **전에** 거른다 — 해시 한 번이 곧 서버 CPU 다.
     ip_wait = login_guard.ip_wait(ip)
     if ip_wait:
-        raise HTTPException(status_code=429, headers={"Retry-After": str(ip_wait)},
-                            detail=f"로그인 시도가 너무 많습니다. {ip_wait}초 후 다시 시도해 주세요.")
+        raise _too_many(ip_wait)
     wait = login_guard.begin_attempt(req.username, client_ip=ip)
     locked = bool(wait)
-    too_many = HTTPException(
-        status_code=429,
-        detail=f"로그인 시도가 너무 많습니다. {wait}초 후 다시 시도해 주세요.",
-        headers={"Retry-After": str(wait or 1)},
-    )
+    too_many = _too_many(wait)
     if locked and not login_guard.allow_probe(req.username, client_ip=ip):
         # 이번 잠금의 확인 기회를 이미 썼다. 여기서는 비밀번호를 보지 않는다.
         raise too_many
