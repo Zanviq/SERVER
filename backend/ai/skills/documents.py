@@ -15,7 +15,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from ... import doc_cache, mounts
+from ... import doc_cache, mounts, moved
 from ...file_kinds import BadName, doc_title, is_editable, kind_of, looks_like_extension, renamed
 from ...json_store import lock_for, write_text_atomic
 from ...notes_graph import backlinks_for
@@ -586,7 +586,10 @@ class RenameDocument(SkillBase):
         dst = src.parent / new
         if dst.exists():
             return SkillResult(ok=False, message="같은 이름의 문서가 이미 있습니다.", error_code="exists")
+        old_rel = to_rel(root, src)
         src.rename(dst)
+        # 옛 이름을 가리키던 링크가 새 자리를 찾아가게(문서 화면의 이름 바꾸기와 같다)
+        moved.record(ctx.user, ctx.settings, old_rel, to_rel(root, dst))
         return SkillResult(
             ok=True, message=f"'{_ident(root, src)}' → '{_ident(root, dst)}'", data={"path": _ident(root, dst)}
         )
@@ -625,7 +628,9 @@ class MoveDocument(SkillBase):
         if dst.exists():
             return SkillResult(ok=False, message="대상 폴더에 같은 이름의 문서가 있습니다.", error_code="exists")
         dst.parent.mkdir(parents=True, exist_ok=True)
+        old_rel = to_rel(root, src)
         src.rename(dst)
+        moved.record(ctx.user, ctx.settings, old_rel, to_rel(root, dst))
         return SkillResult(ok=True, message=f"'{_ident(root, dst)}'로 이동", data={"path": _ident(root, dst)})
 
 

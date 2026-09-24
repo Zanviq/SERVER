@@ -428,21 +428,33 @@ export function Notes() {
         openNote(found.path);
         return;
       }
-      // 확장자가 붙은 이름은 '이미 있는 파일'을 가리킨 것이다. 못 찾았다고 새로 만들면
-      // 백엔드 save가 덮어쓰기라 todo.txt 같은 파일 내용이 '# todo.txt'로 날아간다.
-      if (looksLikeExtension(title)) {
-        toast.error(`문서를 찾을 수 없습니다: ${title}`);
-        return;
-      }
-      // AI 답변 속 링크처럼 **읽으러 온 것**이면 없는 문서를 만들지 않는다.
-      // 편집기 안에서 누른 위키링크만 "없으면 만든다"가 자연스럽다.
-      if (!create) {
-        toast.error(`문서를 찾을 수 없습니다: ${title}`);
-        return;
-      }
-      // 위키링크에는 확장자를 쓰지 않으므로 여기서 마크다운으로 정한다
-      // (백엔드는 더 이상 확장자를 추측하지 않는다).
-      save(`${title}.md`, `# ${title}\n\n`).then(() => reloadTree().then(() => openNote(`${title}.md`)));
+      void (async () => {
+        // 이름을 바꿔 간 문서인가. 예전에는 여기서 곧장 만들어서, 이름을 바꾼 문서의 옛
+        // 링크를 누르면 **빈 옛이름 문서가 새로 생겼다**(내용은 새 이름에 있는데 — 10차).
+        const moved = await api.noteMoved(title).catch(() => null);
+        if (moved?.path) {
+          toast.ok(`'${title}' 은 이름이 바뀌었습니다 → ${moved.path}`);
+          openNote(moved.path);
+          return;
+        }
+        // 확장자가 붙은 이름은 '이미 있는 파일'을 가리킨 것이다. 못 찾았다고 새로 만들면
+        // 백엔드 save가 덮어쓰기라 todo.txt 같은 파일 내용이 '# todo.txt'로 날아간다.
+        if (looksLikeExtension(title)) {
+          toast.error(`문서를 찾을 수 없습니다: ${title}`);
+          return;
+        }
+        // AI 답변 속 링크처럼 **읽으러 온 것**이면 없는 문서를 만들지 않는다.
+        // 편집기 안에서 누른 위키링크만 "없으면 만든다"가 자연스럽다.
+        if (!create) {
+          toast.error(`문서를 찾을 수 없습니다: ${title}`);
+          return;
+        }
+        // 위키링크에는 확장자를 쓰지 않으므로 여기서 마크다운으로 정한다
+        // (백엔드는 더 이상 확장자를 추측하지 않는다).
+        await save(`${title}.md`, `# ${title}\n\n`);
+        await reloadTree();
+        openNote(`${title}.md`);
+      })();
     },
     [notes, openNote, save, reloadTree],
   );

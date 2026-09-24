@@ -11039,6 +11039,63 @@ def test_read_link_skill_reads_long_bodies_in_pieces():
         client.delete("/api/notes/delete", params={"path": "긴글.md"})
 
 
+def test_old_links_follow_a_renamed_or_moved_note():
+    """이름을 바꾸거나 옮긴 문서를 옛 링크가 찾아간다 — 문서는 고쳐 쓰지 않는다.
+
+    실측(격리 서버): `[[원래이름]]`·`[note/연구/원래이름.md]` 가 든 글에서, 원래이름.md 를
+    새이름.md 로 바꾼 뒤 위키링크를 누르면 **빈 원래이름.md 가 새로 생겼고**, 경로 링크는
+    "찾지 못한 링크"였다. 이름 한 번 바꾼 것으로 그 문서를 가리키던 링크가 모두 죽었다.
+    """
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+
+    _login()
+    box = "옮김시험"
+    client.put("/api/notes/save", json={"path": f"{box}/원래이름.md", "content": "본문 5521"})
+    opened = lambda p: client.get("/api/links/open", params={"path": p}).json()  # noqa: E731
+    moved_to = lambda t: client.get("/api/notes/moved", params={"title": t}).json()["path"]  # noqa: E731
+
+    assert client.post("/api/notes/rename", json={"path": f"{box}/원래이름.md",
+                                                  "new_name": "새이름.md"}).status_code == 200
+    got = opened(f"note/{box}/원래이름.md")
+    assert got["found"] and got["path"] == f"note/{box}/새이름.md", got
+    assert opened(f"note/{box}/원래이름")["found"], "확장자 없이 적은 옛 링크도 따라가야 한다"
+    assert moved_to("원래이름") == f"{box}/새이름.md"
+
+    # AI 가 읽을 때도 새 자리의 본문과 함께 "이름이 바뀐 문서" 라고 알린다
+    from backend import links
+
+    u = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    r = links.resolve(u, get_settings(), f"note/{box}/원래이름.md")
+    assert "5521" in r.content and "이름이 바뀌었거나 옮겨진" in r.note, r.note
+
+    # 폴더째 이름을 바꿔도, 옮겨도, 또 이름을 바꿔도 사슬을 따라간다
+    assert client.post("/api/notes/rename", json={"path": box, "new_name": f"{box}2"}).status_code == 200
+    assert opened(f"note/{box}/원래이름.md")["path"] == f"note/{box}2/새이름.md"
+    client.post("/api/notes/folder", json={"path": "옮김목적지"})
+    assert client.post("/api/notes/move", json={"path": f"{box}2/새이름.md",
+                                                "target_folder": "옮김목적지"}).status_code == 200
+    assert opened(f"note/{box}/원래이름.md")["path"] == "note/옮김목적지/새이름.md"
+    reg = default_registry()
+    ctx = SkillContext(user=u, settings=get_settings(), today="2026-09-25")
+    assert reg.dispatch("rename_document", {"path": "옮김목적지/새이름.md", "new_name": "세번째"}, ctx).ok
+    assert opened(f"note/{box}/원래이름.md")["path"] == "note/옮김목적지/세번째.md", "AI 가 바꾼 이름도 따라가야 한다"
+    assert moved_to("원래이름") == "옮김목적지/세번째.md"
+
+    # 옛 이름으로 새 문서를 만들면 그것이 열린다(따라가는 것은 없을 때만)
+    client.put("/api/notes/save", json={"path": f"{box}/원래이름.md", "content": "새로 만든 것"})
+    assert opened(f"note/{box}/원래이름.md")["path"] == f"note/{box}/원래이름.md"
+
+    # 옛 제목이 같은 문서 둘이 각각 옮겨 갔으면 고르지 않는다(엉뚱한 것을 여느니)
+    client.put("/api/notes/save", json={"path": "갈래A/같은옛이름.md", "content": "a"})
+    client.put("/api/notes/save", json={"path": "갈래B/같은옛이름.md", "content": "b"})
+    client.post("/api/notes/rename", json={"path": "갈래A/같은옛이름.md", "new_name": "에이"})
+    client.post("/api/notes/rename", json={"path": "갈래B/같은옛이름.md", "new_name": "비"})
+    assert moved_to("같은옛이름") is None
+    assert moved_to("아무도안쓴이름") is None
+
+
 def test_link_suggestions_say_how_many_more_there_are():
     """후보 상한(30)에 걸려 안 보이는 것이 있으면 그 수를 알린다.
 

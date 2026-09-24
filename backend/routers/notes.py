@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import archive, doc_cache, meeting_store, mounts, paper_store
+from .. import archive, doc_cache, meeting_store, mounts, moved, paper_store
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..json_store import lock_for, write_text_atomic
@@ -628,8 +628,11 @@ def rename_note(
     dst = safe_join(root, dst_rel)
     if dst.exists():
         raise HTTPException(status_code=409, detail="같은 이름의 문서가 이미 있습니다.")
+    old_rel, was_dir = src.relative_to(root).as_posix(), src.is_dir()
     with _fs_errors_are_bad_requests("이름 변경"):
         src.rename(dst)
+    # 옛 이름을 가리키던 링크가 새 자리를 찾아가게(moved.py)
+    moved.record(user, settings, old_rel, dst_rel, folder=was_dir)
     return _summary(root, dst)
 
 
@@ -663,6 +666,7 @@ def _rename_mounted(user: SessionUser, settings: Settings, hit: mounts.MountedFi
         if f.item_id == hit.item_id and f.role == hit.role \
                 and (hit.role != "doc" or split_ext(f.rel.rsplit("/", 1)[-1])[0] == stem):
             st = f.real.stat()
+            moved.record(user, settings, hit.rel, f.rel)
             return NoteSummary(path=f.rel, title=split_ext(f.rel.rsplit("/", 1)[-1])[0],
                                modified=st.st_mtime, kind=kind_of(f.rel), size=st.st_size,
                                editable=f.editable)
@@ -693,10 +697,28 @@ def move_note(
         return _summary(root, src)
     if dst.exists():
         raise HTTPException(status_code=409, detail="대상 폴더에 같은 이름의 문서가 있습니다.")
+    old_rel, was_dir = src.relative_to(root).as_posix(), src.is_dir()
     with _fs_errors_are_bad_requests("문서 이동"):
         dst.parent.mkdir(parents=True, exist_ok=True)
         src.rename(dst)
+    moved.record(user, settings, old_rel, dst_rel, folder=was_dir)
     return _summary(root, dst)
+
+
+@router.get("/moved")
+def moved_title(
+    title: str = Query(..., min_length=1, max_length=300),
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """`[[옛제목]]` 을 눌렀는데 그 제목의 문서가 없을 때 — 이름을 바꿔 간 곳이 있는가.
+
+    화면은 없는 제목이면 새 문서를 만든다. 이름을 바꾼 문서의 옛 링크를 누르면 **빈 옛이름
+    문서가 새로 생겼다**(내용은 새 이름에 있는데). 만들기 전에 이것을 먼저 묻는다.
+    """
+    root = user_data_root(user, settings)
+    now = moved.follow_title(user, settings, title, lambda r: safe_join(root, r).is_file())
+    return {"path": now}
 
 
 @router.get("/search", response_model=list[SearchHit])

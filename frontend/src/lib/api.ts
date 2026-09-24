@@ -161,6 +161,9 @@ export const api = {
     req(`/api/notes/delete?${q({ path })}`, { method: "DELETE" }),
   noteRename: (path: string, new_name: string) =>
     req<NoteSummary>("/api/notes/rename", jsonInit("POST", { path, new_name })),
+  /** `[[옛제목]]` 이 이름을 바꿔 간 곳(없으면 path: null) */
+  noteMoved: (title: string) =>
+    req<{ path: string | null }>(`/api/notes/moved?${q({ title })}`),
   noteMove: (path: string, target_folder: string) =>
     req<NoteSummary>("/api/notes/move", jsonInit("POST", { path, target_folder })),
   noteGraph: (folder = "", mode: "links" | "folders" = "links") =>

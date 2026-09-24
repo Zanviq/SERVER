@@ -27,7 +27,7 @@ from urllib.parse import quote
 
 from fastapi import HTTPException
 
-from . import (diary_store, event_cache, meeting_store, mounts, paper_store, todo_store,
+from . import (diary_store, event_cache, meeting_store, mounts, moved, paper_store, todo_store,
                vocab_store)
 from .auth import SessionUser
 from .config import Settings
@@ -496,6 +496,18 @@ def _resolve_note(user: SessionUser, settings: Settings, rel: str) -> Resolved:
                 if _parent(e.path.split("/", 1)[1]) == to_rel(root, target)]
         return Resolved(path, "note", target.name, True, _listing(kids),
                         href=f"/notes?folder={quote(rel, safe='')}")
+    if not target.exists():
+        # 이름을 바꾸거나 옮긴 문서면 새 자리로 간다(moved.py). 옛 링크는 문서에 그대로
+        # 남아 있으므로, 따라가지 않으면 이름 한 번 바꾼 것으로 링크가 모두 죽는다.
+        exists = lambda r: safe_join(root, r).exists()  # noqa: E731
+        now = moved.follow(user, settings, rel, exists)
+        if now is None and not looks_like_extension(rel):
+            now = moved.follow(user, settings, f"{rel}.md", exists)
+        if now is not None:
+            r = _resolve_note(user, settings, now)
+            r.note = (f"이름이 바뀌었거나 옮겨진 문서입니다(옛 경로 note/{rel} → 지금 {r.path}). "
+                      + r.note).strip()
+            return r
     if not target.is_file():
         return Resolved(path, "note", note="이 경로의 문서를 찾지 못했습니다.")
     real_rel = to_rel(root, target)
