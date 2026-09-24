@@ -20,6 +20,7 @@ import { ChatSession } from "../../lib/api";
 import { deepestLeaf, siblingsOf, threadOf, TreeMessage } from "../../lib/chatTree";
 import { useMarkdownInput } from "../links/useMarkdownInput";
 import { usePendingSave } from "../../lib/usePendingSave";
+import { StreamCut } from "../../lib/sseStream";
 
 interface Step {
   name: string;
@@ -580,7 +581,16 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     } catch (err) {
       if (!ctrl.signal.aborted) {   // 중단은 오류가 아니다
         toast.error(err instanceof Error ? err.message : "AI 오류");
-        patchLast((m) => ({ ...m, text: "요청 처리 중 오류가 발생했습니다." }));
+        // 답을 받던 도중에 끊겼으면 **받은 데까지는 남긴다**. 예전에는 오류 한 줄로
+        // 갈아치워서, 한참 읽던 긴 답이 눈앞에서 사라졌다(백엔드를 죽여 실측).
+        // 끊겼다는 것은 반드시 보인다 — 없으면 다 쓴 답으로 착각한다.
+        const cut = err instanceof StreamCut;
+        patchLast((m) => ({
+          ...m,
+          text: cut && m.text.trim()
+            ? `${m.text}\n\n_(연결이 끊겨 여기서 멈췄습니다. 보낸 질문은 입력칸에 돌려 두었습니다.)_`
+            : "요청 처리 중 오류가 발생했습니다.",
+        }));
         giveBack();
       }
     } finally {

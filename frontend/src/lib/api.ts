@@ -1,4 +1,5 @@
 // 백엔드 API 클라이언트. 세션 쿠키 사용(credentials: include).
+import { readSse } from "./sseStream";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -687,32 +688,8 @@ export async function aiChatStream(
     }
     throw new ApiError(res.status, errorMessage(res.status, detail), detail);
   }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const parts = buf.split("\n\n");
-      buf = parts.pop() ?? "";
-      for (const part of parts) {
-        const line = part.split("\n").find((l) => l.startsWith("data:"));
-        if (!line) continue;
-        try {
-          onEvent(JSON.parse(line.slice(5).trim()));
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-  } catch (e) {
-    // 중단 버튼을 눌렀으면 오류가 아니다 — 여기까지 받은 것으로 끝낸다.
-    if (!signal?.aborted) throw e;
-  } finally {
-    void reader.cancel().catch(() => {});
-  }
+  // 끝 신호(done/error) 없이 끝나면 StreamCut — 잘린 답을 다 쓴 답처럼 보이지 않게.
+  await readSse(res.body, onEvent, signal);
 }
 
 export interface UserSettings {
