@@ -11131,6 +11131,46 @@ def test_read_link_skill_reads_long_bodies_in_pieces():
         client.delete("/api/notes/delete", params={"path": "긴글.md"})
 
 
+def test_global_search_never_skips_an_exact_title_and_says_how_many_more():
+    """전체 검색은 제목이 딱 맞는 것을 놓치지 않고, 잘라서 안 보인 수를 알린다.
+
+    실측(격리 서버): 본문에만 '로드맵'이 든 노트 30개가 앞 폴더에 있으면 뒤 폴더의
+    '로드맵.md' 가 **결과에 없었다**(경로 순으로 24건 찾으면 멈췄다). 단어장도 최근 넣은
+    순으로 16개를 먼저 잘라 정확히 맞는 옛 단어를 놓칠 수 있었다. 그리고 31개 중 8개만
+    보여 주면서 더 있다는 말이 없었다 — 화면에도, AI 에게도.
+    """
+    from backend import search_all
+    from backend.ai.skill_base import SkillContext
+    from backend.ai.skill_registry import default_registry
+    from backend.auth import SessionUser
+
+    _login()
+    for i in range(30):
+        client.put("/api/notes/save", json={"path": f"가검색시험/메모 {i:02d}.md",
+                                            "content": f"오늘 로드맵검 회의 {i}"})
+    client.put("/api/notes/save", json={"path": "하검색시험/로드맵검.md", "content": "분기 계획"})
+    r = client.get("/api/search", params={"q": "로드맵검"}).json()
+    notes = [h for h in r["hits"] if h["kind"] == "note"]
+    assert notes and notes[0]["title"] == "로드맵검", [h["title"] for h in notes]
+    # 본문 일치는 한도(_NOTE_BODY_HITS)까지 + 제목 일치 1 — 그중 PER_KIND 개가 보인다
+    assert r["more"].get("note", 0) == search_all._NOTE_BODY_HITS + 1 - search_all.PER_KIND, r["more"]
+    assert "note" in r["more_at_least"], "본문 읽기를 멈췄으니 '적어도'여야 한다"
+
+    words = [{"word": f"run{c}x", "meanings": ["뜻"]} for c in "abcdefghijklmnopqrstu"]
+    client.post("/api/vocab/words", json={"word": "runzz", "meanings": ["정확히 맞는 옛 단어"]})
+    client.post("/api/vocab/words/bulk", json={"words": words})   # 더 새 단어 21개
+    vr = client.get("/api/search", params={"q": "runzz", "kinds": "vocab"}).json()
+    assert [h["title"] for h in vr["hits"]][:1] == ["runzz"], vr["hits"]
+    vr = client.get("/api/search", params={"q": "run", "kinds": "vocab"}).json()
+    assert vr["more"].get("vocab", 0) >= 21 + 1 - search_all.PER_KIND, vr["more"]
+
+    # AI 도 "더 있다"는 것을 듣는다(말없이 자르면 "이게 전부"라고 답한다)
+    u = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    res = default_registry().dispatch("search_everything", {"query": "로드맵검"},
+                                      SkillContext(user=u, settings=get_settings(), today="2026-09-25"))
+    assert res.ok and "더 있음" in res.message and "17건 넘게" in res.message, res.message
+
+
 def test_old_links_follow_a_renamed_or_moved_note():
     """이름을 바꾸거나 옮긴 문서를 옛 링크가 찾아간다 — 문서는 고쳐 쓰지 않는다.
 

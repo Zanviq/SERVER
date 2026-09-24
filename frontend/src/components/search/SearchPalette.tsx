@@ -38,6 +38,9 @@ export function SearchPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
+  // 갈래마다 잘려서 안 보인 수 — 말없이 자르면 31개 중 8개를 보고 그게 전부인 줄 안다
+  const [more, setMore] = useState<Record<string, number>>({});
+  const [atLeast, setAtLeast] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   // 실패를 빈 결과로 보여 주면 "찾은 것이 없습니다"라는 **거짓말**이 된다.
   const [failed, setFailed] = useState(false);
@@ -89,8 +92,8 @@ export function SearchPalette() {
     let alive = true;
     const t = setTimeout(() => {
       api.searchAll(term)
-        .then((r) => { if (alive) { setHits(r.hits); setCursor(0); setFailed(false); } })
-        .catch(() => { if (alive) { setHits([]); setFailed(true); } })
+        .then((r) => { if (alive) { setHits(r.hits); setMore(r.more ?? {}); setAtLeast(r.more_at_least ?? []); setCursor(0); setFailed(false); } })
+        .catch(() => { if (alive) { setHits([]); setMore({}); setAtLeast([]); setFailed(true); } })
         .finally(() => { if (alive) setBusy(false); });
     }, 200);
     return () => { alive = false; clearTimeout(t); };
@@ -207,6 +210,11 @@ export function SearchPalette() {
                     </button>
                   );
                 })}
+                {(more[kind] ?? 0) > 0 && (
+                  <div data-search-more className="px-4 pb-1.5 pl-11 text-[11.5px] text-fg-muted">
+                    … {more[kind]}개{atLeast.includes(kind) ? " 넘게" : ""} 더 있습니다 — 검색어를 좁혀 보세요
+                  </div>
+                )}
               </div>
             ))
           )}

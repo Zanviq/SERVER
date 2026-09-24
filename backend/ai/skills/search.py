@@ -54,7 +54,7 @@ class SearchEverything(SkillBase):
             limit = 20
         try:
             # 결과가 모델로 나간다 — 민감 문서의 내용은 빼라고 알린다
-            hits = search_all.search(ctx.user, ctx.settings, q,
+            result = search_all.find(ctx.user, ctx.settings, q,
                                      picked or search_all.KINDS, max(1, min(limit, 50)),
                                      for_model=True)
         except Exception as e:  # noqa: BLE001
@@ -63,10 +63,28 @@ class SearchEverything(SkillBase):
             "kind": h["kind"], "where": _KIND_LABEL.get(h["kind"], h["kind"]),
             "id": h["id"], "title": h["title"],
             "snippet": h["snippet"][:200], "when": h["when"] or h["where"],
-        } for h in hits]
+        } for h in result.hits]
         found = ", ".join(sorted({_KIND_LABEL.get(r["kind"], r["kind"]) for r in rows}))
+        message = f"'{q}' — {len(rows)}건" + (f" ({found})" if rows else " (없음)")
+        # 잘려서 안 보인 것이 있으면 말한다 — 말없이 자르면 모델은 "이게 전부"라고 답한다
+        more = _more_note(result)
+        if more:
+            message += f". 더 있음: {more} — 갈래(kinds)를 정하거나 검색어를 좁혀 다시 찾으세요."
         return SkillResult(
-            ok=True,
-            message=(f"'{q}' — {len(rows)}건" + (f" ({found})" if rows else " (없음)")),
-            data={"query": q, "hits": rows},
+            ok=True, message=message,
+            data={"query": q, "hits": rows, "more": result.more,
+                  "more_at_least": sorted(result.at_least)},
         )
+
+
+def _more_note(result) -> str:
+    """'노트 16건 넘게, 단어 3건' 처럼. 끝까지 세지 못한 갈래는 '넘게'·'더 있을 수 있음'."""
+    parts = []
+    for kind in sorted(set(result.more) | result.at_least):
+        n = result.more.get(kind, 0)
+        label = _KIND_LABEL.get(kind, kind)
+        if kind in result.at_least:
+            parts.append(f"{label} {n}건 넘게" if n else f"{label} 더 있을 수 있음")
+        else:
+            parts.append(f"{label} {n}건")
+    return ", ".join(parts)

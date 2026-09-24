@@ -19,5 +19,6 @@ def search(
     settings: Settings = Depends(get_settings),
 ):
     picked = tuple(k for k in (kinds or "").split(",") if k in search_all.KINDS)
-    hits = search_all.search(user, settings, q, picked or search_all.KINDS, limit)
-    return {"query": q, "hits": hits}
+    found = search_all.find(user, settings, q, picked or search_all.KINDS, limit)
+    # more: 갈래마다 잘려서 안 보인 수. at_least: 그 수가 "적어도"인 갈래(끝까지 세지 못했다)
+    return {"query": q, "hits": found.hits, "more": found.more, "more_at_least": sorted(found.at_least)}

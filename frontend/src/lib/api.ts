@@ -474,7 +474,7 @@ export const api = {
     req<{ hits: ContextHit[]; query: string }>(`/api/context/search?${q({ q: query, space })}`),
   /** 화면을 가로지르는 검색. kinds 를 비우면 전부 뒤진다. */
   searchAll: (query: string, kinds = "", limit = 40) =>
-    req<{ hits: SearchHit[]; query: string }>(
+    req<{ hits: SearchHit[]; query: string; more?: Record<string, number>; more_at_least?: string[] }>(
       `/api/search?${q({ q: query, kinds, limit: String(limit) })}`),
   /** 입력칸의 `[` 뒤에 친 글자로 링크 후보를 받는다(이름·주소만, 본문 없음). */
   linkSuggest: (query: string, limit = 30) =>

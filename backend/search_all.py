@@ -11,10 +11,12 @@
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from backend.auth import SessionUser
 from backend.config import Settings
 
-KINDS = ("note", "paper", "meeting", "vocab", "todo", "event", "chat")
+KINDS =("note", "paper", "meeting", "vocab", "todo", "event", "chat")
 
 # 한 갈래가 결과를 독차지하지 않게 갈래마다 상한을 둔다. 단어장은 수천 개가 되기
 # 쉬워서 낮춘다(전부 보고 싶으면 영어 학습 화면에 제대로 된 목록이 있다).
@@ -80,7 +82,18 @@ def _score(q: str, title: str, body: str = "") -> float:
     return 0.0
 
 
-def _notes(user: SessionUser, settings: Settings, q: str) -> list[dict]:
+#: 본문으로 찾은 노트는 이만큼 모이면 더 읽지 않는다(흔한 낱말 하나에 벌트 전체를 읽지 않게).
+#: **제목으로 찾은 것은 세지 않는다** — 이름만 보면 되니 값이 싸고, 점수도 가장 높다.
+_NOTE_BODY_HITS = PER_KIND * 3
+
+
+def _notes(user: SessionUser, settings: Settings, q: str) -> tuple[list[dict], bool]:
+    """(찾은 것, 본문 읽기를 한도에서 멈췄는가).
+
+    예전에는 경로 순으로 훑다가 모두 합쳐 24건이면 멈췄다. 본문에만 낱말이 든 노트가
+    앞 폴더에 많으면, 뒤 폴더에 있는 **제목이 바로 그 낱말**인 노트는 보지도 않았다
+    ('로드맵' 을 찾는데 본문 일치 30개 뒤의 '로드맵.md' 가 안 나왔다 — 13차 실측).
+    """
     from backend import doc_cache
     from backend.file_kinds import is_editable
     from backend.storage import user_data_root, walk_files
@@ -88,19 +101,23 @@ def _notes(user: SessionUser, settings: Settings, q: str) -> list[dict]:
     root = user_data_root(user, settings)
     ql = q.lower()
     out: list[dict] = []
+    body_hits = 0
+    capped = False
     for f in walk_files(root):
         name = f.name
         title = name[:-3] if name.endswith(".md") else name
         if ql in title.lower():
             out.append(_hit("note", f.rel, title, "", "", "노트", _score(q, title)))
         elif is_editable(name):
+            if body_hits >= _NOTE_BODY_HITS:
+                capped = True   # 제목은 계속 보고, 본문만 더 읽지 않는다
+                continue
             text = doc_cache.text_of(f.path, f.stat)
             if text and ql in text.lower():
+                body_hits += 1
                 out.append(_hit("note", f.rel, title,
                                 _snippet(text, q), "", "노트", _score(q, title, text)))
-        if len(out) >= PER_KIND * 3:   # 뒤에서 점수로 자른다
-            break
-    return out
+    return out, capped
 
 
 #: 본문까지 뒤질 때 한 번에 읽을 총량. 논문 본문은 편당 수십~수백 KB 라
@@ -108,7 +125,7 @@ def _notes(user: SessionUser, settings: Settings, q: str) -> list[dict]:
 _PAPER_TEXT_BUDGET = 4_000_000
 
 
-def _papers(user: SessionUser, settings: Settings, q: str) -> list[dict]:
+def _papers(user: SessionUser, settings: Settings, q: str) -> tuple[list[dict], bool]:
     """제목·요약에 없으면 **본문까지** 뒤진다.
 
     논문을 찾는 사람은 대개 "그 논문에서 읽은 그 말"을 기억한다. 제목과 요약만
@@ -133,8 +150,10 @@ def _papers(user: SessionUser, settings: Settings, q: str) -> list[dict]:
             unmatched.append(p)
 
     budget = _PAPER_TEXT_BUDGET
+    capped = False
     for p in unmatched:
         if budget <= 0:
+            capped = True   # 본문을 다 읽지 못했다 — 더 있을 수 있다
             break
         text = paper_store.read_text(user, settings, str(p.get("id") or ""))
         budget -= len(text)
@@ -149,7 +168,7 @@ def _papers(user: SessionUser, settings: Settings, q: str) -> list[dict]:
             f"본문 {page}쪽" if page else "본문",
             15.0,   # 본문 일치는 제목·요약 일치보다 아래
         ))
-    return out
+    return out, capped
 
 
 def _page_at(text: str, index: int) -> int:
@@ -162,7 +181,7 @@ def _page_at(text: str, index: int) -> int:
     return last
 
 
-def _meetings(user: SessionUser, settings: Settings, q: str) -> list[dict]:
+def _meetings(user: SessionUser, settings: Settings, q: str) -> tuple[list[dict], bool]:
     """제목·요약에 없으면 **받아쓴 원본까지** 뒤진다.
 
     이 검색을 만든 이유가 "저번에 그 회의에서 나온 그 용어"였는데, 정작 그 말이
@@ -184,8 +203,10 @@ def _meetings(user: SessionUser, settings: Settings, q: str) -> list[dict]:
             unmatched.append(m)
 
     budget = _PAPER_TEXT_BUDGET
+    capped = False
     for m in unmatched:
         if budget <= 0:
+            capped = True
             break
         mid = str(m.get("id") or "")
         t = meeting_store.read_transcript(user, settings, mid)
@@ -202,14 +223,16 @@ def _meetings(user: SessionUser, settings: Settings, q: str) -> list[dict]:
             snippet = _snippet(str(seg.get("text") or ""), q)
         out.append(_hit("meeting", mid, str(m.get("title") or ""), snippet,
                         str(m.get("date") or ""), where, 15.0))
-    return out
+    return out, capped
 
 
 def _vocab(user: SessionUser, settings: Settings, q: str) -> list[dict]:
     from backend import vocab_store
 
     out = []
-    for w in vocab_store.list_words(user, settings, query=q, limit=PER_KIND * 2):
+    # 맞는 것을 **모두** 받아 점수로 고른다. 예전에는 최근 넣은 순으로 16개를 먼저 잘라서,
+    # 'run' 을 찾으면 running·rerun 같은 새 단어에 밀려 정작 run 이 안 나올 수 있었다.
+    for w in vocab_store.list_words(user, settings, query=q):
         word = str(w.get("word") or "")
         # 뜻은 목록이다(`meanings`). 단수 `meaning` 을 보면 늘 비어 보인다.
         meanings = ", ".join(str(m) for m in (w.get("meanings") or []) if m)
@@ -334,9 +357,31 @@ def _for_model(kind: str, found: list[dict], q: str) -> list[dict]:
     return out
 
 
+@dataclass
+class Found:
+    """검색 결과 + **보여 주지 못한 것**.
+
+    갈래마다 PER_KIND 개, 모두 합쳐 limit 개로 자른다. 예전에는 그 수를 알리지 않아서,
+    맞는 노트 31개 중 8개를 보고 그게 전부인 줄 알았다(13차 실측). 화면과 AI 가 "N개 더"를
+    말할 수 있게 센다.
+    """
+    hits: list[dict] = field(default_factory=list)
+    #: 갈래마다 잘려서 안 보인 수
+    more: dict[str, int] = field(default_factory=dict)
+    #: 그 수가 **적어도**인 갈래(본문 읽기를 한도에서 멈춰 끝까지 세지 못했다)
+    at_least: set[str] = field(default_factory=set)
+
+
 def search(user: SessionUser, settings: Settings, query: str,
            kinds: tuple[str, ...] = KINDS, limit: int = 40, *,
            for_model: bool = False) -> list[dict]:
+    """결과만(더 있는 수는 버린다). 화면·AI 는 find 를 써서 "N개 더" 를 알린다."""
+    return find(user, settings, query, kinds, limit, for_model=for_model).hits
+
+
+def find(user: SessionUser, settings: Settings, query: str,
+         kinds: tuple[str, ...] = KINDS, limit: int = 40, *,
+         for_model: bool = False) -> Found:
     """모든 갈래를 훑어 점수순으로 돌려준다.
 
     한 갈래가 통째로 실패해도(파일이 깨졌거나 아직 없거나) 나머지는 내놓는다 —
@@ -347,38 +392,47 @@ def search(user: SessionUser, settings: Settings, query: str,
     """
     q = (query or "").strip()
     if not q:
-        return []
+        return Found()
 
-    def one(kind: str) -> list[dict]:
+    def one(kind: str) -> tuple[str, list[dict], int, bool]:
         fn = _SOURCES.get(kind)
         if fn is None:
-            return []
+            return kind, [], 0, False
         try:
-            found = fn(user, settings, q)
+            got = fn(user, settings, q)
         except Exception:  # noqa: BLE001 - 한 갈래의 사고가 검색 전체를 막지 않는다
             import logging
 
             logging.getLogger("server.search").exception("검색 실패: %s", kind)
-            return []
+            return kind, [], 0, False
+        found, capped = got if isinstance(got, tuple) else (got, False)
         if for_model:
             found = _for_model(kind, found, q)
         found.sort(key=lambda h: -h["score"])
-        return found[:PER_KIND]
+        return kind, found[:PER_KIND], max(0, len(found) - PER_KIND), capped
 
     # 갈래를 나란히 훑는다. 대부분은 JSON 한 덩이라 수십 ms 인데 문서만 벌트 전체를
     # 읽어서 훨씬 오래 걸린다(1.8MB·800건에 490ms). 차례로 하면 그 시간이 그대로
     # 더해진다 — 나란히 하면 가장 느린 하나만큼만 걸린다. 파일 읽기는 GIL 을 놓아서
     # 스레드로도 실제로 겹쳐진다.
     picked = [k for k in kinds if k in _SOURCES]
-    hits: list[dict] = []
+    out = Found()
     if len(picked) > 1:
         from concurrent.futures import ThreadPoolExecutor
 
         with ThreadPoolExecutor(max_workers=len(picked)) as pool:
-            for found in pool.map(one, picked):
-                hits.extend(found)
+            results = list(pool.map(one, picked))
     else:
-        for kind in picked:
-            hits.extend(one(kind))
-    hits.sort(key=lambda h: -h["score"])
-    return hits[:limit]
+        results = [one(kind) for kind in picked]
+    for kind, shown, rest, capped in results:
+        out.hits.extend(shown)
+        if rest:
+            out.more[kind] = rest
+        if capped:
+            out.at_least.add(kind)
+    out.hits.sort(key=lambda h: -h["score"])
+    # 모두 합친 상한에서 밀려난 것도 그 갈래의 '더'에 센다
+    for h in out.hits[limit:]:
+        out.more[h["kind"]] = out.more.get(h["kind"], 0) + 1
+    out.hits = out.hits[:limit]
+    return out
