@@ -11,6 +11,7 @@ from pydantic import BaseModel, field_validator
 from .. import todo_store
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
+from ..fast_json import json_response
 from ..datetimes import BadDateTime
 from ..datetimes import has_time as dt_has_time
 from ..datetimes import to_iso as dt_to_iso
@@ -128,13 +129,13 @@ def todos(
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    return todo_store.list_todos(
+    return json_response(todo_store.list_todos(
         user, settings,
         category_id=category_id,
         include_done=include_done,
         frm=frm, to=to,
         include_undated=include_undated,
-    )
+    ))
 
 
 @router.get("/board")
@@ -146,7 +147,7 @@ def board(
 
     셋을 따로 부르면 같은 파일을 세 번 읽는다.
     """
-    return todo_store.board(user, settings)
+    return json_response(todo_store.board(user, settings))
 
 
 @router.get("/counts")

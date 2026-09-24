@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from .. import vocab_fill, vocab_store
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
+from ..fast_json import json_response
 
 router = APIRouter(prefix="/api/vocab", tags=["vocab"])
 
@@ -74,7 +75,7 @@ def board(
     settings: Settings = Depends(get_settings),
 ):
     """단어·태그·통계를 한 번에(화면 첫 로드)."""
-    return vocab_store.board(user, settings)
+    return json_response(vocab_store.board(user, settings))
 
 
 @router.get("/words")
@@ -87,8 +88,8 @@ def words(
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    return vocab_store.list_words(user, settings, tag=tag, query=q, due_only=due,
-                                  kind=kind, limit=limit)
+    return json_response(vocab_store.list_words(user, settings, tag=tag, query=q, due_only=due,
+                                                kind=kind, limit=limit))
 
 
 @router.get("/tags")

@@ -36,6 +36,7 @@ from ..ai import models as ai_models
 from ..ai import modes, orchestrator
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
+from ..fast_json import json_response
 
 logger = logging.getLogger("server.ai.router")
 
@@ -193,12 +194,12 @@ def space_messages(
     path = _space_path(space, user, settings)
     data = chat_store.current(path)
     _annotate_proposals(data["messages"], set(data["vocab_done"]), user, settings)
-    return {
+    return json_response({
         "messages": data["messages"], "head": data["head"], "links": data["links"],
         # 지도에서 손으로 옮겨 둔 노드 자리(없는 것은 나무 모양대로 그린다)
         "layout": data.get("layout") or {},
         **chat_store.sessions_of(path),
-    }
+    })
 
 
 @router.post("/space/{space}/sessions")

@@ -1900,6 +1900,72 @@ def test_backlinks_after_a_save_reread_only_the_changed_note(monkeypatch):
     assert reads == ["N7.md"], f"바뀐 노트 하나만 읽어야 한다: {reads}"
 
 
+def test_big_lists_skip_the_event_loop_encoder(monkeypatch):
+    """항목 수에 비례해 커지는 GET 응답은 이벤트 루프 위의 jsonable_encoder 를 거치지 않는다.
+
+    FastAPI 는 response_model 이 없는 응답을 jsonable_encoder 로 바꾸는데, 그 변환은
+    **이벤트 루프에서** 돈다. 단어 3천 개면 322ms 동안 서버 전체가 멈췄다(다른 사람의
+    health 5ms → 중앙 295ms·최대 635ms). 큰 목록은 fast_json.json_response 로 보낸다.
+
+    GET 을 **모두** 두드려 보므로, 새로 만든 목록 API 가 이 길을 빠뜨리면 여기서 깨진다.
+    """
+    import fastapi.routing as fr
+
+    from backend import chat_store
+    from backend.routers import ai as ai_router
+
+    _login()
+    words = [{"word": f"enc{i}", "meanings": [f"뜻{i}"]} for i in range(250)]
+    assert client.post("/api/vocab/words/bulk", json={"words": words}).status_code in (200, 201)
+    for i in range(120):
+        client.post("/api/todo/create", json={"title": f"인코더 시험 {i}"})
+    from backend.auth import SessionUser
+
+    user = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    sp = ai_router._space_path("assistant", user, get_settings())
+    parent = None
+    for i in range(60):
+        q = chat_store.message("user", f"질문 {i}", parent=parent)
+        a = chat_store.message("assistant", f"답 {i}", parent=q["id"])
+        chat_store.append(sp, q, a)
+        parent = a["id"]
+
+    def size(o):
+        n, stack = 0, [o]
+        while stack:
+            x = stack.pop()
+            n += 1
+            if isinstance(x, dict):
+                stack.extend(x.values())
+            elif isinstance(x, (list, tuple)):
+                stack.extend(x)
+        return n
+
+    real = fr.jsonable_encoder
+    big: list[tuple[str, int]] = []
+    current = [""]
+
+    def spy(obj, *a, **k):
+        n = size(obj)
+        if n > 2000:
+            big.append((current[0], n))
+        return real(obj, *a, **k)
+
+    monkeypatch.setattr(fr, "jsonable_encoder", spy)
+    # 구글에 닿거나 인자가 꼭 있어야 하는 것은 뺀다(내려받기·원본 파일은 JSON 이 아니다)
+    skip = {"/api/google/auth-url", "/api/calendar/events", "/api/calendar/reminders",
+            "/api/notes/archive", "/api/notes/archive/account", "/api/notes/raw",
+            "/api/notes/get", "/api/system/ssh"}
+    paths = [r.path for r in app.routes
+             if "GET" in getattr(r, "methods", ()) and r.path.startswith("/api/")
+             and "{" not in r.path and r.path not in skip]
+    paths += ["/api/ai/space/assistant", "/api/context/messages?space=assistant"]
+    for p in paths:
+        current[0] = p
+        client.get(p)
+    assert not big, f"큰 목록이 이벤트 루프에서 변환된다(json_response 를 쓸 것): {big}"
+
+
 def test_calendar_recurrence_and_reminders():
     _login()
     # 매일 반복 이벤트 (알림 30분 전)

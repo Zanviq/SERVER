@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from .. import meeting_store, meeting_transcribe, orphans
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
+from ..fast_json import json_response
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
 
@@ -156,7 +157,7 @@ def get_transcript(
     settings: Settings = Depends(get_settings),
 ):
     meeting_store.get_meeting(user, settings, mid)
-    return meeting_store.read_transcript(user, settings, mid)
+    return json_response(meeting_store.read_transcript(user, settings, mid))
 
 
 @router.put("/{mid}")

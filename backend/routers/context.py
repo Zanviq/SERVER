@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Query
 from .. import context_store
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
+from ..fast_json import json_response
 
 router = APIRouter(prefix="/api/context", tags=["context"])
 
@@ -47,11 +48,11 @@ def messages(
     settings: Settings = Depends(get_settings),
 ):
     """대화 원문. 스킬 호출 기록(meta.tools)도 그대로 나간다 — 감사용이다."""
-    return {
+    return json_response({
         "space": space,
         "label": context_store.space_label(user, settings, space),
         "messages": context_store.read(user, settings, space, session=session, limit=limit),
-    }
+    })
 
 
 @router.get("/search")
