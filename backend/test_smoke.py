@@ -104,6 +104,51 @@ def test_lockout_cannot_shut_the_owner_out_of_their_own_server():
     login_guard.reset()
 
 
+def test_rotating_usernames_cannot_burn_the_server_cpu(monkeypatch):
+    """한 IP 가 아이디를 바꿔 가며 로그인을 쏟아도 해시는 한도까지만 돌고, 보통 요청의
+    스레드풀을 쓰지 않는다.
+
+    아이디+IP 잠금은 새 아이디마다 5번씩 새로 준다. 없는 아이디에도 같은 무게의 해시를
+    돌리므로(아이디가 있는지 흘리지 않으려고) 인증 없이 서버 CPU 를 태울 수 있었다 —
+    실측(24스레드 PC, 48갈래): 380건을 모두 받아 주었고 다른 사용자의 요청이 12ms →
+    386ms. 파이(4코어, 해시 1초 가까이)에서는 몇 초씩 멈춘다.
+    """
+    import threading as _th
+    import uuid as _uuid
+
+    from backend import accounts
+
+    login_guard.reset()
+    c = TestClient(app)
+    seen_threads: list[str] = []
+    real = accounts.authenticate
+
+    def spying(*a, **k):
+        seen_threads.append(_th.current_thread().name)
+        return real(*a, **k)
+
+    monkeypatch.setattr(accounts, "authenticate", spying)
+    bot = {"X-Client-IP": "203.0.113.77"}
+    codes = [c.post("/api/auth/login", json={"username": "x" + _uuid.uuid4().hex[:8], "password": "p"},
+                    headers=bot).status_code for _ in range(login_guard.IP_BUDGET + 5)]
+    assert codes.count(401) == login_guard.IP_BUDGET, codes
+    assert codes[-5:] == [429] * 5, codes
+    assert len(seen_threads) == login_guard.IP_BUDGET, "한도 밖 요청까지 비밀번호를 확인했다"
+    # 해시는 전용 일꾼에서 돈다(보통 요청의 스레드풀을 차지하지 않는다)
+    assert all(n.startswith("pwhash") for n in seen_threads), set(seen_threads)
+    # 다른 곳의 주인은 그대로 들어온다
+    ok = c.post("/api/auth/login", json={"username": "tester", "password": "pw123"},
+                headers={"X-Client-IP": "198.51.100.7"})
+    assert ok.status_code == 200, ok.text
+
+    # 확인을 기다리는 줄이 차 있으면 세우지 않고 503(잠시 뒤 다시)
+    login_guard.reset()
+    monkeypatch.setattr(accounts, "HASH_QUEUE", 0)
+    r = c.post("/api/auth/login", json={"username": "tester", "password": "pw123"})
+    assert r.status_code == 503 and r.headers.get("retry-after"), (r.status_code, r.text)
+    login_guard.reset()
+
+
 def test_a_locked_out_person_still_gets_one_check(monkeypatch):
     """같은 회선에서 잠겼어도 **잠금당 한 번은** 올바른 비밀번호가 통해야 한다.
 

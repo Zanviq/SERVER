@@ -57,7 +57,7 @@ class SessionInfo(BaseModel):
 
 
 @router.post("/login", response_model=SessionInfo)
-def login(
+async def login(
     req: LoginRequest,
     request: Request,
     response: Response,
@@ -71,6 +71,12 @@ def login(
     # nginx 가 덮어써서 넘겨주는 값이라 바깥에서 지어낼 수 없다. 없으면(직접 호출)
     # 빈 문자열이 되어 예전처럼 아이디만으로 센다.
     ip = (request.headers.get("x-client-ip") or "").strip()
+    # 아이디를 바꿔 가며 두드리는 것은 IP 한 곳의 몫으로 막는다(login_guard.IP_BUDGET).
+    # 비밀번호를 보기 **전에** 거른다 — 해시 한 번이 곧 서버 CPU 다.
+    ip_wait = login_guard.ip_wait(ip)
+    if ip_wait:
+        raise HTTPException(status_code=429, headers={"Retry-After": str(ip_wait)},
+                            detail=f"로그인 시도가 너무 많습니다. {ip_wait}초 후 다시 시도해 주세요.")
     wait = login_guard.begin_attempt(req.username, client_ip=ip)
     locked = bool(wait)
     too_many = HTTPException(
@@ -85,7 +91,8 @@ def login(
         # 잠겨 있어도 **한 번은** 확인해 준다. 안 그러면 아이디만 아는 사람이
         # 잠금이 풀릴 때마다 5번씩 틀리는 것만으로 주인을 자기 서버에서 영영
         # 몰아낼 수 있다(대기시간이 상한 10분에 눌러앉는다).
-        acc = accounts.authenticate(req.username, req.password, settings)
+        # 해시는 **전용 일꾼**에서 — 보통 요청의 스레드풀을 로그인이 차지하지 않게(accounts.HASH_WORKERS)
+        acc = await accounts.authenticate_async(req.username, req.password, settings)
     finally:
         if not locked:
             # inflight 는 잠기지 않은 경로에서만 올라간다. 잠긴 채로 여기서

@@ -11,13 +11,16 @@
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import logging
 import os
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -91,6 +94,37 @@ def verify_password(password: str, stored: str) -> bool:
     except (ValueError, TypeError):
         return False
     return hmac.compare_digest(dk, base64.b64decode(hash_b64))
+
+
+#: 로그인 확인(비밀번호 해시)을 돌리는 **전용** 일꾼 수. 한 번이 CPU 하나를 파이에서 1초
+#: 가까이 통째로 쓴다. 보통 요청과 같은 스레드풀에서 돌리면, 로그인을 쏟아붓는 것만으로
+#: 그 풀이 차서 **다른 사용자의 모든 요청이 줄을 섰다** — 없는 아이디로도 같은 무게의
+#: 해시를 돌리기 때문에(아이디가 있는지 흘리지 않으려고) 인증도 필요 없었다.
+#: 실측(24스레드 PC, 48갈래): 다른 사용자의 문서 트리 12ms → 386ms, 380건 모두 받아 줌.
+HASH_WORKERS = 2
+#: 기다리는 확인이 이보다 많으면 줄을 세우지 않고 바로 거절한다.
+HASH_QUEUE = 8
+_hash_pool = ThreadPoolExecutor(max_workers=HASH_WORKERS, thread_name_prefix="pwhash")
+_hash_waiting = 0
+_hash_lock = threading.Lock()
+
+
+async def authenticate_async(username: str, password: str, settings: Settings) -> Account | None:
+    """authenticate 를 전용 일꾼에서. 몰려 있으면 503(잠시 뒤 다시) — 서버 전체가 느려지는
+    것보다 로그인 하나가 미뤄지는 편이 낫다."""
+    global _hash_waiting
+    with _hash_lock:
+        if _hash_waiting >= HASH_QUEUE:
+            raise HTTPException(
+                status_code=503, headers={"Retry-After": "5"},
+                detail="로그인 요청이 몰려 지금은 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+        _hash_waiting += 1
+    try:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_hash_pool, authenticate, username, password, settings)
+    finally:
+        with _hash_lock:
+            _hash_waiting -= 1
 
 
 # ── 저장소 ──

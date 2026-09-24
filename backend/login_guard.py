@@ -51,8 +51,38 @@ class _State:
     probed: bool = False  # 이번 잠금 동안 비밀번호를 한 번 확인해 줬는가
 
 
+#: 한 IP 가 **아이디를 가리지 않고** 1분에 해 볼 수 있는 로그인 수.
+#:
+#: 아이디+IP 로 세는 잠금은 아이디를 바꿔 가며 두드리면 새 아이디마다 5번씩 새로 준다.
+#: 없는 아이디에도 같은 무게의 해시를 돌리므로(아이디가 있는지 흘리지 않으려고) 그것이
+#: 그대로 서버 CPU 를 태우는 길이었다(실측: 한 IP 가 48갈래로 쏟자 380건을 모두 받아
+#: 주었다). 사람이 1분에 스무 번 로그인할 일은 없다. IP 를 모르면(직접 호출) 세지 않는다.
+IP_BUDGET = 20
+IP_WINDOW = 60
+
 _states: dict[str, _State] = {}
+_ip_hits: dict[str, list[float]] = {}
 _lock = threading.Lock()
+
+
+def ip_wait(client_ip: str, now: float | None = None) -> int:
+    """이 IP 가 지금 로그인을 더 해 볼 수 있으면 0(그리고 한 번으로 센다), 아니면 기다릴 초."""
+    ip = (client_ip or "").strip()[:MAX_KEY_CHARS]
+    if not ip:
+        return 0
+    now = time.time() if now is None else now
+    with _lock:
+        hits = [t for t in _ip_hits.get(ip, ()) if now - t < IP_WINDOW]
+        if len(hits) >= IP_BUDGET:
+            _ip_hits[ip] = hits
+            return max(1, int(hits[0] + IP_WINDOW - now + 0.999))
+        hits.append(now)
+        _ip_hits[ip] = hits
+        if len(_ip_hits) > MAX_KEYS:
+            # 창을 넘긴 IP 부터 버린다(여러 IP 로 채워 기록을 부풀리지 못하게)
+            for k in [k for k, v in _ip_hits.items() if not v or now - v[-1] >= IP_WINDOW]:
+                del _ip_hits[k]
+        return 0
 
 
 def _prune(now: float) -> None:
@@ -193,3 +223,4 @@ def reset() -> None:
     """테스트용 — 프로세스 안에 남은 기록을 전부 지운다."""
     with _lock:
         _states.clear()
+        _ip_hits.clear()
