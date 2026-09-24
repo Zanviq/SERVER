@@ -755,7 +755,7 @@ def chat(
 ):
     """ReAct 비서. SSE로 thought/tool_call/tool_result/text/done 이벤트 스트리밍."""
     p = _prepare(body, user, settings)
-    message, full_message = p.message, p.full_message
+    message = p.message
     persist_path, user_meta = p.persist_path, p.user_meta
 
     def gen():
