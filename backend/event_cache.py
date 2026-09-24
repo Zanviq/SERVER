@@ -38,6 +38,15 @@ def events(user: SessionUser, settings: Settings) -> list[dict]:
     return found
 
 
+def forget(user: SessionUser) -> None:
+    """이 사용자의 일정이 바뀌었다 — 다음 조회는 새로 받는다.
+
+    일정을 만들고·고치고·지우는 길(calendar_service)이 부른다. 예전에는 비우지 않아서
+    방금 만든 일정이 30초 동안 검색·링크 후보에 없었고, 지운 일정은 남아 있었다.
+    """
+    _CACHE.pop(user.username, None)
+
+
 def warm(user: SessionUser) -> list[dict] | None:
     """받아 둔 일정이 아직 쓸 만하면 그것, 아니면 None(구글에 묻지 않는다)."""
     hit = _CACHE.get(user.username)

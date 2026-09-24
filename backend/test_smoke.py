@@ -7461,6 +7461,44 @@ def test_global_search_never_hands_sensitive_text_to_the_model():
         client.delete("/api/notes/folder", params={"path": "개인"})
 
 
+def test_search_and_link_see_calendar_changes_at_once():
+    """방금 만든 일정은 **바로** 검색·링크 후보에 나오고, 지운 일정은 바로 사라진다.
+
+    검색·링크 후보는 일정 목록을 30초 담아 둔다(구글 호출을 타자마다 하지 않게).
+    그런데 일정을 만들거나 지워도 그 캐시를 비우지 않아서, 만든 일정이 30초 동안
+    "없다"고 나왔고 지운 일정은 링크 후보에 남아 눌러도 열리지 않았다.
+    """
+    _login()
+    _forget_events("tester")
+    q = "캐시시험일정-4402"
+    assert client.get("/api/search", params={"q": q, "kinds": "event"}).json()["hits"] == []
+    made = client.post("/api/calendar/events", json={
+        "title": q, "start": "2026-10-01T10:00:00", "end": "2026-10-01T11:00:00"}).json()
+    try:
+        hits = client.get("/api/search", params={"q": q, "kinds": "event"}).json()["hits"]
+        assert [h["title"] for h in hits] == [q], "방금 만든 일정을 못 찾았다(캐시가 옛 목록)"
+        items = client.get("/api/links/suggest", params={"q": "event/2026-10-01/"}).json()["items"]
+        assert any(i["label"] == q for i in items), items
+        # 고치면 고친 이름으로
+        client.put(f"/api/calendar/events/{made['id']}", json={"title": q + "-고침"})
+        hits = client.get("/api/search", params={"q": q, "kinds": "event"}).json()["hits"]
+        assert [h["title"] for h in hits] == [q + "-고침"], hits
+    finally:
+        client.delete(f"/api/calendar/events/{made['id']}")
+    assert client.get("/api/search", params={"q": q, "kinds": "event"}).json()["hits"] == [], \
+        "지운 일정이 검색에 남았다"
+
+    # 일정을 바꾸는 서비스 함수는 전부 캐시 비우기로 감싸여 있어야 한다 —
+    # 새 함수를 만들며 빠뜨리면 같은 일이 다시 생긴다.
+    import inspect as _inspect
+
+    from backend import calendar_service
+
+    for name, fn in _inspect.getmembers(calendar_service, _inspect.isfunction):
+        if fn.__module__ == calendar_service.__name__ and name.startswith(("create_", "update_", "delete_")):
+            assert hasattr(fn, "__wrapped__"), f"calendar_service.{name} 가 일정 캐시를 비우지 않는다"
+
+
 def test_new_endpoints_stay_inside_their_own_user():
     """링크 열기·후보·지도 자리 저장은 **자기 것만** 본다.
 

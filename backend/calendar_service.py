@@ -5,11 +5,30 @@
 """
 from __future__ import annotations
 
-from . import calendar_store
+import functools
+
+from . import calendar_store, event_cache
 from .calendar_ids import is_instance
 from .auth import SessionUser
 from .calendar_google import get_google_calendar
 from .config import Settings
+
+
+def _changes_events(fn):
+    """일정을 바꾸는 함수 — 끝나면(실패해도) 그 사용자의 일정 캐시를 비운다.
+
+    검색·링크 후보가 일정 목록을 30초 담아 두는데(event_cache), 바꾸는 쪽이 그것을
+    몰라서 방금 만든 일정이 30초 동안 없는 것처럼 나오고 지운 일정은 남아 있었다.
+    **실패해도** 비운다 — 일괄 작업은 일부만 되고 예외가 날 수 있다.
+    바꾸는 함수를 새로 만들면 이것을 붙인다(붙이지 않으면 같은 일이 다시 생긴다).
+    """
+    @functools.wraps(fn)
+    def run(user: SessionUser, settings: Settings, *args, **kwargs):
+        try:
+            return fn(user, settings, *args, **kwargs)
+        finally:
+            event_cache.forget(user)
+    return run
 
 
 def backend_kind(user: SessionUser, settings: Settings) -> str:
@@ -23,6 +42,7 @@ def list_events(user: SessionUser, settings: Settings, frm=None, to=None) -> lis
     return calendar_store.list_events(user, settings, frm, to)
 
 
+@_changes_events
 def create_event(user: SessionUser, settings: Settings, payload: dict) -> dict:
     gc = get_google_calendar(settings, user.username)
     if gc:
@@ -30,6 +50,7 @@ def create_event(user: SessionUser, settings: Settings, payload: dict) -> dict:
     return calendar_store.create_event(user, settings, payload)
 
 
+@_changes_events
 def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict) -> dict:
     """단건 수정.
 
@@ -43,6 +64,7 @@ def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict)
     return calendar_store.update_event(user, settings, eid, payload)
 
 
+@_changes_events
 def create_many(
     user: SessionUser, settings: Settings, payloads: list[dict]
 ) -> tuple[list[dict], list[tuple[str, str]]]:
@@ -53,6 +75,7 @@ def create_many(
     return calendar_store.create_many(user, settings, payloads)
 
 
+@_changes_events
 def update_many(
     user: SessionUser, settings: Settings, items: list[tuple[str, dict, dict]]
 ) -> tuple[list[str], list[tuple[str, str]]]:
@@ -68,6 +91,7 @@ def update_many(
     return calendar_store.update_many(user, settings, [(eid, payload) for eid, payload, _ in items])
 
 
+@_changes_events
 def delete_many(
     user: SessionUser, settings: Settings, events: list[dict]
 ) -> tuple[list[str], list[tuple[str, str]]]:
@@ -153,6 +177,7 @@ def _occurrence_snapshot(snapshot: dict, eid: str) -> dict:
     return one
 
 
+@_changes_events
 def delete_event(user: SessionUser, settings: Settings, eid: str) -> None:
     """삭제 전에 휴지통에 담는다 — 실수로 지워도 되돌릴 수 있게.
 
