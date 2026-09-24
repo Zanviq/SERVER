@@ -1900,6 +1900,51 @@ def test_backlinks_after_a_save_reread_only_the_changed_note(monkeypatch):
     assert reads == ["N7.md"], f"바뀐 노트 하나만 읽어야 한다: {reads}"
 
 
+def test_sibling_subdomain_cannot_write_with_our_cookie():
+    """형제 서브도메인(같은 사이트)의 페이지가 쿠키를 실어 보낸 쓰기 요청은 거절한다.
+
+    SameSite=Lax 쿠키는 evil.zanviq.dev → server.zanviq.dev 요청에도 실리고, FastAPI 는
+    Content-Type 이 없는 본문을 JSON 으로 읽는다(사전 요청 없는 '단순 요청'). 실측으로
+    이름 바꾸기가 200 으로 통했다. 앱 자신·허용 출처·브라우저가 아닌 클라이언트는 그대로 된다.
+    """
+    import json as _j
+
+    from backend.same_origin import is_foreign
+
+    _login()
+    box = "csrf시험"
+    client.put("/api/notes/save", json={"path": f"{box}/대상.md", "content": "x"})
+    body = _j.dumps({"path": f"{box}/대상.md", "new_name": "당함.md"}).encode()
+    evil = {"Origin": "https://evil.zanviq.dev", "Sec-Fetch-Site": "same-site"}
+    for extra in ({}, {"Content-Type": "application/json"}):
+        r = client.post("/api/notes/rename", content=body, headers={**evil, **extra})
+        assert r.status_code == 403, (extra, r.status_code, r.text)
+    r = client.post("/api/notes/rename", content=body,
+                    headers={"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"})
+    assert r.status_code == 403
+    # 옛 브라우저(Sec-Fetch-Site 없음)는 Origin 과 Host 를 견준다
+    assert client.post("/api/notes/rename", content=body,
+                       headers={"Origin": "https://evil.zanviq.dev"}).status_code == 403
+    assert client.post("/api/notes/rename", content=body, headers={"Origin": "null"}).status_code == 403
+    paths = {n["path"] for n in client.get("/api/notes/list").json()}
+    assert f"{box}/대상.md" in paths and f"{box}/당함.md" not in paths, "거절했는데 바뀌었다"
+    # 읽기는 막지 않는다(응답은 CORS 가 가린다)
+    assert client.get("/api/notes/list", headers=evil).status_code == 200
+
+    # 앱 자신
+    ok = client.post("/api/notes/rename", json={"path": f"{box}/대상.md", "new_name": "정상.md"},
+                     headers={"Sec-Fetch-Site": "same-origin", "Origin": "http://testserver"})
+    assert ok.status_code == 200, ok.text
+
+    allowed = frozenset({"http://localhost:5173"})
+    assert not is_foreign("POST", {"origin": "http://localhost:5173", "sec-fetch-site": "same-site"}, allowed)
+    assert not is_foreign("POST", {}, allowed)  # 스크립트·curl
+    assert not is_foreign("POST", {"origin": "https://server.zanviq.dev", "host": "server.zanviq.dev"}, allowed)
+    assert not is_foreign("GET", {"origin": "https://evil.zanviq.dev", "sec-fetch-site": "same-site"}, allowed)
+    for m in ("POST", "PUT", "PATCH", "DELETE", "delete"):
+        assert is_foreign(m, {"origin": "https://evil.zanviq.dev", "sec-fetch-site": "same-site"}, allowed), m
+
+
 def test_dotted_names_keep_their_whole_title():
     """확장자 없이 점이 든 이름의 제목이 첫/마지막 점에서 잘리지 않는다.
 

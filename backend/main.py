@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from .auth import require_owner, require_session
 from .config import get_settings
+from .same_origin import SameOriginWrites
 from .routers import (
     admin,
     ai,
@@ -124,6 +125,10 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["Content-Type", "Authorization"],
 )
+# CSRF: 쓰기 요청은 같은 출처(또는 위에서 연 출처)에서 온 것만. SameSite=Lax 쿠키는
+# 형제 서브도메인(*.zanviq.dev)의 요청에도 실린다 — 자세한 까닭은 same_origin.py.
+# 가장 바깥에 둔다(마지막에 더한 미들웨어가 가장 먼저 받는다).
+app.add_middleware(SameOriginWrites, allowed_origins=_origins or ["http://localhost:5173"])
 
 # 공개 라우터(인증 불필요)
 app.include_router(auth.router)
