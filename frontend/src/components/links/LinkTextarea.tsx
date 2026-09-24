@@ -2,7 +2,7 @@ import { forwardRef, TextareaHTMLAttributes, useImperativeHandle, useRef, useSta
 import { useNavigate } from "react-router-dom";
 import { Eye, Pencil } from "lucide-react";
 import { MarkdownView } from "../notes/LazyMarkdownView";
-import { useLinkSuggest } from "./useLinkSuggest";
+import { useMarkdownInput } from "./useMarkdownInput";
 
 type Props = TextareaHTMLAttributes<HTMLTextAreaElement> & {
   /**
@@ -19,7 +19,7 @@ type Props = TextareaHTMLAttributes<HTMLTextAreaElement> & {
  * 마크다운 + `[note/…]` 링크를 쓸 수 있는 여러 줄 입력칸.
  *
  * 보통 `<textarea>` 와 똑같이 쓴다(value/onChange 도, defaultValue/onBlur 도 된다).
- * `[` 를 치면 입력칸 위로 링크 후보가 뜬다(useLinkSuggest).
+ * `[` 를 치면 입력칸 위로 링크 후보가 뜬다(useMarkdownInput).
  */
 export const LinkTextarea = forwardRef<HTMLTextAreaElement, Props>(function LinkTextarea(
   { preview = false, wrapClassName = "", className = "", ...rest },
@@ -27,7 +27,7 @@ export const LinkTextarea = forwardRef<HTMLTextAreaElement, Props>(function Link
 ) {
   const ref = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(outer, () => ref.current as HTMLTextAreaElement, []);
-  const panel = useLinkSuggest(ref);
+  const panel = useMarkdownInput(ref);
   const navigate = useNavigate();
   const [showing, setShowing] = useState(false);
   // 미리보기로 바꿀 때의 글. 제어되지 않는 칸(defaultValue)도 있어서 DOM 에서 읽는다.

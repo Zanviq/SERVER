@@ -12,7 +12,7 @@ export function cachedLinkItems(query: string): LinkItem[] | undefined {
   return hit && Date.now() - hit.at < CACHE_MS ? hit.items : undefined;
 }
 
-/** 링크 후보. 입력칸(useLinkSuggest)과 문서 편집기(cmLinks)가 같은 것을 쓴다. */
+/** 링크 후보. 입력칸(useMarkdownInput)과 문서 편집기(cmLinks)가 같은 것을 쓴다. */
 export async function fetchLinkItems(query: string): Promise<LinkItem[]> {
   const hit = cachedLinkItems(query);
   if (hit) return hit;

@@ -4,7 +4,7 @@ import { Dropdown, DropdownItem } from "../ui/Dropdown";
 import { GCAL_COLORS, GCAL_COLOR_NAMES } from "../calendar/EventDialog";
 import type { Todo, TodoCategory } from "../../lib/api";
 import { isSubmitEnter } from "../../lib/keys";
-import { useLinkSuggest } from "../links/useLinkSuggest";
+import { useMarkdownInput } from "../links/useMarkdownInput";
 
 export interface TodoDraft {
   title: string;
@@ -114,7 +114,7 @@ export function TodoComposer({ cats, selectedCat, busy, onSubmit }: Props) {
   const titleRef = useRef<HTMLInputElement>(null);
   const descRef = useRef<HTMLTextAreaElement>(null);
   // 좁은 입력줄이라 미리보기 단추는 두지 않는다(설명은 할 일을 열면 미리볼 수 있다)
-  const descLinks = useLinkSuggest(descRef);
+  const descLinks = useMarkdownInput(descRef);
 
   // 사이드바에서 카테고리를 바꾸면 초안의 카테고리도 따라간다(아직 손대지 않았을 때)
   useEffect(() => {

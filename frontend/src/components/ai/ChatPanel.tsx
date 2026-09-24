@@ -18,7 +18,7 @@ import { ChatSessionList, ChatSessionPicker } from "./ChatSessions";
 import { Modal } from "../ui/Modal";
 import { ChatSession } from "../../lib/api";
 import { deepestLeaf, siblingsOf, threadOf, TreeMessage } from "../../lib/chatTree";
-import { useLinkSuggest } from "../links/useLinkSuggest";
+import { useMarkdownInput } from "../links/useMarkdownInput";
 
 interface Step {
   name: string;
@@ -343,7 +343,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   const touch = useMediaQuery("(pointer: coarse)");
   // `[` 를 치면 입력칸 위로 링크 후보(문서·논문·회의·할 일…)가 뜬다. 목록은 줄을 바꿀 때
   // 이어진다 — 이 칸은 Enter 가 '보내기'라 줄바꿈 키는 Shift+Enter(터치는 Enter)다.
-  const linkPanel = useLinkSuggest(inputRef, { newline: touch ? "enter" : "shift+enter" });
+  const linkPanel = useMarkdownInput(inputRef, { newline: touch ? "enter" : "shift+enter" });
   // 사이드바는 **자리가 있을 때만** 편다. CSS 로만 숨기면 좁은 화면에서 대화 목록과
   // 지도에 닿을 길이 아예 사라진다 — 여기서 정해서, 좁으면 드롭다운·접힘으로 돌린다.
   const roomForList = useMediaQuery("(min-width: 1024px)");

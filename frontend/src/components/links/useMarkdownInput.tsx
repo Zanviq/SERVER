@@ -27,23 +27,25 @@ function setNativeValue(el: Field, value: string) {
   Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, value);
 }
 
-/**
- * 입력칸에서 `[` 를 치면 **입력칸 위로** 링크 후보를 띄운다.
- *
- * 입력칸에 이벤트를 직접 건다(부르는 쪽은 `{panel}` 만 그리면 된다). 그래서
- * 입력칸이 제 onKeyDown 으로 Enter 를 '보내기'에 쓰고 있어도, 후보가 열려 있을
- * 때의 Enter 는 여기서 먼저 받아 멈춘다 — 리액트의 onKeyDown 은 문서 뿌리에서
- * 돌므로 입력칸에 직접 건 것이 먼저다. Esc 도 같아서 대화상자가 함께 닫히지 않는다.
- *
- * 후보가 화면을 가릴 수 있으므로 접기(얇은 띠로)·닫기(이 괄호에서는 다시 안 뜸)를
- * 둔다. 접은 상태는 기억한다.
- */
 export interface InputOptions {
   /** 이 칸에서 줄을 바꾸는 키. 채팅처럼 Enter 가 '보내기'인 칸은 "shift+enter". */
   newline?: "enter" | "shift+enter";
 }
 
-export function useLinkSuggest(ref: RefObject<Field>, opts: InputOptions = {}): ReactNode {
+/**
+ * 여러 줄 입력칸의 마크다운 쓰기 도움 — 모든 입력칸이 이 하나를 쓴다.
+ *
+ *  1) `[` 를 치면 **입력칸 위로** 링크 후보를 띄운다(접기·닫기, 접은 상태는 기억).
+ *  2) 목록·인용 줄에서 줄을 바꾸면 표시를 잇는다(lib/mdInput, 문서 편집기와 같은 규칙).
+ *
+ * 입력칸에 이벤트를 직접 건다(부르는 쪽은 `{panel}` 만 그리면 된다). 그래서
+ * 입력칸이 제 onKeyDown 으로 Enter 를 '보내기'에 쓰고 있어도, 후보가 열려 있을
+ * 때의 Enter 는 여기서 먼저 받아 멈춘다 — 리액트의 onKeyDown 은 문서 뿌리에서
+ * 돌므로 입력칸에 직접 건 것이 먼저다. Esc 도 같아서 대화상자가 함께 닫히지 않는다.
+ * 예전 이름은 useLinkSuggest 였다(목록 잇기를 맡으며 이름을 하는 일에 맞췄다).
+ */
+
+export function useMarkdownInput(ref: RefObject<Field>, opts: InputOptions = {}): ReactNode {
   const [q, setQ] = useState<LinkQuery | null>(null);
   const [items, setItems] = useState<LinkItem[]>([]);
   /** items 가 어느 글자에 대한 답인가. 새로 묻는 동안에는 옛 목록을 그대로 보여
