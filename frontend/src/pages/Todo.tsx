@@ -344,6 +344,9 @@ export function Todo() {
     );
   };
 
+  /** 서버가 돌려준 할 일 하나로 목록의 그 줄만 바꾼다(보드 전체를 다시 받지 않는다). */
+  const replaceTodo = (saved: TodoItem) => setTodos((ts) => ts.map((x) => (x.id === saved.id ? saved : x)));
+
   // 완료 표시는 guard 를 타지 않는다(44차). guard 는 다른 조작이 도는 동안(busy) 들어온 것을 **말없이
   // 버린다** — 목록을 훑으며 잇달아 누르면 사이의 것들이 완료되지 않았다(실측: 60ms 간격 넷 중 둘, 알림
   // 없음). 서로 다른 할 일의 완료는 겹쳐도 되는 일이다. 또 매번 보드 전체(할 일 600개면 141KB)를 다시
@@ -351,7 +354,7 @@ export function Todo() {
   const toggleDone = async (t: TodoItem) => {
     try {
       const saved = await api.todoUpdate(t.id, { done: !t.done });
-      setTodos((ts) => ts.map((x) => (x.id === t.id ? saved : x)));
+      replaceTodo(saved);
       if (saved.done !== t.done) {
         const cid = saved.category_id || UNCATEGORIZED;
         setCounts((c) => {
@@ -396,7 +399,7 @@ export function Todo() {
         api.todoUpdate(id, { description, base_description: base }, keepalive);
       const settle = (saved: TodoItem) => {
         if (descBase.current?.id === id) descBase.current.text = saved.description;
-        setTodos((ts) => ts.map((t) => (t.id === id ? saved : t)));
+        replaceTodo(saved);
       };
       try {
         settle(await put(text, descBase.current?.id === id ? descBase.current.text : undefined));

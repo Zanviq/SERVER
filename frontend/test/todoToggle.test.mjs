@@ -21,7 +21,8 @@ test("완료 표시는 guard 를 타지 않는다(바쁜 동안 누른 것을 �
 
 test("완료 표시는 서버가 돌려준 한 줄과 배지 수만 고친다(보드 전체를 다시 받지 않는다)", () => {
   assert.doesNotMatch(body, /reload\(\)/, "완료 표시마다 보드 전체를 다시 받는다");
-  assert.match(body, /setTodos\(\(ts\) => ts\.map\(\(x\) => \(x\.id === t\.id \? saved : x\)\)\)/);
+  assert.match(body, /replaceTodo\(saved\)/);
+  assert.match(src, /const replaceTodo = \(saved: TodoItem\) => setTodos\(\(ts\) => ts\.map\(\(x\) => \(x\.id === saved\.id \? saved : x\)\)\)/);
   assert.match(body, /setCounts\(/, "배지 수를 고치지 않는다 — 트리의 남은 개수가 어긋난다");
   assert.match(body, /toast\.error\(/, "실패를 알리지 않는다");
 });
