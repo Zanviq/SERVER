@@ -86,13 +86,23 @@ def renamed(old_name: str, new_name: str) -> str:
       `.2 notes` 를 확장자로 보고 새 이름에 통째로 붙였다 — AI 스킬이 실제로 그렇게
       `요약.2 notes` 를 만들었다(문서 화면은 이미 고쳐져 있었는데 두 곳이 따로 놀았다).
     - 폴더를 넘나드는 이름(`/`·`\\`·`..`)은 받지 않는다 — 이름 바꾸기는 같은 폴더 안이다.
+    - 몸통은 그대로 두고 **확장자만 지웠으면** 확장자를 떼 달라는 뜻이다(`메모.py` → `메모`).
+      원래 확장자를 다시 붙이면 결과가 옛 이름 그대로라, 화면에는 "같은 이름의 문서가 이미
+      있습니다"(409)라는 거짓 오류가 뜨고 확장자는 영영 뗄 수 없었다(21차 실측).
+      다만 이미지·PDF·녹음처럼 글이 아닌 파일은 떼지 않는다 — 확장자가 없으면 글로 보고
+      편집기로 열어, 한 글자만 쳐도 원본을 글로 덮어쓴다.
     """
     new = (new_name or "").strip()
     if not new or "/" in new or "\\" in new or ".." in new:
         raise BadName("잘못된 이름입니다.")
     if looks_like_extension(new):
         return new
-    return f"{new}{split_ext(old_name)[1]}"
+    stem, ext = split_ext(old_name.rsplit("/", 1)[-1])
+    if ext and new == stem:
+        if not is_editable(old_name):
+            raise BadName(f"확장자({ext})를 떼면 이 파일을 열 수 없게 됩니다.")
+        return new
+    return f"{new}{ext}"
 
 
 def kind_of(name: str) -> str:

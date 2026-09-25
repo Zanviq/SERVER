@@ -31,7 +31,7 @@ from ..file_kinds import (
 )
 from ..notes_graph import backlinks_for, build_graph, parse_wikilinks
 from ..security_paths import safe_join, to_rel
-from ..storage import resolve, user_data_root, walk_all, walk_files
+from ..storage import resolve, taken_by_another, user_data_root, walk_all, walk_files
 from ..trash import move_to_trash
 
 logger = logging.getLogger("server.notes")
@@ -622,10 +622,15 @@ def rename_note(
         raise HTTPException(status_code=400, detail=str(e)) from e
     rel_dir = src.parent.relative_to(root).as_posix()
     dst_rel = new_name if rel_dir in ("", ".") else f"{rel_dir}/{new_name}"
-    dst = safe_join(root, dst_rel)
-    if dst.exists():
-        raise HTTPException(status_code=409, detail="같은 이름의 문서가 이미 있습니다.")
+    safe_join(root, dst_rel)  # 이름 검사(쓸 수 없는 문자·길이)만 — 자리는 아래처럼 만든다
+    # safe_join 의 resolve 는 있는 파일을 **디스크의 표기**로 바꾼다(Windows). 그 값을 쓰면
+    # 대소문자만 바꾼 이름(`메모.MD`)이 `메모.md` 로 돌아와 제자리 이름 바꾸기가 됐다.
+    dst = src.parent / new_name
     old_rel, was_dir = src.relative_to(root).as_posix(), src.is_dir()
+    if dst_rel == old_rel:
+        return _summary(root, src)  # 이름이 그대로다 — 할 일이 없다("이미 있다"가 아니다)
+    if taken_by_another(src, dst):  # 대소문자만 바꾼 이름은 자기 자신이다
+        raise HTTPException(status_code=409, detail="같은 이름의 문서가 이미 있습니다.")
     with _fs_errors_are_bad_requests("이름 변경"):
         src.rename(dst)
     # 옛 이름을 가리키던 링크가 새 자리를 찾아가게(moved.py)

@@ -20,7 +20,7 @@ from ...file_kinds import BadName, doc_title, is_editable, kind_of, looks_like_e
 from ...json_store import lock_for, write_text_atomic
 from ...notes_graph import backlinks_for
 from ...security_paths import safe_join, to_rel
-from ...storage import user_data_root, walk_all, walk_dirs, walk_files
+from ...storage import taken_by_another, user_data_root, walk_all, walk_dirs, walk_files
 from ...trash import move_to_trash
 from ..skill_base import SkillBase, SkillResult
 from ._common import _MAX_READ, _is_sensitive, asked_to_save
@@ -584,7 +584,10 @@ class RenameDocument(SkillBase):
         except BadName as e:
             return SkillResult(ok=False, message=str(e), error_code="invalid")
         dst = src.parent / new
-        if dst.exists():
+        if dst.name == src.name:  # 이름이 그대로다 — "이미 있다"가 아니다
+            return SkillResult(ok=True, message=f"'{_ident(root, src)}' 는 이미 그 이름입니다.",
+                               data={"path": _ident(root, src)})
+        if taken_by_another(src, dst):  # 대소문자만 바꾼 이름은 자기 자신이다
             return SkillResult(ok=False, message="같은 이름의 문서가 이미 있습니다.", error_code="exists")
         old_rel = to_rel(root, src)
         src.rename(dst)

@@ -8065,6 +8065,12 @@ def test_rename_gives_same_name_from_screen_and_ai():
         ("2026.08 회고.md", "8월 회고", "8월 회고.md"),  # 확장자를 안 적으면 원래 것
         ("메모.md", "메모.txt", "메모.txt"),           # 확장자를 적으면 그것
         ("사진.png", "고양이", "고양이.png"),
+        # 21차: 몸통은 그대로 두고 확장자만 지웠으면 뗀다. 예전엔 원래 확장자를 다시 붙여
+        # 옛 이름 그대로가 되어 "같은 이름의 문서가 이미 있습니다"(409)였다 — 뗄 길이 없었다.
+        ("메모.py", "메모", "메모"),
+        # 대소문자만 바꾼 이름 — 대소문자를 안 가리는 디스크에서 자기 자신에 걸려 409 였다
+        ("메모.md", "메모.MD", "메모.MD"),
+        ("메모.md", "메모.md", "메모.md"),             # 그대로 두고 확인 — 할 일이 없을 뿐 오류가 아니다
     ]
     for i, (src, new, want) in enumerate(cases):
         for via in ("screen", "ai"):
@@ -8082,6 +8088,18 @@ def test_rename_gives_same_name_from_screen_and_ai():
             assert names == [want], f"{via}: {src!r} → {new!r} 가 {names} 가 됐다(기대 {want!r})"
             (folder / want).unlink()
             folder.rmdir()
+
+    # 글이 아닌 파일의 확장자는 떼지 않는다 — 확장자가 없으면 글로 보고 편집기로 열어,
+    # 한 글자만 쳐도 원본을 글로 덮어쓴다. 거짓 409 가 아니라 까닭을 말하는 400 이다.
+    (root / "rename-img.png").write_bytes(b"\x89PNG")
+    try:
+        r = client.post("/api/notes/rename", json={"path": "rename-img.png", "new_name": "rename-img"})
+        assert r.status_code == 400 and "확장자" in r.json()["detail"], r.text
+        got = reg.dispatch("rename_document", {"path": "rename-img.png", "new_name": "rename-img"}, ctx)
+        assert not got.ok and "확장자" in got.message, got.message
+        assert (root / "rename-img.png").read_bytes() == b"\x89PNG"
+    finally:
+        (root / "rename-img.png").unlink(missing_ok=True)
 
     # 쓸 수 없는 이름은 두 길 모두 거절한다(한쪽만 막으면 그쪽으로 돌아 들어간다)
     (root / "rename-bad.md").write_text("x", encoding="utf-8")

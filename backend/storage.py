@@ -33,6 +33,16 @@ def resolve(rel: str, user: SessionUser, settings: Settings) -> Path:
     return safe_join(user_data_root(user, settings), rel)
 
 
+def taken_by_another(src: Path, dst: Path) -> bool:
+    """이름을 dst 로 바꾸려는데 그 자리에 **다른** 파일이 있는가.
+
+    `dst.exists()` 만 보면 대소문자만 바꾼 이름(`메모.md` → `메모.MD`)이 대소문자를 가리지
+    않는 디스크(Windows·NTFS)에서 자기 자신에 걸려 늘 "이미 있다"였다. 문서 화면과 AI 스킬이
+    이 함수 하나를 쓴다(두 길이 따로 판단하면 한쪽만 고쳐진다).
+    """
+    return dst.exists() and not os.path.samefile(src, dst)
+
+
 def item_root(user: SessionUser, settings: Settings, kind: str) -> Path:
     """논문·회의처럼 '폴더 하나가 곧 항목'인 저장소의 뿌리. **만들지 않는다.**
 

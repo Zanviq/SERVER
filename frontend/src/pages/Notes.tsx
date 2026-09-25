@@ -503,6 +503,8 @@ export function Notes() {
 
   const doRenameNote = async () => {
     if (!renameFor || !renameName.trim()) return;
+    // 이름을 그대로 두고 확인했다 — 바꾼 것이 없으니 "변경했습니다"라고 말하지 않는다
+    if (renameName.trim() === fileName(renameFor.path)) { setRenameFor(null); return; }
     try {
       // 옮기기 전에 흘려보낸다. 안 그러면 타이머가 옛 경로로 저장을 보내
       // 방금 이름을 바꾼 문서가 옛 이름으로 하나 더 생긴다(유령 중복).
