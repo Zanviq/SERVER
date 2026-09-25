@@ -9,7 +9,7 @@ import { PaperList, paperTitle } from "../components/papers/PaperList";
 import { PdfViewer, PdfMark, PdfRect } from "../components/papers/PdfViewer";
 import { PaperInfo } from "../components/papers/PaperInfo";
 import { VocabPanel } from "../components/vocab/VocabPanel";
-import { api, ApiError, Paper } from "../lib/api";
+import { api, isConflict, isGone, Paper } from "../lib/api";
 import { isSubmitEnter } from "../lib/keys";
 import { usePendingSave } from "../lib/usePendingSave";
 import { toast } from "../store/toast";
@@ -131,12 +131,12 @@ export function Papers() {
       patch(p.id, await api.paperUpdate(p.id, { notes, base_notes: base }, keepalive));
       return "ok";
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
+      if (isConflict(e)) {
         void load();
         return "conflict";
       }
       // 그새 지운 논문이면 다시 보내도 영영 실패한다 — 끝난 것으로 친다
-      if (e instanceof ApiError && (e.status === 404 || e.status === 410)) return "ok";
+      if (isGone(e)) return "ok";
       toast.error(e instanceof Error ? e.message : "메모 저장 실패");
       return "fail";
     }

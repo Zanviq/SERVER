@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Loader2, Lock } from "lucide-react";
-import { api, ApiError, CalEvent, DiaryAxis, DiaryDay, DiaryShape } from "../../lib/api";
+import { api, CalEvent, DiaryAxis, DiaryDay, DiaryShape, isConflict } from "../../lib/api";
 import { mergeDiaryText } from "../../lib/diaryMerge";
 import { toast } from "../../store/toast";
 import { useSettings } from "../../store/settings";
@@ -199,7 +199,7 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
       baseAt.current = saved.text_at ?? baseAt.current;
       return saved;
     } catch (e) {
-      if (!(e instanceof ApiError && e.status === 409)) throw e;
+      if (!isConflict(e)) throw e;
       const fresh = await api.diaryGet(day);
       // 잠금이 다시 걸려 저쪽 글을 못 받았으면 합치지 않는다 — 빈 글과 합치면 저쪽 글을 덮는다
       if (fresh.locked) throw new Error("일기 잠금이 다시 걸려 합치지 못했습니다. 자물쇠를 풀고 다시 저장해 주세요.");

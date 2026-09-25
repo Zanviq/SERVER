@@ -16,7 +16,7 @@ import { TodoComposer, TodoDraft, draftToBody } from "../components/todo/TodoCom
 import { CategoryDialog, CategoryDraft } from "../components/todo/CategoryDialog";
 import { ListState } from "../components/ui/ListState";
 import { LinkTextarea } from "../components/links/LinkTextarea";
-import { api, ApiError, Todo as TodoItem, TodoCategory, TodoCounts } from "../lib/api";
+import { api, isGone, Todo as TodoItem, TodoCategory, TodoCounts } from "../lib/api";
 import { usePendingSave } from "../lib/usePendingSave";
 import { toast } from "../store/toast";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -370,7 +370,7 @@ export function Todo() {
         setTodos((ts) => ts.map((t) => (t.id === id ? saved : t)));
       } catch (e) {
         // 그새 지워졌다 — 보낼 곳이 없다(다시 해 봐도 영영 실패한다)
-        if (e instanceof ApiError && (e.status === 404 || e.status === 410)) return;
+        if (isGone(e)) return;
         toast.error("할 일 설명을 저장하지 못했습니다 — 잠시 뒤 다시 보냅니다");
         throw e; // 실패로 알려야 PendingSave 가 다시 해 본다
       }

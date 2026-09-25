@@ -13,7 +13,7 @@ import { REVEAL_ON_ROW } from "../components/ui/reveal";
 import { LiveEditor } from "../components/notes/LazyLiveEditor";
 import { NOTE_PATH_MIME } from "../components/notes/dragTypes";
 import { Modal } from "../components/ui/Modal";
-import { api, ApiError, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
+import { api, ApiError, isConflict, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
 import { looksLikeExtension } from "../lib/names";
 import { ancestorsOf, fileName, parentDir } from "../lib/notePath";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
@@ -174,7 +174,7 @@ export function Notes() {
       } catch (e) {
         // 409 = 다른 곳에서 바뀌었다. 자동저장이 1초마다 같은 토스트를 쏟지
         // 않게 띠로 알리고, 덮어쓸지는 사용자가 고른다(밑글은 이미 남아 있다).
-        if (e instanceof ApiError && e.status === 409) {
+        if (isConflict(e)) {
           setConflict(path);
           return false;
         }

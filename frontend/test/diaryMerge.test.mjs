@@ -31,7 +31,9 @@ test("낱말 한가운데서 가르지 않는다(줄 머리에서 자른다)", (
 test("일기 칸은 연 때의 base 를 실어 보내고, 409 면 합친다 — 저장은 한 줄로 세운다", () => {
   const src = readFileSync(new URL("../src/components/calendar/DiaryPanel.tsx", import.meta.url), "utf8");
   assert.match(src, /base_at: baseAt\.current/, "저장에 base 를 싣지 않는다 — 다른 곳의 글을 덮는다");
-  assert.match(src, /e\.status === 409/, "409 를 받아 합치지 않는다");
+  assert.match(src, /if \(!isConflict\(e\)\) throw e;/, "409 를 받아 합치지 않는다");
+  const api = readFileSync(new URL("../src/lib/api.ts", import.meta.url), "utf8");
+  assert.match(api, /isConflict = \(e: unknown\): e is ApiError => e instanceof ApiError && e\.status === 409/);
   assert.match(src, /schedule\(autosaveMs, \(\) => enqueue\(async \(\) => \{\s*setSaving\(true\);\s*try \{\s*const saved = await saveText/,
     "글 저장이 한 줄로 서지 않는다 — 제 앞 저장과 충돌한다");
   assert.match(src, /void enqueue\(async \(\) => \{\s*try \{\s*const saved = await api\.diarySave\(day, patch\)/,

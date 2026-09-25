@@ -81,6 +81,13 @@ const NO_DETAIL: Record<number, string> = {
   524: "서버의 응답이 너무 늦습니다. 잠시 후 다시 시도해 주세요.",
 };
 
+/** 서버가 "그 사이 다른 곳에서 바뀌었다"며 덮지 않았다(409) — 문서·회의 문서·일기·논문 메모. */
+export const isConflict = (e: unknown): e is ApiError => e instanceof ApiError && e.status === 409;
+
+/** 대상이 그새 지워졌다(404·410). 모아 보내는 저장은 다시 해 봐도 영영 실패하므로 끝난 것으로 친다. */
+export const isGone = (e: unknown): e is ApiError =>
+  e instanceof ApiError && (e.status === 404 || e.status === 410);
+
 function errorMessage(status: number, detail: unknown): string {
   if (detail === undefined) return NO_DETAIL[status] ?? `요청이 실패했습니다(${status}).`;
   if (typeof detail === "string" && detail) return detail;

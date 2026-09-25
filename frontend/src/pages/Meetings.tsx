@@ -16,7 +16,7 @@ import { TranscriptView } from "../components/meetings/TranscriptView";
 import { api, Meeting, MeetingDocSummary } from "../lib/api";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
-import { ApiError } from "../lib/api";
+import { isConflict } from "../lib/api";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { Draft, draftAgeText, dropDraft, keepDraft, readDraft } from "../lib/draftBackup";
 
@@ -143,7 +143,7 @@ export function Meetings() {
     } catch (e) {
       // 409 = 다른 곳에서 바뀌었다. 자동저장이 1초마다 같은 토스트를 쏟지 않게
       // 띠로 알리고, 덮어쓸지는 사용자가 고른다(노트와 같은 규칙).
-      if (e instanceof ApiError && e.status === 409) {
+      if (isConflict(e)) {
         setConflict(true);
         return false;
       }
