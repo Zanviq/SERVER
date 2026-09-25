@@ -1,5 +1,6 @@
 import { ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useMenuFocus } from "./useMenuFocus";
 
 interface DropdownProps {
   /** 여닫는 버튼. open 상태를 받아 모양을 바꿀 수 있다. */
@@ -62,27 +63,23 @@ export function Dropdown({
       if (panelRef.current?.contains(t) || btnRef.current?.contains(t)) return;
       setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setOpen(false);
-        btnRef.current?.focus();
-      }
-    };
     // 스크롤하면 버튼이 움직이므로 따라가야 한다(닫아 버리면 date 입력의 달력을
     // 여는 순간 닫히는 브라우저가 있다)
     window.addEventListener("mousedown", onDown);
     window.addEventListener("touchstart", onDown);
-    window.addEventListener("keydown", onKey);
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
     return () => {
       window.removeEventListener("mousedown", onDown);
       window.removeEventListener("touchstart", onDown);
-      window.removeEventListener("keydown", onKey);
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
   }, [open, place]);
+
+  // 패널이 body 끝에 붙으므로 Tab 만으로는 못 들어간다 — 키보드(Esc 포함)는 여기서(39차).
+  // 자리를 재기 전(pos 없음)에는 visibility:hidden 이라 포커스를 옮길 수 없다.
+  useMenuFocus(open && !!pos, panelRef, btnRef, close);
 
   return (
     <>

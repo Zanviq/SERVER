@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { createPortal } from "react-dom";
 import { MoreHorizontal, Pencil, FolderInput, Trash2 } from "lucide-react";
 import { REVEAL_ON_ROW } from "../ui/reveal";
+import { useMenuFocus } from "../ui/useMenuFocus";
 
 /**
  * 문서 트리 줄의 "..." 컨텍스트 메뉴(이름 변경 / 이동 / 휴지통).
@@ -47,20 +48,20 @@ export function RowMenu({ onRename, onMove, onTrash }: {
       if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return;
       setOpen(false);
     };
-    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
     // 목록을 스크롤하면 메뉴만 제자리에 떠 있게 되므로 닫는다(위치 추적보다 단순·안전).
     const onScrollOrResize = () => setOpen(false);
     document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onEsc);
     window.addEventListener("resize", onScrollOrResize);
     window.addEventListener("scroll", onScrollOrResize, true); // capture: 안쪽 스크롤 컨테이너까지
     return () => {
       document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onEsc);
       window.removeEventListener("resize", onScrollOrResize);
       window.removeEventListener("scroll", onScrollOrResize, true);
     };
   }, [open]);
+
+  // 키보드(Esc·Tab·화살표)와 닫힌 뒤 포커스 되돌리기는 드롭다운과 같은 규칙으로(39차)
+  useMenuFocus(open && !!pos, menuRef, btnRef, () => setOpen(false));
 
   return (
     <div className="shrink-0">

@@ -31,14 +31,18 @@ interface ModalProps {
  *  `autoFocus` 는 리액트가 **커밋 중에** 실행하므로, 효과가 도는 시점엔 이미
  *  포커스가 대화상자 안이다(그래서 닫을 때 사라진 입력칸으로 되돌리려다
  *  포커스가 body 로 떨어졌다). 바깥에서 마지막으로 포커스를 받은 곳을 계속
- *  따라 두면 그 타이밍과 무관하다. */
+ *  따라 두면 그 타이밍과 무관하다.
+ *
+ *  떠 있는 메뉴의 항목은 치지 않는다. 대화상자는 흔히 메뉴 항목("이름 변경")이 여는데, 그 항목은
+ *  대화상자가 열리는 커밋에서 메뉴와 함께 사라진다 — 거기로 돌아가려다 포커스가 body 로 떨어졌다
+ *  (39차: 키보드로 이름 변경을 열고 Esc). 그 앞의 자리, 곧 메뉴를 연 단추가 남는다. */
 let lastOutsideDialog: HTMLElement | null = null;
 if (typeof document !== "undefined") {
   document.addEventListener(
     "focusin",
     (e) => {
       const t = e.target as HTMLElement | null;
-      if (t && typeof t.closest === "function" && !t.closest('[role="dialog"]')) {
+      if (t && typeof t.closest === "function" && !t.closest('[role="dialog"], [role="menu"]')) {
         lastOutsideDialog = t;
       }
     },
