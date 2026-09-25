@@ -15,6 +15,26 @@
 /** 목록 표시: 들여쓰기 · 표시(-, *, +, 1., 1)) · 뒤 공백 · 체크박스 */
 const LIST = /^(\s*)([-*+]|(\d+)([.)]))(\s+)(\[[ xX]\]\s+)?/;
 const QUOTE = /^(\s*>\s?)/;
+/** 코드 울타리(``` 또는 ~~~, 앞 들여쓰기 3칸까지) */
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+
+/**
+ * 커서가 닫히지 않은 코드 울타리 안에 있는가.
+ *
+ * 코드 속의 `- ` 나 `1. ` 는 목록이 아니다. 예전에는 코드블록 안에서도 목록을 이어서,
+ * YAML·셸 스크립트를 적다 줄을 바꾸면 `- `·`2. ` 가 코드에 끼어들었다(17차). 닫는 울타리는
+ * 연 것과 같은 글자이고 길이가 같거나 길어야 한다(편집기·그래프와 같은 규칙).
+ */
+function insideFence(text: string, lineStart: number): boolean {
+  let open: string | null = null;
+  for (const line of text.slice(0, lineStart).split("\n")) {
+    const m = FENCE.exec(line);
+    if (!m) continue;
+    if (open === null) open = m[1];
+    else if (m[1][0] === open[0] && m[1].length >= open.length) open = null;
+  }
+  return open !== null;
+}
 
 export interface Edit {
   text: string;
@@ -30,6 +50,7 @@ export function continueList(text: string, caret: number): Edit | null {
   const lineEnd = nl < 0 ? text.length : nl;
   const line = text.slice(lineStart, lineEnd);
   const before = text.slice(lineStart, caret);
+  if (insideFence(text, lineStart)) return null;   // 코드 안 — 보통 줄바꿈
 
   const m = LIST.exec(line);
   if (m && before.length >= m[0].length) {
