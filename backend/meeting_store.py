@@ -68,6 +68,19 @@ def sanitize_filename(name: str) -> str:
     return (cleaned or "recording")[:200]
 
 
+def audio_mime(ext: str) -> str:
+    """녹음의 형식은 **서버가 고른 확장자**로만 정한다 — 올린 쪽이 밝힌 Content-Type 은 믿지 않는다.
+
+    예전엔 올릴 때 브라우저가 밝힌 형식을 그대로 적어 두고, 녹음을 돌려줄 때와 받아쓰기에
+    그 값을 썼다. 이름만 `.mp3` 이고 형식을 `text/html` 로 밝히면 받아 주고, 되돌려 줄 때
+    `text/html` + nosniff(선언을 그대로 믿으라는 뜻)로 내보내 **앱과 같은 출처에서 스크립트가
+    돌았다**(40차 실측). 밝힌 형식이 `application/octet-stream`·`audio/x-m4a` 처럼 흔한 딴
+    이름이면 모델에도 그 이름이 가서 받아쓰기가 형식을 못 알아볼 수 있었다.
+    이미 적힌 옛 기록의 `mime` 도 이제 읽지 않으므로 따로 고칠 필요가 없다.
+    """
+    return AUDIO_TYPES.get(ext, "application/octet-stream")
+
+
 def audio_ext(filename: str, mime: str = "") -> str:
     """파일 이름·MIME 에서 저장할 확장자를 고른다. 모르는 형식이면 빈 문자열."""
     ext = Path(str(filename or "")).suffix.lower().lstrip(".")

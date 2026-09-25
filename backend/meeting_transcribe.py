@@ -147,7 +147,7 @@ def run_sync(user: SessionUser, settings: Settings, mid: str, *, asker=None) -> 
         return meeting_store.update_meta(user, settings, mid, {
             "status": meeting_store.STATUS_FAILED, "error": "녹음 파일이 없습니다.",
         })
-    mime = str(meta.get("mime") or meeting_store.AUDIO_TYPES.get(ext, "audio/webm")).split(";")[0]
+    mime = meeting_store.audio_mime(ext)  # 적어 둔 mime 은 올린 쪽이 밝힌 것일 수 있다
 
     ask = asker or (_ask_gemini if settings.gemini_api_key else None)
     if ask is None:

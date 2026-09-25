@@ -101,7 +101,7 @@ async def upload(
         # 브라우저 녹음은 이름이 'recording.webm' 처럼 밋밋하다 — 제목이 없으면 날짜로
         default_title = title.strip() or (f"{day} 회의" if name.lower().startswith("recording") else "")
         meta = meeting_store.register(
-            user, settings, filename=name, mime=(file.content_type or meeting_store.AUDIO_TYPES[ext]),
+            user, settings, filename=name, mime=meeting_store.audio_mime(ext),  # 밝힌 형식은 안 믿는다
             size=written, ext=ext, day=day, title=default_title, category=category, mid=mid,
         )
     except BaseException:
@@ -141,7 +141,8 @@ def get_audio(
         raise HTTPException(status_code=410, detail="녹음 파일이 없습니다.")
     return FileResponse(
         path,
-        media_type=str(m.get("mime") or meeting_store.AUDIO_TYPES.get(ext, "application/octet-stream")).split(";")[0],
+        # 적어 둔 mime 이 아니라 확장자로 — 옛 기록엔 올린 쪽이 밝힌 text/html 이 남아 있을 수 있다
+        media_type=meeting_store.audio_mime(ext),
         headers={
             "Content-Disposition": "inline",
             "X-Content-Type-Options": "nosniff",

@@ -10219,6 +10219,60 @@ def test_deleting_a_meeting_mid_transcription_leaves_nothing_behind():
     assert not d.exists()
 
 
+def test_a_recording_is_served_and_transcribed_as_its_extension_not_as_claimed():
+    """녹음의 형식은 서버가 고른 확장자로 정한다 — 올린 쪽이 밝힌 Content-Type 은 믿지 않는다(40차).
+
+    예전엔 밝힌 형식을 적어 두고 돌려줄 때 그대로 썼다. 이름은 `.mp3`, 형식은 `text/html` 로
+    HTML 을 올리면 `/api/meetings/{id}/audio` 가 text/html + nosniff 로 내보내, 그 주소를 연
+    탭에서 스크립트가 앱과 같은 출처로 돌았다(브라우저로 확인). 이미 적힌 옛 기록도 막혀야 하고,
+    받아쓰기에 넘기는 형식도 같은 규칙이어야 한다(`application/octet-stream` 으로 밝힌 .m4a).
+    """
+    from backend import meeting_store, meeting_transcribe
+    from backend.config import get_settings
+
+    _login()
+    html = b"<!doctype html><script>document.title='RAN'</script>"
+    r = client.post("/api/meetings/upload", data={"title": "형식 시험"},
+                    files={"file": ("형식.mp3", html, "text/html")})
+    assert r.status_code == 200, r.text
+    mid = r.json()["id"]
+    s, u = get_settings(), _tester()
+    try:
+        assert r.json()["mime"] == "audio/mpeg", r.json()
+        a = client.get(f"/api/meetings/{mid}/audio")
+        assert a.status_code == 200
+        assert a.headers["content-type"].split(";")[0] == "audio/mpeg", a.headers["content-type"]
+        assert a.headers.get("x-content-type-options") == "nosniff"
+
+        # 고치기 전에 적힌 기록 — 적힌 값이 무엇이든 확장자로 준다
+        items = meeting_store._load(u, s)
+        for m in items:
+            if m["id"] == mid:
+                m["mime"] = "text/html"
+        meeting_store._save(items, u, s)
+        a = client.get(f"/api/meetings/{mid}/audio")
+        assert a.headers["content-type"].split(";")[0] == "audio/mpeg", "옛 기록의 text/html 을 그대로 내보낸다"
+    finally:
+        client.delete(f"/api/meetings/{mid}")
+
+    r = client.post("/api/meetings/upload", data={"title": "형식 시험 2"},
+                    files={"file": ("받아쓰기.m4a", b"fake-m4a", "application/octet-stream")})
+    assert r.status_code == 200, r.text
+    mid = r.json()["id"]
+    try:
+        assert r.json()["mime"] == "audio/mp4", r.json()
+        seen: list[str] = []
+
+        def ask(settings, audio, mime):
+            seen.append(mime)
+            return {"segments": [{"start": "00:00", "end": "00:01", "speaker": "화자 1", "text": "네"}], "summary": ""}
+
+        meeting_transcribe.run_sync(u, s, mid, asker=ask)
+        assert seen == ["audio/mp4"], f"모델에 넘긴 형식: {seen}"
+    finally:
+        client.delete(f"/api/meetings/{mid}")
+
+
 def test_a_folder_left_behind_is_cleaned_up_but_an_upload_in_progress_is_not():
     """미아는 치우되, 올리는 중인 것은 건드리지 않는다.
 
