@@ -57,6 +57,15 @@ class SessionInfo(BaseModel):
     origin: str = "signup"
 
 
+def _client_ip(request: Request) -> str:
+    """요청을 실제로 보낸 곳. 로그인·가입 한도가 이 값으로 센다.
+
+    nginx 가 덮어써서 넘겨주는 값(X-Client-IP ← 클라우드플레어의 CF-Connecting-IP)이라 바깥에서
+    지어낼 수 없다(login_guard 설명). 없으면(직접 호출·시험) 빈 문자열 — 한도가 세지 않는다.
+    """
+    return (request.headers.get("x-client-ip") or "").strip()
+
+
 def _too_many(wait: int) -> HTTPException:
     """로그인 한도에 걸렸다는 429 — IP 몫이든 아이디 잠금이든 같은 말·같은 Retry-After."""
     return HTTPException(
@@ -78,9 +87,8 @@ async def login(
     # (확인해 주면 맞았는지 틀렸는지가 새어 나가 제한이 무의미해진다)
     # 확인과 동시에 '진행 중'으로 잡는다 — 따로 하면 동시에 들어온 요청이 전부
     # 통과해 한 번에 수십 개를 시험해 볼 수 있다.
-    # nginx 가 덮어써서 넘겨주는 값이라 바깥에서 지어낼 수 없다. 없으면(직접 호출)
-    # 빈 문자열이 되어 예전처럼 아이디만으로 센다.
-    ip = (request.headers.get("x-client-ip") or "").strip()
+    # IP 를 모르면(직접 호출) 빈 문자열이 되어 예전처럼 아이디만으로 센다.
+    ip = _client_ip(request)
     # 아이디를 바꿔 가며 두드리는 것은 IP 한 곳의 몫으로 막는다(login_guard.IP_BUDGET).
     # 비밀번호를 보기 **전에** 거른다 — 해시 한 번이 곧 서버 CPU 다.
     ip_wait = login_guard.ip_wait(ip)
@@ -148,8 +156,7 @@ async def login(
 def signup(req: SignupRequest, request: Request, settings: Settings = Depends(get_settings)):
     """가입 신청. 관리자가 승인해야 로그인할 수 있다(개인 서버)."""
     # 한 곳에서 신청을 쏟아 승인 대기 줄(50)을 채우지 못하게 IP 마다 센다(login_guard.SIGNUP_BUDGET).
-    # IP 는 로그인과 같은 곳(nginx 가 덮어쓰는 X-Client-IP)에서 읽는다.
-    wait = login_guard.ip_wait((request.headers.get("x-client-ip") or "").strip(), bucket="signup",
+    wait = login_guard.ip_wait(_client_ip(request), bucket="signup",
                                budget=login_guard.SIGNUP_BUDGET, window=login_guard.SIGNUP_WINDOW)
     if wait:
         raise HTTPException(
