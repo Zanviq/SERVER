@@ -35,8 +35,10 @@ test("문서 화면은 문서가 바뀔 때 그 조상 폴더를 펼치고 그 �
 
 test("폴더 줄에도 이름 바꾸기가 있고, 바꾸면 펼침·위치·열린 문서·밑글이 따라간다(36차)", () => {
   const src = readFileSync(new URL("../src/pages/Notes.tsx", import.meta.url), "utf8");
-  assert.match(src, /aria-label="폴더 이름 변경"/, "폴더 줄에 이름 바꾸기 단추가 없다");
-  assert.match(src, /setRenameFor\(\{ path: child\.path, folder: true \}\)/);
+  // 폴더 줄도 문서 줄과 같은 … 메뉴(이름 변경·이동·휴지통) — 끌기가 안 되는 휴대폰·키보드도 옮긴다(38차)
+  assert.match(src, /setRenameFor\(\{ path: child\.path, folder: true \}\)/, "폴더 줄에 이름 바꾸기가 없다");
+  assert.match(src, /setMoveFor\(\{ path: child\.path, folder: true \}\)/, "폴더 줄에 옮기기(메뉴)가 없다");
+  assert.match(src, /f !== moveFor\.path && !f\.startsWith\(`\$\{moveFor\.path\}\/`\)/, "폴더 이동 대상에 제 자신·하위가 뜬다");
   // 뒤처리(밑글·펼침·위치·열린 문서)는 이름 바꾸기와 옮기기가 한 곳(followMove)을 쓴다
   const follow = src.slice(src.indexOf("const followMove"), src.indexOf("const doRenameNote"));
   for (const must of ["moveDraftsUnder(from, to)", "setExpanded(", "setCurFolder(", "moveDraft(from, to)"]) {

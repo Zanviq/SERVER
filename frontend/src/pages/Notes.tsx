@@ -106,7 +106,7 @@ export function Notes() {
   // 이름 바꿀 것 — 문서이거나 폴더(36차: 폴더는 화면에서 이름을 바꿀 길이 없었다)
   const [renameFor, setRenameFor] = useState<{ path: string; folder: boolean } | null>(null);
   const [renameName, setRenameName] = useState("");
-  const [moveFor, setMoveFor] = useState<NoteSummary | null>(null);
+  const [moveFor, setMoveFor] = useState<{ path: string; folder: boolean } | null>(null);
   const [moveTarget, setMoveTarget] = useState("");
   const [delNotePath, setDelNotePath] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
@@ -647,24 +647,19 @@ export function Notes() {
                 오류만 나는 단추를 보여 주지 않는다(안의 항목에는 그대로 있다). */}
             {!isPinned(child.path) && (
               <>
-                {/* 폴더 이름 바꾸기 — 예전에는 문서에만 있어서, 폴더 이름을 바꾸려면 새 폴더를
-                    만들고 안의 것을 하나씩 옮겨야 했다(36차). */}
-                <button onClick={() => { setRenameFor({ path: child.path, folder: true }); setRenameName(child.name); }}
-                  className={`${FOLDER_ICON} hover:text-accent`}
-                  title="폴더 이름 변경" aria-label="폴더 이름 변경">
-                  <Pencil size={13} />
-                </button>
                 <a href={api.noteArchiveUrl(child.path)} download
                   onClick={(e) => e.stopPropagation()}
                   className={`${FOLDER_ICON} hover:text-accent`}
                   title="폴더를 zip으로 내려받기" aria-label="폴더 다운로드">
                   <Download size={13} />
                 </a>
-                <button onClick={() => setDelFolder(child.path)}
-                  className={`${FOLDER_ICON} hover:text-danger`}
-                  title="폴더 삭제" aria-label="폴더 삭제">
-                  <Trash2 size={13} />
-                </button>
+                {/* 이름 바꾸기·옮기기·지우기는 문서 줄과 같은 … 메뉴로. 옮기기가 끌기뿐이면 휴대폰
+                    (터치는 끌어 놓기가 안 된다)과 키보드로는 폴더를 옮길 길이 없었다(38차). */}
+                <RowMenu
+                  onRename={() => { setRenameFor({ path: child.path, folder: true }); setRenameName(child.name); }}
+                  onMove={() => { setMoveFor({ path: child.path, folder: true }); setMoveTarget(""); }}
+                  onTrash={() => setDelFolder(child.path)}
+                />
               </>
             )}
           </div>
@@ -702,7 +697,7 @@ export function Notes() {
             </button>
             <RowMenu
               onRename={() => { setRenameFor({ path: n.path, folder: false }); setRenameName(fileName(n.path)); }}
-              onMove={() => { setMoveFor(n); setMoveTarget(""); }}
+              onMove={() => { setMoveFor({ path: n.path, folder: false }); setMoveTarget(""); }}
               onTrash={() => setDelNotePath(n.path)}
             />
           </div>
@@ -1077,14 +1072,17 @@ export function Notes() {
       </Modal>
 
       {/* 이동 */}
-      <Modal open={!!moveFor} onClose={() => setMoveFor(null)} title="노트 이동" width="max-w-sm">
+      <Modal open={!!moveFor} onClose={() => setMoveFor(null)} title={moveFor?.folder ? "폴더 이동" : "노트 이동"} width="max-w-sm">
         <div className="space-y-3">
           <label className="block">
             <span className="label">대상 폴더</span>
             <select value={moveTarget} onChange={(e) => setMoveTarget(e.target.value)}
               className="input mt-1 cursor-pointer">
               <option value="">(루트)</option>
-              {folders.map((f) => <option key={f} value={f}>{f}</option>)}
+              {/* 폴더를 옮길 때는 제 자신·하위 폴더를 고를 수 없다(서버도 거절한다) */}
+              {folders
+                .filter((f) => !moveFor?.folder || (f !== moveFor.path && !f.startsWith(`${moveFor.path}/`)))
+                .map((f) => <option key={f} value={f}>{f}</option>)}
             </select>
           </label>
           <div className="flex justify-end gap-2">

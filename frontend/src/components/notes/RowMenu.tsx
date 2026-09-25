@@ -3,8 +3,9 @@ import { createPortal } from "react-dom";
 import { MoreHorizontal, Pencil, FolderInput, Trash2 } from "lucide-react";
 
 /**
- * 파일/문서 행의 "..." 컨텍스트 메뉴(이름 변경 / 이동 / 휴지통).
- * 외부 클릭·ESC로 닫힌다. 노트·AI문서 양쪽에서 공용으로 쓴다.
+ * 문서 트리 줄의 "..." 컨텍스트 메뉴(이름 변경 / 이동 / 휴지통).
+ * 외부 클릭·ESC로 닫힌다. 문서 줄과 폴더 줄이 같이 쓴다 — 폴더도 끌기만으로
+ * 옮길 수 있으면 터치·키보드에선 옮길 길이 없다(38차).
  *
  * 메뉴는 **body로 포탈**한다. 행이 들어 있는 문서 목록은 overflow-auto라,
  * 예전처럼 행 안에 absolute로 두면 목록 아래쪽 행에서는 메뉴가 통째로 잘려
