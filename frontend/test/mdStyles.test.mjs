@@ -104,3 +104,10 @@ test("편집기 라이브 프리뷰가 쓰는 클래스에 스타일이 있다",
     assert.match(editor, new RegExp(`"\\.${cls}"`), `${cls} 에 테마 규칙이 없다`);
   }
 });
+
+test("강조색 말풍선 안의 코드 칠은 글자색을 따른다 — 51차", () => {
+  // 코드 칠의 예약어 색(--accent)이 말풍선 바탕과 같아 `const` 가 보이지 않았다(대비 1.0)
+  assert.match(css, /\.md-on-accent \.prose-server pre \[class\*="hljs-"\] \{\s*color: inherit;/);
+  // 보통 바탕의 칠은 그대로 — 말풍선 밖(AI 답)은 색으로 가른다
+  assert.match(css, /\.prose-server \.hljs-keyword,[\s\S]{0,120}color: rgb\(var\(--accent\)\)/);
+});

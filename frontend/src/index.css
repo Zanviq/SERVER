@@ -163,6 +163,18 @@
   .md-on-accent .link-chip {
     @apply bg-white/20 text-inherit hover:bg-white/30;
   }
+  /* 코드 칠(hljs)은 보통 바탕에 맞춘 테마 색이라, 강조색 말풍선 위에서는 예약어(--accent)가 **바탕과
+     같은 색**이 되어 보이지 않았다(51차 실측: 대비 1.0, 숫자 1.3~1.8 — `const` 가 사라져 보였다).
+     말풍선 안에서는 글자색을 따르고 굵기·기울임으로만 가른다. */
+  .md-on-accent .prose-server pre [class*="hljs-"] {
+    color: inherit;
+  }
+  .md-on-accent .prose-server pre :where(.hljs-keyword, .hljs-literal, .hljs-built_in, .hljs-type, .hljs-title) {
+    @apply font-semibold;
+  }
+  .md-on-accent .prose-server pre :where(.hljs-comment, .hljs-quote, .hljs-meta) {
+    @apply italic opacity-80;
+  }
   /* 대화 지도에서 답을 기다리는 노드 — 점선 테가 천천히 돈다.
      움직임을 줄여 달라는 설정에서는 돌지 않고 그대로 서 있는다(테는 남는다). */
   .tree-pending {
