@@ -11469,6 +11469,46 @@ def test_ai_turns_wait_on_their_own_threads():
     assert ai_lanes.inflight("cap-user") == 0, "돌지 못한 응답이 몫을 쥔 채 남았다"
 
 
+def test_names_with_brackets_can_be_linked():
+    """이름에 대괄호가 든 문서도 [note/…] 링크로 걸린다 — 경로의 `[`·`]` 는 %5B·%5D 로 싣는다.
+
+    30차 실측: `회의록 [초안].md` 가 후보에 떠서 고를 수 있는데, 넣은 링크 `[note/…/회의록 [초안].md]`
+    는 첫 `]` 에서 끊겨 본문도 안 실리고 '못 찾음'에도 안 나왔다(조용히 아무 일도 없었다).
+    """
+    from urllib.parse import unquote
+
+    from backend import links
+
+    _login()
+    for path, body in (("괄호30/회의록 [초안].md", "BRACKET-BODY-1"),
+                       ("괄호30/회의 [2026]/안건.md", "BRACKET-BODY-2")):
+        assert client.put("/api/notes/save", json={"path": path, "content": body}).status_code == 200
+    try:
+        items = client.get("/api/links/suggest", params={"q": "note/괄호30/"}).json()["items"]
+        by_label = {i["label"]: i for i in items}
+        doc = by_label["회의록 [초안].md"]
+        assert doc["path"] == "note/괄호30/회의록 %5B초안%5D.md", doc
+        folder = by_label["회의 [2026]"]
+        assert folder["path"] == "note/괄호30/회의 %5B2026%5D" and folder["folder"], folder
+        # 폴더를 골라 들어가면(링크 모양 그대로 친 것) 그 안이 나온다
+        inside = client.get("/api/links/suggest", params={"q": folder["path"] + "/"}).json()["items"]
+        assert [i["label"] for i in inside] == ["안건.md"], inside
+
+        # 고른 것을 넣은 링크가 풀린다 — 본문이 모델에게 간다
+        msg = f"이것 읽어 [{doc['path']}] 그리고 [{folder['path']}]"
+        assert links.find_refs(msg) == [doc["path"], folder["path"]]
+        sent = client.post("/api/ai/preview", json={"message": msg, "mode": "assistant"}).json()
+        assert "BRACKET-BODY-1" in str(sent), str(sent)[:300]
+        assert "안건.md" in str(sent)                      # 이름이 `]` 로 끝나는 폴더도 목록이 나온다
+        # 누르면 그 문서를 연다(화면 주소는 실제 이름)
+        opened = client.get("/api/links/open", params={"path": doc["path"]}).json()
+        assert opened["found"] and unquote(opened["href"]) == "/notes?path=괄호30/회의록 [초안].md", opened
+        # 보여 줄 이름은 실제 이름
+        assert links.plain(f"[{doc['path']}]") == "회의록 [초안].md"
+    finally:
+        client.delete("/api/notes/folder", params={"path": "괄호30"})
+
+
 def test_a_stale_diary_tab_cannot_silently_overwrite_newer_text():
     """두 곳에서 같은 날 일기를 고치면, 옛 글에서 이어 쓴 저장은 덮지 않고 409 다.
 

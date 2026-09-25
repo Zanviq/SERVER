@@ -40,7 +40,15 @@ export function canonKind(k: string): LinkKind | null {
   return (LINK_KINDS as readonly string[]).includes(c) ? (c as LinkKind) : null;
 }
 
-/** `note/서버/기록.md` → { kind: "note", rest: "서버/기록.md" } */
+/**
+ * 링크 경로 속 대괄호의 모양 — `[`·`]` 는 %5B·%5D 로 싣는다(backend links.escape 와 같다).
+ * 대괄호가 든 이름(`회의록 [초안].md`)을 그대로 넣으면 첫 `]` 에서 링크가 끊겼다(30차).
+ * 경로는 **이 모양 그대로** 오간다(후보·열기·#link/) — 되돌리는 것은 이름을 **보여 줄 때**뿐이다
+ * (linkLabel). 되돌린 경로를 다시 넘기면 `회의 [2026]` 의 끝 `]` 를 링크 괄호로 알고 떼어 낸다.
+ */
+export const unescapeLinkPath = (rest: string) => rest.replace(/%5d/gi, "]").replace(/%5b/gi, "[");
+
+/** `note/서버/기록.md` → { kind: "note", rest: "서버/기록.md" } — rest 는 링크 모양 그대로 */
 export function splitLink(path: string): { kind: LinkKind | null; rest: string } {
   const p = path.trim().replace(/^\[|\]$/g, "").replace(/^\/+|\/+$/g, "");
   const i = p.indexOf("/");
@@ -63,7 +71,7 @@ export function findRefs(text: string): string[] {
 /** 칩에 보일 짧은 이름. 경로 전체는 마우스를 올리면 보인다. */
 export function linkLabel(path: string): string {
   const { kind, rest } = splitLink(path);
-  const parts = rest.split("/").filter(Boolean);
+  const parts = unescapeLinkPath(rest).split("/").filter(Boolean);
   const last = parts[parts.length - 1] ?? rest;
   // 일정은 제목만으로는 어느 날 것인지 모른다
   if (kind === "event" && parts.length >= 2) return `${parts[0]} ${parts.slice(1).join("/")}`;

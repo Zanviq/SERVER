@@ -100,3 +100,21 @@ test("읽기 뷰 — 링크는 눌리는 링크로, 코드 속은 그대로", ()
   // 이름에 마크다운 기호가 있어도 그대로 보인다(기울임이 되지 않는다)
   assert.ok(render("[note/a_b_c.md]", { wiki: true }).includes(">a_b_c.md</a>"));
 });
+
+test("대괄호가 든 이름 — 경로는 %5B·%5D 모양으로 오가고, 보일 때만 되돌린다(30차)", () => {
+  // 서버가 후보로 주는 경로(backend links.escape)를 고르면 그대로 들어간다
+  const typed = "읽어 [note/회의";
+  const q = linkQueryAt(typed, typed.length);
+  const doc = "note/괄호/회의록 %5B초안%5D.md";
+  const picked = applyPick(typed, q, doc, false);
+  assert.equal(picked.text, `읽어 [${doc}]`);
+  // 넣은 링크가 링크로 읽힌다 — 예전 모양(날 대괄호)은 첫 `]` 에서 끊겼다
+  assert.deepEqual(findRefs(picked.text), [doc]);
+  assert.deepEqual(findRefs("[note/괄호/회의록 [초안].md]"), [], "날 대괄호는 링크가 아니다(끊긴다)");
+  // 보여 줄 이름은 실제 이름. 이름이 `]` 로 끝나는 폴더도 경로는 그대로 오간다
+  assert.equal(linkLabel(doc), "회의록 [초안].md");
+  const folder = "note/괄호/회의 %5B2026%5D";
+  assert.equal(linkLabel(folder), "회의 [2026]");
+  assert.equal(splitLink(`[${folder}]`).rest, "괄호/회의 %5B2026%5D", "경로를 되돌려 넘기면 끝 ] 가 떨어진다");
+  assert.equal(plainRefs(`[${doc}] 보기`), "회의록 [초안].md 보기");
+});

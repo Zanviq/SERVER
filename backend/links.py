@@ -68,6 +68,21 @@ def segment(name: str, fallback: str = "_") -> str:
     return (s or fallback)[:160]
 
 
+def escape(rest: str) -> str:
+    """링크 경로에 대괄호를 싣는 법 — `[`·`]` 를 %5B·%5D 로.
+
+    `[note/회의록 [초안].md]` 는 첫 `]` 에서 끊겨 링크가 되지 않는다(REF). 문서 이름은 실제
+    파일 이름이라 segment() 처럼 바꿔 버릴 수도 없다. 30차 실측: 후보에는 떠서 고를 수 있는데,
+    넣고 나면 조용히 아무 일도 없었다(본문도 안 실리고 '못 찾음'에도 안 나왔다). 이 두 글자만
+    바꾸므로 대괄호 없는 이름(`100% 달성.md` 도)의 링크는 예전 그대로다. 되돌리기는 split().
+    """
+    return rest.replace("[", "%5B").replace("]", "%5D")
+
+
+def _unescape(rest: str) -> str:
+    return re.sub(r"%5[bB]", "[", re.sub(r"%5[dD]", "]", rest))
+
+
 def canon_kind(kind: str) -> str | None:
     k = str(kind or "").strip().lower()
     k = ALIASES.get(k, k)
@@ -75,10 +90,13 @@ def canon_kind(kind: str) -> str | None:
 
 
 def split(path: str) -> tuple[str | None, str]:
-    """`note/서버/기록.md` → ("note", "서버/기록.md"). 갈래를 모르면 (None, …)."""
+    """`note/서버/기록.md` → ("note", "서버/기록.md"). 갈래를 모르면 (None, …).
+
+    경로 속 %5B·%5D 는 대괄호로 되돌린다(escape — 대괄호가 든 이름을 링크로 실은 것).
+    """
     p = str(path or "").strip().strip("[]").strip().strip("/")
     head, _, rest = p.partition("/")
-    return canon_kind(head), rest.strip("/")
+    return canon_kind(head), _unescape(rest.strip("/"))
 
 
 def find_refs(text: str) -> list[str]:
@@ -88,7 +106,9 @@ def find_refs(text: str) -> list[str]:
         kind, rest = split(m.group(1))
         if kind is None or not rest:
             continue
-        path = f"{kind}/{rest}"
+        # 링크 모양(escape)으로 되돌려 둔다 — 풀 때 split 이 다시 되돌린다. 되돌린 이름을 그대로
+        # 넘기면 `회의 [2026]` 의 끝 `]` 를 split 이 링크 괄호로 알고 떼어 낸다.
+        path = f"{kind}/{escape(rest)}"
         if path not in out:
             out.append(path)
     return out
@@ -183,9 +203,15 @@ def notes_folder(rel: str) -> str:
     return f"/notes?folder={_q(rel)}"
 
 
+def rest_of(e: Entry) -> str:
+    """항목 경로에서 갈래를 뗀 **실제** 이름 경로(escape 를 되돌린 것). 파일·화면과 맞댈 때 쓴다.
+    후보 순위(_rank)는 사용자가 친 글과 맞대므로 링크에 실린 모양 그대로 둔다."""
+    return _unescape(e.path.split("/", 1)[1]) if "/" in e.path else ""
+
+
 def href_of(e: Entry) -> str:
     """이 링크 항목을 여는 화면 주소. 갈래·폴더를 가리키면 그 화면의 목록으로."""
-    rest = e.path.split("/", 1)[1] if "/" in e.path else ""
+    rest = rest_of(e)
     if e.kind == "note":
         return notes_folder(rest) if e.folder else screen_of("note", rest)
     if e.folder:
@@ -209,14 +235,15 @@ def _note_entries(user: SessionUser, settings: Settings) -> list[Entry]:
     files, dirs = walk_all(root)
     ms = mounts.mounts(user, settings)
     out: list[Entry] = []
+    # 경로는 링크에 그대로 실린다 — 이름의 대괄호는 escape 로(보이는 이름 label 은 그대로)
     for d in [*mounts.folders(ms), *dirs]:
-        out.append(Entry(f"note/{d}", "note", d.rsplit("/", 1)[-1], "폴더", folder=True))
+        out.append(Entry(f"note/{escape(d)}", "note", d.rsplit("/", 1)[-1], "폴더", folder=True))
     for f in files:
         # 최근에 고친 것이 앞에 오게(같은 점수 안에서)
-        out.append(Entry(f"note/{f.rel}", "note", f.name, _parent(f.rel),
+        out.append(Entry(f"note/{escape(f.rel)}", "note", f.name, _parent(f.rel),
                          order=-f.stat.st_mtime))
     for f in mounts.files(ms):
-        out.append(Entry(f"note/{f.rel}", "note", f.rel.rsplit("/", 1)[-1], _parent(f.rel)))
+        out.append(Entry(f"note/{escape(f.rel)}", "note", f.rel.rsplit("/", 1)[-1], _parent(f.rel)))
     return out
 
 
@@ -462,7 +489,7 @@ def _find(items: list[Entry], rest: str) -> Entry | None:
     """
     want = rest.strip("/")
     for e in items:
-        if e.path.split("/", 1)[1] == want:
+        if rest_of(e) == want:
             return e
     tail = want.rsplit("/", 1)[-1].lower()
     same = [e for e in items if not e.folder and e.label.lower() == tail]
@@ -502,7 +529,7 @@ def _listing(items: list[Entry]) -> str:
 
 def _resolve_note(user: SessionUser, settings: Settings, rel: str) -> Resolved:
 
-    path = f"note/{rel}"
+    path = f"note/{escape(rel)}"
     # 요청 문자열로 먼저 — 없는 경로라도 막아서 존재 여부를 흘리지 않는다
     if _is_sensitive(rel):
         return Resolved(path, "note", rel.rsplit("/", 1)[-1], True,
@@ -520,7 +547,7 @@ def _resolve_note(user: SessionUser, settings: Settings, rel: str) -> Resolved:
             target = alt
     if target.is_dir():
         kids = [e for e in _note_entries(user, settings)
-                if _parent(e.path.split("/", 1)[1]) == to_rel(root, target)]
+                if _parent(rest_of(e)) == to_rel(root, target)]
         return Resolved(path, "note", target.name, True, _listing(kids),
                         href=notes_folder(rel))
     if not target.exists():
@@ -538,7 +565,7 @@ def _resolve_note(user: SessionUser, settings: Settings, rel: str) -> Resolved:
     if not target.is_file():
         return Resolved(path, "note", note="이 경로의 문서를 찾지 못했습니다.")
     real_rel = to_rel(root, target)
-    r = Resolved(f"note/{real_rel}", "note", target.name, True,
+    r = Resolved(f"note/{escape(real_rel)}", "note", target.name, True,
                  href=screen_of("note", real_rel))
     if _is_sensitive(real_rel):
         r.note = "민감 문서로 판단되어 AI 에게 보내지 않았습니다."
@@ -552,7 +579,7 @@ def _resolve_note(user: SessionUser, settings: Settings, rel: str) -> Resolved:
 def _resolve_mounted(user: SessionUser, settings: Settings, rel: str) -> Resolved:
     """`note/논문/…`·`note/회의/…`. 원본(PDF·녹음)은 뽑아 둔 글로 대신 읽는다."""
 
-    path = f"note/{rel}"
+    path = f"note/{escape(rel)}"
     clean = rel.strip("/")
     if clean in mounts.MOUNT_DIRS:
         ms = [m for m in mounts.mounts(user, settings) if m.folder.startswith(clean + "/")]
@@ -603,7 +630,8 @@ def _meeting_text(user: SessionUser, settings: Settings, e: Entry) -> str:
     if docs:
         # 회의록은 문서 트리에 붙어 있으면 그 경로로 따로 읽을 수 있다
         folder = next((m.folder for m in mounts.mounts(user, settings) if m.item_id == e.ident), "")
-        lines.append("회의록: " + ", ".join(f"[note/{folder}/{d}.md]" if folder else str(d)
+        # 회의 제목(=폴더)에 대괄호가 있으면 escape 해야 링크로 읽힌다
+        lines.append("회의록: " + ", ".join(f"[note/{escape(f'{folder}/{d}.md')}]" if folder else str(d)
                                           for d in docs))
     text = meeting_store.transcript_text(user, settings, e.ident, m.get("speakers") or {})
     lines.append("--- 받아쓰기 ---\n" + (text or "(아직 받아쓰지 않았습니다)"))
