@@ -344,8 +344,25 @@ export function Todo() {
     );
   };
 
-  const toggleDone = (t: TodoItem) =>
-    guard(() => api.todoUpdate(t.id, { done: !t.done }));
+  // 완료 표시는 guard 를 타지 않는다(44차). guard 는 다른 조작이 도는 동안(busy) 들어온 것을 **말없이
+  // 버린다** — 목록을 훑으며 잇달아 누르면 사이의 것들이 완료되지 않았다(실측: 60ms 간격 넷 중 둘, 알림
+  // 없음). 서로 다른 할 일의 완료는 겹쳐도 되는 일이다. 또 매번 보드 전체(할 일 600개면 141KB)를 다시
+  // 받아 전부 다시 그렸다 — 서버가 돌려준 그 한 줄과 배지 수만 고친다(완료는 정렬 순서를 바꾸지 않는다).
+  const toggleDone = async (t: TodoItem) => {
+    try {
+      const saved = await api.todoUpdate(t.id, { done: !t.done });
+      setTodos((ts) => ts.map((x) => (x.id === t.id ? saved : x)));
+      if (saved.done !== t.done) {
+        const cid = saved.category_id || UNCATEGORIZED;
+        setCounts((c) => {
+          const row = c[cid] ?? { total: 0, done: 0 };
+          return { ...c, [cid]: { ...row, done: row.done + (saved.done ? 1 : -1) } };
+        });
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "완료 표시를 바꾸지 못했습니다");
+    }
+  };
 
   const removeTodo = (t: TodoItem) =>
     guard(async () => {
