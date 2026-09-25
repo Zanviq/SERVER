@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import threading
 import time
 from pathlib import Path
 
@@ -31,8 +30,7 @@ TEXT_FALLBACK_CHARS = 60000
 #: text.txt 에 남기는 본문 상한
 TEXT_STORE_CHARS = 400000
 
-_running: set[tuple[str, str]] = set()
-_running_guard = threading.Lock()
+_jobs = ai_lanes.HeavyJobs("논문 추출")
 
 _PROMPT = """You are cataloguing an academic paper for a personal reading workspace.
 Read the paper and answer with a single JSON object (no prose, no code fence) with these keys:
@@ -271,35 +269,19 @@ def _model_of(user: SessionUser, settings: Settings) -> str:
 
 
 def start(user: SessionUser, settings: Settings, pid: str) -> bool:
-    """백그라운드 추출을 시작한다. 이미 돌고 있으면 False."""
-    key = (user.username, pid)
-    with _running_guard:
-        if key in _running:
-            return False
-        _running.add(key)
+    """백그라운드 추출을 시작한다. 이미 돌고 있으면 False.
 
-    def worker():
-        try:
-            # PDF 를 통째로 읽어 싣는 일이라 동시에 몇 개만 돈다(ai_lanes.heavy_job — 12편을
-            # 한꺼번에 올리면 메모리가 1GB 넘게 뛰었다). 기다리는 동안에도 is_running 은 참이다.
-            with ai_lanes.heavy_job():
-                run_sync(user, settings, pid)
-        except Exception:  # noqa: BLE001
-            logger.exception("논문 추출 스레드 실패: %s", pid)
-            try:
-                paper_store.update_meta(user, settings, pid, {
-                    "status": paper_store.STATUS_FAILED, "error": "추출 중 오류가 났습니다.",
-                })
-            except Exception:  # noqa: BLE001
-                pass
-        finally:
-            with _running_guard:
-                _running.discard(key)
-
-    threading.Thread(target=worker, name=f"paper-extract-{pid[:8]}", daemon=True).start()
-    return True
+    PDF 를 통째로 읽어 싣는 일이라 동시에 몇 개만 돈다(ai_lanes.HeavyJobs — 여러 편을 한꺼번에
+    올리면 전부가 동시에 돌아 메모리가 1GB 넘게 뛰었다).
+    """
+    return _jobs.start(
+        (user.username, pid), f"paper-extract-{pid[:8]}",
+        lambda: run_sync(user, settings, pid),
+        lambda: paper_store.update_meta(user, settings, pid, {
+            "status": paper_store.STATUS_FAILED, "error": "추출 중 오류가 났습니다.",
+        }),
+    )
 
 
 def is_running(user: SessionUser, pid: str) -> bool:
-    with _running_guard:
-        return (user.username, pid) in _running
+    return _jobs.is_running((user.username, pid))

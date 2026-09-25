@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import logging
 import threading
 import weakref
 from collections.abc import AsyncIterator, Callable, Iterator
@@ -25,6 +26,8 @@ from contextlib import contextmanager
 import anyio
 import anyio.to_thread
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
 
 #: 서버 전체에서 동시에 모델을 기다릴 수 있는 AI 차례 수(넘치면 줄을 선다). 스레드는 거의
 #: 네트워크를 기다리며 놀고 있으므로 이만큼은 파이에서도 가볍다.
@@ -121,6 +124,49 @@ def heavy_job() -> Iterator[None]:
     """
     with _heavy:
         yield
+
+
+class HeavyJobs:
+    """항목마다 하나씩만 도는 무거운 뒷일 — 논문 추출과 회의 받아쓰기가 같은 모양이라 한 벌로.
+
+    - 같은 항목을 두 번 세우지 않는다. 자리를 기다리는 것도 '도는 중'이다.
+    - 도는 것은 서버 전체에서 HEAVY_JOBS 개씩(heavy_job).
+    - 일이 예외로 끝나면 on_fail 로 항목에 까닭을 남긴다 — 상태가 '처리 중'에 멈춰 있지 않게.
+    """
+
+    def __init__(self, what: str):
+        self._what = what
+        self._running: set[tuple[str, str]] = set()
+        self._guard = threading.Lock()
+
+    def start(self, key: tuple[str, str], thread_name: str,
+              work: Callable[[], object], on_fail: Callable[[], object]) -> bool:
+        """뒷일을 세운다. 이미 서 있으면 False."""
+        with self._guard:
+            if key in self._running:
+                return False
+            self._running.add(key)
+
+        def worker() -> None:
+            try:
+                with heavy_job():
+                    work()
+            except Exception:  # noqa: BLE001
+                logger.exception("%s 스레드 실패: %s", self._what, key[1])
+                try:
+                    on_fail()
+                except Exception:  # noqa: BLE001
+                    pass
+            finally:
+                with self._guard:
+                    self._running.discard(key)
+
+        threading.Thread(target=worker, name=thread_name, daemon=True).start()
+        return True
+
+    def is_running(self, key: tuple[str, str]) -> bool:
+        with self._guard:
+            return key in self._running
 
 
 def streaming(it: Iterator[str], username: str) -> AsyncIterator[str]:

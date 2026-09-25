@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import threading
 import time
 from pathlib import Path
 
@@ -28,8 +27,7 @@ INLINE_AUDIO_MAX = 18 * 1024 * 1024
 #: Files API 처리 대기 상한(초)
 FILE_WAIT_SECS = 180
 
-_running: set[tuple[str, str]] = set()
-_running_guard = threading.Lock()
+_jobs = ai_lanes.HeavyJobs("회의 받아쓰기")
 
 _PROMPT = """You are transcribing a meeting recording for the participant's personal workspace.
 Listen to the whole audio and answer with a single JSON object (no prose, no code fence):
@@ -204,35 +202,18 @@ def _model_of(user: SessionUser, settings: Settings) -> str:
 
 
 def start(user: SessionUser, settings: Settings, mid: str) -> bool:
-    """백그라운드 받아쓰기를 시작한다. 이미 돌고 있으면 False."""
-    key = (user.username, mid)
-    with _running_guard:
-        if key in _running:
-            return False
-        _running.add(key)
+    """백그라운드 받아쓰기를 시작한다. 이미 돌고 있으면 False.
 
-    def worker():
-        try:
-            # 녹음을 통째로 읽어 싣는 일이라 동시에 몇 개만 돈다(ai_lanes.heavy_job). 기다리는
-            # 동안에도 is_running 은 참이다 — 같은 회의를 두 번 줄 세우지 않는다.
-            with ai_lanes.heavy_job():
-                run_sync(user, settings, mid)
-        except Exception:  # noqa: BLE001
-            logger.exception("회의 받아쓰기 스레드 실패: %s", mid)
-            try:
-                meeting_store.update_meta(user, settings, mid, {
-                    "status": meeting_store.STATUS_FAILED, "error": "받아쓰기 중 오류가 났습니다.",
-                })
-            except Exception:  # noqa: BLE001
-                pass
-        finally:
-            with _running_guard:
-                _running.discard(key)
-
-    threading.Thread(target=worker, name=f"meeting-transcribe-{mid[:8]}", daemon=True).start()
-    return True
+    녹음을 통째로 읽어 싣는 일이라 동시에 몇 개만 돈다(ai_lanes.HeavyJobs).
+    """
+    return _jobs.start(
+        (user.username, mid), f"meeting-transcribe-{mid[:8]}",
+        lambda: run_sync(user, settings, mid),
+        lambda: meeting_store.update_meta(user, settings, mid, {
+            "status": meeting_store.STATUS_FAILED, "error": "받아쓰기 중 오류가 났습니다.",
+        }),
+    )
 
 
 def is_running(user: SessionUser, mid: str) -> bool:
-    with _running_guard:
-        return (user.username, mid) in _running
+    return _jobs.is_running((user.username, mid))
