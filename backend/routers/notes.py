@@ -186,13 +186,11 @@ def _summary_of(rel: str, st) -> NoteSummary:
     )
 
 
-# 서버 쪽 사정으로 실패한 것들 — 이름을 바꿔도 소용없으니 500이 맞다.
+# 서버 쪽 사정으로 실패한 것 중 **디스크 문제가 아닌** 것 — 이름을 바꿔도 소용없으니 500이 맞다.
+# 디스크 문제(가득 참·권한·읽기 전용·입출력)는 disk_errors 가 먼저 제 이름으로 알린다(53차).
 _SERVER_FAULT_ERRNOS = {
     e
-    for e in (
-        getattr(errno, n, None)
-        for n in ("ENOSPC", "EACCES", "EPERM", "EROFS", "EIO", "EDQUOT", "EMFILE", "ENFILE")
-    )
+    for e in (getattr(errno, n, None) for n in ("EMFILE", "ENFILE"))
     if e is not None
 }
 
