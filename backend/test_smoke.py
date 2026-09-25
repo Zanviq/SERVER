@@ -622,7 +622,7 @@ def test_notes_wikilinks_and_graph():
     # 그래프: 노드 3, 링크 A->B, A->C, B->A
     g = client.get("/api/notes/graph", params={"folder": box}).json()
     assert len(g["nodes"]) == 3, g["nodes"]
-    pairs = {(l["source"], l["target"]) for l in g["links"]}
+    pairs = {(link["source"], link["target"]) for link in g["links"]}
     assert ("A", "B") in pairs and ("A", "C") in pairs and ("B", "A") in pairs
     # 전문 검색: 내용("alias")으로 매칭
     hits = client.get("/api/notes/search?q=alias").json()

@@ -116,9 +116,9 @@ def _clean_session(raw: dict, idx: int = 0) -> dict:
         # head 가 없거나 가리키는 것이 사라졌으면 마지막 메시지를 본다(옛 파일)
         "head": head if head in ids else (msgs[-1].get("id", "") if msgs else ""),
         "links": [
-            {"from_id": str(l.get("from_id") or ""), "to_id": str(l.get("to_id") or "")}
-            for l in links if isinstance(l, dict)
-            and l.get("from_id") in ids and l.get("to_id") in ids
+            {"from_id": str(link.get("from_id") or ""), "to_id": str(link.get("to_id") or "")}
+            for link in links if isinstance(link, dict)
+            and link.get("from_id") in ids and link.get("to_id") in ids
         ] if isinstance(links, list) else [],
         "vocab_done": [str(k) for k in done if k] if isinstance(done, list) else [],
         # 지도에서 손으로 옮겨 둔 노드 자리. 없으면 나무 모양대로 자동 배치한다.
@@ -264,8 +264,8 @@ def _trim(space: dict) -> None:
                 m["parent"] = None
         if s["head"] not in ids:
             s["head"] = s["messages"][-1].get("id", "") if s["messages"] else ""
-        s["links"] = [l for l in s["links"]
-                      if l["from_id"] in ids and l["to_id"] in ids][-MAX_LINKS:]
+        s["links"] = [link for link in s["links"]
+                      if link["from_id"] in ids and link["to_id"] in ids][-MAX_LINKS:]
         s["vocab_done"] = s["vocab_done"][-MAX_DONE:]
         s["layout"] = clean_layout(s.get("layout"), ids)
 
@@ -397,8 +397,8 @@ def connect(path: Path, from_id: str, to_id: str, on: bool) -> bool:
         ids = {m.get("id") for m in data["messages"]}
         if from_id not in ids or to_id not in ids:
             return False
-        links = [l for l in data["links"]
-                 if not (l["from_id"] == from_id and l["to_id"] == to_id)]
+        links = [link for link in data["links"]
+                 if not (link["from_id"] == from_id and link["to_id"] == to_id)]
         if on:
             if _is_ancestor(data["messages"], from_id, to_id) or \
                _is_ancestor(data["messages"], to_id, from_id):

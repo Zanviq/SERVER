@@ -341,7 +341,7 @@ def backlinks_for(notes_dir: Path, stem: str) -> list[str]:
     """주어진 노트(stem)를 가리키는 다른 노트들의 stem 목록."""
     graph = build_graph(notes_dir)
     return [
-        l["source"]
-        for l in graph["links"]
-        if l["target"].lower() == stem.lower()
+        link["source"]
+        for link in graph["links"]
+        if link["target"].lower() == stem.lower()
     ]
