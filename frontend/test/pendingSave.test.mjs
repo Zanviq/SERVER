@@ -135,6 +135,44 @@ console.log("대기 중인 자동저장");
 }
 
 {
+  // 29차: 실패한 저장은 **스스로 다시 해 본다** — 배포로 서버가 내려간 동안 친 글이, 손을 떼고
+  // 기다리면 서버가 돌아와도 영영 저장되지 않았다(새 입력이나 화면 이동이 있어야만 다시 보냈다).
+  const waits = [];
+  const jobs = new Map();
+  let next = 1;
+  const timers = {
+    set: (fn, ms) => { waits.push(ms); jobs.set(next, fn); return next++; },
+    clear: (id) => { jobs.delete(id); },
+  };
+  const fire = async () => {
+    const all = [...jobs.values()];
+    jobs.clear();
+    for (const f of all) f();
+    await new Promise((r) => setImmediate(r));
+  };
+  const p = new PendingSave(timers);
+  let up = false;
+  let tries = 0;
+  p.schedule(900, () => { tries++; return up; });   // 서버가 내려가 있다
+  await fire();                                      // 자동 저장 — 실패
+  check("실패하면 스스로 다시 해 볼 타이머를 건다", jobs.size === 1, String(jobs.size));
+  await fire();                                      // 다시 — 또 실패
+  await fire();
+  check("다시 해 볼 간격은 늘어난다", waits.slice(1, 4).join(",") === "3000,6000,12000", waits.join(","));
+  up = true;                                         // 서버가 돌아왔다
+  await fire();
+  check("서버가 돌아오면 손대지 않아도 저장된다", !p.scheduled && tries === 4, `tries=${tries}`);
+  check("저장되면 더 해 보지 않는다", jobs.size === 0, String(jobs.size));
+
+  // 버리면(문서를 지웠다) 다시 해 보지 않는다
+  up = false;
+  p.schedule(900, () => false);
+  await fire();
+  p.cancel();
+  check("버리면 다시 해 볼 타이머도 없다", jobs.size === 0 && !p.scheduled, String(jobs.size));
+}
+
+{
   // 실패한 뒤 새 입력이 오면 **새 내용이 이긴다**(옛 예약을 덮어쓴다)
   const clock = fakeTimers();
   const p = new PendingSave(clock.timers);

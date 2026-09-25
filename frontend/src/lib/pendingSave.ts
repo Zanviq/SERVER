@@ -30,10 +30,19 @@ const REAL: Timers = {
   clear: (id) => window.clearTimeout(id),
 };
 
+/**
+ * 실패한 저장을 **스스로** 다시 해 보는 간격(ms). 배포할 때마다 서버가 30~60초 내려가는데, 그동안
+ * 친 글은 새 입력이나 화면 이동이 있어야만 다시 보내졌다 — 손을 떼고 기다리면 서버가 돌아와도
+ * 영영 저장되지 않았다(29차 실측: 30초가 지나도 서버에 없었다). 점점 늘려 서버를 두드리지 않는다.
+ */
+export const RETRY_MS = [3000, 6000, 12000, 24000, 30000];
+
 /** 대기 중인 자동저장 **하나**를 다룬다(항상 최신 것 하나만 남는다). */
 export class PendingSave {
   private id: number | null = null;
   private job: SaveJob | null = null;
+  /** 잇달아 실패한 수 — 다시 해 볼 간격을 고른다(성공하면 0). */
+  private failures = 0;
 
   constructor(private timers: Timers = REAL) {}
 
@@ -70,7 +79,19 @@ export class PendingSave {
     }
     // **이 저장만** 지운다. 저장이 가는 동안 새 입력이 예약됐으면 그것은 남겨야 한다 — 예전에는
     // 무조건 비워서, 가는 중에 친 마지막 글자가 저장되지 않았고 화면은 "저장됨"이었다(29차).
-    if (ok && this.job === job) this.job = null;
+    if (ok) {
+      this.failures = 0;
+      if (this.job === job) this.job = null;
+    } else if (this.job === job && this.id === null) {
+      // 실패했고 그 뒤로 새 입력도 없다 — 스스로 다시 해 본다(RETRY_MS). 새 입력·흘려보내기·
+      // 버리기가 오면 그쪽이 이 타이머를 대신한다.
+      const wait = RETRY_MS[Math.min(this.failures, RETRY_MS.length - 1)];
+      this.failures++;
+      this.id = this.timers.set(() => {
+        this.id = null;
+        void this.run({ keepalive: false });
+      }, wait);
+    }
     return ok;
   }
 
@@ -90,6 +111,7 @@ export class PendingSave {
     if (this.id !== null) this.timers.clear(this.id);
     this.id = null;
     this.job = null;
+    this.failures = 0;
     return had;
   }
 }
