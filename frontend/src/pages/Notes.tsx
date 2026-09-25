@@ -14,6 +14,7 @@ import { NOTE_PATH_MIME } from "../components/notes/dragTypes";
 import { Modal } from "../components/ui/Modal";
 import { api, ApiError, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
 import { looksLikeExtension } from "../lib/names";
+import { ancestorsOf } from "../lib/notePath";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { Draft, draftAgeText, dropDraft, keepDraft, moveDraft, readDraft } from "../lib/draftBackup";
 import { isSubmitEnter } from "../lib/keys";
@@ -492,6 +493,25 @@ export function Notes() {
     }
   }, [params, notes, openByTitle, openNote, setParams]);
 
+  // 연 문서가 트리에서 **보이게** — 조상 폴더를 펼치고 그 줄까지 내린다. 링크·검색·그래프로
+  // 열면 폴더가 접힌 채였다. 문서 2천 개 트리에서 지금 연 문서가 어디 있는지 찾을 수 없었고
+  // (21차 실측), 이름 바꾸기·옮기기·지우기 메뉴는 그 줄에만 있어 거기까지 손으로 찾아가야 했다.
+  // 문서가 바뀔 때만 한다 — 연 채로 사용자가 폴더를 접으면 그대로 둔다.
+  const revealing = useRef<string | null>(null);
+  useEffect(() => {
+    if (!current) return;
+    revealing.current = current;
+    const up = ancestorsOf(current);
+    setExpanded((s) => (up.every((p) => s.has(p)) ? s : new Set([...s, ...up])));
+  }, [current]);
+  useEffect(() => {
+    if (!current || revealing.current !== current) return;
+    const row = document.querySelector(`[data-note="${CSS.escape(current)}"]`);
+    if (!row) return;  // 트리를 아직 못 받았다 — 받으면 다시 온다
+    row.scrollIntoView({ block: "nearest" });
+    revealing.current = null;
+  }, [current, expanded, notes]);
+
   const toggleFolder = (path: string) => {
     setCurFolder(path);
     setExpanded((s) => {
@@ -634,7 +654,7 @@ export function Notes() {
     }
     for (const n of node.notes) {
       rows.push(
-        <li key={"n:" + n.path}
+        <li key={"n:" + n.path} data-note={n.path}
           draggable
           onDragStart={(e) => {
             e.dataTransfer.setData("text/plain", n.path);
