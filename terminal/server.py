@@ -25,11 +25,16 @@ import websockets
 from itsdangerous import URLSafeTimedSerializer
 from urllib.parse import urlparse
 
+from revoked import is_revoked
+
 SECRET = os.getenv("SESSION_SECRET", "")
 SALT = "server-session-v1"
 TTL = int(os.getenv("SESSION_TTL_SECONDS", "3600"))
 # 계정 저장소(읽기 전용 마운트). 없으면 아무도 통과시키지 않는다(fail closed).
 ACCOUNTS_FILE = os.getenv("ACCOUNTS_FILE", "/accounts.json")
+# 로그아웃한 토큰 목록 — 백엔드가 계정 파일과 같은 저장소 폴더에 쓴다(revoked.py)
+REVOKED_FILE = os.getenv(
+    "REVOKED_FILE", os.path.join(os.path.dirname(ACCOUNTS_FILE), "revoked_sessions.json"))
 ADMINS = {a.strip() for a in os.getenv("TERMINAL_ADMINS", "admin").split(",") if a.strip()}
 # CSWSH 방지: 허용 Origin 목록. 비어 있으면 요청 Host와 동일 출처만 허용.
 ALLOWED_ORIGINS = {o.strip() for o in os.getenv("TERMINAL_ORIGINS", "").split(",") if o.strip()}
@@ -80,6 +85,9 @@ def _verify(token: str) -> str | None:
     except (TypeError, ValueError):
         ttl = TTL
     if (time.time() - ts.timestamp()) > ttl:
+        return None
+    # 로그아웃한 토큰이면 만료 전이라도 거절한다(열린 셸은 다음 확인 때 닫힌다)
+    if is_revoked(token, REVOKED_FILE):
         return None
     u = data.get("u")
     if not u or u not in ADMINS:

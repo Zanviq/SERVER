@@ -8,7 +8,7 @@ RUN apt-get update \
 RUN pip install --no-cache-dir "websockets==12.0" "itsdangerous>=2.1,<3"
 
 WORKDIR /app
-COPY server.py .
+COPY server.py revoked.py .
 
 EXPOSE 7681
 CMD ["python", "server.py"]

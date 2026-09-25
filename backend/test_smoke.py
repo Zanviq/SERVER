@@ -104,6 +104,69 @@ def test_lockout_cannot_shut_the_owner_out_of_their_own_server():
     login_guard.reset()
 
 
+def test_logout_revokes_the_token_itself():
+    """로그아웃하면 그 토큰은 서버에서 거절된다 — 쿠키만 지우던 때는 복사된 토큰이 계속 통했다.
+
+    실측(격리 서버): 로그인 → 쿠키 값을 따로 들고 로그아웃 → 그 값으로 /api/auth/session·
+    /api/notes/tree 가 **200**. 같은 계정의 다른 기기(다른 토큰)는 그대로 살아 있어야 한다.
+    """
+    login_guard.reset()
+    a = TestClient(app)
+    b = TestClient(app)
+    assert a.post("/api/auth/login", json={"username": "tester", "password": "pw123"}).status_code == 200
+    assert b.post("/api/auth/login", json={"username": "tester", "password": "pw123"}).status_code == 200
+    copied = a.cookies.get("server_session")
+    assert a.post("/api/auth/logout").status_code == 200
+    thief = TestClient(app, cookies={"server_session": copied})
+    assert thief.get("/api/auth/session").status_code == 401, "로그아웃한 토큰이 아직 통한다"
+    assert thief.get("/api/notes/tree").status_code == 401
+    assert b.get("/api/auth/session").status_code == 200, "다른 기기의 세션까지 끊었다"
+    # 거절 목록은 다시 켠 서버에서도 읽힌다(파일에 있다) — 메모리 캐시를 비워도 그대로
+    from backend import session_revoke
+
+    session_revoke._seen_mtime = None
+    session_revoke._cache = {}
+    assert thief.get("/api/auth/session").status_code == 401
+    login_guard.reset()
+
+
+def test_web_terminal_reads_the_same_revocation_list():
+    """웹 터미널(별도 컨테이너)도 백엔드가 쓴 로그아웃 목록으로 토큰을 거절한다.
+
+    터미널은 세션 쿠키를 스스로 검증한다. 목록을 안 보면 로그아웃 전에 복사된 토큰으로
+    **호스트 셸**이 열린다. 두 쪽이 같은 형식(sha256 → 만료)을 쓰는지 여기서 맞춰 본다.
+    """
+    import importlib.util
+    import pathlib
+    import tempfile
+    import time as _t
+
+    from backend import session_revoke
+    from backend.config import get_settings as _gs
+
+    spec = importlib.util.spec_from_file_location(
+        "term_revoked", pathlib.Path(__file__).resolve().parent.parent / "terminal" / "revoked.py")
+    term = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(term)
+
+    s = _gs()
+    session_revoke.revoke("토큰-갑", _t.time() + 600, s)
+    path = str(s.storage_root / "revoked_sessions.json")
+    assert term.is_revoked("토큰-갑", path), "백엔드가 로그아웃시킨 토큰을 터미널이 통과시킨다"
+    assert not term.is_revoked("토큰-을", path)
+    # 목록이 없으면 막을 것이 없다, 깨졌으면 닫는다(호스트 셸의 문)
+    empty = tempfile.mkdtemp(prefix="termrev_")
+    assert not term.is_revoked("아무거나", str(pathlib.Path(empty) / "없음.json"))
+    broken = pathlib.Path(empty) / "깨짐.json"
+    broken.write_text("{깨진", encoding="utf-8")
+    assert term.is_revoked("아무거나", str(broken))
+    # 터미널 서버가 실제로 이 함수를 부른다(pty 가 없는 곳에서는 모듈을 못 띄워 소스로 본다)
+    server_src = (pathlib.Path(__file__).resolve().parent.parent / "terminal" / "server.py").read_text(encoding="utf-8")
+    assert "if is_revoked(token, REVOKED_FILE):" in server_src
+    docker = (pathlib.Path(__file__).resolve().parent.parent / "terminal" / "Dockerfile").read_text(encoding="utf-8")
+    assert "revoked.py" in docker, "터미널 이미지에 revoked.py 가 안 들어간다(띄우자마자 죽는다)"
+
+
 def test_rotating_usernames_cannot_burn_the_server_cpu(monkeypatch):
     """한 IP 가 아이디를 바꿔 가며 로그인을 쏟아도 해시는 한도까지만 돌고, 보통 요청의
     스레드풀을 쓰지 않는다.

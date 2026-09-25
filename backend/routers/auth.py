@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from ..auth import (
     COOKIE_NAME,
     SessionUser,
+    end_session,
     issue_token,
     require_session,
 )
@@ -161,7 +162,11 @@ def logout(
     response: Response,
     settings: Settings = Depends(get_settings),
 ):
-    """세션 쿠키 제거."""
+    """세션을 끝낸다 — 서버에서 그 토큰을 거절하고 쿠키도 지운다."""
+    # 쿠키만 지우면 그 전에 복사된 토큰은 만료까지 계속 통했다(19차 실측)
+    token = request.cookies.get(COOKIE_NAME)
+    if token:
+        end_session(token, settings)
     # 지울 때도 발급 때와 같은 속성이어야 브라우저가 같은 쿠키로 알아본다.
     response.delete_cookie(
         COOKIE_NAME, path="/", samesite="lax", secure=_cookie_secure(request, settings)

@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import secrets
 import time
 from dataclasses import dataclass
 
@@ -70,7 +71,9 @@ def _payload_ttl(data: dict, settings: Settings) -> int:
 def issue_token(username: str, settings: Settings | None = None, ttl: int | None = None) -> str:
     """username에 대한 서명 세션 토큰 발급. ttl(초) 지정 시 토큰에 포함해 그 값으로 만료."""
     settings = settings or get_settings()
-    payload: dict = {"u": username}
+    # j: 토큰마다 다른 값. 서명의 시각은 초 단위라, 같은 사람이 같은 초에 두 기기에서
+    # 들어오면 **똑같은 토큰**이 나왔다 — 한쪽을 로그아웃하면 다른 쪽까지 끊겼다(시험이 잡았다).
+    payload: dict = {"u": username, "j": secrets.token_urlsafe(9)}
     if ttl is not None:
         payload["ttl"] = int(ttl)
     return _serializer(settings).dumps(payload)
@@ -97,6 +100,11 @@ def _verify(token: str, settings: Settings):
     ttl = _payload_ttl(data, settings)
     if (time.time() - ts.timestamp()) > ttl:
         return None  # 만료
+    # 로그아웃한 토큰은 만료 전이라도 거절한다(session_revoke — 복사된 토큰이 계속 통했다)
+    from . import session_revoke
+
+    if session_revoke.is_revoked(token, settings):
+        return None
     # 계정이 삭제됐거나 active가 아니게 되면(승인 취소·비활성) 즉시 무효
     from . import accounts
 
@@ -104,6 +112,18 @@ def _verify(token: str, settings: Settings):
     if acc is None or not acc.can_login:
         return None
     return username, acc, ts.timestamp() + ttl
+
+
+def end_session(token: str, settings: Settings) -> None:
+    """이 토큰을 끝낸다 — 만료 시각까지 거절 목록에 올린다(유효한 토큰일 때만).
+
+    쿠키를 지우는 것만으로는 그 전에 복사된 토큰이 계속 통한다(session_revoke).
+    """
+    from . import session_revoke
+
+    got = _verify(token, settings)
+    if got is not None:
+        session_revoke.revoke(token, got[2], settings)
 
 
 def require_session(
