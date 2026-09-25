@@ -168,16 +168,21 @@ export function VocabPanel({ refreshKey = 0, initialTag = "", defaultTags = [], 
 
   return (
     <div className={`card flex flex-col overflow-hidden ${className}`}>
-      <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
-        <span className="flex items-center gap-1.5 text-[13px] font-semibold">
-          <BookMarked size={15} className="text-accent" /> 단어장
-          {stats && <span className="text-[11.5px] font-normal text-fg-muted">{stats.total}</span>}
+      {/* 한 줄로 둔다. 단어가 수천 개가 되면 숫자가 자리를 먹어 '단어/장'·'복/습'처럼 글자
+          중간에서 꺾였다(한글은 글자마다 줄을 바꿀 수 있다). 복습 수는 999+ 로 줄인다 — 정확한
+          수는 아래 '오늘 복습' 칩에 있다. */}
+      <div className="flex items-center justify-between gap-2 whitespace-nowrap border-b border-line px-3 py-2">
+        <span className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold">
+          <BookMarked size={15} className="shrink-0 text-accent" /> 단어장
+          {stats && <span className="truncate text-[11.5px] font-normal text-fg-muted">{stats.total}</span>}
         </span>
-        <div className="flex items-center gap-0.5">
+        <div className="flex shrink-0 items-center gap-0.5">
           <button type="button" onClick={() => setReviewOpen(true)} className="btn btn-ghost h-7 gap-1 px-2 text-[12px]" title="플래시카드 복습">
             <GraduationCap size={14} />
             복습
-            {stats && stats.due > 0 && <span className="badge badge-accent ml-0.5 px-1.5">{stats.due}</span>}
+            {stats && stats.due > 0 && (
+              <span className="badge badge-accent ml-0.5 px-1.5">{stats.due > 999 ? "999+" : stats.due}</span>
+            )}
           </button>
           <button type="button" onClick={() => setCollectOpen(true)} className="btn btn-ghost h-7 px-2"
             title="단어·문장·문법을 나열하면 AI가 갈래를 나눠 정리해 넣습니다" aria-label="모아 넣기">
