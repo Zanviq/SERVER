@@ -752,6 +752,42 @@ def preview(
     }
 
 
+def _save_turn(p: Prepared, *, final_text: str, streamed: str, tool_notes: list[dict],
+               errored: bool, error_text: str) -> None:
+    """끝난(또는 끊긴) 차례 하나를 대화에 남긴다 — 질문과, 있으면 답.
+
+    중단 버튼을 눌렀거나 화면을 닫았으면 최종본은 없고 흘려보낸 조각만 있다 — 사용자가 읽은
+    그대로를 남기되, 잘렸다는 표시를 붙인다. 다만 오류로 끊긴 것은 남기지 않는다(반쪽 답을
+    다음 차례가 흉내 낸다).
+    """
+    body = final_text.strip()
+    if not body and not errored:
+        body = _stopped_note(streamed.strip(), tool_notes)
+    if p.persist_path is None:
+        return
+    try:
+        # 이번 차례는 **가지 끝에 매달린다.** 가지를 내라고 했으면 그 자리에서 새 가지가
+        # 나고(같은 부모를 둔 형제가 생긴다), 아니면 지금 끝자락에 이어 붙는다. 가지를 내는데
+        # 자리가 비어 있으면 대화 맨 앞이다(첫 질문을 고쳐 다시 물을 때).
+        # 끝자락은 **물어본 세션의** 것이다(그 사이 다른 세션으로 옮겨 갔을 수 있다).
+        asked_in = (chat_store.session_by_id(p.persist_path, p.session_id)
+                    if p.session_id else chat_store.current(p.persist_path)) or {}
+        at = (p.parent or None) if p.branching else (asked_in.get("head") or None)
+        # 오류로 끝난 답은 남기지 않는다(위). 그러면 까닭도 함께 사라져서, 화면이 다시 읽어
+        # 오는 순간 오류 말풍선이 없어지고 새로 열면 답 없는 질문만 남았다(9차 실측). 질문에
+        # 까닭을 붙여 둔다 — 모델에게는 가지 않는다.
+        meta = ({**(p.user_meta or {}), "failed": (error_text or "답을 받지 못했습니다.")[:300]}
+                if errored and not body else p.user_meta)
+        um = chat_store.message("user", p.message, meta, parent=at)
+        msgs = [um]
+        if body:
+            msgs.append(chat_store.message(
+                "assistant", body, {"tools": tool_notes}, parent=um["id"]))
+        chat_store.append(p.persist_path, *msgs, session_id=p.session_id or None)
+    except Exception:  # noqa: BLE001
+        logger.exception("대화 저장 실패")
+
+
 @router.post("/chat")
 def chat(
     body: ChatRequest,
@@ -760,8 +796,6 @@ def chat(
 ):
     """ReAct 비서. SSE로 thought/tool_call/tool_result/text/done 이벤트 스트리밍."""
     p = _prepare(body, user, settings)
-    message = p.message
-    persist_path, user_meta = p.persist_path, p.user_meta
 
     def gen():
         final_text = ""
@@ -827,35 +861,8 @@ def chat(
             yield orchestrator.sse_format({"type": "error", "message": detail})
         finally:
             # 화면을 닫아도(스트림이 끊겨도) 사용자 메시지와 받은 데까지는 남긴다.
-            # 중단 버튼을 눌렀거나 화면을 닫았으면 최종본은 없고 흘려보낸 조각만
-            # 있다 — 사용자가 읽은 그대로를 남기되, 잘렸다는 표시를 붙인다.
-            # 다만 오류로 끊긴 것은 남기지 않는다(반쪽 답을 다음 차례가 흉내 낸다).
-            body = final_text.strip()
-            if not body and not errored:
-                body = _stopped_note(streamed.strip(), tool_notes)
-            if persist_path is not None:
-                try:
-                    # 이번 차례는 **가지 끝에 매달린다.** 가지를 내라고 했으면 그
-                    # 자리에서 새 가지가 나고(같은 부모를 둔 형제가 생긴다), 아니면
-                    # 지금 끝자락에 이어 붙는다. 가지를 내는데 자리가 비어 있으면
-                    # 대화 맨 앞이다(첫 질문을 고쳐 다시 물을 때).
-                    # 끝자락은 **물어본 세션의** 것이다(그 사이 다른 세션으로 옮겨 갔을 수 있다).
-                    asked_in = (chat_store.session_by_id(persist_path, p.session_id)
-                                if p.session_id else chat_store.current(persist_path)) or {}
-                    at = (p.parent or None) if p.branching else (asked_in.get("head") or None)
-                    # 오류로 끝난 답은 남기지 않는다(위). 그러면 까닭도 함께 사라져서, 화면이
-                    # 다시 읽어 오는 순간 오류 말풍선이 없어지고 새로 열면 답 없는 질문만
-                    # 남았다(9차 실측). 질문에 까닭을 붙여 둔다 — 모델에게는 가지 않는다.
-                    meta = ({**(user_meta or {}), "failed": (error_text or "답을 받지 못했습니다.")[:300]}
-                            if errored and not body else user_meta)
-                    um = chat_store.message("user", message, meta, parent=at)
-                    msgs = [um]
-                    if body:
-                        msgs.append(chat_store.message(
-                            "assistant", body, {"tools": tool_notes}, parent=um["id"]))
-                    chat_store.append(persist_path, *msgs, session_id=p.session_id or None)
-                except Exception:  # noqa: BLE001
-                    logger.exception("대화 저장 실패")
+            _save_turn(p, final_text=final_text, streamed=streamed, tool_notes=tool_notes,
+                       errored=errored, error_text=error_text)
 
     # 모델을 기다리는 동안 공용 스레드를 쥐지 않게 AI 자리에서 흘린다(ai_lanes — AI 45개가
     # 돌면 다른 화면 전부가 13초씩 멈췄다). 한 사람 몫이 넘치면 여기서 429.
