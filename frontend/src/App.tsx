@@ -45,9 +45,21 @@ const ContextPage = lazyChunk(() => loaders.context().then((m) => ({ default: m.
 const TerminalPage = lazyChunk(() => loaders.terminal().then((m) => ({ default: m.TerminalPage })));
 const Analytics = lazyChunk(() => loaders.analytics().then((m) => ({ default: m.Analytics })));
 
-/** 로그인 후 유휴 시간에 모든 라우트 청크를 미리 로드 → 페이지 이동 지연 제거 */
-function prefetchRoutes() {
-  const run = () => Object.values(loaders).forEach((l) => l().catch(() => {}));
+/**
+ * 로그인 후 유휴 시간에 라우트 청크를 미리 받는다 → 페이지 이동 지연 제거.
+ *
+ * 다만 받을 까닭이 없는 것은 받지 않는다(33차 실측: 대시보드 하나를 열어도 조각 51개·gzip 331KB):
+ *  - 웹 터미널(xterm, gzip 73KB)은 서버 주인만 연다 — 다른 사람은 그 화면에 갈 수조차 없다.
+ *  - 데이터 절약·2G 면 아무것도 미리 받지 않는다(누를 때 받는다). 파이의 조각은 배포할 때마다
+ *    이름이 바뀌어 다시 받는다.
+ */
+function prefetchRoutes(owner: boolean) {
+  const conn = (navigator as { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+  if (conn?.saveData || /(^|-)2g$/.test(conn?.effectiveType ?? "")) return;
+  const run = () => Object.entries(loaders).forEach(([name, l]) => {
+    if (name === "terminal" && !owner) return;
+    l().catch(() => {});
+  });
   const ric = (window as unknown as { requestIdleCallback?: (cb: () => void) => void }).requestIdleCallback;
   if (ric) ric(run);
   else setTimeout(run, 1500);
@@ -148,7 +160,7 @@ export default function App() {
   useEffect(() => {
     if (session) {
       useSettings.getState().load();
-      prefetchRoutes();
+      prefetchRoutes(session.origin === "bootstrap" && session.role === "admin");
     }
   }, [session]);
 
