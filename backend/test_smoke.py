@@ -11469,6 +11469,53 @@ def test_ai_turns_wait_on_their_own_threads():
     assert ai_lanes.inflight("cap-user") == 0, "돌지 못한 응답이 몫을 쥔 채 남았다"
 
 
+def test_signup_cannot_flood_the_queue_or_bloat_the_account_file():
+    """가입은 한 IP 에 한 시간 SIGNUP_BUDGET 번, 표시 이름·비밀번호에는 상한이 있다.
+
+    26차 실측: 로그인 없이 20초 만에 가입 50건(표시 이름 20,000자) → 승인 대기 줄이 차 진짜
+    가입이 429, 계정 파일 3MB — 인증된 요청마다 그 파일을 읽어 모든 요청이 6.8ms → 12.7ms.
+    """
+    from fastapi.testclient import TestClient as _TC
+
+    from backend import accounts, login_guard
+
+    login_guard.reset()
+    anon = _TC(app)
+    made = []
+    try:
+        ip = {"X-Client-IP": "203.0.113.9"}
+        for i in range(login_guard.SIGNUP_BUDGET):
+            r = anon.post("/api/auth/signup", headers=ip,
+                          json={"username": f"flood{i}", "password": "longenough-1"})
+            assert r.status_code == 201, r.text
+            made.append(f"flood{i}")
+        r = anon.post("/api/auth/signup", headers=ip, json={"username": "flood9", "password": "longenough-1"})
+        assert r.status_code == 429 and r.headers.get("retry-after"), r.text
+        assert "잦습니다" in r.json()["detail"]
+        # 다른 곳의 사람은 막히지 않는다
+        r = anon.post("/api/auth/signup", headers={"X-Client-IP": "198.51.100.7"},
+                      json={"username": "elsewhere1", "password": "longenough-1"})
+        assert r.status_code == 201, r.text
+        made.append("elsewhere1")
+
+        # 상한 — 계정 파일에 그대로 남아 인증된 요청마다 읽힌다
+        r = anon.post("/api/auth/signup", json={"username": "longname1", "password": "longenough-1",
+                                               "display_name": "가" * (accounts.MAX_DISPLAY_NAME + 1)})
+        assert r.status_code == 400 and "표시 이름" in r.json()["detail"], r.text
+        r = anon.post("/api/auth/signup", json={"username": "longpass1",
+                                               "password": "p" * (accounts.MAX_PASSWORD + 1)})
+        assert r.status_code == 400 and "비밀번호" in r.json()["detail"], r.text
+        r = anon.post("/api/auth/signup", json={"username": "okname1", "password": "longenough-1",
+                                               "display_name": "가" * accounts.MAX_DISPLAY_NAME})
+        assert r.status_code == 201, r.text
+        made.append("okname1")
+    finally:
+        login_guard.reset()
+        _login()
+        for name in made:
+            client.delete(f"/api/admin/users/{name}")
+
+
 def test_big_bodies_are_refused_before_anyone_reads_them(monkeypatch):
     """본문 크기 한도 — 로그인 전에는 작게, 읽기 전에 거절한다. 422 는 받은 값을 되읊지 않는다.
 

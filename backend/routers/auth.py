@@ -145,8 +145,18 @@ async def login(
 
 
 @router.post("/signup", status_code=201)
-def signup(req: SignupRequest, settings: Settings = Depends(get_settings)):
+def signup(req: SignupRequest, request: Request, settings: Settings = Depends(get_settings)):
     """가입 신청. 관리자가 승인해야 로그인할 수 있다(개인 서버)."""
+    # 한 곳에서 신청을 쏟아 승인 대기 줄(50)을 채우지 못하게 IP 마다 센다(login_guard.SIGNUP_BUDGET).
+    # IP 는 로그인과 같은 곳(nginx 가 덮어쓰는 X-Client-IP)에서 읽는다.
+    wait = login_guard.ip_wait((request.headers.get("x-client-ip") or "").strip(), bucket="signup",
+                               budget=login_guard.SIGNUP_BUDGET, window=login_guard.SIGNUP_WINDOW)
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail=f"가입 신청이 너무 잦습니다. {max(1, wait // 60)}분 뒤 다시 시도해 주세요.",
+            headers={"Retry-After": str(wait)},
+        )
     acc = accounts.signup(req.username, req.password, req.display_name, settings)
     return {
         "ok": True,

@@ -36,6 +36,12 @@ _ITERATIONS = 600_000
 
 USERNAME_RE = re.compile(r"^[a-z0-9_-]{3,32}$")
 MIN_PASSWORD = 8
+#: 비밀번호·표시 이름의 상한. 가입은 인증 없이 부를 수 있고, 표시 이름은 계정 파일에 그대로
+#: 남는데 **인증된 요청마다 그 파일을 읽는다**. 상한이 없던 때 로그인 없이 가입 50건(표시 이름
+#: 20,000자)으로 계정 파일이 3MB 가 되어 모든 요청이 6.8ms → 12.7ms 로 늘었다(26차 실측).
+#: 본문 한도(body_limit)가 들어오기 전에는 가입 한 건에 90MB 이름도 들어갔다.
+MAX_PASSWORD = 256
+MAX_DISPLAY_NAME = 40
 # 승인 대기 줄의 상한 — 가입은 인증 없이 부를 수 있어서 막지 않으면 무한히 쌓인다.
 MAX_PENDING = 50
 
@@ -346,6 +352,10 @@ def signup(username: str, password: str, display_name: str, settings: Settings) 
         )
     if len(password or "") < MIN_PASSWORD:
         raise HTTPException(status_code=400, detail=f"비밀번호는 {MIN_PASSWORD}자 이상이어야 합니다.")
+    if len(password) > MAX_PASSWORD:
+        raise HTTPException(status_code=400, detail=f"비밀번호는 {MAX_PASSWORD}자까지입니다.")
+    if len((display_name or "").strip()) > MAX_DISPLAY_NAME:
+        raise HTTPException(status_code=400, detail=f"표시 이름은 {MAX_DISPLAY_NAME}자까지입니다.")
 
     p = _path(settings)
     # 저장소가 비어 있을 때 가입이 먼저 들어오면, 아래에서 계정 파일을 **새 사용자

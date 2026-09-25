@@ -60,27 +60,44 @@ class _State:
 IP_BUDGET = 20
 IP_WINDOW = 60
 
+#: 한 IP 가 한 시간에 넣을 수 있는 가입 신청 수. 가입은 인증 없이 부를 수 있고 승인 대기 줄은
+#: MAX_PENDING(50)에서 닫힌다 — 한도가 없으면 한 곳에서 20초 만에 50건을 채워 진짜 가입을
+#: 막고, 관리 화면을 쓰레기 신청으로 덮었다(26차 실측). 사람은 한 시간에 세 번 가입하지 않는다.
+SIGNUP_BUDGET = 3
+SIGNUP_WINDOW = 3600
+
 _states: dict[str, _State] = {}
-_ip_hits: dict[str, list[float]] = {}
+_ip_hits: dict[str, list[float]] = {}   # "몫:IP" → 시각들
+_windows: dict[str, int] = {}           # 몫 → 창(초)
 _lock = threading.Lock()
 
 
-def ip_wait(client_ip: str, now: float | None = None) -> int:
-    """이 IP 가 지금 로그인을 더 해 볼 수 있으면 0(그리고 한 번으로 센다), 아니면 기다릴 초."""
+def ip_wait(client_ip: str, now: float | None = None, *, bucket: str = "login",
+            budget: int | None = None, window: int | None = None) -> int:
+    """이 IP 가 지금 (bucket 의 일을) 더 해 볼 수 있으면 0(그리고 한 번으로 센다), 아니면 기다릴 초.
+
+    bucket 마다 따로 센다 — 로그인과 가입은 몫이 다르다. IP 를 모르면(직접 호출) 세지 않는다.
+    """
     ip = (client_ip or "").strip()[:MAX_KEY_CHARS]
     if not ip:
         return 0
+    budget = IP_BUDGET if budget is None else budget
+    window = IP_WINDOW if window is None else window
+    key = f"{bucket}:{ip}"
     now = time.time() if now is None else now
     with _lock:
-        hits = [t for t in _ip_hits.get(ip, ()) if now - t < IP_WINDOW]
-        if len(hits) >= IP_BUDGET:
-            _ip_hits[ip] = hits
-            return max(1, int(hits[0] + IP_WINDOW - now + 0.999))
+        hits = [t for t in _ip_hits.get(key, ()) if now - t < window]
+        if len(hits) >= budget:
+            _ip_hits[key] = hits
+            return max(1, int(hits[0] + window - now + 0.999))
         hits.append(now)
-        _ip_hits[ip] = hits
+        _ip_hits[key] = hits
+        _windows[bucket] = window
         if len(_ip_hits) > MAX_KEYS:
-            # 창을 넘긴 IP 부터 버린다(여러 IP 로 채워 기록을 부풀리지 못하게)
-            for k in [k for k, v in _ip_hits.items() if not v or now - v[-1] >= IP_WINDOW]:
+            # 창을 넘긴 IP 부터 버린다(여러 IP 로 채워 기록을 부풀리지 못하게). 창은 몫마다
+            # 다르다 — 로그인의 1분 창으로 가입 기록을 버리면 가입 한도가 풀린다.
+            for k in [k for k, v in _ip_hits.items()
+                      if not v or now - v[-1] >= _windows.get(k.split(":", 1)[0], IP_WINDOW)]:
                 del _ip_hits[k]
         return 0
 

@@ -124,6 +124,7 @@ export function Login() {
               className="input mb-3"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
+              maxLength={40}
               placeholder="비워두면 아이디를 사용합니다"
             />
           </>
