@@ -626,14 +626,24 @@ def rename_note(
     # safe_join 의 resolve 는 있는 파일을 **디스크의 표기**로 바꾼다(Windows). 그 값을 쓰면
     # 대소문자만 바꾼 이름(`메모.MD`)이 `메모.md` 로 돌아와 제자리 이름 바꾸기가 됐다.
     dst = src.parent / new_name
-    old_rel, was_dir = src.relative_to(root).as_posix(), src.is_dir()
-    if dst_rel == old_rel:
+    if dst_rel == src.relative_to(root).as_posix():
         return _summary(root, src)  # 이름이 그대로다 — 할 일이 없다("이미 있다"가 아니다)
     if taken_by_another(src, dst):  # 대소문자만 바꾼 이름은 자기 자신이다
         raise HTTPException(status_code=409, detail="같은 이름의 문서가 이미 있습니다.")
-    with _fs_errors_are_bad_requests("이름 변경"):
+    return _relocate(user, settings, root, src, dst, dst_rel, "이름 변경")
+
+
+def _relocate(user: SessionUser, settings: Settings, root: Path, src: Path, dst: Path,
+              dst_rel: str, what: str) -> NoteSummary:
+    """src 를 dst 로 옮기고, 옛 경로를 가리키던 링크가 새 자리를 찾게 기록한다(moved.py).
+
+    이름 바꾸기와 옮기기가 함께 쓴다. 두 길이 저마다 적으면 한쪽이 기록을 빠뜨려, 그 길로 옮긴
+    문서(폴더면 그 안 전부)의 옛 링크만 죽는다.
+    """
+    old_rel, was_dir = src.relative_to(root).as_posix(), src.is_dir()
+    with _fs_errors_are_bad_requests(what):
+        dst.parent.mkdir(parents=True, exist_ok=True)
         src.rename(dst)
-    # 옛 이름을 가리키던 링크가 새 자리를 찾아가게(moved.py)
     moved.record(user, settings, old_rel, dst_rel, folder=was_dir)
     return _summary(root, dst)
 
@@ -705,12 +715,7 @@ def move_note(
         return _summary(root, src)
     if dst.exists():
         raise HTTPException(status_code=409, detail="대상 폴더에 같은 이름의 문서가 있습니다.")
-    old_rel, was_dir = src.relative_to(root).as_posix(), src.is_dir()
-    with _fs_errors_are_bad_requests("문서 이동"):
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        src.rename(dst)
-    moved.record(user, settings, old_rel, dst_rel, folder=was_dir)
-    return _summary(root, dst)
+    return _relocate(user, settings, root, src, dst, dst_rel, "문서 이동")
 
 
 @router.get("/moved")
