@@ -1,19 +1,13 @@
-import { ReactNode, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { Copy, Check } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import type { PluggableList } from "unified";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import remarkMath from "remark-math";
-import rehypeKatex from "rehype-katex";
 import rehypeSlug from "rehype-slug";
-import rehypeHighlight from "rehype-highlight";
-// 코드 색은 앱 테마 변수로 칠한다(index.css 의 .hljs-* 규칙) — 별도 테마 CSS 를
-// 가져오면 다크/라이트를 따라오지 못해 어두운 배경에 검은 글씨가 된다.
-// 수식 글꼴·자리잡기. **여기서 가져온다** — 이 화면은 지연 로드되므로 수식을
-// 쓰지 않는 사람은 이 CSS·폰트를 내려받지 않는다.
-import "katex/dist/katex.min.css";
 import type { EmbedResolver } from "../../lib/embeds";
 import { transformWiki } from "../../lib/wikiTransform";
 import { remarkHighlight } from "../../lib/markdownExtras";
@@ -62,6 +56,63 @@ function safeDecode(s: string): string {
   }
 }
 
+/*
+ * 수식(KaTeX)·코드 칠(highlight.js)은 **그것이 있는 글에서만** 불러 온다(35차).
+ *
+ * 둘을 늘 싣던 때는 이 조각이 780KB(gzip 239KB)였다 — 말풍선 하나를 그려도 전부 해석·실행한다.
+ * 빼면 347KB. 실측(운영 번들, CPU 4배 느림 ≈ 보통 휴대폰, 받아 둔 상태): 대화 화면 첫 말풍선까지
+ * 2037ms → 1713ms. 대부분의 말에는 수식도 코드 울타리도 없다.
+ *
+ * 수식은 remark-math 가 늘 읽어 두므로, 불러 오기 전에는 수식 자리가 코드 모양으로 잠깐 보였다가
+ * 바뀐다. 코드 울타리는 칠하기 전의 고정폭 글씨로 먼저 보인다. 한 번 불러 오면 모두가 같이 쓴다.
+ * 순서는 예전 그대로다 — 둘 다 **살균 뒤**(까닭은 아래 rehypePlugins 주석).
+ * 코드 색은 앱 테마 변수로 칠한다(index.css 의 .hljs-* 규칙 — 별도 테마 CSS 를 쓰면 다크/라이트를
+ * 따라오지 못한다). 수식 글꼴·자리잡기 CSS 는 KaTeX 와 함께 불러 온다.
+ */
+const MATH_HINT = /\$|\\\(|\\\[/;
+const CODE_HINT = /(^|\n)[ \t]{0,3}(```|~~~)/;
+let katexPlugin: PluggableList[number] | null = null;
+let highlightPlugin: PluggableList[number] | null = null;
+let katexLoad: Promise<unknown> | null = null;
+let highlightLoad: Promise<unknown> | null = null;
+
+function loadKatex() {
+  return (katexLoad ??= Promise.all([import("rehype-katex"), import("katex/dist/katex.min.css")])
+    .then(([{ default: rehypeKatex }]) => {
+      katexPlugin = [rehypeKatex, { throwOnError: false, errorColor: "rgb(var(--danger))" }];
+    }));
+}
+
+function loadHighlight() {
+  return (highlightLoad ??= import("rehype-highlight").then(({ default: rehypeHighlight }) => {
+    highlightPlugin = [rehypeHighlight, { detect: false, ignoreMissing: true }];
+  }));
+}
+
+/** 이 글에 필요한 무거운 플러그인 — 아직 안 불러 왔으면 불러 오고, 오면 다시 그린다. */
+function useRichPlugins(content: string): PluggableList {
+  const wantMath = MATH_HINT.test(content);
+  const wantCode = CODE_HINT.test(content);
+  const [, redraw] = useState(0);
+  useEffect(() => {
+    const jobs: Promise<unknown>[] = [];
+    if (wantMath && !katexPlugin) jobs.push(loadKatex());
+    if (wantCode && !highlightPlugin) jobs.push(loadHighlight());
+    if (!jobs.length) return;
+    let alive = true;
+    Promise.all(jobs).then(() => { if (alive) redraw((n) => n + 1); }).catch(() => {
+      // 못 불러 왔으면 칠하지 않은 채로 둔다(글은 그대로 읽힌다). 다음 글에서 다시 해 본다.
+      katexLoad = katexPlugin ? katexLoad : null;
+      highlightLoad = highlightPlugin ? highlightLoad : null;
+    });
+    return () => { alive = false; };
+  }, [wantMath, wantCode]);
+  const out: PluggableList = [];
+  if (wantMath && katexPlugin) out.push(katexPlugin);
+  if (wantCode && highlightPlugin) out.push(highlightPlugin);
+  return out;
+}
+
 export interface MarkdownViewProps {
   content: string;
   onWikiClick: (title: string) => void;
@@ -74,6 +125,7 @@ export function MarkdownView({
   onWikiClick,
   resolveEmbed,
 }: MarkdownViewProps) {
+  const rich = useRichPlugins(content);
   return (
     <div className="prose-server">
       <ReactMarkdown
@@ -91,9 +143,8 @@ export function MarkdownView({
         // rehypeSlug 는 살균 **앞**이라도 되지만, 뒤에 두면 살균이 id 를 지운다.
         // rehypeHighlight 는 살균 뒤다 — 토큰마다 class 를 수백 개 붙이므로 앞에
         // 두면 살균이 전부 걷어내 색이 사라진다(수식과 같은 이유).
-        rehypePlugins={[rehypeRaw, rehypeSlug, [rehypeSanitize, mdSanitizeSchema],
-                        [rehypeKatex, { throwOnError: false, errorColor: "rgb(var(--danger))" }],
-                        [rehypeHighlight, { detect: false, ignoreMissing: true }]]}
+        // 수식·코드 칠은 이 글에 있을 때만 불러 와 끼운다(useRichPlugins).
+        rehypePlugins={[rehypeRaw, rehypeSlug, [rehypeSanitize, mdSanitizeSchema], ...rich]}
         components={{
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
           // 칸이 많은 표가 화면을 옆으로 밀지 않도록 **감싸서** 그 안에서만 흐르게
