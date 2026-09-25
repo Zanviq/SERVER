@@ -17,7 +17,9 @@ const src = new URL("../src/", import.meta.url);
 
 test("이 시험의 파이프라인이 화면의 것과 같다", () => {
   // mdPipeline.mjs 가 MarkdownView 와 다른 플러그인을 쓰면 이 파일 전체가 거짓말이 된다
-  const view = readFileSync(new URL("./components/notes/MarkdownView.tsx", src), "utf8");
+  // 수식·코드 칠은 필요할 때 불러 오는 곳(richPlugins)에 있다 — 둘을 합쳐 본다
+  const view = readFileSync(new URL("./components/notes/MarkdownView.tsx", src), "utf8") +
+    readFileSync(new URL("./components/notes/richPlugins.ts", src), "utf8");
   const harness = readFileSync(new URL("./mdPipeline.mjs", import.meta.url), "utf8");
   for (const p of ["remarkGfm", "remarkBreaks", "remarkHighlight", "remarkMath",
                    "rehypeRaw", "rehypeSanitize", "rehypeKatex"]) {

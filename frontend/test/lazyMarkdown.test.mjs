@@ -11,12 +11,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-const src = readFileSync(new URL("../src/components/notes/MarkdownView.tsx", import.meta.url), "utf8");
+const view = readFileSync(new URL("../src/components/notes/MarkdownView.tsx", import.meta.url), "utf8");
+const src = readFileSync(new URL("../src/components/notes/richPlugins.ts", import.meta.url), "utf8");
 
 test("무거운 플러그인을 맨 위에서 가져오지 않는다", () => {
   for (const mod of ["rehype-katex", "rehype-highlight", "katex/dist/katex.min.css"]) {
     assert.ok(!new RegExp(`^import[^\\n]*["']${mod.replace(/[./]/g, "\\$&")}["']`, "m").test(src),
       `${mod} 를 맨 위에서 가져온다 — 모든 말풍선이 그 값을 치른다`);
+    assert.ok(!view.includes(`"${mod}"`), `MarkdownView 가 ${mod} 를 직접 가져온다`);
     assert.ok(src.includes(`import("${mod}")`), `${mod} 를 필요할 때 불러 오지 않는다`);
   }
 });
@@ -29,5 +31,6 @@ test("수식·코드 울타리를 알아본다(필요한 글에서는 불러 온
   assert.ok(code.test("앞말\n```js\nconst a = 1;\n```") && code.test("~~~\n코드\n~~~") && code.test("```\nx\n```"));
   assert.ok(!code.test("`한 줄 코드` 는 칠하지 않는다"), "인라인 코드만 있는 글까지 불러 온다");
   // 살균 뒤에 끼운다(앞에 두면 살균이 KaTeX·칠의 class 를 모두 걷어 낸다)
-  assert.match(src, /\[rehypeSanitize, mdSanitizeSchema\], \.\.\.rich\]/);
+  assert.match(view, /\[rehypeSanitize, mdSanitizeSchema\], \.\.\.rich\]/);
+  assert.match(view, /const rich = useRichPlugins\(content\);/);
 });
