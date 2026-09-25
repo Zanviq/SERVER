@@ -9,15 +9,14 @@ from __future__ import annotations
 
 import logging
 import tempfile
-import threading
 import time
 import zipfile
 from pathlib import Path
 
-from fastapi import HTTPException
 from fastapi.responses import FileResponse
 
 from .config import Settings
+from .slots import Slots
 
 logger = logging.getLogger("server.archive")
 
@@ -31,27 +30,12 @@ MAX_TOTAL = 2
 #: 이보다 오래된 임시 zip 은 주인이 없다(받기가 끝났거나 서버가 도중에 내려갔다)
 STALE_SECONDS = 6 * 3600
 
-_guard = threading.Lock()
-_running: dict[str, int] = {}
-
-
-def _claim(owner: str) -> None:
-    with _guard:
-        if _running.get(owner, 0) >= MAX_PER_USER:
-            raise HTTPException(status_code=429,
-                                detail="이미 내려받기를 만들고 있습니다 — 그것이 끝난 뒤 다시 받아 주세요.")
-        if sum(_running.values()) >= MAX_TOTAL:
-            raise HTTPException(status_code=503, detail="지금 다른 내려받기가 많습니다. 잠시 뒤 다시 해 주세요.")
-        _running[owner] = _running.get(owner, 0) + 1
-
-
-def _release(owner: str) -> None:
-    with _guard:
-        n = _running.get(owner, 0) - 1
-        if n > 0:
-            _running[owner] = n
-        else:
-            _running.pop(owner, None)
+_slots = Slots(
+    lambda: MAX_PER_USER,
+    lambda _n: "이미 내려받기를 만들고 있습니다 — 그것이 끝난 뒤 다시 받아 주세요.",
+    total=MAX_TOTAL,
+    full="지금 다른 내려받기가 많습니다. 잠시 뒤 다시 해 주세요.",
+)
 
 
 def sweep_stale(settings: Settings, max_age: float = STALE_SECONDS) -> int:
@@ -102,11 +86,11 @@ def zip_dir(target: Path, *, filename: str, settings: Settings, owner: str,
     skip_dirs 에 든 이름의 폴더는 건너뛴다(휴지통·임시 폴더). owner(사용자 이름)마다 동시에 하나,
     서버 전체에 MAX_TOTAL 개까지만 **만든다** — 넘치면 429·503. 자리는 다 만들면 돌려준다.
     """
-    _claim(owner)
+    release = _slots.claim(owner)
     try:
         return _build(target, filename=filename, settings=settings, skip_dirs=skip_dirs)
     finally:
-        _release(owner)
+        release()
 
 
 def _build(target: Path, *, filename: str, settings: Settings, skip_dirs: frozenset[str]) -> FileResponse:

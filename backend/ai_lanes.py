@@ -25,7 +25,8 @@ from contextlib import contextmanager
 
 import anyio
 import anyio.to_thread
-from fastapi import HTTPException
+
+from .slots import Slots
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,13 @@ STREAMS = 16
 PER_USER = 6
 
 _limiter: anyio.CapacityLimiter | None = None
-_lock = threading.Lock()
-_inflight: dict[str, int] = {}
+# 멈춘 차례도 모델이 끝날 때까지는 자리를 쓴다(모델은 이미 일하는 중이다) — 방금 멈췄는데 왜 막히는지
+# 모르지 않게 그 말도 한다. PER_USER 는 부를 때마다 읽는다(시험·느린 모델 하네스가 바꾼다).
+_slots = Slots(
+    lambda: PER_USER,
+    lambda n: (f"AI 가 아직 앞의 답 {n}개를 만들고 있습니다(멈춘 것도 끝날 때까지는 "
+               "자리를 씁니다). 잠시 뒤 다시 보내 주세요."),
+)
 
 
 def _lane() -> anyio.CapacityLimiter:
@@ -50,38 +56,12 @@ def _lane() -> anyio.CapacityLimiter:
 
 
 def inflight(username: str) -> int:
-    with _lock:
-        return _inflight.get(username, 0)
+    return _slots.held(username)
 
 
 def claim(username: str) -> Callable[[], None]:
     """한 사람 몫을 하나 잡는다. 넘치면 429. 돌려준 함수로 놓는다(여러 번 불러도 한 번만)."""
-    with _lock:
-        n = _inflight.get(username, 0)
-        if n >= PER_USER:
-            # 멈춘 차례도 모델이 끝날 때까지는 자리를 쓴다(모델은 이미 일하는 중이다) —
-            # 방금 멈췄는데 왜 막히는지 모르지 않게 그 말도 한다.
-            raise HTTPException(
-                status_code=429,
-                detail=(f"AI 가 아직 앞의 답 {n}개를 만들고 있습니다(멈춘 것도 끝날 때까지는 "
-                        "자리를 씁니다). 잠시 뒤 다시 보내 주세요."),
-            )
-        _inflight[username] = n + 1
-    done = False
-
-    def release() -> None:
-        nonlocal done
-        with _lock:
-            if done:
-                return
-            done = True
-            left = _inflight.get(username, 1) - 1
-            if left > 0:
-                _inflight[username] = left
-            else:
-                _inflight.pop(username, None)
-
-    return release
+    return _slots.claim(username)
 
 
 class _End(Exception):

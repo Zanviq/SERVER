@@ -10396,16 +10396,18 @@ def test_archive_zips_are_capped_and_never_left_behind():
     (src / "가.txt").write_text("x" * 5000, encoding="utf-8")
 
     # 만드는 자리: 한 사람이 동시에 둘은 못 만들고(429), 서버 전체도 넘치면 503
-    archive._claim("zip-시험")
+    first = archive._slots.claim("zip-시험")
     with pytest.raises(HTTPException) as ei:
-        archive._claim("zip-시험")
+        archive._slots.claim("zip-시험")
     assert ei.value.status_code == 429, "같은 사람이 동시에 둘을 만들었다"
-    archive._claim("zip-다른이")
+    second = archive._slots.claim("zip-다른이")
     with pytest.raises(HTTPException) as ei:
-        archive._claim("zip-셋째")
+        archive._slots.claim("zip-셋째")
     assert ei.value.status_code == 503
-    archive._release("zip-시험")
-    archive._release("zip-다른이")
+    first()
+    first()  # 두 번 놓아도 한 번만 빠진다
+    second()
+    assert archive._slots.held("zip-시험") == 0 and archive._slots.held("zip-다른이") == 0
 
     # 자리는 다 만들면 돌려준다 — 보내는 동안(받는 쪽이 읽기를 멈춰도) 쥐지 않는다
     r = archive.zip_dir(src, filename="a.zip", settings=s, owner="zip-시험")
