@@ -10345,6 +10345,33 @@ def test_todo_description_does_not_overwrite_a_change_the_screen_has_not_seen():
         client.delete(f"/api/todo/{tid}")
 
 
+def test_a_full_disk_is_named_on_every_write_path(monkeypatch):
+    """디스크가 가득 차면 어느 쓰기에서든 "저장 공간이 가득 찼습니다"(507)로 알린다(53차).
+
+    main 의 처리기는 디스크 문제에 이름을 붙이지만(외장하드가 차거나 빠지는 파이에서 사용자가 스스로
+    고칠 수 있는 몇 안 되는 오류다), 문서 저장·올리기·이름 바꾸기·폴더 만들기는 제 안에서 OSError 를
+    먼저 잡아 "문서 저장에 실패했습니다."(500)로 바꿨다 — 가장 흔한 쓰기에서 까닭이 사라졌다.
+    """
+    import errno as _errno
+
+    from backend.routers import notes as notes_router
+
+    def full(*a, **k):
+        raise OSError(_errno.ENOSPC, "No space left on device")
+
+    _login()
+    monkeypatch.setattr(notes_router, "write_text_atomic", full)
+    r = client.put("/api/notes/save", json={"path": "가득참/문서.md", "content": "x"})
+    assert r.status_code == 507, (r.status_code, r.text)
+    assert "저장 공간이 가득 찼습니다" in r.json()["detail"], r.text
+    # 이름 탓인 오류는 예전처럼 400(이름을 바꿔 보라는 뜻)
+    monkeypatch.setattr(notes_router, "write_text_atomic",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError(_errno.EINVAL, "Invalid argument")))
+    r = client.put("/api/notes/save", json={"path": "가득참/문서2.md", "content": "x"})
+    assert r.status_code == 400, (r.status_code, r.text)
+    client.request("DELETE", "/api/notes/folder", params={"path": "가득참"})
+
+
 def test_user_bytes_leave_only_through_user_file():
     """올린 파일을 내보내는 라우터는 FileResponse 를 직접 만들지 않는다 — user_file 을 지난다.
 

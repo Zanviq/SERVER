@@ -33,6 +33,7 @@ from ..security_paths import safe_join, to_rel
 from ..storage import resolve, taken_by_another, user_data_root, walk_all, walk_files
 from ..trash import move_to_trash
 from ..user_file import user_file
+from ..disk_errors import disk_trouble
 
 logger = logging.getLogger("server.notes")
 router = APIRouter(prefix="/api/notes", tags=["notes"])
@@ -220,6 +221,11 @@ def _fs_errors_are_bad_requests(what: str):  # noqa: D401
             status_code=400, detail=f"{what}에 실패했습니다 — 저장할 수 없는 문자가 들어 있습니다."
         ) from e
     except OSError as e:
+        # 디스크가 찼거나 빠졌으면 그렇다고 말한다(disk_errors — main 의 처리기와 같은 말). 예전엔 여기서
+        # "문서 저장에 실패했습니다."로 바꿔 가장 흔한 쓰기에서 까닭이 사라졌다(53차).
+        if (named := disk_trouble(e)) is not None:
+            logger.exception("%s 실패(디스크)", what)
+            raise named from e
         if e.errno in _SERVER_FAULT_ERRNOS:
             logger.exception("%s 실패(서버 문제)", what)
             raise HTTPException(status_code=500, detail=f"{what}에 실패했습니다.") from e
