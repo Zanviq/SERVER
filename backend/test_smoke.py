@@ -11469,6 +11469,46 @@ def test_ai_turns_wait_on_their_own_threads():
     assert ai_lanes.inflight("cap-user") == 0, "돌지 못한 응답이 몫을 쥔 채 남았다"
 
 
+def test_heavy_background_jobs_take_turns(monkeypatch):
+    """논문 추출·회의 받아쓰기는 한꺼번에 올려도 HEAVY_JOBS 개씩만 돈다(나머지는 줄을 선다).
+
+    23차 실측: 31.5MB 논문 12편을 한꺼번에 올리자 추출 12개가 동시에 PDF 를 통째로 읽고
+    부풀려 서버 메모리가 53MB → 1,166MB. 줄을 선 것도 결국 모두 끝나야 한다.
+    """
+    import threading as _th
+    import time as _time
+
+    from backend import ai_lanes, meeting_transcribe, paper_extract
+    from backend.auth import SessionUser
+
+    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    for mod, prefix in ((paper_extract, "heavy-p"), (meeting_transcribe, "heavy-m")):
+        now = {"n": 0, "max": 0, "done": 0}
+        lock = _th.Lock()
+
+        def fake_run(user, settings, item_id, _now=now, _lock=lock):
+            with _lock:
+                _now["n"] += 1
+                _now["max"] = max(_now["max"], _now["n"])
+            _time.sleep(0.15)
+            with _lock:
+                _now["n"] -= 1
+                _now["done"] += 1
+
+        monkeypatch.setattr(mod, "run_sync", fake_run)
+        ids = [f"{prefix}{i}" for i in range(6)]
+        assert all(mod.start(u, get_settings(), i) for i in ids)
+        # 줄을 선 것도 '돌고 있음'이다 — 같은 것을 두 번 세우지 않는다
+        assert all(mod.is_running(u, i) for i in ids)
+        assert not mod.start(u, get_settings(), ids[-1])
+        deadline = _time.time() + 10
+        while now["done"] < len(ids) and _time.time() < deadline:
+            _time.sleep(0.05)
+        assert now["done"] == len(ids), f"{mod.__name__}: 줄 선 일이 끝나지 않았다 {now}"
+        assert now["max"] <= ai_lanes.HEAVY_JOBS, f"{mod.__name__}: {now['max']}개가 한꺼번에 돌았다"
+        assert now["max"] >= 2, "하나씩만 돌았다(자리가 너무 좁다)"
+
+
 def test_chat_goes_through_the_ai_lanes(monkeypatch):
     """대화 창구가 AI 자리를 쓴다 — 몫이 차면 429 로 까닭을 말하고, 끝나면 몫을 돌려준다."""
     from backend import ai_lanes

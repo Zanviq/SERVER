@@ -20,6 +20,7 @@ from __future__ import annotations
 import threading
 import weakref
 from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import contextmanager
 
 import anyio
 import anyio.to_thread
@@ -101,6 +102,25 @@ async def _stream(it: Iterator[str], release: Callable[[], None]) -> AsyncIterat
             yield chunk
     finally:
         release()
+
+
+#: 무거운 뒷일(논문 추출·회의 받아쓰기)을 서버 전체에서 동시에 몇 개까지 돌리나. 넘친 것은
+#: '처리 중'인 채 줄을 선다(화면은 상태를 되물어 볼 뿐 포기 시한이 없다).
+HEAVY_JOBS = 2
+_heavy = threading.BoundedSemaphore(HEAVY_JOBS)
+
+
+@contextmanager
+def heavy_job() -> Iterator[None]:
+    """원본을 통째로 읽어 모델에 싣는 일의 자리 하나.
+
+    논문 추출은 PDF(최대 100MB)를, 받아쓰기는 녹음을 **통째로** 읽고 요청에 싣느라 부풀린다.
+    올린 것마다 곧바로 스레드를 띄우던 때는 여러 편을 한꺼번에 올리면 전부가 동시에 돌았다 —
+    23차 실측: 31.5MB 논문 12편 → 서버 메모리 53MB → 1,166MB. 파이는 다른 서비스와 메모리를
+    나눠 쓴다. 자리를 기다리는 스레드는 가볍다(아무것도 읽지 않고 멈춰 있다).
+    """
+    with _heavy:
+        yield
 
 
 def streaming(it: Iterator[str], username: str) -> AsyncIterator[str]:

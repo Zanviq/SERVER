@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import meeting_store
+from . import ai_lanes, meeting_store
 from .ai import errors as ai_errors
 from .auth import SessionUser
 from .config import Settings
@@ -213,7 +213,10 @@ def start(user: SessionUser, settings: Settings, mid: str) -> bool:
 
     def worker():
         try:
-            run_sync(user, settings, mid)
+            # 녹음을 통째로 읽어 싣는 일이라 동시에 몇 개만 돈다(ai_lanes.heavy_job). 기다리는
+            # 동안에도 is_running 은 참이다 — 같은 회의를 두 번 줄 세우지 않는다.
+            with ai_lanes.heavy_job():
+                run_sync(user, settings, mid)
         except Exception:  # noqa: BLE001
             logger.exception("회의 받아쓰기 스레드 실패: %s", mid)
             try:

@@ -17,7 +17,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import paper_store
+from . import ai_lanes, paper_store
 from .ai import errors as ai_errors
 from .auth import SessionUser
 from .config import Settings
@@ -280,7 +280,10 @@ def start(user: SessionUser, settings: Settings, pid: str) -> bool:
 
     def worker():
         try:
-            run_sync(user, settings, pid)
+            # PDF 를 통째로 읽어 싣는 일이라 동시에 몇 개만 돈다(ai_lanes.heavy_job — 12편을
+            # 한꺼번에 올리면 메모리가 1GB 넘게 뛰었다). 기다리는 동안에도 is_running 은 참이다.
+            with ai_lanes.heavy_job():
+                run_sync(user, settings, pid)
         except Exception:  # noqa: BLE001
             logger.exception("논문 추출 스레드 실패: %s", pid)
             try:
