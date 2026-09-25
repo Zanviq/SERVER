@@ -22,7 +22,7 @@ import { makeSlashSource, SlashActions } from "./slashMenu";
 import { tableTools } from "./tableTools";
 import { Paperclip } from "lucide-react";
 import { toast } from "../../store/toast";
-import { useMediaQuery } from "../../lib/useMediaQuery";
+import { TOUCH, useMediaQuery } from "../../lib/useMediaQuery";
 import { NOTE_PATH_MIME, isOurDrag } from "./dragTypes";
 import { itemLinks, linkCompletionSource } from "../links/cmLinks";
 import { openLink } from "../links/linkFetch";
@@ -688,7 +688,7 @@ export function LiveEditor({
   const fileRef = useRef<HTMLInputElement>(null);
   // 터치 기기이거나 화면이 좁을 때. 터치엔 드래그앤드롭이 없고, 좁은 창에서는
   // 트리에서 편집기로 끌어올 공간 자체가 없다(둘을 번갈아 보여주므로).
-  const needsAttachButton = useMediaQuery("(pointer: coarse), (max-width: 639px)");
+  const needsAttachButton = useMediaQuery(`${TOUCH}, (max-width: 639px)`);
   const applyingExternal = useRef(false);
   // 업로드가 끝난 뒤 삽입할 자리들. 편집이 일어나면 함께 옮긴다.
   const pendingSpots = useRef<{ pos: number }[]>([]);

@@ -23,3 +23,11 @@ export function useMediaQuery(query: string): boolean {
 
   return matches;
 }
+
+/** 손가락으로 쓰는 화면인가 — 자판 단축키(↑↓·Esc·Shift+Enter)를 기대할 수 없는 곳. */
+export const TOUCH = "(pointer: coarse)";
+
+/** TOUCH 를 리액트 상태로. 채팅 줄바꿈 키·링크 후보 안내가 같은 판단을 쓴다. */
+export function useTouch(): boolean {
+  return useMediaQuery(TOUCH);
+}
