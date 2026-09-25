@@ -53,12 +53,22 @@ export class PendingSave {
 
   /** ms 뒤에 저장한다. 앞선 예약은 **덮어쓴다** — 마지막 것만 유효하다. */
   schedule(ms: number, job: SaveJob): void {
-    if (this.id !== null) this.timers.clear(this.id);
     this.job = job;
+    this.arm(ms);
+  }
+
+  /** 타이머는 하나뿐이다 — 새로 걸면 앞 것(예약·다시 해 보기)을 대신한다. */
+  private arm(ms: number): void {
+    this.disarm();
     this.id = this.timers.set(() => {
       this.id = null;
       void this.run({ keepalive: false });
     }, ms);
+  }
+
+  private disarm(): void {
+    if (this.id !== null) this.timers.clear(this.id);
+    this.id = null;
   }
 
   /**
@@ -87,10 +97,7 @@ export class PendingSave {
       // 버리기가 오면 그쪽이 이 타이머를 대신한다.
       const wait = RETRY_MS[Math.min(this.failures, RETRY_MS.length - 1)];
       this.failures++;
-      this.id = this.timers.set(() => {
-        this.id = null;
-        void this.run({ keepalive: false });
-      }, wait);
+      this.arm(wait);
     }
     return ok;
   }
@@ -98,18 +105,14 @@ export class PendingSave {
   /** 기다리지 않고 **지금** 저장한다. 문서를 옮기기 전에 부른다.
    *  돌려주는 값은 "이제 안 남았는가" — false 면 저장에 실패한 것이다. */
   async flush(how: SendHow = { keepalive: false }): Promise<boolean> {
-    if (this.id !== null) {
-      this.timers.clear(this.id);
-      this.id = null;
-    }
+    this.disarm();
     return this.run(how);
   }
 
   /** 대기 중인 저장을 **버린다**. 문서를 지운 뒤에 부른다. */
   cancel(): boolean {
     const had = this.job !== null || this.id !== null;
-    if (this.id !== null) this.timers.clear(this.id);
-    this.id = null;
+    this.disarm();
     this.job = null;
     this.failures = 0;
     return had;
