@@ -33,6 +33,13 @@ def _login():
     return r
 
 
+def _tester(display_name: str = "T"):
+    """시험 계정(tester)의 세션 — 저장소를 직접 부르는 시험이 쓴다. 저장 자리는 username 이 정한다."""
+    from backend.auth import SessionUser
+
+    return SessionUser(username="tester", display_name=display_name, expires_at=0, remaining=0)
+
+
 # ── 인증 ──
 def test_unauthenticated_blocked():
     fresh = TestClient(app)
@@ -799,9 +806,8 @@ def test_category_filter_includes_children():
     client.post("/api/todo/create", json={"title": "부모직속", "category_id": parent["id"]})
     client.post("/api/todo/create", json={"title": "자식것", "category_id": child["id"]})
     try:
-        from backend.auth import SessionUser
 
-        me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+        me = _tester()
         board = todo_store.board(me, get_settings())
         got = todo_store.filter_todos(board["todos"], category_id=parent["id"],
                                       categories=board["categories"])
@@ -1212,14 +1218,13 @@ def test_color_rule_is_the_same_everywhere():
     from backend.ai.skill_base import SkillContext
     from backend.ai.skill_registry import default_registry
     from backend.ai.skills import calendar as cal_skill
-    from backend.auth import SessionUser
     from backend.calendar_colors import strict_color
 
     assert cal_skill._strict_color is strict_color
 
     reg = default_registry()
     ctx = SkillContext(
-        user=SessionUser(username="tester", display_name="T", expires_at=0, remaining=0),
+        user=_tester(),
         settings=get_settings(), today="2026-09-02")
     calls = {
         "일정": ("create_calendar_event", {"title": "색", "start": "2027-05-02T10:00",
@@ -1254,11 +1259,10 @@ def test_folder_identifier_is_not_read_as_a_document():
     """
     from backend.ai.skill_base import SkillContext
     from backend.ai.skill_registry import default_registry
-    from backend.auth import SessionUser
 
     s = get_settings()
     _login()
-    user = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    user = _tester()
     ctx = SkillContext(user=user, settings=s, today="2026-09-02")
     reg = default_registry()
 
@@ -1597,11 +1601,10 @@ def test_old_owner_account_keeps_admin_access():
 def test_old_settings_values_are_normalized_on_read():
     """예전 버전이 남긴 범위 밖 값이 그대로 내려가면 화면이 이상해진다."""
     from backend import user_settings
-    from backend.auth import SessionUser
 
     _login()
     s = get_settings()
-    me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    me = _tester()
     path = s.user_root("tester") / "settings.json"
     backup = path.read_text(encoding="utf-8") if path.exists() else None
     path.write_text(json.dumps({
@@ -2019,10 +2022,9 @@ def test_a_turn_stays_in_the_session_it_was_asked_in(monkeypatch):
     """
     from backend import chat_store, context_store
     from backend.ai import orchestrator
-    from backend.auth import SessionUser
 
     _login()
-    u = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    u = _tester()
     path = context_store.space_path(u, get_settings(), "assistant")
     a = client.post("/api/ai/space/assistant/sessions", json={"title": "세션A"}).json()["id"]
     chat_store.append(path, chat_store.message("user", "앞선 말"),
@@ -2282,9 +2284,8 @@ def test_big_lists_skip_the_event_loop_encoder(monkeypatch):
     assert client.post("/api/vocab/words/bulk", json={"words": words}).status_code in (200, 201)
     for i in range(120):
         client.post("/api/todo/create", json={"title": f"인코더 시험 {i}"})
-    from backend.auth import SessionUser
 
-    user = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    user = _tester()
     sp = ai_router._space_path("assistant", user, get_settings())
     parent = None
     for i in range(60):
@@ -2358,10 +2359,9 @@ def test_calendar_recurrence_and_reminders():
     # 알림 due 엔드포인트 — **리스트인지만 보면 안 된다.** 알림 계산이 통째로
     # 죽어 아무 알림도 안 나가게 되어도 그 검사는 초록불이다.
     from backend import calendar_service
-    from backend.auth import SessionUser
     from backend.config import get_settings as _gs
 
-    me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    me = _tester()
     # 8/6 08:00 기준으로 보면 그날 09:00 회차가 30분 전 알림 대상이다
     due = calendar_service.due_reminders(me, _gs(), "2026-08-06T08:00:00", 120)
     mine = [d for d in due if d["title"] == "데일리 스탠드업"]
@@ -2996,14 +2996,13 @@ def test_uncategorized_filter_does_not_return_everything():
     전부를 가리키게 됐다. 그 바람에 미분류 지정 조회가 모든 할 일을 돌려준다.
     """
     from backend import todo_store
-    from backend.auth import SessionUser
 
     _login()
     cat = client.post("/api/todo/categories", json={"name": "분류있음"}).json()
     client.post("/api/todo/create", json={"title": "분류된것", "category_id": cat["id"]})
     client.post("/api/todo/create", json={"title": "분류없는것"})
     try:
-        me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+        me = _tester()
         s = get_settings()
         board = todo_store.board(me, s)
         todos, cats = board["todos"], board["categories"]
@@ -3184,11 +3183,10 @@ def test_ai_call_failure_does_not_leak_internals():
     """
     from backend.ai import orchestrator
     from backend.ai.orchestrator import LLMResult
-    from backend.auth import SessionUser
     from backend.config import get_settings
 
     s = get_settings()
-    u = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    u = _tester()
     secret = "API key AIzaSyLEAKED at C:\\srv\\keys\\gemini.json"
 
     class Broken:
@@ -3214,13 +3212,12 @@ def test_ai_call_failure_does_not_leak_internals():
 def test_ai_react_chains_skills():
     from backend.ai import orchestrator
     from backend.ai.orchestrator import LLMResult
-    from backend.auth import SessionUser
     from backend.config import get_settings
     from backend.storage import user_data_root
     from backend import calendar_store
 
     s = get_settings()
-    user = SessionUser(username="tester", display_name="Tester", expires_at=0, remaining=0)
+    user = _tester("Tester")
 
     class FakeLLM:
         def __init__(self):
@@ -4087,7 +4084,7 @@ def test_ai_skill_catalog_and_ops():
         assert "scope" not in (c.get("parameters", {}).get("properties") or {}), c["name"]
 
     ctx = SkillContext(
-        user=SessionUser(username="tester", display_name="T", expires_at=0, remaining=0),
+        user=_tester(),
         settings=s,
     )
     # append_document → read_document 반영
@@ -4126,12 +4123,11 @@ def test_ai_skill_catalog_and_ops():
 def test_ai_blocks_sensitive_files():
     from backend.ai.skill_base import SkillContext
     from backend.ai.skills import ReadDocument
-    from backend.auth import SessionUser
     from backend.config import get_settings
 
     s = get_settings()
     ctx = SkillContext(
-        user=SessionUser(username="tester", display_name="T", expires_at=0, remaining=0),
+        user=_tester(),
         settings=s,
     )
     for path in ("password.txt", "내 비밀번호", "계좌/메모", "secret.md"):
@@ -6735,11 +6731,10 @@ def test_context_of_another_user_is_never_readable():
     말을 자기가 아는 것처럼 이어 말하게 된다.
     """
     from backend import accounts, chat_store, paper_store
-    from backend.auth import SessionUser
     from backend.config import get_settings
 
     s = get_settings()
-    victim = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    victim = _tester()
     SECRET = "컨텍스트비밀QQQ"
     _login()
 
@@ -7073,11 +7068,10 @@ def test_another_user_cannot_touch_your_papers_meetings_or_words():
     구분해 주면 "그 id 는 있다"는 사실이 새어 나간다.
     """
     from backend import accounts, meeting_store, paper_store, vocab_store
-    from backend.auth import SessionUser
     from backend.config import get_settings
 
     s = get_settings()
-    victim = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    victim = _tester()
     _login()
 
     paper = paper_store.register(victim, s, "남의논문.pdf", 1234)
@@ -7260,7 +7254,6 @@ def test_every_ai_feature_names_the_same_failure_the_same_way():
     assert "ai_errors.message(" in inspect.getsource(orchestrator._llm_error_message)
 
     # 논문 추출이 한도 초과로 실패하면 그렇게 적힌다
-    from backend.auth import SessionUser
     from backend.config import get_settings
 
     s = get_settings()
@@ -7269,7 +7262,7 @@ def test_every_ai_feature_names_the_same_failure_the_same_way():
                     files={"file": ("quota.pdf", _tiny_pdf("Quota"), "application/pdf")})
     pid = r.json()["id"]
     try:
-        u = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+        u = _tester()
 
         def blow(*a, **k):
             raise RuntimeError(quota)
@@ -7347,7 +7340,6 @@ def test_usage_shows_numbers_and_never_content():
     부족하고(개발자 도구로 응답을 그대로 본다), 서버가 애초에 안 보내야 한다.
     """
     from backend import usage
-    from backend.auth import SessionUser
     from backend.config import get_settings
 
     s = get_settings()
@@ -7355,7 +7347,7 @@ def test_usage_shows_numbers_and_never_content():
 
     # 훔쳐볼 만한 것을 잔뜩 만들어 둔다
     secrets = ["아무도 모르는 일기입니다", "비밀 문서 제목", "몰래 잡은 일정"]
-    victim = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    victim = _tester()
     client.put("/api/notes/save", json={"path": f"{secrets[1]}.md", "content": "본문도 비밀"})
     ev = client.post("/api/calendar/events",
                      json={"title": secrets[2], "start": "2026-09-09T10:00:00"})
@@ -7467,11 +7459,10 @@ def test_broken_pdf_text_does_not_kill_extraction(monkeypatch):
     죽어 "추출이 안 된다"로 끝났다(가입 사용자가 올린 논문에서 실측).
     """
     from backend import paper_extract, paper_store
-    from backend.auth import SessionUser
     from backend.config import get_settings
 
     s = get_settings()
-    u = SessionUser(username="tester", display_name="Tester", expires_at=0, remaining=0)
+    u = _tester("Tester")
 
     # 글꼴 매핑이 깨진 PDF 가 내놓는 모양 그대로
     dirty = "정상 앞부분 😀 사이 \udca9 끝"
@@ -7523,7 +7514,6 @@ def test_paper_upload_extracts_in_background_and_ai_context(monkeypatch):
     from backend import chat_store, paper_extract, paper_store
     from backend.ai import orchestrator
     from backend.ai.orchestrator import LLMResult
-    from backend.auth import SessionUser
     from backend.config import get_settings
 
     s = get_settings()
@@ -7566,7 +7556,7 @@ def test_paper_upload_extracts_in_background_and_ai_context(monkeypatch):
     # 두 번째 논문 + 그 논문에서 나눈 대화
     r = client.post("/api/papers/upload", files={"file": ("second.pdf", _tiny_pdf("Second one"), "application/pdf")})
     pid2 = r.json()["id"]
-    u = SessionUser(username="tester", display_name="Tester", expires_at=0, remaining=0)
+    u = _tester("Tester")
     chat_store.append(paper_store.chat_path(u, s, pid2),
                       chat_store.message("user", "positional encoding 이 뭐야"),
                       chat_store.message("assistant", "위치 정보를 더하는 방식입니다."))
@@ -7866,14 +7856,13 @@ def test_mounted_folders_never_shadow_a_real_folder():
     import shutil as _shutil
 
     from backend import storage
-    from backend.auth import SessionUser
     from backend.config import get_settings
 
     _login()
     # (붙어 있을 때 새로 만드는 길이 막히는 것은 위 테스트가 확인한다. 여기서는
     #  붙은 것이 없으므로 `논문` 은 그냥 평범한 이름이고 만들 수 있어야 한다.)
     # 예전부터 있던 폴더를 흉내 낸다 — 디스크에 직접 만든다
-    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    u = _tester("")
     real = storage.user_data_root(u, get_settings()) / "논문"
     real.mkdir(parents=True, exist_ok=True)
     (real / "내 글.md").write_text("사용자가 쓴 글", encoding="utf-8")
@@ -7899,7 +7888,6 @@ def test_global_search_never_hands_sensitive_text_to_the_model():
     """
     from backend.ai.skill_base import SkillContext
     from backend.ai.skill_registry import default_registry
-    from backend.auth import SessionUser
 
     _login()
     token = "SECRET-TOKEN-7719"
@@ -7908,7 +7896,7 @@ def test_global_search_never_hands_sensitive_text_to_the_model():
     assert client.put("/api/notes/save", json={
         "path": "개인/장보기.md", "content": f"우유, 계란 {token}-평범"}).status_code == 200
     try:
-        u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+        u = _tester("")
         ctx = SkillContext(user=u, settings=get_settings(), today="2026-09-25")
         got = default_registry().dispatch("search_everything", {"query": token}, ctx)
         assert got.ok, got.message
@@ -8011,7 +7999,6 @@ def test_ai_cannot_collapse_the_meeting_and_paper_folders():
     """
     from backend.ai.skill_base import SkillContext
     from backend.ai.skill_registry import default_registry
-    from backend.auth import SessionUser
     from backend.storage import user_data_root
 
     _login()
@@ -8019,7 +8006,7 @@ def test_ai_cannot_collapse_the_meeting_and_paper_folders():
                     files={"file": ("녹음.webm", b"fake-audio", "audio/webm")})
     assert r.status_code == 200, r.text
     mid = r.json()["id"]
-    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    u = _tester("")
     ctx = SkillContext(user=u, settings=get_settings(), today="2026-09-25")
     reg = default_registry()
     root = user_data_root(u, get_settings())
@@ -8052,11 +8039,10 @@ def test_rename_gives_same_name_from_screen_and_ai():
     """
     from backend.ai.skill_base import SkillContext
     from backend.ai.skill_registry import default_registry
-    from backend.auth import SessionUser
     from backend.storage import user_data_root
 
     _login()
-    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    u = _tester("")
     root = user_data_root(u, get_settings())
     reg = default_registry()
     ctx = SkillContext(user=u, settings=get_settings(), today="2026-09-25")
@@ -8463,10 +8449,9 @@ def test_handled_vocab_proposal_never_comes_back(monkeypatch):
 
     # 대화를 비우면 처리 기록도 같이 비운다 — 가리킬 목록이 사라졌다
     client.delete("/api/ai/space/english")
-    from backend.auth import SessionUser
     from backend.config import get_settings
     from backend import chat_store
-    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    u = _tester("")
     assert chat_store.vocab_done(chat_store.english_path(u, get_settings())) == set()
 
     # 키는 순서·대소문자를 타지 않는다(같은 단어들이면 같은 목록이다)
@@ -8503,9 +8488,8 @@ def test_saved_proposal_shows_words_that_are_now_in_the_notebook(monkeypatch):
     props = _proposals_in(client.get("/api/ai/space/english").json()["messages"])
     assert props[0]["proposal"][0]["exists"] is False
 
-    from backend.auth import SessionUser
     from backend.config import get_settings
-    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    u = _tester("")
     vocab_store.add_words(u, get_settings(), [{"word": "Laconic", "meanings": ["말수가 적은"]}])
 
     props = _proposals_in(client.get("/api/ai/space/english").json()["messages"])
@@ -8710,9 +8694,8 @@ def test_the_viewer_can_fix_a_page_count_pypdf_could_not_read():
                     files={"file": ("쪽수없음.pdf", _tiny_pdf(), "application/pdf")})
     pid = r.json()["id"]
     try:
-        from backend.auth import SessionUser
 
-        me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+        me = _tester()
         st = get_settings()
         paper_store.update_meta(me, st, pid, {"pages": 0})
         assert paper_store.find_paper(me, st, pid)["pages"] == 0
@@ -8738,9 +8721,8 @@ def test_extraction_never_stores_the_models_excuse_as_the_title():
                     files={"file": ("변명논문.pdf", _tiny_pdf(), "application/pdf")})
     pid = r.json()["id"]
     try:
-        from backend.auth import SessionUser
 
-        me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+        me = _tester()
         st = get_settings()
         paper_extract.run_sync(me, st, pid, asker=lambda *a, **k: {
             "title": "Unable to extract title.",
@@ -8788,9 +8770,8 @@ def test_a_paper_with_no_text_keeps_its_fields_empty():
     assert r.status_code == 200, r.text
     pid = r.json()["id"]
     try:
-        from backend.auth import SessionUser
 
-        me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+        me = _tester()
         st = get_settings()
         # 글자를 못 뽑은 상황을 흉내 낸다 — 모델도 빈 값을 돌려준다
         paper_extract.run_sync(me, st, pid, asker=lambda *a, **k: {
@@ -9111,9 +9092,8 @@ def test_prompt_tells_the_model_that_missing_skills_are_not_absent_data():
     없이 **"오늘은 일정이 없습니다"**라고 답했다. 사용자는 일정이 비었다고 믿는다.
     """
     from backend.ai import modes
-    from backend.auth import SessionUser
 
-    u = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    u = _tester()
     today = "2026-09-06 (일)"
     for text in (modes.english_system(u, "assistant", today),
                  modes.paper_system(u, "assistant", today, None, []),
@@ -9160,9 +9140,8 @@ def test_prompts_only_promise_skills_and_arguments_that_exist():
 
     from backend.ai import modes, prompt_builder
     from backend.ai.skills import ALL_SKILLS
-    from backend.auth import SessionUser
 
-    u = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    u = _tester()
     today = "2026-09-06 (일)"
     blob = "\n".join([
         prompt_builder.build_system(u, "assistant", today, {"default_remind": 30, "ai_rules": ""}),
@@ -9244,10 +9223,9 @@ def test_account_backup_includes_everything_but_the_trash():
     from backend import trash, vocab_store
     from backend.storage import user_data_root
 
-    from backend.auth import SessionUser
 
     _login()
-    me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    me = _tester()
     st = get_settings()
     (user_data_root(me, st) / "백업시험.md").write_text("# 백업\n", encoding="utf-8")
     vocab_store.add_words(me, st, [{"word": "backup", "meanings": ["백업"]}])
@@ -9729,7 +9707,7 @@ def test_locked_diary_text_never_leaves_the_server():
         assert client.post("/api/diary/unlock", json={"pin": "abcd", "date": day}).status_code == 403
         # 남의 표는 안 통한다(서명이 사용자 이름을 담는다)
         other = SessionUser(username="침입자", display_name="X", expires_at=0, remaining=0)
-        me = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+        me = _tester()
         s = get_settings()
         assert not diary_store.is_unlocked(diary_store.issue_unlock(other, s, day), me, s, day)
         assert not diary_store.is_unlocked("아무말", other, s, day)
@@ -9770,7 +9748,7 @@ def test_locked_diary_text_never_leaves_the_server():
         client.put(f"/api/diary/{day}", json={"body": "", "heart": "", "mind": "", "text": ""},
                    headers={"X-Diary-Unlock": client.post(
                        "/api/diary/unlock", json={"pin": "1111", "date": day}).json().get("token", "")})
-        diary_store.set_pin(SessionUser(username="tester", display_name="T", expires_at=0, remaining=0),
+        diary_store.set_pin(_tester(),
                             get_settings(), "0000")
 
 
@@ -10963,10 +10941,9 @@ def test_links_suggest_resolve_and_reach_the_model():
     from datetime import date as _date
 
     from backend import calendar_service, diary_store, todo_store, vocab_store
-    from backend.auth import SessionUser
 
     _login()
-    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    u = _tester("")
     st = get_settings()
     body = "# 서버 기록\n링크로 읽힌 본문 LINKBODY-7731"
     assert client.put("/api/notes/save", json={"path": "서버/기록.md", "content": body}).status_code == 200
@@ -11189,7 +11166,6 @@ def test_read_link_skill_reads_long_bodies_in_pieces():
     from backend import links
     from backend.ai.skill_base import SkillContext
     from backend.ai.skill_registry import default_registry
-    from backend.auth import SessionUser
 
     _login()
     long_body = "앞" * links.MAX_LINK_CHARS + "TAIL-MARK-3377"
@@ -11199,7 +11175,7 @@ def test_read_link_skill_reads_long_bodies_in_pieces():
                                                    "mode": "assistant"}).json()["message"]
         assert "TAIL-MARK-3377" not in pv and "offset=" in pv, "잘렸다는 안내가 없다"
 
-        u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+        u = _tester("")
         reg = default_registry()
         ctx = SkillContext(user=u, settings=get_settings(), today="2026-09-21")
         first = reg.dispatch("read_link", {"path": "note/긴글.md"}, ctx)
@@ -11223,7 +11199,6 @@ def test_global_search_never_skips_an_exact_title_and_says_how_many_more():
     from backend import search_all
     from backend.ai.skill_base import SkillContext
     from backend.ai.skill_registry import default_registry
-    from backend.auth import SessionUser
 
     _login()
     for i in range(30):
@@ -11246,7 +11221,7 @@ def test_global_search_never_skips_an_exact_title_and_says_how_many_more():
     assert vr["more"].get("vocab", 0) >= 21 + 1 - search_all.PER_KIND, vr["more"]
 
     # AI 도 "더 있다"는 것을 듣는다(말없이 자르면 "이게 전부"라고 답한다)
-    u = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    u = _tester()
     res = default_registry().dispatch("search_everything", {"query": "로드맵검"},
                                       SkillContext(user=u, settings=get_settings(), today="2026-09-25"))
     assert res.ok and "더 있음" in res.message and "17건 넘게" in res.message, res.message
@@ -11261,7 +11236,6 @@ def test_old_links_follow_a_renamed_or_moved_note():
     """
     from backend.ai.skill_base import SkillContext
     from backend.ai.skill_registry import default_registry
-    from backend.auth import SessionUser
 
     _login()
     box = "옮김시험"
@@ -11279,7 +11253,7 @@ def test_old_links_follow_a_renamed_or_moved_note():
     # AI 가 읽을 때도 새 자리의 본문과 함께 "이름이 바뀐 문서" 라고 알린다
     from backend import links
 
-    u = SessionUser(username="tester", display_name="T", expires_at=0, remaining=0)
+    u = _tester()
     r = links.resolve(u, get_settings(), f"note/{box}/원래이름.md")
     assert "5521" in r.content and "이름이 바뀌었거나 옮겨진" in r.note, r.note
 
@@ -11375,10 +11349,9 @@ def test_calendar_links_open_the_view_they_point_at():
     from pathlib import Path as _Path
 
     from backend import calendar_service, diary_store, links
-    from backend.auth import SessionUser
 
     _login()
-    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    u = _tester("")
     st = get_settings()
     today = _date.today().isoformat()
     assert calendar_service.backend_kind(u, st) == "internal"  # 구글에 쓰면 안 된다
@@ -11678,9 +11651,8 @@ def test_heavy_background_jobs_take_turns(monkeypatch):
     import time as _time
 
     from backend import ai_lanes, meeting_transcribe, paper_extract
-    from backend.auth import SessionUser
 
-    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    u = _tester("")
     for mod, prefix in ((paper_extract, "heavy-p"), (meeting_transcribe, "heavy-m")):
         now = {"n": 0, "max": 0, "done": 0}
         lock = _th.Lock()
@@ -11775,10 +11747,9 @@ def test_search_hits_open_the_same_screen_as_links():
     from datetime import date as _date
 
     from backend import calendar_service, links
-    from backend.auth import SessionUser
 
     _login()
-    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    u = _tester("")
     st = get_settings()
     today = _date.today().isoformat()
     assert calendar_service.backend_kind(u, st) == "internal"  # 구글에 쓰면 안 된다
