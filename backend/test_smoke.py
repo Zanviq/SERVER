@@ -11509,6 +11509,41 @@ def test_heavy_background_jobs_take_turns(monkeypatch):
         assert now["max"] >= 2, "하나씩만 돌았다(자리가 너무 좁다)"
 
 
+def test_vocab_jobs_cap_and_never_forget_a_running_one():
+    """단어장 정리는 한 사람당 MAX_RUNNING 개까지 돌고, 도는 중인 작업의 기록은 지우지 않는다.
+
+    23차 실측: 25개를 보내면 25개가 한꺼번에 돌고, 기록은 최근 20개만 남겨 **도는 중인** 5개가
+    사라졌다 — 화면은 그것들을 잃은 것으로 알렸는데 실제로는 끝까지 돌아 단어가 들어갔다.
+    """
+    from fastapi import HTTPException
+
+    from backend import vocab_fill
+    from backend.auth import SessionUser
+
+    u = SessionUser(username="vocab-cap", display_name="", expires_at=0, remaining=0)
+    vocab_fill._jobs.pop(u.username, None)
+    try:
+        # 끝난 기록이 한가득 있어도
+        for _ in range(vocab_fill.MAX_JOBS):
+            j = vocab_fill._new_job(u, "collect", [], [])
+            vocab_fill._finish(u, j["id"], {"status": vocab_fill.STATUS_DONE})
+        running = [vocab_fill._new_job(u, "collect", [], []) for _ in range(vocab_fill.MAX_RUNNING)]
+        try:
+            vocab_fill._new_job(u, "collect", [], [])
+            raise AssertionError("한도를 넘는 작업을 받았다")
+        except HTTPException as e:
+            assert e.status_code == 429 and "돌고 있습니다" in e.detail
+        rows = vocab_fill.jobs_for(u)
+        assert len(rows) <= vocab_fill.MAX_JOBS
+        kept = {r["id"] for r in rows}
+        assert all(j["id"] in kept for j in running), "도는 중인 작업의 기록이 지워졌다"
+        # 하나가 끝나면 다시 받는다
+        vocab_fill._finish(u, running[0]["id"], {"status": vocab_fill.STATUS_DONE})
+        vocab_fill._new_job(u, "collect", [], [])
+    finally:
+        vocab_fill._jobs.pop(u.username, None)
+
+
 def test_chat_goes_through_the_ai_lanes(monkeypatch):
     """대화 창구가 AI 자리를 쓴다 — 몫이 차면 429 로 까닭을 말하고, 끝나면 몫을 돌려준다."""
     from backend import ai_lanes

@@ -26,6 +26,8 @@ import threading
 import time
 import uuid
 
+from fastapi import HTTPException
+
 from . import vocab_store
 from .ai import errors as ai_errors
 from .auth import SessionUser
@@ -42,8 +44,14 @@ BATCH_ITEMS = 40
 MAX_ITEMS = 200
 #: collect 에 붙여 넣을 수 있는 글 길이
 MAX_COLLECT_CHARS = 6000
-#: 사용자당 남겨 두는 작업 기록 수
+#: 사용자당 남겨 두는 작업 기록 수(끝난 것만 지운다 — 도는 중인 것은 늘 남긴다)
 MAX_JOBS = 20
+#: 사용자당 한꺼번에 도는 작업 수. 넘으면 거절한다(429). 올릴 때마다 스레드를 띄워 모델을
+#: 부르던 때는 25개를 보내면 25개가 한꺼번에 돌았고, 기록은 20개만 남겨 **도는 중인** 작업
+#: 5개의 기록이 지워졌다 — 화면은 그것들을 "서버가 다시 시작된 것 같다"(잃음)로 알렸는데
+#: 실제로는 끝까지 돌아 단어가 들어갔다(23차 실측, 가짜 느린 모델). 줄을 세우지 않는 것은
+#: 화면이 5분 뒤 포기하기 때문이다 — 오래 기다리게 할 바에는 지금 말한다.
+MAX_RUNNING = 4
 
 STATUS_PENDING = "pending"
 STATUS_DONE = "done"
@@ -130,8 +138,18 @@ def _new_job(user: SessionUser, kind: str, words: list[str], tags: list[str]) ->
     }
     with _guard:
         rows = _jobs.setdefault(user.username, [])
+        running = sum(1 for j in rows if j["status"] == STATUS_PENDING)
+        if running >= MAX_RUNNING:
+            raise HTTPException(
+                status_code=429,
+                detail=f"단어장 정리가 이미 {running}개 돌고 있습니다. 끝난 뒤 다시 넣어 주세요.")
         rows.append(job)
-        del rows[:-MAX_JOBS]
+        # 끝난 기록만 오래된 것부터 지운다. 도는 중인 기록을 지우면 화면이 그 작업을 잃은
+        # 것으로 알린다(실제로는 끝까지 돈다).
+        extra = len(rows) - MAX_JOBS
+        if extra > 0:
+            old = {j["id"] for j in [r for r in rows if r["status"] != STATUS_PENDING][:extra]}
+            rows[:] = [j for j in rows if j["id"] not in old]
     return job
 
 
