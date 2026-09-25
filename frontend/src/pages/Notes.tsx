@@ -508,35 +508,44 @@ export function Notes() {
     });
   };
 
+  /** 열린 문서가 바로 이것이거나(문서) 이 안에 있는가(폴더) — 경로를 바꾸기 전에 흘려보낼지. */
+  const touchesOpen = (path: string, folder: boolean) =>
+    !!current && (folder ? current.startsWith(`${path}/`) : current === path);
+
+  /**
+   * 이름 바꾸기·옮기기로 경로가 바뀐 뒤 — 옛 경로를 들고 있던 것(밑글·펼친 폴더·위치)을 새 경로로
+   * 옮기고, 열려 있던 문서의 새 경로를 돌려준다(없으면 null). 밑글을 안 옮기면 옛 경로에 고아로
+   * 남는다. 폴더는 안의 것이 모두 따라간다(36·37차 — 폴더 이름 바꾸기·옮기기).
+   */
+  const followMove = (from: string, to: string, folder: boolean): string | null => {
+    const moved = (p: string) => (p === from || p.startsWith(`${from}/`) ? to + p.slice(from.length) : p);
+    if (folder) {
+      moveDraftsUnder(from, to);
+      setExpanded((s) => new Set([...s].map(moved)));
+      setCurFolder((c) => moved(c));
+    } else {
+      moveDraft(from, to);
+    }
+    return touchesOpen(from, folder) && current ? moved(current) : null;
+  };
+
   const doRenameNote = async () => {
     if (!renameFor || !renameName.trim()) return;
     // 이름을 그대로 두고 확인했다 — 바꾼 것이 없으니 "변경했습니다"라고 말하지 않는다
     if (renameName.trim() === fileName(renameFor.path)) { setRenameFor(null); return; }
     const { path, folder } = renameFor;
-    // 열린 문서가 바로 이것이거나(문서) 이 안에 있는가(폴더)
-    const touches = (p: string | null): p is string => !!p && (folder ? p.startsWith(`${path}/`) : p === path);
     try {
       // 옮기기 전에 흘려보낸다. 안 그러면 타이머가 옛 경로로 저장을 보내
       // 방금 이름을 바꾼 문서가 옛 이름으로 하나 더 생긴다(유령 중복).
       // 흘려보내기가 **실패하면 멈춘다** — 그대로 진행하면 아직 서버에 없는
       // 마지막 문단이 옛 경로와 함께 사라진다.
-      if (touches(current) && !(await flushPendingSave())) {
+      if (touchesOpen(path, folder) && !(await flushPendingSave())) {
         toast.error("마지막 편집을 저장하지 못해 이름을 바꾸지 않았습니다.");
         return;
       }
       const r = await api.noteRename(path, renameName.trim());
-      // 경로가 바뀐다 — 옛 경로를 들고 있는 것(밑글·펼친 폴더·위치·열린 문서)을 모두 옮긴다.
-      // 밑글을 안 옮기면 옛 경로에 고아로 남는다.
-      const moved = (p: string) => (p === path || p.startsWith(`${path}/`) ? r.path + p.slice(path.length) : p);
-      if (folder) {
-        moveDraftsUnder(path, r.path);
-        setExpanded((s) => new Set([...s].map(moved)));
-        setCurFolder((c) => moved(c));
-      } else {
-        moveDraft(path, r.path);
-      }
+      const reopen = followMove(path, r.path, folder);
       toast.ok(folder ? "폴더 이름을 변경했습니다" : "이름을 변경했습니다");
-      const reopen = touches(current) ? moved(current) : null;
       setRenameFor(null);
       await reloadTree();
       if (reopen) openNote(reopen);
@@ -546,19 +555,21 @@ export function Notes() {
   };
 
   const doMoveNote = async (path: string, folder: string) => {
+    const isFolder = folders.includes(path);
+    // 폴더를 제 안(자기 자신·하위)으로 끌어 놓았다 — 서버도 거절하지만 여기서 조용히 멈춘다
+    if (isFolder && (folder === path || folder.startsWith(`${path}/`))) return;
     try {
       // 옛 경로로 되살아나지 않게 먼저 흘려보낸다. 실패하면 옮기지 않는다.
-      if (current === path && !(await flushPendingSave())) {
+      if (touchesOpen(path, isFolder) && !(await flushPendingSave())) {
         toast.error("마지막 편집을 저장하지 못해 옮기지 않았습니다.");
         return;
       }
       const r = await api.noteMove(path, folder);
-      moveDraft(path, r.path);
+      const reopen = followMove(path, r.path, isFolder);
       toast.ok("이동했습니다");
-      const wasOpen = current === path;
       setMoveFor(null);
       await reloadTree();
-      if (wasOpen) openNote(r.path);
+      if (reopen) openNote(reopen);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "이동 실패");
     }
@@ -592,6 +603,14 @@ export function Notes() {
       rows.push(
         <li key={"f:" + child.path}>
           <div
+            // 폴더도 끌어서 다른 폴더(또는 맨 위)로 옮긴다 — 예전에는 문서만 끌 수 있어 폴더를 옮길
+            // 길이 없었다(37차). 고정 폴더(논문·회의)는 붙여 놓은 자리라 옮기지 않는다.
+            draggable={!isPinned(child.path)}
+            onDragStart={(e) => {
+              e.stopPropagation();
+              e.dataTransfer.setData("text/plain", child.path);
+              e.dataTransfer.effectAllowed = "move";
+            }}
             onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOver(child.path); }}
             onDragLeave={() => setDragOver((p) => (p === child.path ? null : p))}
             onDrop={(e) => {

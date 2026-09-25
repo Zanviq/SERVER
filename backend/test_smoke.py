@@ -11511,6 +11511,30 @@ def test_folders_are_renamed_to_exactly_the_given_name():
         client.delete("/api/notes/folder", params={"path": "시험폴더36"})
 
 
+def test_folders_move_but_never_into_themselves():
+    """폴더를 다른 폴더로 옮긴다 — 제 안(자기·하위)으로는 까닭을 말하고 멈춘다(37차).
+
+    폴더 끌어 옮기기를 화면에 붙이며 찾았다: 제 하위 폴더로 옮기면 대상 폴더를 먼저 만들고 나서
+    파일 시스템이 거절해(EINVAL) 빈 폴더가 남고, 화면에는 "이 이름은 쓸 수 없습니다" 가 떴다.
+    """
+    _login()
+    client.put("/api/notes/save", json={"path": "시험37/가/안.md", "content": "MOVE-37"})
+    client.put("/api/notes/save", json={"path": "시험37/나/자리.md", "content": "x"})
+    try:
+        for target in ("시험37/가", "시험37/가/새하위"):
+            r = client.post("/api/notes/move", json={"path": "시험37/가", "target_folder": target})
+            assert r.status_code == 400 and "그 안으로" in r.json()["detail"], (target, r.text)
+        folders = client.get("/api/notes/tree").json()["folders"]
+        assert "시험37/가/새하위" not in folders, "거절했는데 빈 폴더가 남았다"
+        r = client.post("/api/notes/move", json={"path": "시험37/가", "target_folder": "시험37/나"})
+        assert r.status_code == 200 and r.json()["path"] == "시험37/나/가", r.text
+        assert client.get("/api/notes/get", params={"path": "시험37/나/가/안.md"}).json()["content"] == "MOVE-37"
+        opened = client.get("/api/links/open", params={"path": "note/시험37/가/안.md"}).json()
+        assert opened["found"] and "%EB%82%98" in opened["href"], opened      # 옛 링크가 새 자리(나/가)로
+    finally:
+        client.delete("/api/notes/folder", params={"path": "시험37"})
+
+
 def test_titles_with_brackets_keep_their_name_in_links():
     """할 일·단어 제목의 대괄호도 링크 후보·칩에 그대로 보인다(예전 `_` 모양의 링크도 열린다).
 

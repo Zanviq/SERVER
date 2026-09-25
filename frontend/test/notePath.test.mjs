@@ -37,8 +37,21 @@ test("폴더 줄에도 이름 바꾸기가 있고, 바꾸면 펼침·위치·열
   const src = readFileSync(new URL("../src/pages/Notes.tsx", import.meta.url), "utf8");
   assert.match(src, /aria-label="폴더 이름 변경"/, "폴더 줄에 이름 바꾸기 단추가 없다");
   assert.match(src, /setRenameFor\(\{ path: child\.path, folder: true \}\)/);
-  const fn = src.slice(src.indexOf("const doRenameNote"), src.indexOf("const doMoveNote"));
-  for (const must of ["moveDraftsUnder(path, r.path)", "setExpanded(", "setCurFolder(", "openNote(reopen)"]) {
-    assert.ok(fn.includes(must), `폴더 이름을 바꾼 뒤 ${must} 를 하지 않는다`);
+  // 뒤처리(밑글·펼침·위치·열린 문서)는 이름 바꾸기와 옮기기가 한 곳(followMove)을 쓴다
+  const follow = src.slice(src.indexOf("const followMove"), src.indexOf("const doRenameNote"));
+  for (const must of ["moveDraftsUnder(from, to)", "setExpanded(", "setCurFolder(", "moveDraft(from, to)"]) {
+    assert.ok(follow.includes(must), `경로가 바뀐 뒤 ${must} 를 하지 않는다`);
   }
+  const rename = src.slice(src.indexOf("const doRenameNote"), src.indexOf("const doMoveNote"));
+  const move = src.slice(src.indexOf("const doMoveNote"), src.indexOf("const doDeleteNotePath"));
+  for (const [name, fn] of [["이름 바꾸기", rename], ["옮기기", move]]) {
+    assert.ok(fn.includes("followMove(") && fn.includes("openNote(reopen)"), `${name} 가 뒤처리를 하지 않는다`);
+  }
+});
+
+test("폴더도 끌어 옮긴다 — 고정 폴더는 빼고, 제 안으로는 놓지 않는다(37차)", () => {
+  const src = readFileSync(new URL("../src/pages/Notes.tsx", import.meta.url), "utf8");
+  assert.match(src, /draggable=\{!isPinned\(child\.path\)\}/, "폴더 줄을 끌 수 없다");
+  const move = src.slice(src.indexOf("const doMoveNote"), src.indexOf("const doDeleteNotePath"));
+  assert.match(move, /folder === path \|\| folder\.startsWith\(`\$\{path\}\/`\)/, "폴더를 제 안으로 놓는 것을 막지 않는다");
 });

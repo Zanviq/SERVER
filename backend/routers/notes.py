@@ -693,6 +693,12 @@ def move_note(
     folder = (req.target_folder or "").strip().strip("/")
     if ".." in folder.split("/"):
         raise HTTPException(status_code=400, detail="잘못된 폴더 경로입니다.")
+    # 폴더를 제 안(자기 자신·하위 폴더)으로 옮기면 파일 시스템이 거절한다(EINVAL) — 그 전에
+    # 대상 폴더를 만들어 두므로 빈 폴더가 하나 남고, 화면에는 "이 이름은 쓸 수 없습니다" 라는
+    # 엉뚱한 말이 떴다(37차, 폴더 끌어 옮기기를 붙이며 찾았다). 먼저 까닭을 말하고 멈춘다.
+    src_rel = src.relative_to(root).as_posix()
+    if src.is_dir() and (folder == src_rel or folder.startswith(src_rel + "/")):
+        raise HTTPException(status_code=400, detail="폴더를 그 안으로 옮길 수는 없습니다.")
     dst_rel = f"{folder}/{src.name}" if folder else src.name
     dst = safe_join(root, dst_rel)
     if dst == src:
