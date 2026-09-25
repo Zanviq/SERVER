@@ -10,6 +10,7 @@
 // 타입은 `import type` 으로 따로 받는다 — 값과 섞어 두면 타입을 지우는 것만으로
 // 돌리는 환경(노드의 --experimental-strip-types)에서 "그런 export 없다"고 멈춘다.
 import { parseWikiEmbed } from "./embeds";
+import { closesFence } from "./fence";
 import type { EmbedResolver } from "./embeds";
 import { transformLinks } from "./links";
 
@@ -49,7 +50,7 @@ function mapOutsideCode(text: string, fn: (chunk: string) => string): string {
     if (fence) {
       out.push(line);
       // 같은 종류의 울타리가 같은 길이 이상이면 닫힌다
-      if (open && open[1][0] === fence[0] && open[1].length >= fence.length) fence = null;
+      if (open && closesFence(fence, open[1])) fence = null;
       continue;
     }
     if (open) {

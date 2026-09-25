@@ -12,6 +12,8 @@
  * 화면 없이 시험한다(test/mdInput.test.mjs).
  */
 
+import { closesFence } from "./fence";
+
 /** 목록 표시: 들여쓰기 · 표시(-, *, +, 1., 1)) · 뒤 공백 · 체크박스 */
 const LIST = /^(\s*)([-*+]|(\d+)([.)]))(\s+)(\[[ xX]\]\s+)?/;
 const QUOTE = /^(\s*>\s?)/;
@@ -31,7 +33,7 @@ function insideFence(text: string, lineStart: number): boolean {
     const m = FENCE.exec(line);
     if (!m) continue;
     if (open === null) open = m[1];
-    else if (m[1][0] === open[0] && m[1].length >= open.length) open = null;
+    else if (closesFence(open, m[1])) open = null;
   }
   return open !== null;
 }
