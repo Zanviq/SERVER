@@ -11448,6 +11448,35 @@ def test_old_links_follow_the_latest_note_at_a_reused_place():
     assert opened("note/사슬F/a.md")["path"] == "note/사슬G/b.md"
 
 
+def test_app_links_count_as_backlinks_and_graph_edges():
+    """`[note/경로]` 로 이은 문서도 역링크·문서 지도에 나온다 — 위키링크만 세지 않는다(46차).
+
+    입력칸에서 `[` 를 치면 앱이 넣어 주는 링크가 이 모양인데, 그래프·역링크는 `[[제목]]` 만 셌다.
+    실측: A 에 `[note/시험46/폴더/B.md]` 를 적어도 B 의 역링크는 [] 였다.
+    """
+    _login()
+    box = "역링크46"
+    client.put("/api/notes/save", json={"path": f"{box}/대상/B.md", "content": "# B"})
+    client.put("/api/notes/save", json={"path": f"{box}/대상/회의 [2026].md", "content": "# 괄호"})
+    client.put("/api/notes/save", json={"path": f"{box}/A.md", "content": f"보라 [note/{box}/대상/B.md]"})
+    client.put("/api/notes/save", json={"path": f"{box}/확장자없이.md", "content": f"[note/{box}/대상/B]"})
+    # 이름에 대괄호가 든 문서는 링크에서 %5B·%5D 로 적힌다(30차)
+    client.put("/api/notes/save", json={"path": f"{box}/괄호가리킴.md",
+                                        "content": f"[note/{box}/대상/회의 %5B2026%5D.md]"})
+    # 코드 안의 것은 링크 문법을 **설명하는** 글이다 — 세지 않는다
+    client.put("/api/notes/save", json={"path": f"{box}/설명.md", "content": f"쓰는 법: `[note/{box}/대상/B.md]`"})
+    try:
+        back = client.get("/api/notes/get", params={"path": f"{box}/대상/B.md"}).json()["backlinks"]
+        assert sorted(back) == ["A", "확장자없이"], back
+        back2 = client.get("/api/notes/get", params={"path": f"{box}/대상/회의 [2026].md"}).json()["backlinks"]
+        assert back2 == ["괄호가리킴"], back2
+        g = client.get("/api/notes/graph", params={"folder": box}).json()
+        assert {"source": "A", "target": "B"} in g["links"], g["links"]
+        assert not any(l["source"] == "설명" for l in g["links"]), "코드 안의 링크를 셌다"
+    finally:
+        client.request("DELETE", "/api/notes/folder", params={"path": box})
+
+
 def test_link_suggestions_say_how_many_more_there_are():
     """후보 상한(30)에 걸려 안 보이는 것이 있으면 그 수를 알린다.
 

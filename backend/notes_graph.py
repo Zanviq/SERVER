@@ -1,7 +1,9 @@
-"""노트 위키링크 파싱 + 그래프 빌드 (옵시디언식).
+"""노트 링크 파싱 + 그래프 빌드 (옵시디언식).
 
-노트는 .md 파일. `[[제목]]` 또는 `[[제목|별칭]]`으로 다른 노트를 참조.
-링크는 파일명(확장자 제외, stem)으로 매칭한다.
+노트는 .md 파일. 다른 노트를 가리키는 길은 둘이다:
+- `[[제목]]`·`[[제목|별칭]]` — 파일명(확장자 제외, stem)으로 매칭한다.
+- `[note/경로]` — 이 앱의 링크(입력칸에서 `[` 를 치면 넣어 주는 것). 문서 루트 기준 경로로 매칭한다.
+  예전엔 위키링크만 세어, 앱이 넣어 준 링크로 이은 문서는 역링크에도 지도에도 나오지 않았다(46차).
 """
 from __future__ import annotations
 
@@ -11,6 +13,7 @@ import re
 import threading
 from collections import OrderedDict
 from pathlib import Path
+from typing import NamedTuple
 
 from . import doc_cache
 from .storage import WalkedFile, walk_all, walk_files
@@ -41,7 +44,13 @@ _CACHE_MAX = 32
 #:
 #: 무효화는 doc_cache 와 같다 — mtime·크기가 그대로면 같은 내용으로 본다(저장은
 #: os.replace 로 갈아 끼우므로 내용이 바뀌면 mtime 이 반드시 바뀐다).
-_LINKS: "OrderedDict[str, tuple[int, int, tuple[str, ...]]]" = OrderedDict()
+class NoteLinks(NamedTuple):
+    """노트 하나가 가리키는 것 — 위키링크 제목과 `[note/…]` 경로(문서 루트 기준, 되돌린 이름)."""
+    titles: tuple[str, ...] = ()
+    paths: tuple[str, ...] = ()
+
+
+_LINKS: "OrderedDict[str, tuple[int, int, NoteLinks]]" = OrderedDict()
 #: 담아 둘 노트 수. 넘으면 오래 안 쓴 것부터 버린다(지운 노트가 남아도 여기서 멈춘다).
 _LINKS_MAX = 50_000
 _links_lock = threading.Lock()
@@ -53,8 +62,24 @@ def clear_cache() -> None:
         _LINKS.clear()
 
 
-def _links_of(f: WalkedFile) -> tuple[str, ...]:
-    """이 노트의 위키링크. 지난번과 mtime·크기가 같으면 읽지도 파싱하지도 않는다."""
+def parse_note_links(text: str) -> list[str]:
+    """본문의 `[note/경로]` 링크 경로들(나온 순서, 중복 없이). 코드 안의 것은 뺀다(links.find_refs)."""
+    # 링크가 없는 글은 코드 가리기·정규식을 돌리지 않는다(문서 링크의 갈래는 note·notes 뿐이다)
+    if "[note" not in text:
+        return []
+    # links 는 여러 저장소를 불러온다 — 그래프만 쓰는 쪽까지 끌고 오지 않게 부를 때 불러온다
+    from .links import find_refs, split
+
+    out: list[str] = []
+    for ref in find_refs(text):
+        kind, rest = split(ref)
+        if kind == "note" and rest and rest not in out:
+            out.append(rest)
+    return out
+
+
+def _links_of(f: WalkedFile) -> NoteLinks:
+    """이 노트의 링크. 지난번과 mtime·크기가 같으면 읽지도 파싱하지도 않는다."""
     key = f.abspath
     fp = (f.stat.st_mtime_ns, f.stat.st_size)
     with _links_lock:
@@ -65,16 +90,30 @@ def _links_of(f: WalkedFile) -> tuple[str, ...]:
     # 본문은 검색과 같은 캐시로 읽는다(같은 파일을 두 번 읽지 않게).
     text = doc_cache.text_of(f.path, f.stat)
     if text is None:
-        return ()
+        return NoteLinks()
     # 전에는 read_text 로 읽었다 — 줄바꿈을 모두 \n 으로 바꿔 준다. 코드 구간 판정
     # (빈 줄은 못 넘는다)이 \n 만 보므로, CRLF 문서에서 결과가 달라지지 않게 맞춘다.
-    found = tuple(parse_wikilinks(text.replace("\r\n", "\n").replace("\r", "\n")))
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    found = NoteLinks(tuple(parse_wikilinks(text)), tuple(parse_note_links(text)))
     with _links_lock:
         _LINKS.pop(key, None)
         _LINKS[key] = (fp[0], fp[1], found)
         while len(_LINKS) > _LINKS_MAX:
             _LINKS.popitem(last=False)
     return found
+
+
+def _index_rel(by_rel: dict, rel: str, value) -> None:
+    """`[note/경로]` 를 찾을 표 — 경로는 확장자를 붙여도 떼어도 같은 문서다(링크 열기와 같은 규칙)."""
+    key = rel.lower()
+    by_rel.setdefault(key, value)
+    if key.endswith(".md"):
+        by_rel.setdefault(key[:-3], value)
+
+
+def _targets(ln: NoteLinks, by_key: dict, by_rel: dict) -> list:
+    """노트 하나의 링크가 닿는 것들(못 찾은 것은 None) — 위키링크는 제목으로, 경로 링크는 경로로."""
+    return [by_key.get(t.lower()) for t in ln.titles] + [by_rel.get(p.strip("/").lower()) for p in ln.paths]
 
 
 def _fingerprint(files: list[WalkedFile], dirs: list[str]) -> tuple:
@@ -220,11 +259,13 @@ def build_graph(
 
     notes = [f for f in files if f.rel.endswith(".md")]
     by_key: dict[str, str] = {}
+    by_rel: dict[str, str] = {}
     nodes = []
     for f in notes:
         p = f.path
         stem = p.stem
         by_key.setdefault(stem.lower(), stem)
+        _index_rel(by_rel, p.relative_to(notes_dir).as_posix(), stem)
         nodes.append(
             {
                 "id": stem,
@@ -238,8 +279,7 @@ def build_graph(
     seen = set()
     for f in notes:
         src = f.path.stem
-        for target in _links_of(f):
-            tgt = by_key.get(target.lower())
+        for tgt in _targets(_links_of(f), by_key, by_rel):
             if tgt and tgt != src:
                 key = (src, tgt)
                 if key not in seen:
@@ -314,8 +354,10 @@ def _folder_graph(notes_dir: Path, base: Path) -> dict:
     # 전체 스템 → 경로 (base 하위만) 로 위키링크 대상 해석
     all_notes = [f for f in walk_files(base, sort=False) if f.rel.endswith(".md")]
     by_key: dict[str, Path] = {}
+    by_rel: dict[str, Path] = {}
     for f in all_notes:
         by_key.setdefault(f.path.stem.lower(), f.path)
+        _index_rel(by_rel, f.path.relative_to(notes_dir).as_posix(), f.path)
 
     valid_ids = {n["id"] for n in nodes}
     links = []
@@ -324,8 +366,7 @@ def _folder_graph(notes_dir: Path, base: Path) -> dict:
         g_src = group_of(f.path)
         if g_src not in valid_ids:
             continue
-        for target in _links_of(f):
-            tp = by_key.get(target.lower())
+        for tp in _targets(_links_of(f), by_key, by_rel):
             if not tp:
                 continue
             g_tgt = group_of(tp)
