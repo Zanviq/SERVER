@@ -29,8 +29,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .. import (
-    branch_names, chat_store, context_store, links, meeting_store, paper_store, vocab_store,
-    vocab_suggest,
+    ai_lanes, branch_names, chat_store, context_store, links, meeting_store, paper_store,
+    vocab_store, vocab_suggest,
 )
 from ..ai import models as ai_models
 from ..ai import modes, orchestrator
@@ -857,8 +857,10 @@ def chat(
                 except Exception:  # noqa: BLE001
                     logger.exception("대화 저장 실패")
 
+    # 모델을 기다리는 동안 공용 스레드를 쥐지 않게 AI 자리에서 흘린다(ai_lanes — AI 45개가
+    # 돌면 다른 화면 전부가 13초씩 멈췄다). 한 사람 몫이 넘치면 여기서 429.
     return StreamingResponse(
-        gen(),
+        ai_lanes.streaming(gen(), user.username),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

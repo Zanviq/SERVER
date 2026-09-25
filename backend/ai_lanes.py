@@ -1,0 +1,115 @@
+"""AI 차례가 모델을 기다리는 자리 — 다른 화면이 쓰는 스레드와 떼어 둔다.
+
+대화(/api/ai/chat)는 동기 생성기를 StreamingResponse 로 흘린다. Starlette 는 그런 생성기의
+조각 하나하나를 **공용 스레드 풀**(기본 40)에서 꺼내는데, 조각 하나를 꺼내는 동안 모델의
+답을 기다린다(수 초~수십 초). 그래서 AI 차례가 40개쯤 동시에 돌면 문서 목록·저장처럼
+동기로 도는 화면 **전부**가 스레드를 못 얻어 멈췄다 — 22차 실측(가짜 느린 모델): AI 45개가
+도는 동안 /api/notes/list 가 29ms → 13,139ms. 한 사람이 탭을 여러 개 열거나 스크립트로
+보내면 서버 전체가 선다.
+
+- 조각은 Starlette 와 **같은 방식**(anyio.to_thread.run_sync)으로 꺼내되 AI 전용 한도
+  (STREAMS)를 쓴다. 공용 한도의 몫을 쓰지 않으므로 AI 가 아무리 밀려도 다른 화면은 돈다.
+  넘친 차례는 거절하지 않고 자리가 날 때까지 기다린다.
+- 한 사람이 한꺼번에 기다릴 수 있는 차례는 PER_USER 개. 넘으면 429 로 까닭을 말한다 —
+  한 사람이 AI 자리를 다 차지하면 다른 사람의 차례가 몇 분씩 밀리고, 모델 비용은 서버
+  주인의 키로 나간다.
+- 생성기를 닫는 방식은 그대로다(끊기면 버려질 때 닫혀 finally 가 받은 데까지 남긴다).
+"""
+from __future__ import annotations
+
+import threading
+import weakref
+from collections.abc import AsyncIterator, Callable, Iterator
+
+import anyio
+import anyio.to_thread
+from fastapi import HTTPException
+
+#: 서버 전체에서 동시에 모델을 기다릴 수 있는 AI 차례 수(넘치면 줄을 선다). 스레드는 거의
+#: 네트워크를 기다리며 놀고 있으므로 이만큼은 파이에서도 가볍다.
+STREAMS = 16
+#: 한 사람이 한꺼번에 기다릴 수 있는 AI 차례 수(넘치면 429). 영어 튜터·논문·회의·비서를
+#: 탭 여러 개에 열어 두고 동시에 묻는 정도(동시성 시험이 한 사람당 6개를 보낸다)는 받는다.
+PER_USER = 6
+
+_limiter: anyio.CapacityLimiter | None = None
+_lock = threading.Lock()
+_inflight: dict[str, int] = {}
+
+
+def _lane() -> anyio.CapacityLimiter:
+    # 이벤트 루프 안에서 만들어야 한다(anyio 가 지금 도는 백엔드를 보고 만든다).
+    global _limiter
+    if _limiter is None:
+        _limiter = anyio.CapacityLimiter(STREAMS)
+    return _limiter
+
+
+def inflight(username: str) -> int:
+    with _lock:
+        return _inflight.get(username, 0)
+
+
+def claim(username: str) -> Callable[[], None]:
+    """한 사람 몫을 하나 잡는다. 넘치면 429. 돌려준 함수로 놓는다(여러 번 불러도 한 번만)."""
+    with _lock:
+        n = _inflight.get(username, 0)
+        if n >= PER_USER:
+            # 멈춘 차례도 모델이 끝날 때까지는 자리를 쓴다(모델은 이미 일하는 중이다) —
+            # 방금 멈췄는데 왜 막히는지 모르지 않게 그 말도 한다.
+            raise HTTPException(
+                status_code=429,
+                detail=(f"AI 가 아직 앞의 답 {n}개를 만들고 있습니다(멈춘 것도 끝날 때까지는 "
+                        "자리를 씁니다). 잠시 뒤 다시 보내 주세요."),
+            )
+        _inflight[username] = n + 1
+    done = False
+
+    def release() -> None:
+        nonlocal done
+        with _lock:
+            if done:
+                return
+            done = True
+            left = _inflight.get(username, 1) - 1
+            if left > 0:
+                _inflight[username] = left
+            else:
+                _inflight.pop(username, None)
+
+    return release
+
+
+class _End(Exception):
+    """생성기가 끝났다 — StopIteration 은 스레드 경계를 넘기지 못해 바꿔 던진다."""
+
+
+def _next(it: Iterator[str]) -> str:
+    try:
+        return next(it)
+    except StopIteration:
+        raise _End from None
+
+
+async def _stream(it: Iterator[str], release: Callable[[], None]) -> AsyncIterator[str]:
+    try:
+        while True:
+            try:
+                chunk = await anyio.to_thread.run_sync(_next, it, limiter=_lane())
+            except _End:
+                return
+            yield chunk
+    finally:
+        release()
+
+
+def streaming(it: Iterator[str], username: str) -> AsyncIterator[str]:
+    """동기 생성기를 AI 자리에서 흘리는 비동기 반복자로. 사람 몫은 여기서 잡는다(넘치면 429).
+
+    응답이 한 번도 돌지 못하고 버려져도(보내기 전에 끊긴 연결) 몫을 돌려준다 — finally 는
+    시작한 비동기 생성기에서만 돈다.
+    """
+    release = claim(username)
+    agen = _stream(it, release)
+    weakref.finalize(agen, release)
+    return agen

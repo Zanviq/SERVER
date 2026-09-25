@@ -11405,6 +11405,93 @@ def test_calendar_links_open_the_view_they_point_at():
     assert {"diary", "events"} <= known, known
 
 
+def test_ai_turns_wait_on_their_own_threads():
+    """AI 차례가 모델을 기다리는 동안 다른 화면의 스레드를 쥐지 않는다.
+
+    22차 실측(가짜 느린 모델): AI 대화 45개가 돌자 /api/notes/list 가 29ms → 13,139ms. 동기
+    생성기의 조각을 Starlette 가 공용 스레드 풀(40)에서 꺼내는데, 조각 하나를 꺼내는 동안
+    모델을 기다리기 때문이다. 공용 한도를 2로 줄여 두고 AI 넷이 기다리는 중에도 공용 스레드
+    일이 곧바로 도는지 본다(예전 방식이면 AI 가 끝날 때까지 줄을 선다).
+    """
+    import gc
+    import time as _time
+
+    import anyio
+    import anyio.to_thread
+
+    from backend import ai_lanes
+
+    def slow():
+        _time.sleep(0.6)   # 모델을 기다리는 셈
+        yield "답"
+
+    async def main():
+        anyio.to_thread.current_default_thread_limiter().total_tokens = 2
+        got: list[str] = []
+        waited = {}
+
+        async def consume(i):
+            async for chunk in ai_lanes.streaming(slow(), f"lane-user-{i}"):
+                got.append(chunk)
+
+        async with anyio.create_task_group() as tg:
+            for i in range(4):
+                tg.start_soon(consume, i)
+            await anyio.sleep(0.1)
+            t = _time.perf_counter()
+            await anyio.to_thread.run_sync(lambda: None)   # 다른 화면의 동기 일
+            waited["other"] = _time.perf_counter() - t
+        return got, waited
+
+    got, waited = anyio.run(main)
+    assert got == ["답"] * 4
+    assert waited["other"] < 0.3, f"AI 가 기다리는 동안 다른 일이 {waited['other']:.2f}초 막혔다"
+
+    # 한 사람 몫: 넘치면 429, 놓으면 다시. 한 번도 돌지 못하고 버려진 응답도 몫을 돌려준다.
+    from fastapi import HTTPException
+
+    held = [ai_lanes.claim("cap-user") for _ in range(ai_lanes.PER_USER)]
+    try:
+        ai_lanes.claim("cap-user")
+        raise AssertionError("몫이 넘쳐도 받아들였다")
+    except HTTPException as e:
+        assert e.status_code == 429 and "만들고 있습니다" in e.detail
+    held.pop()()
+    held.append(ai_lanes.claim("cap-user"))
+    for r in held:
+        r()
+        r()   # 두 번 놓아도 한 번만
+    assert ai_lanes.inflight("cap-user") == 0
+    unused = ai_lanes.streaming(iter(["x"]), "cap-user")
+    assert ai_lanes.inflight("cap-user") == 1
+    del unused
+    gc.collect()
+    assert ai_lanes.inflight("cap-user") == 0, "돌지 못한 응답이 몫을 쥔 채 남았다"
+
+
+def test_chat_goes_through_the_ai_lanes(monkeypatch):
+    """대화 창구가 AI 자리를 쓴다 — 몫이 차면 429 로 까닭을 말하고, 끝나면 몫을 돌려준다."""
+    from backend import ai_lanes
+    from backend.ai import orchestrator
+
+    class Fine:
+        def chat(self, contents, catalog, system):
+            return orchestrator.LLMResult(text="자리 시험 답")
+
+    monkeypatch.setattr(orchestrator, "GeminiLLM", lambda settings, model="": Fine())
+    _login()
+    r = client.post("/api/ai/chat", json={"message": "자리 시험", "mode": "assistant"})
+    assert r.status_code == 200 and "자리 시험 답" in r.text
+    assert ai_lanes.inflight("tester") == 0, "끝난 차례가 몫을 돌려주지 않았다"
+    held = [ai_lanes.claim("tester") for _ in range(ai_lanes.PER_USER)]
+    try:
+        r = client.post("/api/ai/chat", json={"message": "넘친 차례", "mode": "assistant"})
+        assert r.status_code == 429 and "만들고 있습니다" in r.json()["detail"], r.text
+    finally:
+        for rel in held:
+            rel()
+
+
 def test_search_hits_open_the_same_screen_as_links():
     """전역 검색 결과가 싣는 href 는 링크와 같은 규칙(links.screen_of)에서 나온다.
 
