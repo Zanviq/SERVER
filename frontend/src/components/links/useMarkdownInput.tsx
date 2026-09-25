@@ -1,4 +1,4 @@
-import { ReactNode, RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { ReactNode, RefObject, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight, ChevronUp, Link2, X } from "lucide-react";
 import type { LinkItem } from "../../lib/api";
@@ -273,6 +273,25 @@ export function useMarkdownInput(ref: RefObject<Field>, opts: InputOptions = {})
     listRef.current?.children[active]?.scrollIntoView({ block: "nearest" });
   }, [active]);
 
+  // 화면 읽기에도 후보를 잇는다. 포커스는 입력칸에 남으므로(치던 글을 이어 쳐야 한다) 목록과
+  // 고른 후보를 입력칸의 aria 로 가리킨다. 예전엔 아무 연결이 없어 후보 30개가 떠도, ↓ 로 골라도
+  // 화면 읽기에는 들리지 않았다(41차 실측). textarea 에 role=combobox 는 주지 않는다 — 여러 줄
+  // 입력칸이라는 뜻이 사라진다. 대신 textbox 가 받는 aria-autocomplete·activedescendant 로.
+  const baseId = useId();
+  const listId = `${baseId}-links`;
+  const optId = (i: number) => `${baseId}-link-${i}`;
+  const shown = !!q && !!pos && !collapsed;
+  const current = shown && itemsFor === q?.query && items.length > 0 ? optId(Math.min(active, items.length - 1)) : null;
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    node.setAttribute("aria-autocomplete", "list");
+    if (shown) node.setAttribute("aria-controls", listId);
+    else node.removeAttribute("aria-controls");
+    if (current) node.setAttribute("aria-activedescendant", current);
+    else node.removeAttribute("aria-activedescendant");
+  }, [el, ref, shown, current, listId]);
+
   if (!q || !pos) return null;
   const style: React.CSSProperties = {
     position: "fixed", left: pos.left, width: pos.width, zIndex: 60,
@@ -335,11 +354,11 @@ export function useMarkdownInput(ref: RefObject<Field>, opts: InputOptions = {})
               <X size={12} />
             </button>
           </div>
-          <ul ref={listRef} role="listbox" aria-label="링크 후보" className="min-h-0 flex-1 overflow-y-auto py-1">
+          <ul ref={listRef} id={listId} role="listbox" aria-label="링크 후보" className="min-h-0 flex-1 overflow-y-auto py-1">
             {items.map((it, i) => {
               const Icon = linkIcon(it.kind, it.folder);
               return (
-                <li key={it.path} role="option" aria-selected={i === active}>
+                <li key={it.path} id={optId(i)} role="option" aria-selected={i === active}>
                   <button
                     type="button"
                     onMouseEnter={() => setActive(i)}

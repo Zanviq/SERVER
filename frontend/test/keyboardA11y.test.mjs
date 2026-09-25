@@ -35,6 +35,18 @@ test("링크 후보의 안내는 휴대폰에서 할 수 없는 조작(↑↓·E
   assert.match(hook, /touch \? "눌러서 넣기/, "휴대폰 안내가 없다");
 });
 
+test("링크 후보는 입력칸의 aria 로 목록과 고른 후보를 가리킨다 — 41차", () => {
+  // 포커스는 입력칸에 남는다. 예전엔 아무 연결이 없어 후보 30개가 떠도, ↓ 로 골라도 화면 읽기에 안 들렸다.
+  const hook = src("components/links/useMarkdownInput.tsx");
+  assert.match(hook, /setAttribute\("aria-autocomplete", "list"\)/);
+  assert.match(hook, /setAttribute\("aria-controls", listId\)/, "입력칸이 후보 목록을 가리키지 않는다");
+  assert.match(hook, /setAttribute\("aria-activedescendant", current\)/, "↓ 로 고른 후보가 알려지지 않는다");
+  assert.match(hook, /removeAttribute\("aria-activedescendant"\)/, "닫힌 뒤에도 사라진 후보를 가리킨다");
+  assert.match(hook, /<ul ref=\{listRef\} id=\{listId\} role="listbox"/);
+  assert.match(hook, /<li key=\{it\.path\} id=\{optId\(i\)\} role="option"/);
+  assert.doesNotMatch(hook, /role", "combobox"/, "여러 줄 입력칸에 combobox 를 씌우면 여러 줄이라는 뜻이 사라진다");
+});
+
 test("아이콘만 있는 드롭다운 단추에는 이름(label)이 있다 — 31차", async () => {
   // 논문·회의 목록의 … 단추가 이름 없이 "단추"로만 읽혔다(화면 전체를 훑은 실측). 컴포넌트가
   // 이름을 받게 하고, 아이콘 하나만 그리는 쓰임은 모두 넘기는지 소스로 본다.
