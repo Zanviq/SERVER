@@ -118,3 +118,11 @@ test("대괄호가 든 이름 — 경로는 %5B·%5D 모양으로 오가고, 보
   assert.equal(splitLink(`[${folder}]`).rest, "괄호/회의 %5B2026%5D", "경로를 되돌려 넘기면 끝 ] 가 떨어진다");
   assert.equal(plainRefs(`[${doc}] 보기`), "회의록 [초안].md 보기");
 });
+
+test("대괄호를 싣는 모양이 백엔드와 같다(%5B·%5D)", () => {
+  // 한쪽만 바꾸면 서버가 준 후보 경로를 화면이 이름으로 되돌리지 못한다(또는 그 반대)
+  const py = readFileSync(new URL("../../backend/links.py", import.meta.url), "utf8");
+  assert.match(py, /replace\("\[", "%5B"\)\.replace\("\]", "%5D"\)/, "백엔드 escape 모양이 바뀌었다");
+  const ts = readFileSync(new URL("../src/lib/links.ts", import.meta.url), "utf8");
+  assert.match(ts, /replace\(\/%5d\/gi, "\]"\)\.replace\(\/%5b\/gi, "\["\)/, "프런트 되돌리기 모양이 바뀌었다");
+});

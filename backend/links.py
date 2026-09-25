@@ -59,6 +59,14 @@ MAX_TOTAL_CHARS = 24000
 #: 폴더 링크를 풀 때 보여 줄 항목 수
 MAX_LISTING = 120
 
+
+# ── 경로의 모양 ───────────────────────────────────────────────────────
+#
+# 규칙 하나: 링크 경로는 **escape 된 모양으로 오간다**(후보·열기·찾기·모델에게 주는 목록).
+# 되돌리는 것은 실제 이름과 맞댈 때(파일 찾기·화면 주소·보일 이름)뿐이다 — split·rest_of·_shown.
+# 되돌린 경로를 다시 넘기면 이름 끝의 `]` 를 링크 괄호로 알고 떼어 낸다(30차에 시험이 잡았다).
+# 프런트(lib/links.ts)도 같은 규칙이다(unescapeLinkPath 는 보일 이름에만).
+
 _BAD_SEGMENT = re.compile(r"[\\/\x00-\x1f]")
 
 
@@ -97,6 +105,14 @@ def note_link(rel: str) -> str:
     끊긴다(30차). 실제 이름으로 되돌리는 쪽은 split·rest_of.
     """
     return f"note/{escape(rel)}"
+
+
+def _legacy(rest: str) -> str:
+    """32차 전 segment 가 짓던 모양 — 대괄호를 `_` 로. 대화 기록에 남은 옛 링크를 찾을 때만."""
+    return rest.replace("[", "_").replace("]", "_")
+
+
+# ── 링크 읽기 ─────────────────────────────────────────────────────────
 
 
 def canon_kind(kind: str) -> str | None:
@@ -515,11 +531,6 @@ def _find(items: list[Entry], rest: str) -> Entry | None:
     tail = want.rsplit("/", 1)[-1].lower()
     same = [e for e in items if not e.folder and e.label.lower() == tail]
     return same[0] if len(same) == 1 else None
-
-
-def _legacy(rest: str) -> str:
-    """32차 전 segment 가 짓던 모양 — 대괄호를 `_` 로."""
-    return rest.replace("[", "_").replace("]", "_")
 
 
 def resolve(user: SessionUser, settings: Settings, path: str) -> Resolved:
