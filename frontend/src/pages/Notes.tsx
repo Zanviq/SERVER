@@ -1060,10 +1060,8 @@ export function Notes() {
               docKey={current}
               resolveEmbed={resolveEmbed}
               plain={!isMarkdown}
-              // 그림·문서 링크를 마크다운으로 넣는 것들 — 평문에는 넣지 않는다(첨부 단추도 사라진다)
-              onDropFiles={isMarkdown ? onDropFiles : undefined}
-              onDropPath={isMarkdown ? onDropPath : undefined}
-              onCreateDoc={isMarkdown ? onCreateDoc : undefined}
+              // 그림·문서 링크를 마크다운으로 넣는 것들 — 평문에는 넘기지 않는다(첨부 단추도 사라진다)
+              {...(isMarkdown ? { onDropFiles, onDropPath, onCreateDoc } : {})}
               // 읽기 뷰와 같은 동작 — 편집 화면에서도 `[[제목]]` 을 누르면 연다
               onOpenTitle={openByTitle}
             />
