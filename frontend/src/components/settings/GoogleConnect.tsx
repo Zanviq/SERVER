@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CalendarCheck, Link2, Loader2, Unlink } from "lucide-react";
 import { api, GoogleStatus } from "../../lib/api";
 import { useAuth } from "../../store/auth";
-import { toast } from "../../store/toast";
+import { toast } from "../../store/toast";
 import { isOwner } from "../../lib/owner";
 
 /** 캘린더 탭 상단의 Google 연동 카드. */

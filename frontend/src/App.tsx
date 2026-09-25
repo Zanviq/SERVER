@@ -9,7 +9,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { Toaster } from "./components/ui/Toaster";
 import { ReminderPoller } from "./components/ReminderPoller";
 import { SearchPalette } from "./components/search/SearchPalette";
-import { startPageTiming, trackRoute } from "./lib/pageTiming";
+import { startPageTiming, trackRoute } from "./lib/pageTiming";
 import { isOwner } from "./lib/owner";
 
 // 무거운 라우트는 코드 분할(지연 로드) — 초기 번들 축소
