@@ -13,6 +13,14 @@ import { test } from "node:test";
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
 
+test("대화 입력칸(한 줄 칸)의 안내 글은 두 줄로 꺾이지 않는다", () => {
+  // 27차: 달력·논문의 좁은 대화 칸에서 안내 글이 칸보다 길어 두 줄로 꺾였고, 칸은 한 줄
+  // 높이라 아랫줄이 반쯤 잘려 보였다. 여러 줄 칸(단어 뜻 등)의 안내는 줄바꿈이 뜻이 있어 건드리지 않는다.
+  const src = read("../src/components/ai/ChatPanel.tsx");
+  const box = src.slice(src.indexOf("rows={1}"), src.indexOf("rows={1}") + 400);
+  assert.match(box, /placeholder:truncate/, "대화 입력칸의 안내 글이 한 줄로 고정되지 않았다");
+});
+
 test("단어장 머리글은 한 줄이고, 복습 수는 네 자리에서 줄인다", () => {
   const src = read("../src/components/vocab/VocabPanel.tsx");
   const head = src.slice(src.indexOf("<BookMarked") - 400, src.indexOf("모아 넣기"));

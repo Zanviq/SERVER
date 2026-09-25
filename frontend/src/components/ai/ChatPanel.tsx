@@ -1067,8 +1067,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
           placeholder={placeholder ?? (touch ? "메시지를 입력하세요…" : "메시지를 입력하세요… (Shift+Enter 줄바꿈)")}
           // 답을 기다리는 동안에도 다음 말을 적어 둘 수 있어야 한다(보내기만 막힌다).
           // 잠가 두면 Esc 로 중단할 방법도 함께 사라진다.
+          // 한 줄 칸이라 안내 글이 칸보다 길면 두 줄로 꺾여 아랫줄이 반쯤 잘려 보였다(달력·논문의
+          // 좁은 대화 칸, 27차) — 안내 글은 한 줄로 두고 넘치는 끝만 숨긴다(placeholder:truncate).
           rows={1}
-          className="input flex-1 resize-none !h-auto min-h-[2.25rem] py-2 leading-relaxed [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="input flex-1 resize-none !h-auto min-h-[2.25rem] py-2 leading-relaxed placeholder:truncate [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           style={{ maxHeight: 160, overflowY: "auto" }}
         />
         {linkPanel}
