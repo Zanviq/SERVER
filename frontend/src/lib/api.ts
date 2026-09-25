@@ -439,7 +439,8 @@ export const api = {
   /** 달력 한 화면치. 서버가 글을 아예 안 실어 주므로 표를 붙이지 않는다. */
   diaryRange: (from: string, to: string) => req<DiaryDay[]>(`/api/diary?${q({ from, to })}`),
   diaryGet: (day: string) => req<DiaryDay>(`/api/diary/${day}`, { headers: unlockHeader(day) }),
-  diarySave: async (day: string, body: Partial<Pick<DiaryDay, "body" | "heart" | "mind" | "text">>) => {
+  diarySave: async (day: string,
+    body: Partial<Pick<DiaryDay, "body" | "heart" | "mind" | "text">> & { base_at?: number }) => {
     const r = await req<DiaryDay>(`/api/diary/${day}`, {
       ...jsonInit("PUT", body),
       headers: { "Content-Type": "application/json", ...unlockHeader(day) },
@@ -876,6 +877,9 @@ export interface DiaryDay {
    *  `diarySave` 가 받아서 보관하므로 화면이 직접 다룰 일은 없다. */
   unlock?: string;
   updated_at: string;
+  /** 글이 마지막으로 바뀐 때(도형만 바꾼 것으로는 안 움직인다). 저장에 base_at 으로 돌려보내면
+   *  그 사이 다른 곳에서 바뀐 글을 덮지 않고 409 가 온다. */
+  text_at?: number;
 }
 
 // ── 회의 녹음 ──

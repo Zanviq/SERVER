@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Loader2, Lock } from "lucide-react";
-import { api, CalEvent, DiaryAxis, DiaryDay, DiaryShape } from "../../lib/api";
+import { api, ApiError, CalEvent, DiaryAxis, DiaryDay, DiaryShape } from "../../lib/api";
+import { mergeDiaryText } from "../../lib/diaryMerge";
 import { toast } from "../../store/toast";
 import { useSettings } from "../../store/settings";
 import { isSubmitEnter } from "../../lib/keys";
@@ -148,6 +149,11 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
   onEditRef.current = onEdit;
   const dateRef = useRef(date);
   dateRef.current = date;
+  const textRef = useRef(text);
+  textRef.current = text;
+  //: 지금 칸의 글이 **어느 서버 글에서 이어졌는가**(그 글의 text_at). 저장에 실어 보내면, 그 사이
+  //: 다른 곳(폰·다른 탭)에서 글이 바뀌었을 때 서버가 덮지 않고 409 를 준다(28차).
+  const baseAt = useRef(cur.text_at ?? 0);
 
   // 날짜가 바뀌면 글을 새 날의 것으로 바꾼다. 떠나기 전에 남은 저장은 먼저 보낸다
   // (타이머가 뜨기 전에 다른 날을 누르면 마지막 문장이 사라졌다).
@@ -159,6 +165,7 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
   useEffect(() => {
     setText(entry?.text ?? "");
     setDirty(false);
+    baseAt.current = entry?.text_at ?? 0;
     // entry 는 저장 응답으로도 바뀌는데, 그때 입력 중인 글을 덮으면 안 된다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date]);
@@ -167,8 +174,38 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
   // 도므로 그때 다시 돌지 않아, 자물쇠를 풀었는데 칸이 비어 있었다(실측).
   // 입력 중이거나 이미 뭔가 적혀 있으면 건드리지 않는다.
   useEffect(() => {
-    if (!locked && !dirty && entry?.text && !text) setText(entry.text);
-  }, [locked, entry?.text, dirty, text]);
+    if (!locked && !dirty && entry?.text && !text) {
+      setText(entry.text);
+      baseAt.current = entry.text_at ?? 0;
+    }
+  }, [locked, entry?.text, entry?.text_at, dirty, text]);
+
+  /**
+   * 글 저장. 연 뒤에 다른 곳에서 글이 바뀌었으면(409) 덮지 않고 **둘 다 남긴다** — 서버 글 뒤에
+   * 이 기기에서 쓴 부분을 표시를 달아 붙여 저장하고 알린다(lib/diaryMerge).
+   * 합치는 사이 더 친 글이 있으면 칸은 건드리지 않고 base 도 그대로 둔다 — 다음 저장이 다시
+   * 409 를 받아 한 번 더 합친다(어느 쪽 글도 잃지 않는다).
+   */
+  const saveText = async (day: string, v: string): Promise<DiaryDay> => {
+    try {
+      const saved = await api.diarySave(day, { text: v, base_at: baseAt.current });
+      baseAt.current = saved.text_at ?? baseAt.current;
+      return saved;
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 409)) throw e;
+      const fresh = await api.diaryGet(day);
+      // 잠금이 다시 걸려 저쪽 글을 못 받았으면 합치지 않는다 — 빈 글과 합치면 저쪽 글을 덮는다
+      if (fresh.locked) throw new Error("일기 잠금이 다시 걸려 합치지 못했습니다. 자물쇠를 풀고 다시 저장해 주세요.");
+      const merged = mergeDiaryText(fresh.text, v);
+      const saved = await api.diarySave(day, { text: merged, base_at: fresh.text_at ?? 0 });
+      if (dateRef.current === day && textRef.current === v) {
+        setText(merged);
+        baseAt.current = saved.text_at ?? baseAt.current;
+      }
+      toast.ok("다른 곳에서 바뀐 일기와 합쳤습니다 — 이어 붙인 부분을 확인해 주세요");
+      return saved;
+    }
+  };
 
   const dayEvents = useMemo(
     () => events.filter((e) => onDay(e, date)).sort((a, b) => a.start.localeCompare(b.start)),
@@ -180,8 +217,11 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
     const next: DiaryShape = cur[axis] === shape ? "" : shape;
     // 글을 치는 중이면 그것도 함께 보낸다(따로 가면 뒤늦은 저장이 도형을 되돌리진
     // 않지만, 응답으로 오는 entry 가 옛 글이라 화면이 흔들린다).
-    const patch: Partial<DiaryDay> = { [axis]: next };
-    if (dirty) patch.text = text;
+    const patch: Partial<DiaryDay> & { base_at?: number } = { [axis]: next };
+    if (dirty) {
+      patch.text = text;
+      patch.base_at = baseAt.current;   // 글을 함께 보내면 글 저장과 같은 검사를 받는다
+    }
 
     // **누른 즉시** 화면을 바꾼다. 예전에는 서버 응답을 기다렸다가 바꿔서, 파이까지
     // 다녀오는 동안(집 회선과 클라우드플레어를 지난다) 도형도 달력 칸도 가만히
@@ -205,6 +245,7 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
         if (dirty) {
           pending.current.cancel();
           setDirty(false);
+          baseAt.current = saved.text_at ?? baseAt.current;
         }
         // 그 사이에 또 눌렀으면 이 응답은 이미 옛것이다 — 화면을 되돌리지 않는다
         if (mine === picks.current) onChangeRef.current(saved);
@@ -222,20 +263,26 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
     setDirty(true);
     const day = date;
     onEditRef.current(day);
-    pending.current.schedule(autosaveMs, async () => {
-      setSaving(true);
-      try {
-        const saved = await api.diarySave(day, { text: v });
-        onChangeRef.current(saved);
-        // 떠난 날의 저장이 늦게 끝났다면 새 날의 '입력 중' 표시를 건드리지 않는다
-        if (dateRef.current === day) setDirty(false);
-        return true;
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "일기 저장 실패");
-        return false;
-      } finally {
-        setSaving(false);
-      }
+    // 저장은 도형 저장과 **한 줄로** 세운다(chain). 앞 저장의 응답(새 base)을 받기 전에 뒤 저장을
+    // 보내면, 서버는 자기 앞 저장을 '다른 곳의 변경'으로 보고 409 를 준다 — 제 글끼리 합쳐진다.
+    pending.current.schedule(autosaveMs, () => {
+      const run = chain.current.then(async () => {
+        setSaving(true);
+        try {
+          const saved = await saveText(day, v);
+          onChangeRef.current(saved);
+          // 떠난 날의 저장이 늦게 끝났다면 새 날의 '입력 중' 표시를 건드리지 않는다
+          if (dateRef.current === day) setDirty(false);
+          return true;
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "일기 저장 실패");
+          return false;
+        } finally {
+          setSaving(false);
+        }
+      });
+      chain.current = run.then(() => undefined);
+      return run;
     });
   };
 

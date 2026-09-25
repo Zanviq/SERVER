@@ -11469,6 +11469,39 @@ def test_ai_turns_wait_on_their_own_threads():
     assert ai_lanes.inflight("cap-user") == 0, "돌지 못한 응답이 몫을 쥔 채 남았다"
 
 
+def test_a_stale_diary_tab_cannot_silently_overwrite_newer_text():
+    """두 곳에서 같은 날 일기를 고치면, 옛 글에서 이어 쓴 저장은 덮지 않고 409 다.
+
+    28차 실측: 폰에서 이어 쓴 문단이, 아침에 열어 둔 PC 탭의 자동 저장 한 번에 말없이 사라졌다
+    (나중 저장이 늘 이겼다). 화면은 연 때의 text_at 을 base_at 으로 보낸다.
+    """
+    _login()
+    day = "2031-03-04"
+    first = client.put(f"/api/diary/{day}", json={"text": "아침 첫 줄"}).json()
+    h = {"X-Diary-Unlock": first["unlock"]}
+    opened = client.get(f"/api/diary/{day}", headers=h).json()          # PC 탭이 연 상태
+    base = opened["text_at"]
+    assert base > 0
+    # 폰에서 이어 씀(그 기기는 제 base 를 보낸다 — 통과)
+    r = client.put(f"/api/diary/{day}", headers=h, json={"text": "아침 첫 줄\n폰 문단", "base_at": base})
+    assert r.status_code == 200, r.text
+    # 도형만 바꾼 것은 글의 때를 움직이지 않는다(글 충돌이 아니다)
+    after_phone = r.json()["text_at"]
+    r = client.put(f"/api/diary/{day}", headers=h, json={"body": "circle"})
+    assert r.json()["text_at"] == after_phone
+    # PC 탭: 옛 base 로 다른 글 → 409, 서버 글은 그대로
+    r = client.put(f"/api/diary/{day}", headers=h, json={"text": "아침 첫 줄\nPC 덧붙임", "base_at": base})
+    assert r.status_code == 409 and "다른 곳에서" in r.json()["detail"], r.text
+    assert client.get(f"/api/diary/{day}", headers=h).json()["text"] == "아침 첫 줄\n폰 문단"
+    # 같은 글을 다시 보낸 것은 충돌이 아니다
+    r = client.put(f"/api/diary/{day}", headers=h, json={"text": "아침 첫 줄\n폰 문단", "base_at": base})
+    assert r.status_code == 200
+    # 사용자가 '덮기'를 고르면(base 없이) 덮는다
+    r = client.put(f"/api/diary/{day}", headers=h, json={"text": "덮어쓴 글"})
+    assert r.status_code == 200 and r.json()["text"] == "덮어쓴 글"
+    client.put(f"/api/diary/{day}", headers=h, json={"text": "", "body": ""})
+
+
 def test_signup_cannot_flood_the_queue_or_bloat_the_account_file():
     """가입은 한 IP 에 한 시간 SIGNUP_BUDGET 번, 표시 이름·비밀번호에는 상한이 있다.
 

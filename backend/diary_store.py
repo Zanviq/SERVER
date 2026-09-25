@@ -103,7 +103,15 @@ def _entry(day: str, raw: dict) -> dict:
         # 알면 되고(체크 표시), 글은 비밀번호를 넣기 전에는 브라우저에 오지 않는다.
         "has_text": bool(text.strip()),
         "updated_at": float(raw.get("updated_at") or 0),
+        # 글이 마지막으로 바뀐 때 — 도형만 바꾼 것으로는 움직이지 않는다. 화면은 연 때의 이 값을
+        # 저장에 실어 보내고, 그 사이 다른 곳에서 글이 바뀌었으면 덮지 않는다(TextConflict).
+        # 이 값이 없던 옛 기록은 updated_at 으로 대신한다.
+        "text_at": float(raw.get("text_at") or raw.get("updated_at") or 0),
     }
+
+
+class TextConflict(Exception):
+    """화면이 연 뒤에 다른 곳에서 그날 글이 바뀌었다 — 그대로 저장하면 그 글이 사라진다."""
 
 
 def hide_text(entry: dict) -> dict:
@@ -113,7 +121,7 @@ def hide_text(entry: dict) -> dict:
 
 def empty(day: str) -> dict:
     return {"date": day, "body": "", "heart": "", "mind": "", "text": "",
-            "has_text": False, "updated_at": 0.0}
+            "has_text": False, "updated_at": 0.0, "text_at": 0.0}
 
 
 def get_day(user: SessionUser, settings: Settings, day: str) -> dict:
@@ -133,25 +141,37 @@ def list_range(user: SessionUser, settings: Settings, start: str, end: str) -> l
     return out
 
 
-def save_day(user: SessionUser, settings: Settings, day: str, patch: dict) -> dict:
-    """부분 수정. 준 필드만 바꾸고, 결과가 전부 비면 그 날짜를 지운다."""
+def save_day(user: SessionUser, settings: Settings, day: str, patch: dict,
+             base_at: float | None = None) -> dict:
+    """부분 수정. 준 필드만 바꾸고, 결과가 전부 비면 그 날짜를 지운다.
+
+    base_at: 화면이 글을 연 때의 text_at. 주면, 그 뒤에 다른 곳에서 글이 바뀌었을 때 덮지 않고
+    TextConflict 를 낸다. 예전에는 늘 나중 저장이 이겼다 — 폰에서 이어 쓴 문단이, 아침에 열어 둔
+    PC 탭의 자동 저장 한 번에 **말없이** 사라졌다(28차 실측). 글이 같으면(다시 보낸 것) 통과한다.
+    """
     day = check_date(day)
     p = _path(user, settings)
     with json_store.lock_for(p):
         days = _load(user, settings)
         cur = _entry(day, days.get(day) or {})
+        if "text" in patch and patch["text"] is not None:
+            new_text = str(patch["text"])[:MAX_TEXT]
+            if (base_at is not None and new_text != cur["text"]
+                    and abs(cur["text_at"] - float(base_at)) > 1e-6):
+                raise TextConflict(day)
+            if new_text != cur["text"]:
+                cur["text_at"] = time.time()
+            cur["text"] = new_text
         for axis in AXES:
             if axis in patch and patch[axis] is not None:
                 cur[axis] = _shape(patch[axis])
-        if "text" in patch and patch["text"] is not None:
-            cur["text"] = str(patch["text"])[:MAX_TEXT]
         if not any(cur[a] for a in AXES) and not cur["text"].strip():
             days.pop(day, None)
             _save(days, user, settings)
             return empty(day)
         cur["updated_at"] = time.time()
         cur["has_text"] = bool(cur["text"].strip())
-        days[day] = {k: cur[k] for k in ("body", "heart", "mind", "text", "updated_at")}
+        days[day] = {k: cur[k] for k in ("body", "heart", "mind", "text", "updated_at", "text_at")}
         _save(days, user, settings)
     return cur
 

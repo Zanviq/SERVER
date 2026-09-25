@@ -21,6 +21,8 @@ class DiaryPatch(BaseModel):
     heart: str | None = None
     mind: str | None = None
     text: str | None = None
+    #: 화면이 글을 연 때의 text_at — 주면 그 사이 다른 곳에서 바뀐 글을 덮지 않는다(409)
+    base_at: float | None = None
 
 
 class UnlockBody(BaseModel):
@@ -114,6 +116,7 @@ def save_day(
     settings: Settings = Depends(get_settings),
 ):
     patch = body.model_dump(exclude_none=True)
+    base_at = patch.pop("base_at", None)
     unlocked = diary_store.is_unlocked(x_diary_unlock, user, settings, day)
     # 아직 글이 없는 날인가. 잠긴 화면이 덮어쓰지 못하게 막을지, 처음 쓰는
     # 글이라 그냥 받을지가 여기서 갈린다.
@@ -126,7 +129,15 @@ def save_day(
     # 일기를 아예 쓸 수 없다 — 서버가 조용히 버리는데 화면에는 "저장됨"만 뜬다.
     if not unlocked and had_text:
         patch.pop("text", None)
-    saved = diary_store.save_day(user, settings, day, patch)
+    try:
+        saved = diary_store.save_day(user, settings, day, patch, base_at=base_at)
+    except diary_store.TextConflict:
+        # 화면이 연 뒤에 다른 곳(다른 기기·탭)에서 글이 바뀌었다. 덮으면 그 글이 사라진다 —
+        # 화면이 합칠지 덮을지 묻는다(DiaryPanel). base_at 을 빼고 다시 보내면 덮는다.
+        raise HTTPException(
+            status_code=409,
+            detail="다른 곳에서 이 날의 일기가 바뀌었습니다. 합치거나 지금 글로 덮어쓸 수 있습니다.",
+        ) from None
     if unlocked:
         return saved
     if not had_text and saved["has_text"]:
