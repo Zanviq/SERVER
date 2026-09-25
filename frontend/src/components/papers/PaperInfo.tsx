@@ -7,6 +7,7 @@ import { usePendingSave } from "../../lib/usePendingSave";
 import { paperTitle } from "./PaperList";
 import { LinkTextarea } from "../links/LinkTextarea";
 import { REVEAL_ON_ROW } from "../ui/reveal";
+import { LengthNote } from "../ui/LengthNote";
 
 interface Props {
   paper: Paper;
@@ -255,12 +256,7 @@ export function PaperInfo({ paper: p, categories = [], onUpdate, onSaveNotes, on
             </span>
           </p>
         )}
-        {notes.length > MAX_NOTES * 0.9 && (
-          <p className="mt-1 text-[11px] text-fg-muted">
-            {notes.length.toLocaleString()} / {MAX_NOTES.toLocaleString()}자
-            {notes.length >= MAX_NOTES && " — 여기까지만 저장됩니다"}
-          </p>
-        )}
+        <LengthNote length={notes.length} max={MAX_NOTES} full="여기까지만 저장됩니다" />
       </Block>
     </div>
   );
