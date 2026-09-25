@@ -16,7 +16,9 @@ const policy = read("../csp-app.conf").match(/Content-Security-Policy "([^"]+)"/
 const directive = (name) => policy.split(";").map((d) => d.trim()).find((d) => d.startsWith(name + " ")) ?? "";
 
 test("스크립트는 같은 출처의 파일로만 — 인라인·eval 은 열지 않는다", () => {
-  assert.equal(directive("script-src"), "script-src 'self'");
+  // 바깥은 클라우드플레어가 앞단에서 끼우는 방문 통계 하나뿐(운영에서 막힌 것을 보고 열었다)
+  assert.equal(directive("script-src"), "script-src 'self' https://static.cloudflareinsights.com");
+  assert.ok(!/'unsafe-inline'/.test(directive("script-src")), "인라인 스크립트를 열었다");
   assert.equal(directive("object-src"), "object-src 'none'");
   assert.equal(directive("base-uri"), "base-uri 'self'");
   assert.match(directive("frame-ancestors"), /'self'/);
