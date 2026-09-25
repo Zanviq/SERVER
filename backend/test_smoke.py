@@ -11505,6 +11505,12 @@ def test_names_with_brackets_can_be_linked():
         assert opened["found"] and unquote(opened["href"]) == "/notes?path=괄호30/회의록 [초안].md", opened
         # 보여 줄 이름은 실제 이름
         assert links.plain(f"[{doc['path']}]") == "회의록 [초안].md"
+        # 문서 링크 경로는 note_link 한 곳에서만 만든다 — 손으로 f"note/{…}" 를 짓는 자리가
+        # 생기면 escape 를 빠뜨려 대괄호 이름이 다시 조용히 끊긴다
+        import inspect
+
+        src = inspect.getsource(links)
+        assert src.count('f"note/{') == 1, "note_link 밖에서 문서 링크 경로를 손으로 만든다"
     finally:
         client.delete("/api/notes/folder", params={"path": "괄호30"})
 

@@ -83,6 +83,15 @@ def _unescape(rest: str) -> str:
     return re.sub(r"%5[bB]", "[", re.sub(r"%5[dD]", "]", rest))
 
 
+def note_link(rel: str) -> str:
+    """문서(상대 경로)를 가리키는 링크 경로 `note/…` — 문서 링크는 모두 이것으로 만든다.
+
+    escape 를 부르는 곳이 여럿이면 새 자리 하나가 빠뜨려, 대괄호 이름의 링크가 다시 조용히
+    끊긴다(30차). 실제 이름으로 되돌리는 쪽은 split·rest_of.
+    """
+    return f"note/{escape(rel)}"
+
+
 def canon_kind(kind: str) -> str | None:
     k = str(kind or "").strip().lower()
     k = ALIASES.get(k, k)
@@ -237,13 +246,13 @@ def _note_entries(user: SessionUser, settings: Settings) -> list[Entry]:
     out: list[Entry] = []
     # 경로는 링크에 그대로 실린다 — 이름의 대괄호는 escape 로(보이는 이름 label 은 그대로)
     for d in [*mounts.folders(ms), *dirs]:
-        out.append(Entry(f"note/{escape(d)}", "note", d.rsplit("/", 1)[-1], "폴더", folder=True))
+        out.append(Entry(note_link(d), "note", d.rsplit("/", 1)[-1], "폴더", folder=True))
     for f in files:
         # 최근에 고친 것이 앞에 오게(같은 점수 안에서)
-        out.append(Entry(f"note/{escape(f.rel)}", "note", f.name, _parent(f.rel),
+        out.append(Entry(note_link(f.rel), "note", f.name, _parent(f.rel),
                          order=-f.stat.st_mtime))
     for f in mounts.files(ms):
-        out.append(Entry(f"note/{escape(f.rel)}", "note", f.rel.rsplit("/", 1)[-1], _parent(f.rel)))
+        out.append(Entry(note_link(f.rel), "note", f.rel.rsplit("/", 1)[-1], _parent(f.rel)))
     return out
 
 
@@ -529,7 +538,7 @@ def _listing(items: list[Entry]) -> str:
 
 def _resolve_note(user: SessionUser, settings: Settings, rel: str) -> Resolved:
 
-    path = f"note/{escape(rel)}"
+    path = note_link(rel)
     # 요청 문자열로 먼저 — 없는 경로라도 막아서 존재 여부를 흘리지 않는다
     if _is_sensitive(rel):
         return Resolved(path, "note", rel.rsplit("/", 1)[-1], True,
@@ -565,7 +574,7 @@ def _resolve_note(user: SessionUser, settings: Settings, rel: str) -> Resolved:
     if not target.is_file():
         return Resolved(path, "note", note="이 경로의 문서를 찾지 못했습니다.")
     real_rel = to_rel(root, target)
-    r = Resolved(f"note/{escape(real_rel)}", "note", target.name, True,
+    r = Resolved(note_link(real_rel), "note", target.name, True,
                  href=screen_of("note", real_rel))
     if _is_sensitive(real_rel):
         r.note = "민감 문서로 판단되어 AI 에게 보내지 않았습니다."
@@ -579,7 +588,7 @@ def _resolve_note(user: SessionUser, settings: Settings, rel: str) -> Resolved:
 def _resolve_mounted(user: SessionUser, settings: Settings, rel: str) -> Resolved:
     """`note/논문/…`·`note/회의/…`. 원본(PDF·녹음)은 뽑아 둔 글로 대신 읽는다."""
 
-    path = f"note/{escape(rel)}"
+    path = note_link(rel)
     clean = rel.strip("/")
     if clean in mounts.MOUNT_DIRS:
         ms = [m for m in mounts.mounts(user, settings) if m.folder.startswith(clean + "/")]
@@ -631,7 +640,7 @@ def _meeting_text(user: SessionUser, settings: Settings, e: Entry) -> str:
         # 회의록은 문서 트리에 붙어 있으면 그 경로로 따로 읽을 수 있다
         folder = next((m.folder for m in mounts.mounts(user, settings) if m.item_id == e.ident), "")
         # 회의 제목(=폴더)에 대괄호가 있으면 escape 해야 링크로 읽힌다
-        lines.append("회의록: " + ", ".join(f"[note/{escape(f'{folder}/{d}.md')}]" if folder else str(d)
+        lines.append("회의록: " + ", ".join(f"[{note_link(f'{folder}/{d}.md')}]" if folder else str(d)
                                           for d in docs))
     text = meeting_store.transcript_text(user, settings, e.ident, m.get("speakers") or {})
     lines.append("--- 받아쓰기 ---\n" + (text or "(아직 받아쓰지 않았습니다)"))
