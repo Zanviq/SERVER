@@ -11387,6 +11387,41 @@ def test_calendar_links_open_the_view_they_point_at():
     assert {"diary", "events"} <= known, known
 
 
+def test_search_hits_open_the_same_screen_as_links():
+    """전역 검색 결과가 싣는 href 는 링크와 같은 규칙(links.screen_of)에서 나온다.
+
+    검색 팔레트가 주소 규칙을 따로 들고 있던 때는 한쪽만 고쳐질 수 있었다 — 같은 일정을
+    링크로 열면 일정 보기, 검색으로 열면 지금 보기(기록일 수도)로 갈라졌다.
+    """
+    from datetime import date as _date
+
+    from backend import calendar_service, links
+    from backend.auth import SessionUser
+
+    _login()
+    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    st = get_settings()
+    today = _date.today().isoformat()
+    assert calendar_service.backend_kind(u, st) == "internal"  # 구글에 쓰면 안 된다
+    calendar_service.create_event(u, st, {"title": "HREFSAME 일정", "start": f"{today}T09:00:00",
+                                          "end": f"{today}T10:00:00"})
+    _forget_events("tester")
+    assert client.put("/api/notes/save", json={"path": "주소/HREFSAME 노트.md",
+                                                "content": "HREFSAME"}).status_code == 200
+
+    hits = client.get("/api/search", params={"q": "HREFSAME"}).json()["hits"]
+    by_kind = {h["kind"]: h for h in hits}
+    assert {"event", "note"} <= set(by_kind), hits
+    for h in hits:
+        assert h["href"] == links.screen_of(h["kind"], h["id"], h["when"]), h
+    # 링크로 여는 것과 같은 화면
+    opened = client.get("/api/links/open", params={"path": f"event/{today}/HREFSAME 일정"}).json()
+    assert by_kind["event"]["href"] == opened["href"] == f"/calendar?d={today}&view=events"
+    note = client.get("/api/links/open", params={"path": "note/주소/HREFSAME 노트.md"}).json()
+    assert by_kind["note"]["href"] == note["href"]
+    assert links.screen_of("chat", "english|s-1") == "/context?space=english&s=s-1"
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"

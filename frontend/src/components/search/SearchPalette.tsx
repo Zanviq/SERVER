@@ -12,21 +12,18 @@ import { moreNote } from "../../lib/moreNote";
 export const OPEN_SEARCH = "twoems:open-search";
 export const openSearch = () => window.dispatchEvent(new CustomEvent(OPEN_SEARCH));
 
-/** 갈래마다 이름·아이콘·갈 곳. 여기 한 군데만 고치면 전부 따라온다. */
-const KIND: Record<SearchKind, { label: string; icon: typeof FileText; href: (h: SearchHit) => string }> = {
-  note: { label: "노트", icon: FileText, href: (h) => `/notes?path=${encodeURIComponent(h.id)}` },
-  paper: { label: "논문", icon: BookOpen, href: (h) => `/papers?p=${encodeURIComponent(h.id)}` },
-  meeting: { label: "회의", icon: Mic, href: (h) => `/meetings?m=${encodeURIComponent(h.id)}` },
-  vocab: { label: "단어", icon: Languages, href: (h) => `/english?w=${encodeURIComponent(h.id)}` },
-  todo: { label: "할 일", icon: CheckSquare, href: (h) => `/todo?t=${encodeURIComponent(h.id)}` },
-  event: { label: "일정", icon: CalendarDays, href: (h) => `/calendar?d=${encodeURIComponent(h.when)}&view=events` },
-  chat: {
-    label: "대화", icon: MessageSquare,
-    href: (h) => {
-      const [space, session] = h.id.split("|");
-      return `/context?space=${encodeURIComponent(space ?? "")}&s=${encodeURIComponent(session ?? "")}`;
-    },
-  },
+/**
+ * 갈래마다 이름·아이콘. 갈 곳(href)은 서버가 결과에 싣는다 — 링크와 같은 규칙 하나
+ * (backend links.screen_of)다. 여기 따로 두었을 때 한쪽만 고쳐질 수 있었다.
+ */
+const KIND: Record<SearchKind, { label: string; icon: typeof FileText }> = {
+  note: { label: "노트", icon: FileText },
+  paper: { label: "논문", icon: BookOpen },
+  meeting: { label: "회의", icon: Mic },
+  vocab: { label: "단어", icon: Languages },
+  todo: { label: "할 일", icon: CheckSquare },
+  event: { label: "일정", icon: CalendarDays },
+  chat: { label: "대화", icon: MessageSquare },
 };
 
 /** 화면을 가로지르는 검색창. Ctrl/⌘+K 로 열린다.
@@ -102,7 +99,7 @@ export function SearchPalette() {
 
   const go = useCallback((h: SearchHit) => {
     setOpen(false);
-    navigate(KIND[h.kind].href(h));
+    navigate(h.href);
   }, [navigate]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {

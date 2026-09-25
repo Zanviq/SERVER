@@ -146,32 +146,54 @@ class Entry:
                 "detail": self.detail, "folder": self.folder, "href": href_of(self)}
 
 
+def _q(s: str) -> str:
+    return quote(s, safe="")
+
+
+def screen_of(kind: str, ident: str, when: str = "") -> str:
+    """항목 하나를 여는 화면 주소 — 링크(href_of)와 전역 검색(routers/search)이 함께 쓴다.
+
+    검색 팔레트가 같은 규칙을 따로 들고 있던 때, 한쪽만 고쳐져 두 길이 다른 화면을 열 수
+    있었다(20차: 기록 링크가 보기 없이 일정 보기로 떨어진 것도 이렇게 한쪽에만 있던 규칙).
+    달력은 일정과 기록을 한 화면의 다른 '보기'로 그려 view 를 함께 싣는다
+    (frontend lib/calendarView.ts 와 같은 이름).
+    """
+    if kind == "note":
+        return f"/notes?path={_q(ident)}"
+    if kind == "paper":
+        return f"/papers?p={_q(ident)}"
+    if kind == "meeting":
+        return f"/meetings?m={_q(ident)}"
+    if kind == "todo":
+        return f"/todo?t={_q(ident)}"
+    if kind == "vocab":
+        return f"/english?w={_q(ident)}"
+    if kind == "event":
+        return f"/calendar?d={_q(when)}&view=events"
+    if kind == "diary":
+        return f"/calendar?d={_q(when)}&view=diary"
+    if kind == "chat":  # 대화 기록: id 가 "공간|세션"
+        space, _, session = ident.partition("|")
+        return f"/context?space={_q(space)}&s={_q(session)}"
+    return "/"
+
+
+def notes_folder(rel: str) -> str:
+    """문서 화면에서 폴더 하나를 펼친 주소."""
+    return f"/notes?folder={_q(rel)}"
+
+
 def href_of(e: Entry) -> str:
-    """이 항목을 여는 화면 주소. 검색 팔레트(SearchPalette)와 같은 규칙이다."""
-    q = lambda s: quote(s, safe="")  # noqa: E731
+    """이 링크 항목을 여는 화면 주소. 갈래·폴더를 가리키면 그 화면의 목록으로."""
     rest = e.path.split("/", 1)[1] if "/" in e.path else ""
     if e.kind == "note":
-        return f"/notes?folder={q(rest)}" if e.folder else f"/notes?path={q(rest)}"
-    # 달력은 일정과 기록을 한 화면의 다른 '보기'로 그린다. view 를 빼면 늘 일정 보기로 열려
-    # 기록 링크를 눌러도 그날 일기가 보이지 않았다(frontend lib/calendarView.ts 와 같은 이름).
+        return notes_folder(rest) if e.folder else screen_of("note", rest)
     if e.folder:
         return {"todo": "/todo",
-                "event": f"/calendar?d={q(e.when)}&view=events" if e.when else "/calendar?view=events",
+                "event": screen_of("event", "", e.when) if e.when else "/calendar?view=events",
                 "paper": "/papers", "meeting": "/meetings", "vocab": "/english",
                 "diary": "/calendar?view=diary"}.get(e.kind, "/")
-    if e.kind == "paper":
-        return f"/papers?p={q(e.ident)}"
-    if e.kind == "meeting":
-        return f"/meetings?m={q(e.ident)}"
-    if e.kind == "todo":
-        return f"/todo?t={q(e.ident)}"
-    if e.kind == "vocab":
-        return f"/english?w={q(e.ident)}"
-    if e.kind == "event":
-        return f"/calendar?d={q(e.when)}&view=events"
-    if e.kind == "diary":
-        return f"/calendar?d={q(e.when)}&view=diary"
-    return "/"
+    return screen_of(e.kind, e.ident, e.when)
 
 
 def _days_from_today(day: str) -> float:
@@ -485,7 +507,7 @@ def _resolve_note(user: SessionUser, settings: Settings, rel: str) -> Resolved:
     if _is_sensitive(rel):
         return Resolved(path, "note", rel.rsplit("/", 1)[-1], True,
                         note="민감 문서로 판단되어 AI 에게 보내지 않았습니다.",
-                        href=f"/notes?path={quote(rel, safe='')}")
+                        href=screen_of("note", rel))
     root = user_data_root(user, settings)
 
     if mounts.head_of(rel) in mounts.active_roots(user, settings):
@@ -500,7 +522,7 @@ def _resolve_note(user: SessionUser, settings: Settings, rel: str) -> Resolved:
         kids = [e for e in _note_entries(user, settings)
                 if _parent(e.path.split("/", 1)[1]) == to_rel(root, target)]
         return Resolved(path, "note", target.name, True, _listing(kids),
-                        href=f"/notes?folder={quote(rel, safe='')}")
+                        href=notes_folder(rel))
     if not target.exists():
         # 이름을 바꾸거나 옮긴 문서면 새 자리로 간다(moved.py). 옛 링크는 문서에 그대로
         # 남아 있으므로, 따라가지 않으면 이름 한 번 바꾼 것으로 링크가 모두 죽는다.
@@ -517,7 +539,7 @@ def _resolve_note(user: SessionUser, settings: Settings, rel: str) -> Resolved:
         return Resolved(path, "note", note="이 경로의 문서를 찾지 못했습니다.")
     real_rel = to_rel(root, target)
     r = Resolved(f"note/{real_rel}", "note", target.name, True,
-                 href=f"/notes?path={quote(real_rel, safe='')}")
+                 href=screen_of("note", real_rel))
     if _is_sensitive(real_rel):
         r.note = "민감 문서로 판단되어 AI 에게 보내지 않았습니다."
     elif not is_editable(target.name):
@@ -535,13 +557,13 @@ def _resolve_mounted(user: SessionUser, settings: Settings, rel: str) -> Resolve
     if clean in mounts.MOUNT_DIRS:
         ms = [m for m in mounts.mounts(user, settings) if m.folder.startswith(clean + "/")]
         return Resolved(path, "note", clean, True, "\n".join(f"- note/{m.folder}/" for m in ms)
-                        or "(비어 있음)", href=f"/notes?folder={quote(clean, safe='')}")
+                        or "(비어 있음)", href=notes_folder(clean))
     item = mounts.find_folder(user, settings, clean)
     hit = mounts.find(user, settings, clean)
     kind, iid = (item.kind, item.item_id) if item else (hit.kind, hit.item_id) if hit else ("", "")
     if not kind:
         return Resolved(path, "note", note="이 경로의 문서를 찾지 못했습니다.")
-    href = f"/notes?path={quote(clean, safe='')}" if hit else f"/notes?folder={quote(clean, safe='')}"
+    href = screen_of("note", clean) if hit else notes_folder(clean)
     name = clean.rsplit("/", 1)[-1]
     if hit is not None and hit.role == "doc":
         return Resolved(path, "note", name, True, text_of(hit.real, hit.real.stat()) or "", href=href)

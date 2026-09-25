@@ -557,6 +557,8 @@ export interface SearchHit {
   when: string;
   where: string;
   score: number;
+  /** 고르면 갈 화면. 서버가 링크와 같은 규칙(links.screen_of)으로 만든다. */
+  href: string;
 }
 
 export interface AiEvent {

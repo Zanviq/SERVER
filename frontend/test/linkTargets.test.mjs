@@ -22,7 +22,14 @@ const PAGE = {
   todo: "../src/pages/Todo.tsx",
   english: "../src/pages/English.tsx",
   calendar: "../src/pages/Calendar.tsx",
+  context: "../src/pages/Context.tsx",
 };
+
+/**
+ * 주소를 만드는 곳. 검색 팔레트도 예전엔 제 규칙을 들고 있었는데, 이제 서버가 결과에 href 를
+ * 싣는다(links.screen_of) — 팔레트에 주소 꼴이 다시 생기면 규칙이 두 벌이 된 것이다.
+ */
+const MAKERS = ["../../backend/links.py"];
 
 /**
  * 소스에서 `/경로?키=…&키=…` 꼴의 키를 모두 뽑는다. 첫 키만 보던 때는 `&view=diary` 처럼
@@ -30,7 +37,7 @@ const PAGE = {
  */
 function targets(src) {
   const out = new Set();
-  for (const m of src.matchAll(/\/(notes|papers|meetings|todo|english|calendar)\?([^"'`\s]*)/g)) {
+  for (const m of src.matchAll(/\/(notes|papers|meetings|todo|english|calendar|context)\?([^"'`\s]*)/g)) {
     for (const k of m[2].matchAll(/(?:^|&)(\w+)=/g)) out.add(`${m[1]}?${k[1]}`);
   }
   return [...out];
@@ -42,10 +49,7 @@ function calendarViews(src) {
 }
 
 test("링크와 검색이 만드는 주소의 값은 모두 받는 화면이 읽는다", () => {
-  const made = new Set([
-    ...targets(read("../../backend/links.py")),
-    ...targets(read("../src/components/search/SearchPalette.tsx")),
-  ]);
+  const made = new Set(MAKERS.flatMap((f) => targets(read(f))));
   assert.ok(made.size >= 6, `주소를 거의 못 찾았다 — 이 시험의 정규식을 확인할 것: ${[...made]}`);
   for (const t of made) {
     const [route, key] = t.split("?");
@@ -58,13 +62,16 @@ test("링크와 검색이 만드는 주소의 값은 모두 받는 화면이 읽
 test("달력 링크의 view 값은 달력이 아는 보기다(기록 링크가 일정 보기에 떨어지지 않게)", () => {
   const src = read("../src/lib/calendarView.ts");
   const known = new Set([...src.match(/CAL_VIEWS = \[([^\]]*)\]/)[1].matchAll(/"(\w+)"/g)].map((m) => m[1]));
-  const sent = [
-    ...calendarViews(read("../../backend/links.py")),
-    ...calendarViews(read("../src/components/search/SearchPalette.tsx")),
-  ];
+  const sent = MAKERS.flatMap((f) => calendarViews(read(f)));
   // 기록·일정 링크 둘 다 보기를 실어야 한다 — 빠지면 지금 보기에 머문다
   assert.ok(sent.includes("diary") && sent.includes("events"), `보기를 싣지 않는 달력 링크가 있다: ${sent}`);
   for (const v of sent) assert.ok(known.has(v), `view=${v} 는 달력이 모르는 보기다(${[...known]})`);
   assert.ok(read(PAGE.calendar).includes('calViewParam(params.get("view"))'),
     "달력이 주소의 view 를 읽지 않는다");
+});
+
+test("검색 팔레트는 갈 곳을 스스로 만들지 않는다(서버의 href 하나)", () => {
+  const src = read("../src/components/search/SearchPalette.tsx");
+  assert.equal(targets(src).length, 0, `팔레트에 주소 규칙이 다시 생겼다: ${targets(src)}`);
+  assert.ok(src.includes("navigate(h.href)"), "팔레트가 서버가 준 href 로 가지 않는다");
 });
