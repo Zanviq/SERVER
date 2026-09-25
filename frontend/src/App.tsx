@@ -9,7 +9,8 @@ import { Dashboard } from "./pages/Dashboard";
 import { Toaster } from "./components/ui/Toaster";
 import { ReminderPoller } from "./components/ReminderPoller";
 import { SearchPalette } from "./components/search/SearchPalette";
-import { startPageTiming, trackRoute } from "./lib/pageTiming";
+import { startPageTiming, trackRoute } from "./lib/pageTiming";
+import { isOwner } from "./lib/owner";
 
 // 무거운 라우트는 코드 분할(지연 로드) — 초기 번들 축소
 // 라우트별 동적 import 썽크 — lazy()와 프리페치에 함께 사용
@@ -84,8 +85,8 @@ function PageTiming() {
 function AuthedRoutes() {
   // 대시보드·터미널은 .env로 만들어진 서버 주인 전용.
   // '/'는 catch-all의 목적지이기도 하므로, 주인이 아니면 두 경로 모두 문서로 보낸다.
-  const isOwner = useAuth((st) => st.session?.origin === "bootstrap" && st.session?.role === "admin");
-  const home = isOwner ? <Dashboard /> : <Navigate to="/notes" replace />;
+  const owner = useAuth((st) => isOwner(st.session));
+  const home = owner ? <Dashboard /> : <Navigate to="/notes" replace />;
   return (
     <Suspense fallback={<Spinner />}>
       <Routes>
@@ -103,9 +104,9 @@ function AuthedRoutes() {
         <Route path="/trash" element={<Trash />} />
         <Route path="/context" element={<ContextPage />} />
         {/* 사용량은 주인 전용이다 — 백엔드도 require_owner 로 다시 막는다 */}
-        <Route path="/analytics" element={isOwner ? <Analytics /> : <Navigate to="/notes" replace />} />
-        <Route path="/terminal" element={isOwner ? <TerminalPage /> : <Navigate to="/notes" replace />} />
-        <Route path="*" element={<Navigate to={isOwner ? "/" : "/notes"} replace />} />
+        <Route path="/analytics" element={owner ? <Analytics /> : <Navigate to="/notes" replace />} />
+        <Route path="/terminal" element={owner ? <TerminalPage /> : <Navigate to="/notes" replace />} />
+        <Route path="*" element={<Navigate to={owner ? "/" : "/notes"} replace />} />
       </Routes>
     </Suspense>
   );
@@ -160,7 +161,7 @@ export default function App() {
   useEffect(() => {
     if (session) {
       useSettings.getState().load();
-      prefetchRoutes(session.origin === "bootstrap" && session.role === "admin");
+      prefetchRoutes(isOwner(session));
     }
   }, [session]);
 

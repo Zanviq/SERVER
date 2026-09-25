@@ -10,6 +10,7 @@ import { isSubmitEnter } from "../lib/keys";
 import { GCAL_COLORS, GCAL_COLOR_NAMES } from "../components/calendar/EventDialog";
 import { AccountAdmin } from "../components/settings/AccountAdmin";
 import { GoogleConnect } from "../components/settings/GoogleConnect";
+import { isOwner } from "../lib/owner";
 
 const BASE_TABS = [
   { id: "account", label: "계정", icon: User },
@@ -217,8 +218,8 @@ export function Settings() {
     );
   }
 
-  const isOwner = session?.origin === "bootstrap" && session?.role === "admin";
-  const tabs = isOwner ? [...BASE_TABS, ADMIN_TAB] : BASE_TABS;
+  const owner = isOwner(session);
+  const tabs = owner ? [...BASE_TABS, ADMIN_TAB] : BASE_TABS;
 
   return (
     <Shell title="설정">
@@ -381,7 +382,7 @@ export function Settings() {
             </div>
           )}
 
-          {tab === "members" && isOwner && (
+          {tab === "members" && owner && (
             <AccountAdmin me={session.username} />
           )}
 

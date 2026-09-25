@@ -22,6 +22,7 @@ import { useAuth } from "../../store/auth";
 import { api } from "../../lib/api";
 import { openSearch } from "../search/SearchPalette";
 import { MoreSheet, SheetItem } from "./MoreSheet";
+import { isOwner } from "../../lib/owner";
 
 // 터미널 가용 여부 캐시. 계정별로 키를 둔다 —
 // 모듈 전역 캐시로 두면 주인이 로그아웃한 뒤 같은 탭에서 가입 사용자가 로그인해도
@@ -107,8 +108,8 @@ export function Sidebar() {
 
   // 데스크톱 레일과 모바일 탭바가 같은 배열을 두 번 렌더하므로,
   // JSX가 아니라 배열에서 걸러야 양쪽에 동시에 반영된다.
-  const isOwner = session?.origin === "bootstrap" && session?.role === "admin";
-  const visible = NAV.filter((n) => !n.ownerOnly || isOwner);
+  const owner = isOwner(session);
+  const visible = NAV.filter((n) => !n.ownerOnly || owner);
   const nav: SheetItem[] = termAvail
     ? [...visible, { to: "/terminal", icon: TerminalSquare, label: "터미널" }]
     : visible;
