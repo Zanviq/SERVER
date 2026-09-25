@@ -105,7 +105,31 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "계정이 없습니다 — .env의 AUTH_USERS로 최초 관리자를 만들거나 가입 후 승인이 필요합니다."
         )
+    _warm_note_graphs(settings)
     yield
+
+
+def _warm_note_graphs(settings) -> None:
+    """활성 사용자의 문서 그래프를 뒤에서 미리 만든다(notes_graph.warm_up — 첫 문서 열기가 늦지 않게).
+
+    열쇠는 문서 화면과 같은 **해석한** 문서 루트여야 캐시가 맞는다(storage.user_data_root 가 resolve 한다).
+    폴더가 없는 사용자는 건너뛴다(여기서 만들지 않는다). 기동을 막지 않는다.
+    """
+    import threading
+
+    from . import accounts, notes_graph
+
+    try:
+        roots = []
+        for a in accounts.list_all(settings):
+            d = settings.user_root(a["username"]) / "data"
+            if a.get("status") == "active" and d.is_dir():
+                roots.append(d.resolve())
+    except Exception:  # noqa: BLE001 - 계정 파일 문제는 위에서 이미 알렸다
+        return
+    if roots:
+        threading.Thread(target=notes_graph.warm_up, args=(roots[:20],),
+                         name="graph-warmup", daemon=True).start()
 
 
 app = FastAPI(

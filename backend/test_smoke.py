@@ -11477,6 +11477,30 @@ def test_app_links_count_as_backlinks_and_graph_edges():
         client.request("DELETE", "/api/notes/folder", params={"path": box})
 
 
+def test_note_graphs_are_warmed_when_the_server_starts():
+    """서버가 뜨면 활성 사용자의 문서 그래프를 뒤에서 미리 만든다(47차).
+
+    문서 열기는 역링크를 위해 그래프를 쓴다. 식은 캐시에서는 모든 노트를 읽어, 노트 2045개에서 서버를
+    띄운 뒤 첫 문서 열기가 2.2초(둘째부터 0.13초)였다 — 배포마다 그만큼.
+    """
+    from backend import notes_graph
+    from backend.storage import user_data_root
+
+    _login()
+    client.put("/api/notes/save", json={"path": "미리그래프/가.md", "content": "[note/미리그래프/나.md]"})
+    client.put("/api/notes/save", json={"path": "미리그래프/나.md", "content": "나"})
+    root = str(user_data_root(_tester(), get_settings()))
+    notes_graph.clear_cache()
+    warmed = lambda: any(k[0] == root and k[2] == "links" for k in list(notes_graph._CACHE))  # noqa: E731
+    assert not warmed()
+    with TestClient(app):  # lifespan 이 돈다
+        deadline = time.time() + 15
+        while not warmed() and time.time() < deadline:
+            time.sleep(0.05)
+    assert warmed(), "서버가 뜬 뒤에도 그래프가 비어 있다 — 첫 문서 열기가 모든 노트를 읽는다"
+    client.request("DELETE", "/api/notes/folder", params={"path": "미리그래프"})
+
+
 def test_link_suggestions_say_how_many_more_there_are():
     """후보 상한(30)에 걸려 안 보이는 것이 있으면 그 수를 알린다.
 

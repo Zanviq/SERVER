@@ -386,6 +386,21 @@ def _folder_graph(notes_dir: Path, base: Path) -> dict:
     return {"nodes": nodes, "links": links}
 
 
+def warm_up(roots: list[Path]) -> None:
+    """서버를 띄운 뒤 사용자마다 문서 그래프를 미리 만들어 둔다(뒤에서, 한 사람씩).
+
+    문서 열기(/api/notes/get)는 역링크를 위해 그래프를 쓰는데, 식은 캐시에서는 모든 노트를 읽고
+    파싱한다. 47차 실측(노트 2045개): 서버를 띄운 뒤 첫 문서 열기 2.2초, 둘째부터 0.13초. 배포마다
+    서버가 다시 뜨므로 그때마다 첫 문서가 그만큼(파이에서는 몇 배) 늦었다. 여기서 먼저 만들어 두면
+    첫 열기도 캐시를 쓴다. 실패는 기록만 한다 — 미리 못 만들었을 뿐 열 때 만들면 된다.
+    """
+    for root in roots:
+        try:
+            build_graph(root)
+        except Exception:  # noqa: BLE001
+            logger.exception("문서 그래프를 미리 만들지 못했습니다: %s", root)
+
+
 def backlinks_for(notes_dir: Path, stem: str) -> list[str]:
     """주어진 노트(stem)를 가리키는 다른 노트들의 stem 목록."""
     graph = build_graph(notes_dir)
