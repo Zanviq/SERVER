@@ -116,6 +116,25 @@ console.log("대기 중인 자동저장");
 }
 
 {
+  // 29차: 저장이 **가는 중에** 새 입력이 오면, 앞 저장이 끝나며 새 예약을 지워 버렸다.
+  // 새 예약의 타이머가 떠도 할 일이 없어 마지막 입력이 저장되지 않았고, 화면은 앞 저장의
+  // 성공으로 "저장됨"·밑글 지우기까지 했다(느린 망·파이 왕복에서 흔하다).
+  const clock = fakeTimers();
+  const p = new PendingSave(clock.timers);
+  const saved = [];
+  let finishFirst;
+  p.schedule(900, () => new Promise((r) => { finishFirst = () => { saved.push("앞입력"); r(true); }; }));
+  await clock.tick();                                   // 앞 저장이 떠났다(아직 가는 중)
+  p.schedule(900, () => { saved.push("마지막입력"); return true; });   // 그 사이 한 글자 더
+  finishFirst();                                        // 앞 저장이 끝난다
+  await new Promise((r) => setImmediate(r));
+  check("가는 중에 온 새 입력은 앞 저장이 끝나도 남아 있다", p.scheduled, "지워졌다");
+  await clock.tick();
+  check("새 입력도 저장된다", saved.join(">") === "앞입력>마지막입력", saved.join(">"));
+  check("다 저장했으니 비어 있다", !p.scheduled);
+}
+
+{
   // 실패한 뒤 새 입력이 오면 **새 내용이 이긴다**(옛 예약을 덮어쓴다)
   const clock = fakeTimers();
   const p = new PendingSave(clock.timers);

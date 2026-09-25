@@ -68,7 +68,9 @@ export class PendingSave {
     } catch {
       ok = false;
     }
-    if (ok) this.job = null;
+    // **이 저장만** 지운다. 저장이 가는 동안 새 입력이 예약됐으면 그것은 남겨야 한다 — 예전에는
+    // 무조건 비워서, 가는 중에 친 마지막 글자가 저장되지 않았고 화면은 "저장됨"이었다(29차).
+    if (ok && this.job === job) this.job = null;
     return ok;
   }
 
