@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useRef } from "react";
 import { useDismissable } from "../../lib/useDismissable";
+import { FOCUSABLE } from "../../lib/focusable";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
@@ -90,10 +91,7 @@ export function Modal({
    *  (그 상태로 Enter 를 누르면 뒤에서 무슨 일이 일어난다). */
   const trapTab = (e: React.KeyboardEvent) => {
     if (e.key !== "Tab" || !panelRef.current) return;
-    const all = panelRef.current.querySelectorAll<HTMLElement>(
-      "a[href], button:not([disabled]), textarea:not([disabled]), " +
-      "input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])",
-    );
+    const all = panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE);
     const list = Array.from(all).filter((el) => el.offsetParent !== null);
     if (list.length === 0) return;
     const first = list[0];

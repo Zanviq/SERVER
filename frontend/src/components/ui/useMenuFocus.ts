@@ -1,9 +1,6 @@
 import { RefObject, useEffect, useRef } from "react";
 import { menuKey } from "../../lib/menuKeys";
-
-const FOCUSABLE =
-  "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), " +
-  "textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+import { FOCUSABLE } from "../../lib/focusable";
 
 /**
  * body 로 포탈한 메뉴를 키보드로 쓸 수 있게 한다 — 문서 줄 … 메뉴(RowMenu)와 드롭다운이 같이 쓴다.
