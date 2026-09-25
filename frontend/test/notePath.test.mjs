@@ -70,3 +70,17 @@ test("주소(?path=)가 열린 문서를 따라간다 — 49차", () => {
   assert.match(src, /shownPath\.current = current;\s*handledPath\.current = current;/);
   assert.match(src, /if \(path !== handledPath\.current\) \{\s*handledPath\.current = path;\s*if \(path !== current\) openNote\(path\);/);
 });
+test("마크다운과 평문은 확장자로 가린다 — 평문은 글자 그대로 연다(50차)", async () => {
+  const { isMarkdownPath } = await import("../src/lib/notePath.ts");
+  for (const p of ["메모.md", "a/b/회의.MD", "긴글.markdown"]) assert.equal(isMarkdownPath(p), true, p);
+  for (const p of ["메모.txt", "코드.py", "설정.json", "2026.08 회고", "md", "a.md.txt"]) assert.equal(isMarkdownPath(p), false, p);
+  // 평문을 마크다운으로 열면 `# 주석` 이 제목으로, `**kw` 의 별표가 사라져 보였다
+  const ed = readFileSync(new URL("../src/components/notes/LiveEditor.tsx", import.meta.url), "utf8");
+  assert.match(ed, /const md = \(\.\.\.e: Extension\[\]\): Extension\[\] => \(plain \? \[\] : e\);/);
+  for (const ext of ["markdown\\(\\{", "livePreview", "embedDeco", "itemLinks\\(\\{", "autocompletion\\(\\{", "tableTools\\(\\)"]) {
+    assert.match(ed, new RegExp(`\\.\\.\\.md\\([\\s\\S]{0,400}${ext}`), `${ext} 가 평문에서도 켜진다`);
+  }
+  const notes = readFileSync(new URL("../src/pages/Notes.tsx", import.meta.url), "utf8");
+  assert.match(notes, /plain=\{!isMarkdown\}/);
+  assert.match(notes, /current && isEditable && isMarkdown && \(/, "평문에도 읽기(마크다운 보기) 단추가 뜬다");
+});

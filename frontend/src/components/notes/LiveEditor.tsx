@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { EditorView, keymap, ViewPlugin, Decoration, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
-import type { Range } from "@codemirror/state";
+import type { Extension, Range } from "@codemirror/state";
 import {
   history, historyKeymap, defaultKeymap, indentMore, indentLess,
 } from "@codemirror/commands";
@@ -660,6 +660,13 @@ export interface LiveEditorProps {
   onCreateDoc?: () => Promise<string | null>;
   /** `[[제목]]` 칩을 눌렀을 때. 없으면 위키링크는 칩으로 바꾸지 않는다. */
   onOpenTitle?: (title: string) => void;
+  /**
+   * 평문(.txt·.py·.json…) — 마크다운으로 해석하지 않고 **글자를 그대로** 보인다(50차). 예전엔 모든
+   * 글을 마크다운으로 열어, 평문 파일의 `# 주석` 이 제목으로 커지고 `- ` 가 •로, `**kwargs` 의 별표가
+   * 커서 밖 줄에서 사라졌다 — 파일에 실제로 든 글자와 다른 것을 보여 줬다. 이름을 .md → .txt 로
+   * 바꿔도 그대로여서 "확장자를 바꿔도 적용이 안 된다"로 보였다.
+   */
+  plain?: boolean;
 }
 
 export function LiveEditor({
@@ -673,6 +680,7 @@ export function LiveEditor({
   onDropPath,
   onCreateDoc,
   onOpenTitle,
+  plain = false,
 }: LiveEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -810,6 +818,8 @@ export function LiveEditor({
       createDocLink: cbs.current.onCreateDoc ? createDocLink : undefined,
     });
     const slashSource = makeSlashSource(slashActions);
+    // 마크다운에만 있는 것들 — 평문(plain)이면 뺀다. 자리는 그대로 두어 순서(우선순위)가 바뀌지 않게.
+    const md = (...e: Extension[]): Extension[] => (plain ? [] : e);
 
     const state = EditorState.create({
       doc: value,
@@ -818,7 +828,7 @@ export function LiveEditor({
         // 빈 인용문 탈출은 markdown() 의 Prec.high 이어쓰기보다 먼저 와야 한다.
         // 조건이 아주 좁아서(내용 없는 `>` 줄 + 커서가 줄 끝) 다른 Enter 를
         // 가로채지 않는다.
-        Prec.highest(keymap.of([{ key: "Enter", run: exitEmptyQuote }])),
+        ...md(Prec.highest(keymap.of([{ key: "Enter", run: exitEmptyQuote }]))),
         keymap.of([
           { key: "Mod-s", run: () => { cbs.current.onSave?.(); return true; } },
           ...closeBracketsKeymap,
@@ -832,12 +842,12 @@ export function LiveEditor({
           ...defaultKeymap,
           ...historyKeymap,
         ]),
-        markdown({
+        ...md(markdown({
           base: markdownLanguage,
           codeLanguages: languages,
           // 형광펜(==강조==)은 표준 마크다운에 없다. 읽기 뷰와 같은 규칙을 쓴다.
           extensions: [cmHighlightExtension],
-        }),
+        })),
         // 드래그&드롭: 떨어뜨린 '그 위치'에 삽입한다(옵시디언과 동일).
         EditorView.domEventHandlers({
           dragover(e) {
@@ -908,27 +918,31 @@ export function LiveEditor({
         }),
         // 표 안에서만 뜨는 툴바 + Tab 칸 이동. keymap 은 defaultKeymap 보다
         // 앞에 와야 Tab 을 먼저 집는다(표 밖에서는 false 를 돌려 넘긴다).
-        tableTools(),
-        syntaxHighlighting(mdHighlight),
-        livePreview,
-        // embedDeco보다 먼저 선언해야 같은 트랜잭션에서 갱신된 값을 읽는다.
-        // init으로 첫 값을 심는다 — 마운트 직후부터 이미지가 보여야 한다.
-        embedResolver.init(() => cbs.current.resolveEmbed),
-        embedDeco,
+        ...md(
+          tableTools(),
+          syntaxHighlighting(mdHighlight),
+          livePreview,
+          // embedDeco보다 먼저 선언해야 같은 트랜잭션에서 갱신된 값을 읽는다.
+          // init으로 첫 값을 심는다 — 마운트 직후부터 이미지가 보여야 한다.
+          embedResolver.init(() => cbs.current.resolveEmbed),
+          embedDeco,
+        ),
         EditorView.lineWrapping,
         closeBrackets(),
-        // `[note/서버/기록.md]` 항목 링크 — 칠하고, Ctrl(⌘)+클릭으로 연다
-        itemLinks({
-          item: (path) => void openLink(path, (href) => cbs.current.navigate(href)),
-          // 위키링크 칩은 여는 곳이 있을 때만(회의록 편집기 등은 문서를 열 자리가 없다)
-          wiki: onOpenTitle ? (t) => cbs.current.onOpenTitle?.(t) : undefined,
-        }),
-        autocompletion({
-          // `[` 는 항목 링크 후보, `[[` 는 위키링크 후보(서로 겹치지 않는다)
-          override: [wikiComplete, linkCompletionSource, slashSource],
-          // 슬래시 메뉴는 고르는 목록이라 첫 항목이 미리 선택돼 있어야 Enter로 바로 넣는다
-          defaultKeymap: true,
-        }),
+        ...md(
+          // `[note/서버/기록.md]` 항목 링크 — 칠하고, Ctrl(⌘)+클릭으로 연다
+          itemLinks({
+            item: (path) => void openLink(path, (href) => cbs.current.navigate(href)),
+            // 위키링크 칩은 여는 곳이 있을 때만(회의록 편집기 등은 문서를 열 자리가 없다)
+            wiki: onOpenTitle ? (t) => cbs.current.onOpenTitle?.(t) : undefined,
+          }),
+          autocompletion({
+            // `[` 는 항목 링크 후보, `[[` 는 위키링크 후보(서로 겹치지 않는다)
+            override: [wikiComplete, linkCompletionSource, slashSource],
+            // 슬래시 메뉴는 고르는 목록이라 첫 항목이 미리 선택돼 있어야 Enter로 바로 넣는다
+            defaultKeymap: true,
+          }),
+        ),
         EditorView.updateListener.of((u) => {
           if (!u.docChanged) return;
           // 업로드가 끝나면 넣을 자리들을 편집에 맞춰 옮긴다. 안 옮기면 업로드가

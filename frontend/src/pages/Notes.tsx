@@ -15,7 +15,7 @@ import { NOTE_PATH_MIME } from "../components/notes/dragTypes";
 import { Modal } from "../components/ui/Modal";
 import { api, ApiError, isConflict, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
 import { looksLikeExtension } from "../lib/names";
-import { ancestorsOf, fileName, parentDir } from "../lib/notePath";
+import { ancestorsOf, fileName, isMarkdownPath, parentDir } from "../lib/notePath";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { Draft, draftAgeText, dropDraft, keepDraft, moveDraft, moveDraftsUnder, readDraft } from "../lib/draftBackup";
 import { isSubmitEnter } from "../lib/keys";
@@ -731,6 +731,8 @@ export function Notes() {
   const currentMeta = current ? notes.find((n) => n.path === current) : undefined;
   const isEditable =
     (!currentMeta || currentMeta.editable) && !(current && viewerOnly.has(current));
+  // 평문(.txt·.py·.json…)은 글자 그대로 — 마크다운 칠하기·읽기 보기·그림 넣기가 없다(50차, LiveEditor.plain)
+  const isMarkdown = !!current && isMarkdownPath(current);
 
   const doUpload = async (files: FileList | null) => {
     if (!files || !files.length) return;
@@ -946,7 +948,7 @@ export function Notes() {
               {saving ? <Loader2 size={13} className="animate-spin text-fg-muted" />
                 : dirty ? <Save size={13} className="text-warning" />
                 : current && isEditable ? <span className="label text-positive">저장됨</span> : null}
-              {current && isEditable && (
+              {current && isEditable && isMarkdown && (
                 <button
                   onClick={() => {
                     const next = !reading;
@@ -1041,7 +1043,7 @@ export function Notes() {
               <DocViewer path={current} kind={currentMeta?.kind ?? "other"}
                          size={currentMeta?.size} />
             </div>
-          ) : reading ? (
+          ) : reading && isMarkdown ? (
             <div className="flex-1 overflow-auto p-4">
               <MarkdownView content={content} onWikiClick={openByTitle} resolveEmbed={resolveEmbed} />
             </div>
@@ -1057,9 +1059,11 @@ export function Notes() {
               titles={notes.map((n) => n.title)}
               docKey={current}
               resolveEmbed={resolveEmbed}
-              onDropFiles={onDropFiles}
-              onDropPath={onDropPath}
-              onCreateDoc={onCreateDoc}
+              plain={!isMarkdown}
+              // 그림·문서 링크를 마크다운으로 넣는 것들 — 평문에는 넣지 않는다(첨부 단추도 사라진다)
+              onDropFiles={isMarkdown ? onDropFiles : undefined}
+              onDropPath={isMarkdown ? onDropPath : undefined}
+              onCreateDoc={isMarkdown ? onCreateDoc : undefined}
               // 읽기 뷰와 같은 동작 — 편집 화면에서도 `[[제목]]` 을 누르면 연다
               onOpenTitle={openByTitle}
             />
