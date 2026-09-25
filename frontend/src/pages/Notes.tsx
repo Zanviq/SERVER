@@ -9,6 +9,7 @@ import { MarkdownView } from "../components/notes/LazyMarkdownView";
 import { DocViewer } from "../components/notes/DocViewer";
 import { ThreePane } from "../components/notes/ThreePane";
 import { RowMenu } from "../components/notes/RowMenu";
+import { REVEAL_ON_ROW } from "../components/ui/reveal";
 import { LiveEditor } from "../components/notes/LazyLiveEditor";
 import { NOTE_PATH_MIME } from "../components/notes/dragTypes";
 import { Modal } from "../components/ui/Modal";
@@ -33,13 +34,8 @@ interface TreeNode {
  *  "강조 없음"(null)과 구분이 안 되므로, 폴더 경로가 될 수 없는 값을 쓴다. */
 const ROOT_DROP = "/";
 
-/**
- * 폴더 줄 끝의 작은 단추(이름 바꾸기·내려받기·지우기). 넓은 화면에서는 줄에 올렸을 때·포커스일 때만 보이고,
- * 터치 기기엔 hover 가 없어 좁은 화면은 늘 보인다. hidden 은 쓰지 않는다 — 탭 순서에서 빠진다.
- * 아이콘은 작게 두되 누를 자리는 28px(두 단추가 붙어 있으면 휴대폰에서 옆 것이 눌린다). 색만 단추마다 다르다.
- */
-const FOLDER_ICON =
-  "grid h-7 w-7 shrink-0 place-items-center rounded text-fg-muted transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100";
+/** 이름을 바꾸거나 옮길 트리 항목 — 문서이거나 폴더. 폴더면 서버가 다른 규칙(확장자 없음·제 안으로 못 옮김)을 쓴다. */
+type TreeItem = { path: string; folder: boolean };
 
 function buildTree(folders: string[], notes: NoteSummary[], pinned: string[] = []): TreeNode {
   const root: TreeNode = { name: "", path: "", children: [], notes: [] };
@@ -104,9 +100,9 @@ export function Notes() {
   const [delFolder, setDelFolder] = useState<string | null>(null);
   // 행 컨텍스트 메뉴: 이름 변경 / 이동 / 개별 삭제 + 드래그 이동
   // 이름 바꿀 것 — 문서이거나 폴더(36차: 폴더는 화면에서 이름을 바꿀 길이 없었다)
-  const [renameFor, setRenameFor] = useState<{ path: string; folder: boolean } | null>(null);
+  const [renameFor, setRenameFor] = useState<TreeItem | null>(null);
   const [renameName, setRenameName] = useState("");
-  const [moveFor, setMoveFor] = useState<{ path: string; folder: boolean } | null>(null);
+  const [moveFor, setMoveFor] = useState<TreeItem | null>(null);
   const [moveTarget, setMoveTarget] = useState("");
   const [delNotePath, setDelNotePath] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
@@ -641,7 +637,6 @@ export function Notes() {
                 {child.name}
               </span>
             </button>
-            {/* 단추 모양·보이는 때의 까닭은 FOLDER_ICON. */}
             {/* 고정 폴더(논문·회의) 자체는 받을 수도 지울 수도 없다 — 실제 폴더가
                 아니라 다른 저장소를 붙여 놓은 자리다. 서버도 거절하므로, 눌러도
                 오류만 나는 단추를 보여 주지 않는다(안의 항목에는 그대로 있다). */}
@@ -649,7 +644,9 @@ export function Notes() {
               <>
                 <a href={api.noteArchiveUrl(child.path)} download
                   onClick={(e) => e.stopPropagation()}
-                  className={`${FOLDER_ICON} hover:text-accent`}
+                  // 누를 자리는 … 단추와 같은 28px(붙은 단추가 작으면 휴대폰에서 옆 것이 눌린다).
+                  // 보이는 때의 까닭은 REVEAL_ON_ROW.
+                  className={`grid h-7 w-7 shrink-0 place-items-center rounded text-fg-muted transition-opacity hover:text-accent ${REVEAL_ON_ROW}`}
                   title="폴더를 zip으로 내려받기" aria-label="폴더 다운로드">
                   <Download size={13} />
                 </a>
