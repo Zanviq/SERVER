@@ -1,10 +1,11 @@
 import { DragEvent, useMemo, useRef, useState } from "react";
 import {
   AlertCircle, ChevronDown, ChevronRight, FileText, FolderClosed, FolderOpen, Loader2,
-  MoreHorizontal, RefreshCw, Search, Star, Trash2, Upload, X,
+  RefreshCw, Search, Star, Trash2, Upload, X,
 } from "lucide-react";
 import { Paper } from "../../lib/api";
-import { Dropdown, DropdownItem } from "../ui/Dropdown";
+import { DropdownItem } from "../ui/Dropdown";
+import { RowMoreMenu } from "../ui/RowMoreMenu";
 import { ListState } from "../ui/ListState";
 
 interface Props {
@@ -153,10 +154,7 @@ export function PaperList({
             )}
           </span>
           {p.starred && <Star size={12} className="mt-1 shrink-0 fill-warning text-warning" />}
-          <span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-            <Dropdown align="end" width={190} label="논문 메뉴"
-              className={`tap grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-hovered hover:text-fg ${active ? "" : "sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"}`}
-              trigger={() => <MoreHorizontal size={14} />}>
+          <RowMoreMenu label="논문 메뉴" width={190} active={active}>
               {(close) => (
                 <>
                   <DropdownItem onClick={() => { onStar(p); close(); }}>
@@ -186,8 +184,7 @@ export function PaperList({
                   </DropdownItem>
                 </>
               )}
-            </Dropdown>
-          </span>
+          </RowMoreMenu>
         </div>
       </li>
     );

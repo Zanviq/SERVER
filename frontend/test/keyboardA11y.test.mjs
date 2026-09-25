@@ -50,11 +50,13 @@ test("아이콘만 있는 드롭다운 단추에는 이름(label)이 있다 — 
     const text = readFileSync(f, "utf8").replace(/\r\n/g, "\n");
     for (const m of text.matchAll(/<Dropdown\b[^>]*?trigger=\{\(\) => <([A-Z]\w+) size=\{\d+\} \/>\}[^>]*>/gs)) {
       iconOnly++;
-      if (!/\blabel="[^"]+"/.test(m[0])) bad.push(`${f.split(/[\\/]/).pop()}: ${m[1]}`);
+      if (!/\blabel=(?:"[^"]+"|\{\w+\})/.test(m[0])) bad.push(`${f.split(/[\\/]/).pop()}: ${m[1]}`);
     }
   }
-  assert.ok(iconOnly >= 3, `아이콘만 그리는 드롭다운을 못 찾았다 — 이 시험의 식을 확인할 것(${iconOnly})`);
+  assert.ok(iconOnly >= 2, `아이콘만 그리는 드롭다운을 못 찾았다 — 이 시험의 식을 확인할 것(${iconOnly})`);
   assert.deepEqual(bad, [], `이름 없는 아이콘 드롭다운: ${bad.join(", ")}`);
   const dd = src("components/ui/Dropdown.tsx");
   assert.match(dd, /aria-label=\{label\}/, "드롭다운 단추가 이름을 달지 않는다");
+  // 목록 줄의 … 메뉴(RowMoreMenu)는 이름을 **반드시** 받는다(선택 사항이면 또 빠진다)
+  assert.match(src("components/ui/RowMoreMenu.tsx"), /label: string;/, "줄 메뉴의 이름이 선택 사항이다");
 });

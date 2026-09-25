@@ -1,7 +1,8 @@
 import { DragEvent, useMemo, useRef, useState } from "react";
-import { AlertCircle, AudioLines, Loader2, Mic, MoreHorizontal, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
+import { AlertCircle, AudioLines, Loader2, Mic, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 import { Meeting } from "../../lib/api";
-import { Dropdown, DropdownItem } from "../ui/Dropdown";
+import { DropdownItem } from "../ui/Dropdown";
+import { RowMoreMenu } from "../ui/RowMoreMenu";
 import { ListState } from "../ui/ListState";
 
 interface Props {
@@ -167,22 +168,18 @@ export function MeetingList({
                             : [m.category, m.docs ? `문서 ${m.docs}` : "", m.summary].filter(Boolean).join(" · ")}
                         </span>
                       </span>
-                      <span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-                        <Dropdown align="end" width={170} label="회의 메뉴"
-                          className={`tap grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-hovered hover:text-fg ${active ? "" : "sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"}`}
-                          trigger={() => <MoreHorizontal size={14} />}>
-                          {(close) => (
-                            <>
-                              <DropdownItem onClick={() => { onRetry(m); close(); }}>
-                                <RefreshCw size={13} /> 다시 받아쓰기
-                              </DropdownItem>
-                              <DropdownItem onClick={() => { onDelete(m); close(); }} className="text-danger">
-                                <Trash2 size={13} /> 휴지통으로
-                              </DropdownItem>
-                            </>
-                          )}
-                        </Dropdown>
-                      </span>
+                      <RowMoreMenu label="회의 메뉴" width={170} active={active}>
+                        {(close) => (
+                          <>
+                            <DropdownItem onClick={() => { onRetry(m); close(); }}>
+                              <RefreshCw size={13} /> 다시 받아쓰기
+                            </DropdownItem>
+                            <DropdownItem onClick={() => { onDelete(m); close(); }} className="text-danger">
+                              <Trash2 size={13} /> 휴지통으로
+                            </DropdownItem>
+                          </>
+                        )}
+                      </RowMoreMenu>
                     </div>
                   </li>
                 );

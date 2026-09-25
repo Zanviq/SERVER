@@ -40,9 +40,12 @@ test("받아쓰기는 줄 전체가 되감기 단추다", () => {
 });
 
 test("작게 남아야 하는 아이콘에는 .tap 이 붙어 있다", () => {
+  // 논문·회의 줄 끝의 … 는 한 벌(RowMoreMenu)로 모였다 — 거기에 붙어 있고 두 목록이 그것을 쓴다
+  for (const file of ["../src/components/papers/PaperList.tsx", "../src/components/meetings/MeetingList.tsx"]) {
+    assert.match(read(file), /<RowMoreMenu\b/, `${file} 가 줄 끝 메뉴를 한 벌로 쓰지 않는다`);
+  }
   for (const [file, what] of [
-    ["../src/components/papers/PaperList.tsx", "논문 줄 끝 아이콘"],
-    ["../src/components/meetings/MeetingList.tsx", "회의 줄 끝 아이콘"],
+    ["../src/components/ui/RowMoreMenu.tsx", "논문·회의 줄 끝 아이콘"],
     ["../src/components/meetings/TranscriptView.tsx", "화자 이름 칩"],
     ["../src/pages/Meetings.tsx", "회의 목록으로"],
   ]) {
