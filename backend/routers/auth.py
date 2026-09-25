@@ -66,13 +66,14 @@ def _client_ip(request: Request) -> str:
     return (request.headers.get("x-client-ip") or "").strip()
 
 
+def _retry_later(detail: str, wait: int) -> HTTPException:
+    """한도에 걸렸다는 429 — 로그인·가입이 같은 모양으로 준다(Retry-After 는 늘 1초 이상)."""
+    return HTTPException(status_code=429, detail=detail, headers={"Retry-After": str(max(1, wait))})
+
+
 def _too_many(wait: int) -> HTTPException:
     """로그인 한도에 걸렸다는 429 — IP 몫이든 아이디 잠금이든 같은 말·같은 Retry-After."""
-    return HTTPException(
-        status_code=429,
-        detail=f"로그인 시도가 너무 많습니다. {wait}초 후 다시 시도해 주세요.",
-        headers={"Retry-After": str(wait or 1)},
-    )
+    return _retry_later(f"로그인 시도가 너무 많습니다. {wait}초 후 다시 시도해 주세요.", wait)
 
 
 @router.post("/login", response_model=SessionInfo)
@@ -159,11 +160,7 @@ def signup(req: SignupRequest, request: Request, settings: Settings = Depends(ge
     wait = login_guard.ip_wait(_client_ip(request), bucket="signup",
                                budget=login_guard.SIGNUP_BUDGET, window=login_guard.SIGNUP_WINDOW)
     if wait:
-        raise HTTPException(
-            status_code=429,
-            detail=f"가입 신청이 너무 잦습니다. {max(1, wait // 60)}분 뒤 다시 시도해 주세요.",
-            headers={"Retry-After": str(wait)},
-        )
+        raise _retry_later(f"가입 신청이 너무 잦습니다. {max(1, wait // 60)}분 뒤 다시 시도해 주세요.", wait)
     acc = accounts.signup(req.username, req.password, req.display_name, settings)
     return {
         "ok": True,
