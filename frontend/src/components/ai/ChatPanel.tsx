@@ -6,6 +6,7 @@ import {
   ChevronLeft, ChevronRight, GitBranch, Pencil,
 } from "lucide-react";
 import { MarkdownView } from "../notes/LazyMarkdownView";
+import { AccentBubble } from "../ui/AccentBubble";
 import { useNavigate } from "react-router-dom";
 import { aiChatStream, api, AiEvent, ChatMessage } from "../../lib/api";
 import { isSubmitEnter } from "../../lib/keys";
@@ -328,9 +329,9 @@ function UserBubble({ m, openDoc, branches, onGo, onEdit, busy }: {
       ) : null}
       {m.text && (
         // 사용자가 친 것도 마크다운이다(목록·굵게·`[note/…]` 링크)
-        <div className="md-on-accent max-w-[80%] rounded-lg rounded-br-sm bg-accent px-4 py-2.5 text-[13.5px] text-accent-contrast">
+        <AccentBubble className="px-4 py-2.5 text-[13.5px]">
           <MarkdownView content={m.text} onWikiClick={openDoc} />
-        </div>
+        </AccentBubble>
       )}
       {m.missing && m.missing.length > 0 && (
         <div className="max-w-[80%] text-right text-[11px] text-danger">

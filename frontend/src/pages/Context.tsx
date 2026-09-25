@@ -8,6 +8,7 @@ import {
 import { Shell } from "../components/layout/Shell";
 import { ThreePane } from "../components/notes/ThreePane";
 import { MarkdownView } from "../components/notes/LazyMarkdownView";
+import { AccentBubble } from "../components/ui/AccentBubble";
 import { AiPreview, api, ChatMessage, ContextHit, ContextSession, ContextSpace } from "../lib/api";
 import { isSubmitEnter } from "../lib/keys";
 import { toast } from "../store/toast";
@@ -431,10 +432,10 @@ function Turn({ msg, onDelete }: { msg: ChatMessage; onDelete: () => void }) {
           </div>
         ) : null}
         {/* 대화 화면과 같이 마크다운으로(`[note/…]` 링크도 눌린다) */}
-        <div className="md-on-accent max-w-[80%] rounded-lg rounded-br-sm bg-accent px-3.5 py-2 text-[13px] text-accent-contrast">
+        <AccentBubble className="px-3.5 py-2 text-[13px]">
           <MarkdownView content={msg.text}
             onWikiClick={(t) => navigate(`/notes?open=${encodeURIComponent(t)}&create=0`)} />
-        </div>
+        </AccentBubble>
         <TurnFoot ts={msg.ts} onDelete={onDelete} />
       </div>
     );
