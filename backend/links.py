@@ -152,10 +152,13 @@ def href_of(e: Entry) -> str:
     rest = e.path.split("/", 1)[1] if "/" in e.path else ""
     if e.kind == "note":
         return f"/notes?folder={q(rest)}" if e.folder else f"/notes?path={q(rest)}"
+    # 달력은 일정과 기록을 한 화면의 다른 '보기'로 그린다. view 를 빼면 늘 일정 보기로 열려
+    # 기록 링크를 눌러도 그날 일기가 보이지 않았다(frontend lib/calendarView.ts 와 같은 이름).
     if e.folder:
-        return {"todo": "/todo", "event": f"/calendar?d={q(e.when)}" if e.when else "/calendar",
+        return {"todo": "/todo",
+                "event": f"/calendar?d={q(e.when)}&view=events" if e.when else "/calendar?view=events",
                 "paper": "/papers", "meeting": "/meetings", "vocab": "/english",
-                "diary": "/calendar"}.get(e.kind, "/")
+                "diary": "/calendar?view=diary"}.get(e.kind, "/")
     if e.kind == "paper":
         return f"/papers?p={q(e.ident)}"
     if e.kind == "meeting":
@@ -164,8 +167,10 @@ def href_of(e: Entry) -> str:
         return f"/todo?t={q(e.ident)}"
     if e.kind == "vocab":
         return f"/english?w={q(e.ident)}"
-    if e.kind in ("event", "diary"):
-        return f"/calendar?d={q(e.when)}"
+    if e.kind == "event":
+        return f"/calendar?d={q(e.when)}&view=events"
+    if e.kind == "diary":
+        return f"/calendar?d={q(e.when)}&view=diary"
     return "/"
 
 

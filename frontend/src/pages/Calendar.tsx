@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
@@ -17,6 +17,7 @@ import { api, CalEvent, DiaryDay, DiaryShape, Todo, TodoCategory } from "../lib/
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
 import { useMediaQuery } from "../lib/useMediaQuery";
+import { CalView, calViewParam } from "../lib/calendarView";
 
 const CAL_SUGGESTIONS = [
   "이번 주 일정 정리해줘",
@@ -25,12 +26,7 @@ const CAL_SUGGESTIONS = [
   "이번 달 할 일 뭐 남았어?",
 ];
 
-/**
- * 달력에 무엇을 그릴지. 일정·할 일·기록은 저장소가 달라 섞어 보면 헷갈린다.
- * 셋을 한 덩어리 버튼으로 늘어놓고 그중 하나를 고른다.
- */
-type CalView = "events" | "todos" | "diary";
-
+/** 셋(CalView)을 한 덩어리 버튼으로 늘어놓고 그중 하나를 고른다. */
 const VIEW_BUTTONS: { key: CalView; button: string; text: string; hint: string }[] = [
   { key: "events", button: "viewEvents", text: "일정", hint: "일정 보기" },
   { key: "todos", button: "viewTodos", text: "할 일", hint: "마감이 있는 할 일 보기" },
@@ -91,15 +87,20 @@ export function Calendar() {
   // Tailwind의 sm(640px) 경계와 맞춘다 — 사이드바가 하단 탭바로 바뀌는 지점이다.
   const isNarrow = useMediaQuery("(max-width: 639px)");
 
-  // 전역 검색에서 일정을 고르면 `?d=YYYY-MM-DD` 로 온다. 달력을 그 날짜로 옮기고
-  // 그 날을 고른다(일정 하나만 띄우면 앞뒤 맥락이 사라진다).
+  // 전역 검색·링크에서 일정을 고르면 `?d=YYYY-MM-DD&view=…` 로 온다. 달력을 그 날짜로
+  // 옮기고 그 날을 고른다(일정 하나만 띄우면 앞뒤 맥락이 사라진다). view 가 있으면 그 보기로
+  // — 기록 링크가 '일정' 보기에 떨어지면 그날 일기가 안 보인다(calendarView).
+  // location.key 에 묶는다: 같은 링크를 다시 눌러도(달을 넘겨 본 뒤) 다시 그 날로 간다.
   const [params] = useSearchParams();
+  const { key: arrival } = useLocation();
   const jumpDay = params.get("d") ?? "";
+  const jumpView = calViewParam(params.get("view"));
   useEffect(() => {
+    if (jumpView) setView(jumpView);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(jumpDay)) return;
     calRef.current?.getApi().gotoDate(jumpDay);
     setSelectedDay(jumpDay);
-  }, [jumpDay]);
+  }, [arrival, jumpDay, jumpView]);
 
   const defaultColor = s?.calendar.default_color ?? "2";
   const defaultView = s?.calendar.default_view ?? "dayGridMonth";

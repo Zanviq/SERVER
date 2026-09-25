@@ -19,7 +19,7 @@ const KIND: Record<SearchKind, { label: string; icon: typeof FileText; href: (h:
   meeting: { label: "회의", icon: Mic, href: (h) => `/meetings?m=${encodeURIComponent(h.id)}` },
   vocab: { label: "단어", icon: Languages, href: (h) => `/english?w=${encodeURIComponent(h.id)}` },
   todo: { label: "할 일", icon: CheckSquare, href: (h) => `/todo?t=${encodeURIComponent(h.id)}` },
-  event: { label: "일정", icon: CalendarDays, href: (h) => `/calendar?d=${encodeURIComponent(h.when)}` },
+  event: { label: "일정", icon: CalendarDays, href: (h) => `/calendar?d=${encodeURIComponent(h.when)}&view=events` },
   chat: {
     label: "대화", icon: MessageSquare,
     href: (h) => {

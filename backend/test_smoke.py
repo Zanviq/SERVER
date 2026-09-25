@@ -11345,6 +11345,48 @@ def test_every_linked_document_says_whether_it_was_carried():
     assert "(내용 없음)" in sections[n], sections[n]
 
 
+def test_calendar_links_open_the_view_they_point_at():
+    """기록 링크는 달력의 기록 보기로, 일정 링크는 일정 보기로 연다.
+
+    달력은 일정·할 일·기록을 한 화면의 다른 '보기'로 그린다. 주소가 `/calendar?d=…` 뿐이던 때는
+    늘 일정 보기로 열려 `[diary/2026-09-20]` 을 눌러도 그날 일기가 보이지 않았다(막다른 길).
+    보기 이름은 frontend lib/calendarView.ts 의 CAL_VIEWS 가 읽을 수 있는 것이어야 한다.
+    """
+    import re as _re
+    from datetime import date as _date
+    from pathlib import Path as _Path
+
+    from backend import calendar_service, diary_store, links
+    from backend.auth import SessionUser
+
+    _login()
+    u = SessionUser(username="tester", display_name="", expires_at=0, remaining=0)
+    st = get_settings()
+    today = _date.today().isoformat()
+    assert calendar_service.backend_kind(u, st) == "internal"  # 구글에 쓰면 안 된다
+    calendar_service.create_event(u, st, {"title": "보기 일정", "start": f"{today}T09:00:00",
+                                          "end": f"{today}T10:00:00"})
+    _forget_events("tester")
+    diary_store.save_day(u, st, today, {"text": "보기 일기"})
+
+    def href(path):
+        r = client.get("/api/links/open", params={"path": path}).json()
+        assert r["found"], (path, r)
+        return r["href"]
+
+    assert href(f"diary/{today}") == f"/calendar?d={today}&view=diary"
+    assert href(f"event/{today}/보기 일정") == f"/calendar?d={today}&view=events"
+    # 갈래 자체(폴더)를 가리키는 링크도 그 보기로
+    assert links.href_of(links.Entry("diary", "diary", "기록", folder=True)) == "/calendar?view=diary"
+    assert links.href_of(links.Entry(f"event/{today}", "event", today, folder=True,
+                                     when=today)).endswith("&view=events")
+
+    # 달력이 아는 보기 이름이어야 한다 — 모르는 값이면 조용히 지금 보기에 남는다
+    src = (_Path(__file__).parent.parent / "frontend/src/lib/calendarView.ts").read_text("utf-8")
+    known = set(_re.findall(r'"(\w+)"', _re.search(r"CAL_VIEWS = \[([^\]]*)\]", src).group(1)))
+    assert {"diary", "events"} <= known, known
+
+
 if __name__ == "__main__":
     # 손으로 적은 호출 목록이었다. 목록이 파일 중간에 있어서 그 아래에 새로 쓴
     # 테스트는 하나도 돌지 않았는데(100개 중 54개만), 끝에 "ALL SMOKE TESTS PASSED"

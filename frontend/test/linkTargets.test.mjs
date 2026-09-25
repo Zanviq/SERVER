@@ -24,13 +24,21 @@ const PAGE = {
   calendar: "../src/pages/Calendar.tsx",
 };
 
-/** 소스에서 `/경로?키=` 꼴을 모두 뽑는다 */
+/**
+ * 소스에서 `/경로?키=…&키=…` 꼴의 키를 모두 뽑는다. 첫 키만 보던 때는 `&view=diary` 처럼
+ * 뒤에 붙인 값을 화면이 안 읽어도 통과했다 — 기록 링크가 그렇게 일정 보기로 떨어졌다.
+ */
 function targets(src) {
   const out = new Set();
-  for (const m of src.matchAll(/\/(notes|papers|meetings|todo|english|calendar)\?(\w+)=/g)) {
-    out.add(`${m[1]}?${m[2]}`);
+  for (const m of src.matchAll(/\/(notes|papers|meetings|todo|english|calendar)\?([^"'`\s]*)/g)) {
+    for (const k of m[2].matchAll(/(?:^|&)(\w+)=/g)) out.add(`${m[1]}?${k[1]}`);
   }
   return [...out];
+}
+
+/** 소스에서 달력 주소가 싣는 `view=` 값을 모두 뽑는다 */
+function calendarViews(src) {
+  return [...src.matchAll(/\/calendar\?[^"'`\s]*?view=(\w+)/g)].map((m) => m[1]);
 }
 
 test("링크와 검색이 만드는 주소의 값은 모두 받는 화면이 읽는다", () => {
@@ -45,4 +53,18 @@ test("링크와 검색이 만드는 주소의 값은 모두 받는 화면이 읽
     assert.ok(page.includes(`params.get("${key}")`),
       `/${route}?${key}= 로 보내는데 ${PAGE[route]} 는 "${key}" 를 읽지 않는다(누르면 아무 일도 없다)`);
   }
+});
+
+test("달력 링크의 view 값은 달력이 아는 보기다(기록 링크가 일정 보기에 떨어지지 않게)", () => {
+  const src = read("../src/lib/calendarView.ts");
+  const known = new Set([...src.match(/CAL_VIEWS = \[([^\]]*)\]/)[1].matchAll(/"(\w+)"/g)].map((m) => m[1]));
+  const sent = [
+    ...calendarViews(read("../../backend/links.py")),
+    ...calendarViews(read("../src/components/search/SearchPalette.tsx")),
+  ];
+  // 기록·일정 링크 둘 다 보기를 실어야 한다 — 빠지면 지금 보기에 머문다
+  assert.ok(sent.includes("diary") && sent.includes("events"), `보기를 싣지 않는 달력 링크가 있다: ${sent}`);
+  for (const v of sent) assert.ok(known.has(v), `view=${v} 는 달력이 모르는 보기다(${[...known]})`);
+  assert.ok(read(PAGE.calendar).includes('calViewParam(params.get("view"))'),
+    "달력이 주소의 view 를 읽지 않는다");
 });
