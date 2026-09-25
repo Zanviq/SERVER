@@ -14,7 +14,8 @@ export function Shell({
   actions?: ReactNode;
   children: ReactNode;
 }) {
-  const { session, logout } = useAuth();
+  const session = useAuth((s) => s.session);
+  const logout = useAuth((s) => s.logout);
   return (
     <div className="flex h-full">
       <Sidebar />

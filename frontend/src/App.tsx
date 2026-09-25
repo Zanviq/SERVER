@@ -129,7 +129,16 @@ function Offline({ onRetry }: { onRetry: () => void }) {
 }
 
 export default function App() {
-  const { session, loading, offline, init, tick, refresh, retryInit } = useAuth();
+  // **필요한 값만 구독한다.** useAuth() 를 통째로 받으면 1초마다 줄어드는 remaining 때문에
+  // App 이 1초마다 다시 그려지고, 그 아래 화면 전체가 따라 그려졌다 — 300차례 대화의 AI 비서
+  // 화면에서 가만히 있어도 1초마다 130ms 가 멈췄다(15차 실측). 남은 시간은 시계만 본다.
+  const session = useAuth((s) => s.session);
+  const loading = useAuth((s) => s.loading);
+  const offline = useAuth((s) => s.offline);
+  const init = useAuth((s) => s.init);
+  const tick = useAuth((s) => s.tick);
+  const refresh = useAuth((s) => s.refresh);
+  const retryInit = useAuth((s) => s.retryInit);
 
   useEffect(() => {
     init();

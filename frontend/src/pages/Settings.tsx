@@ -152,7 +152,8 @@ function NumberField({
 
 
 export function Settings() {
-  const { session, logout } = useAuth();
+  const session = useAuth((s) => s.session);
+  const logout = useAuth((s) => s.logout);
   const { settings: s, loaded, error, load, patch } = useSettings();
   // 구글 콜백은 `/settings?google=...` 로 돌아온다. 그때는 곧장 캘린더 탭이어야
   // 결과(연동됨/취소됨)를 보여 줄 자리가 생긴다.

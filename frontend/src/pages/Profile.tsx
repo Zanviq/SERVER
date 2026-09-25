@@ -9,7 +9,10 @@ function fmt(sec: number): string {
 }
 
 export function Profile() {
-  const { session, remaining, logout } = useAuth();
+  const session = useAuth((s) => s.session);
+  // 이 화면은 남은 시간을 보여 주므로 1초마다 다시 그리는 것이 맞다
+  const remaining = useAuth((s) => s.remaining);
+  const logout = useAuth((s) => s.logout);
   const initial = (session?.display_name || "?").charAt(0).toUpperCase();
   return (
     <Shell title="프로필">

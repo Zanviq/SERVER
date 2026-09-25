@@ -7,7 +7,9 @@ import { api } from "../lib/api";
 type Mode = "login" | "signup";
 
 export function Login() {
-  const { login, error, clearError } = useAuth();
+  const login = useAuth((s) => s.login);
+  const error = useAuth((s) => s.error);
+  const clearError = useAuth((s) => s.clearError);
   const [mode, setMode] = useState<Mode>("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");

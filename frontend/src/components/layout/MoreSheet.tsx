@@ -29,7 +29,8 @@ export function MoreSheet({
   onClose: () => void;
   items: SheetItem[];
 }) {
-  const { session, logout } = useAuth();
+  const session = useAuth((s) => s.session);
+  const logout = useAuth((s) => s.logout);
 
   useDismissable(open, onClose);
 
