@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Loader2, Lock } from "lucide-react";
 import { api, CalEvent, DiaryAxis, DiaryDay, DiaryShape, isConflict } from "../../lib/api";
-import { mergeDiaryText } from "../../lib/diaryMerge";
+import { mergeTexts } from "../../lib/textMerge";
 import { toast } from "../../store/toast";
 import { useSettings } from "../../store/settings";
 import { isSubmitEnter } from "../../lib/keys";
@@ -189,7 +189,7 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
 
   /**
    * 글 저장. 연 뒤에 다른 곳에서 글이 바뀌었으면(409) 덮지 않고 **둘 다 남긴다** — 서버 글 뒤에
-   * 이 기기에서 쓴 부분을 표시를 달아 붙여 저장하고 알린다(lib/diaryMerge).
+   * 이 기기에서 쓴 부분을 표시를 달아 붙여 저장하고 알린다(lib/textMerge).
    * 합치는 사이 더 친 글이 있으면 칸은 건드리지 않고 base 도 그대로 둔다 — 다음 저장이 다시
    * 409 를 받아 한 번 더 합친다(어느 쪽 글도 잃지 않는다).
    */
@@ -203,7 +203,7 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
       const fresh = await api.diaryGet(day);
       // 잠금이 다시 걸려 저쪽 글을 못 받았으면 합치지 않는다 — 빈 글과 합치면 저쪽 글을 덮는다
       if (fresh.locked) throw new Error("일기 잠금이 다시 걸려 합치지 못했습니다. 자물쇠를 풀고 다시 저장해 주세요.");
-      const merged = mergeDiaryText(fresh.text, v);
+      const merged = mergeTexts(fresh.text, v);
       const saved = await api.diarySave(day, { text: merged, base_at: fresh.text_at ?? 0 });
       if (dateRef.current === day && textRef.current === v) {
         setText(merged);

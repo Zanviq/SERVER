@@ -17,7 +17,7 @@ import { CategoryDialog, CategoryDraft } from "../components/todo/CategoryDialog
 import { ListState } from "../components/ui/ListState";
 import { LinkTextarea } from "../components/links/LinkTextarea";
 import { api, isConflict, isGone, Todo as TodoItem, TodoCategory, TodoCounts } from "../lib/api";
-import { mergeDiaryText } from "../lib/diaryMerge";
+import { mergeTexts } from "../lib/textMerge";
 import { usePendingSave } from "../lib/usePendingSave";
 import { toast } from "../store/toast";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -390,7 +390,7 @@ export function Todo() {
           // 다른 곳에서 바뀌었다 — 둘 다 남긴다(일기와 같은 합치기: 저쪽 글 뒤에 이 기기에서 쓴 부분)
           const theirs = (await api.todoBoard()).todos.find((t) => t.id === id);
           if (!theirs) return;
-          const merged = mergeDiaryText(theirs.description, text);
+          const merged = mergeTexts(theirs.description, text);
           settle(await put(merged, theirs.description));
           // 그동안 더 치지 않았으면 칸에도 합친 글을 보인다(더 쳤으면 그 글이 다음 저장에 실린다)
           const el = descRef.current;

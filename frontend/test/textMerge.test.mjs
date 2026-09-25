@@ -1,30 +1,30 @@
 /**
- * 두 곳에서 같은 날 일기를 고쳤을 때 둘 다 남기는 합치기(28차).
+ * 두 곳에서 같은 글(일기 28차·할 일 설명 43차)을 고쳤을 때 둘 다 남기는 합치기.
  *
  * 서버가 409(연 뒤에 다른 곳에서 바뀜)를 주면 화면은 서버 글 뒤에 이 기기에서 쓴 부분만 표시를 달아
  * 붙여 저장한다. 같이 시작한 앞부분은 한 번만, 줄 머리에서 자른다.
  *
- * 돌리는 법: node --experimental-strip-types --import ./test/tsResolve.mjs --test test/diaryMerge.test.mjs
+ * 돌리는 법: node --experimental-strip-types --import ./test/tsResolve.mjs --test test/textMerge.test.mjs
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { MERGE_MARK, mergeDiaryText } from "../src/lib/diaryMerge.ts";
+import { MERGE_MARK, mergeTexts } from "../src/lib/textMerge.ts";
 
 test("같이 시작한 줄은 한 번만, 이 기기에서 쓴 부분만 붙인다", () => {
-  const merged = mergeDiaryText("아침 첫 줄\n폰 문단", "아침 첫 줄\nPC 덧붙임");
+  const merged = mergeTexts("아침 첫 줄\n폰 문단", "아침 첫 줄\nPC 덧붙임");
   assert.equal(merged, `아침 첫 줄\n폰 문단\n\n${MERGE_MARK}\nPC 덧붙임`);
 });
 
 test("붙일 것이 없으면 저쪽 글 그대로", () => {
-  assert.equal(mergeDiaryText("아침 첫 줄\n폰 문단", "아침 첫 줄"), "아침 첫 줄\n폰 문단");   // 내 글은 이미 들어 있다
-  assert.equal(mergeDiaryText("같다", "같다"), "같다");
-  assert.equal(mergeDiaryText("저쪽", ""), "저쪽");
-  assert.equal(mergeDiaryText("", "내 글"), "내 글");                                      // 저쪽이 비웠다
+  assert.equal(mergeTexts("아침 첫 줄\n폰 문단", "아침 첫 줄"), "아침 첫 줄\n폰 문단");   // 내 글은 이미 들어 있다
+  assert.equal(mergeTexts("같다", "같다"), "같다");
+  assert.equal(mergeTexts("저쪽", ""), "저쪽");
+  assert.equal(mergeTexts("", "내 글"), "내 글");                                      // 저쪽이 비웠다
 });
 
 test("낱말 한가운데서 가르지 않는다(줄 머리에서 자른다)", () => {
-  const merged = mergeDiaryText("오늘은 비가 왔다", "오늘은 맑았다");
+  const merged = mergeTexts("오늘은 비가 왔다", "오늘은 맑았다");
   assert.equal(merged, `오늘은 비가 왔다\n\n${MERGE_MARK}\n오늘은 맑았다`);
 });
 
