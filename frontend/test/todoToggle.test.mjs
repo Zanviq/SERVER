@@ -26,3 +26,19 @@ test("완료 표시는 서버가 돌려준 한 줄과 배지 수만 고친다(�
   assert.match(body, /setCounts\(/, "배지 수를 고치지 않는다 — 트리의 남은 개수가 어긋난다");
   assert.match(body, /toast\.error\(/, "실패를 알리지 않는다");
 });
+
+test("상세의 고치기(마감·카테고리·색)는 guard 없이 차례로 보낸다 — 45차", () => {
+  // guard 는 도는 중 들어온 것을 말없이 버려 색을 잇달아 두 번 고르면 마지막 것이 사라졌다(연두→노랑이 연두로)
+  const patch = src.slice(src.indexOf("const patchDetail = "), src.indexOf("const titleSave = "));
+  assert.ok(patch.length > 0, "patchDetail 을 못 찾았다");
+  assert.doesNotMatch(patch, /guard\(/, "상세의 고치기가 guard 를 탄다 — 잇달아 고른 것이 버려진다");
+  assert.match(patch, /patchChain\.current = patchChain\.current\.then\(/, "차례로 줄을 세우지 않는다 — 응답이 뒤집히면 앞의 값으로 돌아간다");
+});
+
+test("할 일 제목은 칠 때 모아 보내고 칸을 벗어나면 곧바로 보낸다 — 45차", () => {
+  // 칸을 벗어날 때만 보내 새로고침·앱 전환에 고친 제목이 사라졌다
+  assert.match(src, /const titleSave = usePendingSave\(\[selectedTodo\]\)/);
+  assert.match(src, /onChange=\{\(e\) => typeTitle\(detail\.id, e\.target\.value\)\}\s*onBlur=\{\(\) => \{ void titleSave\.flush\(\); \}\}/);
+  // 설명과 같은 PendingSave 를 쓰면 마지막 하나만 남아 한쪽이 다른 쪽을 지운다
+  assert.notEqual(src.indexOf("const titleSave"), src.indexOf("const descSave"));
+});

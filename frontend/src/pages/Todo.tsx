@@ -374,9 +374,41 @@ export function Todo() {
       setSelectedTodo(null);
     }, "휴지통으로 옮겼습니다");
 
+  // 상세의 고치기(마감·카테고리·색)는 guard 를 타지 않는다(45차). guard 는 도는 중 들어온 것을 말없이
+  // 버려, 색을 잇달아 두 번 고르면 **마지막으로 고른 것**이 사라졌다(실측: 연두→노랑, 서버·화면 모두 연두).
+  // 대신 차례로 줄을 세운다 — 겹쳐 보내면 응답이 뒤집혀 올 때 화면이 앞의 값으로 돌아간다.
+  // 마감·카테고리는 목록 차례와 트리 배지를 바꾸므로 보드를 다시 받고, 나머지는 그 줄만 바꾼다.
+  const patchChain = useRef<Promise<unknown>>(Promise.resolve());
   const patchDetail = (body: Partial<TodoItem>) => {
     if (!detail) return;
-    guard(() => api.todoUpdate(detail.id, body));
+    const id = detail.id;
+    patchChain.current = patchChain.current.then(async () => {
+      try {
+        const saved = await api.todoUpdate(id, body);
+        if ("due" in body || "category_id" in body) await reload();
+        else replaceTodo(saved);
+      } catch (e) {
+        if (!isGone(e)) toast.error(e instanceof Error ? e.message : "할 일을 고치지 못했습니다");
+      }
+    });
+  };
+
+  // 제목도 칠 때 모아 보낸다(45차) — 칸을 벗어날 때만 보내 새로고침·앱 전환에 고친 제목이 사라졌다.
+  // 설명과 따로 둔다: PendingSave 는 마지막 하나만 남기므로 같이 쓰면 한쪽이 다른 쪽을 지운다.
+  const titleSave = usePendingSave([selectedTodo]);
+  const typeTitle = (id: string, v: string) => {
+    const title = v.trim();
+    // 비운 채로는 보내지 않는다(서버가 "(제목 없음)"으로 적는다) — 다시 치면 그것을 보낸다
+    if (!title) return;
+    titleSave.schedule(800, async ({ keepalive }) => {
+      try {
+        replaceTodo(await api.todoUpdate(id, { title }, keepalive));
+      } catch (e) {
+        if (isGone(e)) return;
+        toast.error("할 일 제목을 저장하지 못했습니다 — 잠시 뒤 다시 보냅니다");
+        throw e;
+      }
+    });
   };
 
   // 설명은 칠 때마다 모아 두었다 보낸다(42차). 칸을 벗어날 때(blur)만 보냈더니 새로고침·탭 닫기·
@@ -614,10 +646,9 @@ export function Todo() {
           className="input flex-1 text-base font-semibold"
           defaultValue={detail.title}
           key={`title-${detail.id}`}
-          onBlur={(e) => {
-            const v = e.target.value.trim();
-            if (v && v !== detail.title) patchDetail({ title: v });
-          }}
+          aria-label="할 일 제목"
+          onChange={(e) => typeTitle(detail.id, e.target.value)}
+          onBlur={() => { void titleSave.flush(); }}
         />
         <button
           type="button"
