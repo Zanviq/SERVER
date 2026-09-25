@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, ChevronUp, Link2, X } from "lucide-react";
 import type { LinkItem } from "../../lib/api";
 import { applyPick, linkQueryAt } from "../../lib/links";
 import { continueList } from "../../lib/mdInput";
-import { diffRange } from "../../lib/textEdit";
+import { replaceFieldValue } from "../../lib/textEdit";
 import type { LinkQuery } from "../../lib/links";
 import { linkIcon } from "./LinkChip";
 import { cachedLinkPage, fetchLinkPage, linkMoreNote } from "./linkFetch";
@@ -22,36 +22,6 @@ interface Pos {
   top?: number;
   bottom?: number;
   maxH: number;
-}
-
-/** 리액트가 모르게 값을 바꾸면 onChange 가 안 불린다. 원래 setter 로 넣고 input 을 쏜다. */
-function setNativeValue(el: Field, value: string) {
-  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, value);
-}
-
-/**
- * 입력칸의 값을 `next` 로 바꾸고 커서를 `caret` 에 둔다 — **되돌리기(Ctrl+Z)가 살아 있게.**
- *
- * 값을 통째로 넣으면(setNativeValue) 브라우저가 되돌리기 기록을 지운다. 24차 실측: 목록이 한 번
- * 이어지거나 링크 후보를 한 번 고르면, 그 전에 친 글까지 Ctrl+Z 가 아무것도 되돌리지 못했다.
- * 바뀐 조각만(diffRange) 브라우저의 편집 명령으로 넣는다 — 기록에 한 걸음으로 남고, 진짜 input
- * 이벤트가 나가 리액트도 안다. 명령을 못 쓰는 브라우저에서만 예전처럼 통째로 넣는다.
- */
-function replaceValue(el: Field, next: string, caret: number) {
-  const { from, to, insert } = diffRange(el.value, next);
-  el.focus();
-  el.setSelectionRange(from, to);
-  const ok = insert
-    ? document.execCommand("insertText", false, insert)
-    : document.execCommand("delete", false);
-  if (!ok || el.value !== next) {
-    setNativeValue(el, next);
-    el.setSelectionRange(caret, caret);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    return;
-  }
-  el.setSelectionRange(caret, caret);
 }
 
 export interface InputOptions {
@@ -145,7 +115,7 @@ export function useMarkdownInput(ref: RefObject<Field>, opts: InputOptions = {})
     const el = ref.current;
     if (!el) return;
     const next = applyPick(el.value, cur, it.path, it.folder);
-    replaceValue(el, next.text, next.caret);
+    replaceFieldValue(el, next.text, next.caret);
     // 커서를 옮긴 뒤에 다시 본다 — 편집 명령이 낸 input 은 옮기기 전 자리를 봤다
     // (폴더를 고르면 그 안의 후보가 이어서 떠야 한다)
     sync();
@@ -218,7 +188,7 @@ export function useMarkdownInput(ref: RefObject<Field>, opts: InputOptions = {})
       if (!next) return;
       e.preventDefault();
       e.stopPropagation();
-      replaceValue(el, next.text, next.caret);
+      replaceFieldValue(el, next.text, next.caret);
     };
 
     const onKey = (ev: Event) => {

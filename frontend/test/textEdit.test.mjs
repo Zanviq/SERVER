@@ -33,9 +33,12 @@ test("바뀐 한 조각만 — 적용하면 뒤 글이 된다", () => {
 });
 
 test("입력칸 도움은 값을 통째로 넣지 않고 편집 명령으로 넣는다", () => {
-  const src = readFileSync(new URL("../src/components/links/useMarkdownInput.tsx", import.meta.url), "utf8");
-  assert.match(src, /execCommand\("insertText"/, "편집 명령을 쓰지 않는다 — 되돌리기 기록이 지워진다");
-  // 통째로 넣는 것은 명령을 못 쓸 때의 대비 한 곳뿐이어야 한다(정의 + replaceValue 안의 대비)
-  const calls = src.match(/setNativeValue\(el, /g) ?? [];
-  assert.equal(calls.length, 1, `값을 통째로 넣는 곳이 ${calls.length}곳 — 되돌리기가 다시 끊긴다`);
+  const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+  const lib = read("../src/lib/textEdit.ts");
+  assert.match(lib, /execCommand\("insertText"/, "편집 명령을 쓰지 않는다 — 되돌리기 기록이 지워진다");
+  // 통째로 넣는 것은 명령을 못 쓸 때의 대비 한 곳뿐이어야 한다
+  assert.equal((lib.match(/setNativeValue\(el, /g) ?? []).length, 1, "통째로 넣는 곳이 늘었다");
+  const hook = read("../src/components/links/useMarkdownInput.tsx");
+  assert.ok(!/setNativeValue|\.value = /.test(hook), "입력칸 도움이 값을 통째로 넣는다 — 되돌리기가 다시 끊긴다");
+  assert.equal((hook.match(/replaceFieldValue\(el, /g) ?? []).length, 2, "목록 잇기·링크 넣기가 편집 명령을 거치지 않는다");
 });
