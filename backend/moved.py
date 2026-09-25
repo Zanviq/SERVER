@@ -34,6 +34,14 @@ def _rows(user: SessionUser, settings: Settings) -> list[dict]:
             and isinstance(r.get("to"), str)] if isinstance(rows, list) else []
 
 
+def rows_beside(notes_root) -> list[dict]:
+    """문서 루트(…/사용자/data) 옆의 옮김 기록 — 사용자를 모르고 문서 루트만 아는 쪽(문서 그래프)이 쓴다.
+    기록은 사용자 폴더에 있고(_path) 문서 루트는 그 아래 data 다."""
+    rows = json_store.read_json(notes_root.parent / "moved.json", [])
+    return [r for r in rows if isinstance(r, dict) and isinstance(r.get("from"), str)
+            and isinstance(r.get("to"), str)] if isinstance(rows, list) else []
+
+
 def record(user: SessionUser, settings: Settings, old_rel: str, new_rel: str,
            *, folder: bool = False) -> None:
     """old_rel 이 new_rel 로 갔다. 폴더면 그 아래 전부가 함께 간 것으로 본다."""

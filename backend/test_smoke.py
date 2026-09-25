@@ -11477,6 +11477,33 @@ def test_app_links_count_as_backlinks_and_graph_edges():
         client.request("DELETE", "/api/notes/folder", params={"path": box})
 
 
+def test_backlinks_follow_a_renamed_note_like_the_link_does():
+    """이름을 바꾼 문서를 옛 경로로 가리키는 링크도 역링크·지도에 센다(48차).
+
+    옛 링크는 누르면 옮김 기록을 따라 새 자리를 연다(37·46차). 그런데 역링크·지도는 지금 경로만 봐서,
+    B 를 B2 로 바꾸면 A 에서 B2 로 가는 링크는 누르면 열리는데 B2 의 역링크에는 A 가 없었다.
+    """
+    from backend import moved
+    from backend.storage import user_data_root
+
+    _login()
+    box = "역링크48"
+    client.put("/api/notes/save", json={"path": f"{box}/B.md", "content": "# B"})
+    client.put("/api/notes/save", json={"path": f"{box}/A.md", "content": f"[note/{box}/B.md]"})
+    client.put("/api/notes/save", json={"path": f"{box}/C.md", "content": f"[note/{box}/B]"})
+    try:
+        assert client.post("/api/notes/rename", json={"path": f"{box}/B.md", "new_name": "B2.md"}).status_code == 200
+        # 문서 그래프는 문서 루트 옆의 기록을 읽는다 — 기록이 실제로 거기 있는지(자리 약속)
+        root = user_data_root(_tester(), get_settings())
+        assert any(r["from"] == f"{box}/B.md" for r in moved.rows_beside(root))
+        back = client.get("/api/notes/get", params={"path": f"{box}/B2.md"}).json()["backlinks"]
+        assert sorted(back) == ["A", "C"], back
+        g = client.get("/api/notes/graph", params={"folder": box}).json()
+        assert {"source": "A", "target": "B2"} in g["links"], g["links"]
+    finally:
+        client.request("DELETE", "/api/notes/folder", params={"path": box})
+
+
 def test_note_graphs_are_warmed_when_the_server_starts():
     """서버가 뜨면 활성 사용자의 문서 그래프를 뒤에서 미리 만든다(47차).
 

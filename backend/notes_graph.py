@@ -15,7 +15,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import NamedTuple
 
-from . import doc_cache
+from . import doc_cache, moved
 from .storage import WalkedFile, walk_all, walk_files
 
 logger = logging.getLogger("server.graph")
@@ -110,9 +110,11 @@ class _Lookup:
     쪽이 정한다(그래프는 stem, 폴더 지도는 Path). 같은 열쇠는 먼저 넣은 것이 이긴다.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, notes_dir: Path) -> None:
         self.by_title: dict = {}
         self.by_rel: dict = {}
+        self._notes_dir = notes_dir
+        self._moved: list[dict] | None = None  # 옮김 기록 — 못 찾은 경로 링크가 있을 때만 읽는다
 
     def add(self, path: Path, notes_dir: Path, value) -> None:
         self.by_title.setdefault(path.stem.lower(), value)
@@ -124,8 +126,27 @@ class _Lookup:
 
     def targets(self, ln: NoteLinks) -> list:
         """노트 하나의 링크가 닿는 것들(못 찾은 것은 None)."""
-        return ([self.by_title.get(t.lower()) for t in ln.titles]
-                + [self.by_rel.get(p.strip("/").lower()) for p in ln.paths])
+        out = [self.by_title.get(t.lower()) for t in ln.titles]
+        for p in ln.paths:
+            rel = p.strip("/")
+            hit = self.by_rel.get(rel.lower())
+            out.append(hit if hit is not None else self._follow(rel))
+        return out
+
+    def _follow(self, rel: str):
+        """이름을 바꾸거나 옮긴 문서를 옛 경로로 가리키는 링크 — 누르면 옮김 기록을 따라 열리므로(links.resolve)
+        역링크·지도도 같은 기록을 따라가 센다(48차). 예전엔 누르면 열리는데 역링크에는 없었다.
+        남의 문서의 링크를 고쳐 쓰지 않는다는 규칙(moved.py)은 그대로다."""
+        if self._moved is None:
+            self._moved = moved.rows_beside(self._notes_dir)
+        if not self._moved:
+            return None
+        exists = lambda r: r.lower() in self.by_rel  # noqa: E731
+        for cand in (rel, f"{rel}.md"):  # 확장자 없이 적은 옛 링크도(링크 열기와 같은 규칙)
+            now = moved.follow_rows(self._moved, cand, exists)
+            if now is not None:
+                return self.by_rel.get(now.lower())
+        return None
 
 
 def _fingerprint(files: list[WalkedFile], dirs: list[str]) -> tuple:
@@ -272,7 +293,7 @@ def build_graph(
 def _link_graph(notes_dir: Path, files: list[WalkedFile]) -> dict:
     """노트 사이의 링크 그래프(위키링크·경로 링크). 폴더 지도(_folder_graph)와 짝이다."""
     notes = [f for f in files if f.rel.endswith(".md")]
-    find = _Lookup()
+    find = _Lookup(notes_dir)
     nodes = []
     for f in notes:
         p = f.path
@@ -363,7 +384,7 @@ def _folder_graph(notes_dir: Path, base: Path) -> dict:
 
     # 전체 스템 → 경로 (base 하위만) 로 위키링크 대상 해석
     all_notes = [f for f in walk_files(base, sort=False) if f.rel.endswith(".md")]
-    find = _Lookup()
+    find = _Lookup(notes_dir)
     for f in all_notes:
         find.add(f.path, notes_dir, f.path)
 
