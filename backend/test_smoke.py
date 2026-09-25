@@ -11422,6 +11422,32 @@ def test_old_links_follow_a_renamed_or_moved_note():
     assert moved_to("아무도안쓴이름") is None
 
 
+def test_old_links_follow_the_latest_note_at_a_reused_place():
+    """같은 자리에 시간에 따라 다른 문서가 살아도, 옛 링크는 그 자리의 **최근** 문서를 따라간다(46차).
+
+    폴더 X 를 Y 로 옮긴 뒤 새로 X 를 만들고 그 안의 B 를 B2 로 바꾸면, 옮김 기록을 처음부터 밟던
+    예전 방식은 먼저 "X/ → Y/" 에 걸려 Y/B 로 가 버리고 방금의 "X/B → X/B2" 는 닿지 못했다
+    — `[note/X/B.md]` 가 "찾지 못한 링크" 였다(격리 서버·브라우저에서 확인).
+    """
+    _login()
+    opened = lambda p: client.get("/api/links/open", params={"path": p}).json()  # noqa: E731
+    client.put("/api/notes/save", json={"path": "재사용X/B.md", "content": "옛 B"})
+    client.post("/api/notes/folder", json={"path": "재사용Y"})
+    assert client.post("/api/notes/move", json={"path": "재사용X", "target_folder": "재사용Y"}).status_code == 200
+    # 같은 이름의 폴더를 새로 만들고, 그 안의 새 B 를 B2 로
+    client.put("/api/notes/save", json={"path": "재사용X/B.md", "content": "새 B"})
+    assert client.post("/api/notes/rename", json={"path": "재사용X/B.md", "new_name": "B2.md"}).status_code == 200
+    got = opened("note/재사용X/B.md")
+    assert got["found"] and got["path"] == "note/재사용X/B2.md", got
+    # 옛 B 가 간 곳(재사용Y/재사용X/B.md)을 가리키는 링크는 그대로 그곳으로
+    assert opened("note/재사용Y/재사용X/B.md")["path"] == "note/재사용Y/재사용X/B.md"
+    # 최근 옮김으로는 닿지 않으면 더 오래된 사슬로 — 폴더 안에서 이름을 바꾼 뒤 폴더를 옮긴 경우
+    client.put("/api/notes/save", json={"path": "사슬F/a.md", "content": "a"})
+    client.post("/api/notes/rename", json={"path": "사슬F/a.md", "new_name": "b.md"})
+    client.post("/api/notes/rename", json={"path": "사슬F", "new_name": "사슬G"})
+    assert opened("note/사슬F/a.md")["path"] == "note/사슬G/b.md"
+
+
 def test_link_suggestions_say_how_many_more_there_are():
     """후보 상한(30)에 걸려 안 보이는 것이 있으면 그 수를 알린다.
 

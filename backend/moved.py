@@ -64,14 +64,27 @@ def follow(user: SessionUser, settings: Settings, rel: str,
     옮김을 **일어난 차례대로** 다시 밟는다. 최신 것부터 보면 "폴더 안에서 이름을 바꾸고
     나서 폴더 이름을 바꾼" 경우에 폴더 규칙이 먼저 걸려 옛 파일 이름을 새 폴더에서 찾고
     끝났다(시험이 잡았다).
+
+    다만 **어디서부터** 밟을지는 가장 최근의 것부터 고른다(46차). 같은 자리에는 시간에 따라
+    다른 문서가 살 수 있다 — 폴더 X 를 Y 로 옮긴 뒤 새로 X 를 만들고 그 안의 B 를 B2 로 바꾸면,
+    처음부터 밟은 예전 방식은 먼저 "X/ → Y/" 를 적용해 Y/B 로 가 버리고 방금의 "X/B → X/B2" 는
+    닿지 못해 링크가 죽었다(실측: 이름 한 번 바꾼 문서의 링크가 "찾지 못한 링크"). 링크는 대개
+    그 자리의 **가장 최근** 문서를 가리키므로, rel 에 직접 닿는 옮김 중 최근 것부터 거기서 끝까지
+    밟아 보고, 지금 있는 자리에 닿으면 그것을 준다.
     """
-    cur = rel.strip("/")
-    went = False
-    for r in _rows(user, settings):
-        nxt = _apply(r, cur)
-        if nxt is not None and nxt != cur:
-            cur, went = nxt, True
-    return cur if went and exists(cur) else None
+    start = rel.strip("/")
+    rows = _rows(user, settings)
+    for s in range(len(rows) - 1, -1, -1):
+        if _apply(rows[s], start) in (None, start):
+            continue  # 이 옮김은 rel 에 닿지 않는다 — 여기서 시작할 까닭이 없다
+        cur = start
+        for r in rows[s:]:
+            nxt = _apply(r, cur)
+            if nxt is not None:
+                cur = nxt
+        if cur != start and exists(cur):
+            return cur
+    return None
 
 
 def follow_title(user: SessionUser, settings: Settings, title: str,
