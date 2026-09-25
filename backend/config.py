@@ -10,9 +10,16 @@ from pathlib import Path
 
 try:
     # 로컬 개발 편의: backend/../.env 자동 로드 (없어도 무방)
-    from dotenv import load_dotenv
+    #
+    # 시험은 읽지 않는다(SERVER_NO_DOTENV=1). load_dotenv() 는 backend 를 import 하는 **모든**
+    # 프로세스에서 위로 거슬러 올라가 개발자의 진짜 .env 를 찾아 읽는다 — 시험 묶음도. 40차 실측:
+    # 시험 환경에 실제 GEMINI 키가 실려, 논문·회의를 올리는 시험마다 가짜 PDF·녹음을 뒤에서 실제
+    # 모델로 보냈다(요금·할당량, 시험 자료가 밖으로 나감). 그 호출이 무거운 뒷일 자리(HEAVY_JOBS)를
+    # 쥐고 있어 줄서기 시험이 전체로 돌릴 때만 가끔 깨졌다.
+    if not os.getenv("SERVER_NO_DOTENV"):
+        from dotenv import load_dotenv
 
-    load_dotenv()
+        load_dotenv()
 except Exception:  # pragma: no cover - dotenv 미설치 환경
     pass
 

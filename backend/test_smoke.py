@@ -17,6 +17,10 @@ os.environ["AUTH_USERS"] = json.dumps(
 os.environ["SESSION_SECRET"] = "test-secret-please-change"
 os.environ["SESSION_TTL_SECONDS"] = "3600"
 os.environ["DEBUG"] = "true"
+# 개발자의 진짜 .env(모델 키·구글 계정)를 읽지 않는다. 셸에서 물려받은 키도 비운다 — 시험은
+# 모델이 필요하면 가짜(asker·llm)를 넣는다. 까닭은 config.py 의 load_dotenv 옆(40차).
+os.environ["SERVER_NO_DOTENV"] = "1"
+os.environ["GEMINI_API_KEY"] = ""
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -38,6 +42,18 @@ def _tester(display_name: str = "T"):
     from backend.auth import SessionUser
 
     return SessionUser(username="tester", display_name=display_name, expires_at=0, remaining=0)
+
+
+def test_the_suite_never_reaches_a_real_model_or_google():
+    """시험 묶음은 실제 바깥 서비스를 부르지 않는다(40차).
+
+    예전엔 config 의 load_dotenv() 가 시험에서도 개발자의 .env 를 읽어, 논문·회의를 올리는
+    시험마다 뒤에서 가짜 PDF·녹음을 실제 모델로 보냈다(시험 환경에서 회의 하나 올리자 실제
+    받아쓰기 호출 1번을 확인). 그 호출이 무거운 뒷일 자리를 쥐어 줄서기 시험이 가끔 깨졌다.
+    """
+    assert get_settings().gemini_api_key is None, "시험 환경에 실제 모델 키가 실려 있다"
+    leaked = sorted(k for k in os.environ if k.endswith("_GOOGLE_REFRESH_TOKEN") or k == "CF_TUNNEL_TOKEN")
+    assert leaked == [], f".env 의 비밀이 시험 환경에 실려 있다: {leaked}"
 
 
 # ── 인증 ──

@@ -141,7 +141,9 @@ def name_branches(settings: Settings, msgs: list[dict], *, model: str = "",
     보일 뿐이고, 그것 때문에 지도를 못 열면 손해가 더 크다.
     """
     starts = branch_starts(msgs)
-    if not starts or not settings.gemini_api_key:
+    # 키는 실제 모델을 부를 때만 따진다(논문 추출·받아쓰기와 같은 규칙). 예전엔 넣어 준 가짜
+    # asker 앞에서도 키를 따져, 그 시험은 개발자 .env 의 진짜 키가 실려 있을 때만 통과했다(40차).
+    if not starts or (asker is None and not settings.gemini_api_key):
         return {}
     try:
         raw = (asker or _ask)(settings, payload_for(msgs, starts), model)
