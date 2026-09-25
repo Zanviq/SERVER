@@ -10,7 +10,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { ancestorsOf } from "../src/lib/notePath.ts";
+import { ancestorsOf, fileName, parentDir } from "../src/lib/notePath.ts";
+
+test("파일명·부모 폴더", () => {
+  assert.equal(fileName("서버/설정/기록.md"), "기록.md");
+  assert.equal(fileName("루트.md"), "루트.md");
+  assert.equal(parentDir("서버/설정/기록.md"), "서버/설정");
+  assert.equal(parentDir("루트.md"), "");
+});
 
 test("조상 폴더는 뿌리부터 가까운 쪽까지 전부", () => {
   assert.deepEqual(ancestorsOf("서버/설정/기록.md"), ["서버", "서버/설정"]);

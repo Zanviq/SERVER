@@ -14,7 +14,7 @@ import { NOTE_PATH_MIME } from "../components/notes/dragTypes";
 import { Modal } from "../components/ui/Modal";
 import { api, ApiError, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
 import { looksLikeExtension } from "../lib/names";
-import { ancestorsOf } from "../lib/notePath";
+import { ancestorsOf, fileName, parentDir } from "../lib/notePath";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { Draft, draftAgeText, dropDraft, keepDraft, moveDraft, readDraft } from "../lib/draftBackup";
 import { isSubmitEnter } from "../lib/keys";
@@ -33,16 +33,6 @@ interface TreeNode {
  *  "강조 없음"(null)과 구분이 안 되므로, 폴더 경로가 될 수 없는 값을 쓴다. */
 const ROOT_DROP = "/";
 
-/** 목록에 보여줄 파일명 — 확장자를 포함한다.
- *  NoteSummary.title은 확장자를 뗀 값(= 위키링크 [[제목]]의 키)이라 표시용으로는 안 맞다. */
-const fileName = (path: string) => path.split("/").pop() ?? path;
-
-/** 문서가 들어 있는 폴더 경로(루트면 빈 문자열). */
-const parentDir = (path: string) => {
-  const i = path.lastIndexOf("/");
-  return i >= 0 ? path.slice(0, i) : "";
-};
-
 function buildTree(folders: string[], notes: NoteSummary[], pinned: string[] = []): TreeNode {
   const root: TreeNode = { name: "", path: "", children: [], notes: [] };
   const byPath = new Map<string, TreeNode>([["", root]]);
@@ -60,11 +50,7 @@ function buildTree(folders: string[], notes: NoteSummary[], pinned: string[] = [
   };
 
   folders.forEach((f) => ensure(f));
-  notes.forEach((n) => {
-    const slash = n.path.lastIndexOf("/");
-    const parentPath = slash >= 0 ? n.path.slice(0, slash) : "";
-    ensure(parentPath).notes.push(n);
-  });
+  notes.forEach((n) => ensure(parentDir(n.path)).notes.push(n));
 
   const sortNode = (node: TreeNode) => {
     // 고정 폴더(논문·회의처럼 다른 화면이 관리하는 것)는 **맨 위에**, 서버가 준
@@ -250,8 +236,7 @@ export function Notes() {
         setContent("");
         setDetail(null);
         setDirty(false);
-        const cut = meta.path.lastIndexOf("/");
-        setCurFolder(cut >= 0 ? meta.path.slice(0, cut) : "");
+        setCurFolder(parentDir(meta.path));
         return;
       }
       try {
@@ -275,8 +260,7 @@ export function Notes() {
         baseRef.current[d.path] = d.modified;
         setConflict(null);
         // 열린 노트의 상위 폴더를 현재 폴더로
-        const slash = d.path.lastIndexOf("/");
-        setCurFolder(slash >= 0 ? d.path.slice(0, slash) : "");
+        setCurFolder(parentDir(d.path));
       } catch (e) {
         if (!openSeq.isCurrent(seq)) return;
         // 415 = 편집기로 열 수 없는 문서. 오류만 띄우면 사용자는 아무 데도 갈 수
@@ -287,8 +271,7 @@ export function Notes() {
           setContent("");
           setDetail(null);
           setDirty(false);
-          const cut = path.lastIndexOf("/");
-          setCurFolder(cut >= 0 ? path.slice(0, cut) : "");
+          setCurFolder(parentDir(path));
           toast.error(e.message);
           return;
         }
@@ -424,7 +407,7 @@ export function Notes() {
       const found =
         notes.find((n) => n.title.toLowerCase() === key) ??
         notes.find((n) => n.path.toLowerCase() === key) ??
-        notes.find((n) => (n.path.split("/").pop() ?? "").toLowerCase() === key);
+        notes.find((n) => fileName(n.path).toLowerCase() === key);
       if (found) {
         openNote(found.path);
         return;
@@ -470,12 +453,7 @@ export function Notes() {
       // 없었다(막다른 길). 조상 폴더까지 펼쳐야 트리에서 실제로 보인다.
       const clean = folder.replace(/^\/+|\/+$/g, "");
       setCurFolder(clean);
-      setExpanded((s) => {
-        const n = new Set(s);
-        const parts = clean.split("/").filter(Boolean);
-        for (let i = 1; i <= parts.length; i++) n.add(parts.slice(0, i).join("/"));
-        return n;
-      });
+      if (clean) setExpanded((s) => new Set([...s, ...ancestorsOf(clean), clean]));
       params.delete("folder");
       setParams(params, { replace: true });
     }
