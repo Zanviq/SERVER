@@ -29,24 +29,7 @@
       href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <script>
-      // 하이드레이션 전에 테마 적용 — 잘못된 테마 깜빡임 방지
-      (function () {
-        try {
-          var raw = localStorage.getItem("tw-theme");
-          var mode = raw ? JSON.parse(raw).state.mode : "system";
-          var resolved =
-            mode === "system"
-              ? window.matchMedia("(prefers-color-scheme: dark)").matches
-                ? "dark"
-                : "light"
-              : mode;
-          document.documentElement.setAttribute("data-theme", resolved);
-        } catch (e) {
-          document.documentElement.setAttribute("data-theme", "light");
-        }
-      })();
-    </script>
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

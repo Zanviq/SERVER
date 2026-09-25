@@ -18,6 +18,7 @@ RUN npm run build
 FROM nginx:1.27-alpine AS confcheck
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY security-headers.conf /etc/nginx/security-headers.conf
+COPY csp-app.conf /etc/nginx/csp-app.conf
 RUN sed -i -e 's|http://backend:8000|http://127.0.0.1:8000|' \
            -e 's|http://terminal:7681|http://127.0.0.1:7681|' \
         /etc/nginx/conf.d/default.conf \
@@ -31,5 +32,6 @@ FROM nginx:1.27-alpine
 COPY --from=confcheck /conf-ok /conf-ok
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY security-headers.conf /etc/nginx/security-headers.conf
+COPY csp-app.conf /etc/nginx/csp-app.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
