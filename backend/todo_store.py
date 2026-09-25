@@ -27,6 +27,7 @@ from . import json_store
 from .auth import SessionUser
 from .config import Settings
 from .datetimes import BadDateTime
+from .edit_conflict import refuse_if_changed
 from .datetimes import has_time as dt_has_time
 from .datetimes import to_iso as dt_to_iso
 
@@ -412,9 +413,9 @@ def update_todo(user: SessionUser, settings: Settings, tid: str, payload: dict) 
         # 설명 전체가 나가, 그 사이 폰에서 고친 설명이 말없이 사라진다(일기 28차와 같은 모양). 화면은
         # 409 를 받으면 두 글을 합쳐 다시 보낸다. base 를 안 주는 쪽(AI 스킬)은 예전처럼 곧바로 쓴다.
         base = payload.pop("base_description", None)
-        if (base is not None and payload.get("description") is not None
-                and str(todos[idx].get("description") or "") != str(base)):
-            raise HTTPException(status_code=409, detail="그 사이 할 일 설명이 다른 곳에서 바뀌었습니다.")
+        if payload.get("description") is not None:
+            refuse_if_changed(todos[idx].get("description"), base,
+                              "그 사이 할 일 설명이 다른 곳에서 바뀌었습니다.")
         if payload.get("category_id"):
             cid = str(payload["category_id"])
             if not any(c["id"] == cid for c in cats):

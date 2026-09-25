@@ -30,6 +30,7 @@ from fastapi import HTTPException
 from . import json_store, storage
 from .auth import SessionUser
 from .config import Settings
+from .edit_conflict import refuse_if_changed
 
 logger = logging.getLogger("server.papers")
 
@@ -243,9 +244,8 @@ def update_meta(user: SessionUser, settings: Settings, pid: str, patch: dict) ->
         # 메모를 바꿨는데 화면이 아직 다시 받아 오지 않았으면, 예전엔 말없이 그쪽 내용을 덮었다
         # (실측: 다른 기기가 쓴 메모가 1.5초 만에 사라졌다). 일기(28차)와 같은 규칙이다.
         # base_notes 를 주지 않는 쪽(AI 스킬 등)은 예전처럼 곧바로 쓴다.
-        base = patch.get("base_notes")
-        if base is not None and patch.get("notes") is not None and str(p.get("notes") or "") != str(base):
-            raise HTTPException(status_code=409, detail="그 사이 메모가 다른 곳에서 바뀌었습니다.")
+        if patch.get("notes") is not None:
+            refuse_if_changed(p.get("notes"), patch.get("base_notes"), "그 사이 메모가 다른 곳에서 바뀌었습니다.")
         for k in ("abstract", "summary", "methods", "limitations", "notes", "error"):
             if k in patch and patch[k] is not None:
                 p[k] = _s(patch[k], MAX_TEXT * 2 if k == "notes" else MAX_TEXT)
