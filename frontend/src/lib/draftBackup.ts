@@ -69,6 +69,17 @@ export function moveDraft(from: string, to: string): void {
   });
 }
 
+/** 폴더 이름이 바뀌면 그 안 문서들의 밑글도 새 경로로 옮긴다(36차 — 폴더 이름 바꾸기). */
+export function moveDraftsUnder(fromFolder: string, toFolder: string): void {
+  const from = key(`${fromFolder}/`);
+  const keys = safe(() => Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) ?? "")) ?? [];
+  for (const k of keys) {
+    if (!k.startsWith(from)) continue;
+    const rest = k.slice(from.length);
+    moveDraft(`${fromFolder}/${rest}`, `${toFolder}/${rest}`);
+  }
+}
+
 export function draftAgeText(at: number): string {
   const min = Math.floor((Date.now() - at) / 60000);
   if (min < 1) return "방금";

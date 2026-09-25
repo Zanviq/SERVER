@@ -78,7 +78,7 @@ class BadName(ValueError):
     """사용자가 준 새 이름을 쓸 수 없다(빈 이름·경로 조각)."""
 
 
-def renamed(old_name: str, new_name: str) -> str:
+def renamed(old_name: str, new_name: str, *, folder: bool = False) -> str:
     """이름 바꾸기의 **결과 이름**. 문서 화면과 AI 스킬이 이것 하나를 쓴다.
 
     - 확장자를 적지 않았으면 **원래 확장자**를 붙인다(`사진.png` → `고양이` = `고양이.png`).
@@ -95,6 +95,10 @@ def renamed(old_name: str, new_name: str) -> str:
     new = (new_name or "").strip()
     if not new or "/" in new or "\\" in new or ".." in new:
         raise BadName("잘못된 이름입니다.")
+    # 폴더에는 확장자가 없다 — 적은 이름 그대로. 확장자 규칙을 걸던 때는 `project.v1` 폴더를
+    # `proj` 로 바꾸면 `proj.v1` 이 됐다(36차, 폴더 이름 바꾸기를 화면에 붙이며 찾았다).
+    if folder:
+        return new
     if looks_like_extension(new):
         return new
     stem, ext = split_ext(old_name.rsplit("/", 1)[-1])

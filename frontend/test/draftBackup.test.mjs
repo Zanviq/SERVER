@@ -14,9 +14,11 @@ globalThis.localStorage = {
   getItem: (k) => (store.has(k) ? store.get(k) : null),
   setItem: (k, v) => store.set(k, String(v)),
   removeItem: (k) => store.delete(k),
+  get length() { return store.size; },
+  key: (i) => [...store.keys()][i] ?? null,
 };
 
-const { keepDraft, dropDraft, readDraft, moveDraft, draftAgeText } =
+const { keepDraft, dropDraft, readDraft, moveDraft, moveDraftsUnder, draftAgeText } =
   await bundle("src/lib/draftBackup.ts");
 
 let fails = 0;
@@ -70,6 +72,17 @@ let threw = false;
 try { keepDraft("사파리.md", "가득 찼을 때"); } catch { threw = true; }
 globalThis.localStorage.setItem = real;
 check("quota 오류를 밖으로 던지지 않는다", !threw);
+
+console.log("\n폴더 이름을 바꾸면 안의 밑글이 따라간다(36차)");
+keepDraft("회의/1월.md", "1월 밑글");
+keepDraft("회의/깊이/2월.md", "2월 밑글");
+keepDraft("회의록/다른폴더.md", "옆 폴더");   // 이름이 '회의' 로 시작할 뿐 다른 폴더
+moveDraftsUnder("회의", "모임");
+check("안의 문서 밑글이 새 경로로", readDraft("모임/1월.md", "")?.text === "1월 밑글");
+check("깊은 곳까지", readDraft("모임/깊이/2월.md", "")?.text === "2월 밑글");
+check("옛 경로에는 남지 않는다", readDraft("회의/1월.md", "") === null);
+check("이름이 비슷한 옆 폴더는 건드리지 않는다", readDraft("회의록/다른폴더.md", "")?.text === "옆 폴더");
+dropDraft("모임/1월.md"); dropDraft("모임/깊이/2월.md"); dropDraft("회의록/다른폴더.md");
 
 console.log("\n지난 시간 표기");
 check("방금", draftAgeText(Date.now()) === "방금");

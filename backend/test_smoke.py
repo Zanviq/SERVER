@@ -11488,6 +11488,29 @@ def test_names_with_brackets_can_be_linked():
         client.delete("/api/notes/folder", params={"path": "괄호30"})
 
 
+def test_folders_are_renamed_to_exactly_the_given_name():
+    """폴더 이름 바꾸기는 적은 이름 그대로 — 확장자 규칙을 걸지 않는다(36차).
+
+    폴더 이름 바꾸기를 화면에 붙이며 찾았다: 확장자 규칙(renamed)이 폴더에도 걸려 `project.v1`
+    폴더를 `proj` 로 바꾸면 `proj.v1` 이 됐다. 안의 문서는 따라가고, 옛 링크도 새 자리를 찾는다.
+    """
+    _login()
+    assert client.put("/api/notes/save", json={"path": "시험폴더36/project.v1/안건.md",
+                                                "content": "FOLDER-36"}).status_code == 200
+    try:
+        r = client.post("/api/notes/rename", json={"path": "시험폴더36/project.v1", "new_name": "proj"})
+        assert r.status_code == 200 and r.json()["path"] == "시험폴더36/proj", r.text
+        assert client.get("/api/notes/get", params={"path": "시험폴더36/proj/안건.md"}).json()["content"] == "FOLDER-36"
+        # 옛 경로의 링크도 새 자리로(moved)
+        opened = client.get("/api/links/open", params={"path": "note/시험폴더36/project.v1/안건.md"}).json()
+        assert opened["found"] and "proj" in opened["href"], opened
+        # 점이 든 이름도 그대로
+        r = client.post("/api/notes/rename", json={"path": "시험폴더36/proj", "new_name": "v2.0 자료"})
+        assert r.status_code == 200 and r.json()["path"] == "시험폴더36/v2.0 자료", r.text
+    finally:
+        client.delete("/api/notes/folder", params={"path": "시험폴더36"})
+
+
 def test_titles_with_brackets_keep_their_name_in_links():
     """할 일·단어 제목의 대괄호도 링크 후보·칩에 그대로 보인다(예전 `_` 모양의 링크도 열린다).
 

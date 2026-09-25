@@ -617,7 +617,7 @@ def rename_note(
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
     # 결과 이름은 AI 스킬과 **같은 함수**로 정한다(따로 두었다가 어긋났다)
     try:
-        new_name = renamed(src.name, req.new_name)
+        new_name = renamed(src.name, req.new_name, folder=src.is_dir())
     except BadName as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     rel_dir = src.parent.relative_to(root).as_posix()

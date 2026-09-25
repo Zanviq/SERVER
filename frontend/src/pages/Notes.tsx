@@ -16,7 +16,7 @@ import { api, ApiError, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/ap
 import { looksLikeExtension } from "../lib/names";
 import { ancestorsOf, fileName, parentDir } from "../lib/notePath";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
-import { Draft, draftAgeText, dropDraft, keepDraft, moveDraft, readDraft } from "../lib/draftBackup";
+import { Draft, draftAgeText, dropDraft, keepDraft, moveDraft, moveDraftsUnder, readDraft } from "../lib/draftBackup";
 import { isSubmitEnter } from "../lib/keys";
 import { embedMarkdownFor, makeResolver } from "../lib/embeds";
 import { toast } from "../store/toast";
@@ -95,7 +95,8 @@ export function Notes() {
   const [delOpen, setDelOpen] = useState(false);
   const [delFolder, setDelFolder] = useState<string | null>(null);
   // 행 컨텍스트 메뉴: 이름 변경 / 이동 / 개별 삭제 + 드래그 이동
-  const [renameFor, setRenameFor] = useState<NoteSummary | null>(null);
+  // 이름 바꿀 것 — 문서이거나 폴더(36차: 폴더는 화면에서 이름을 바꿀 길이 없었다)
+  const [renameFor, setRenameFor] = useState<{ path: string; folder: boolean } | null>(null);
   const [renameName, setRenameName] = useState("");
   const [moveFor, setMoveFor] = useState<NoteSummary | null>(null);
   const [moveTarget, setMoveTarget] = useState("");
@@ -503,22 +504,34 @@ export function Notes() {
     if (!renameFor || !renameName.trim()) return;
     // 이름을 그대로 두고 확인했다 — 바꾼 것이 없으니 "변경했습니다"라고 말하지 않는다
     if (renameName.trim() === fileName(renameFor.path)) { setRenameFor(null); return; }
+    const { path, folder } = renameFor;
+    // 열린 문서가 바로 이것이거나(문서) 이 안에 있는가(폴더)
+    const touches = (p: string | null): p is string => !!p && (folder ? p.startsWith(`${path}/`) : p === path);
     try {
       // 옮기기 전에 흘려보낸다. 안 그러면 타이머가 옛 경로로 저장을 보내
       // 방금 이름을 바꾼 문서가 옛 이름으로 하나 더 생긴다(유령 중복).
       // 흘려보내기가 **실패하면 멈춘다** — 그대로 진행하면 아직 서버에 없는
       // 마지막 문단이 옛 경로와 함께 사라진다.
-      if (current === renameFor.path && !(await flushPendingSave())) {
+      if (touches(current) && !(await flushPendingSave())) {
         toast.error("마지막 편집을 저장하지 못해 이름을 바꾸지 않았습니다.");
         return;
       }
-      const r = await api.noteRename(renameFor.path, renameName.trim());
-      moveDraft(renameFor.path, r.path);   // 밑글도 따라간다(옛 경로에 고아로 남지 않게)
-      toast.ok("이름을 변경했습니다");
-      const wasOpen = current === renameFor.path;
+      const r = await api.noteRename(path, renameName.trim());
+      // 경로가 바뀐다 — 옛 경로를 들고 있는 것(밑글·펼친 폴더·위치·열린 문서)을 모두 옮긴다.
+      // 밑글을 안 옮기면 옛 경로에 고아로 남는다.
+      const moved = (p: string) => (p === path || p.startsWith(`${path}/`) ? r.path + p.slice(path.length) : p);
+      if (folder) {
+        moveDraftsUnder(path, r.path);
+        setExpanded((s) => new Set([...s].map(moved)));
+        setCurFolder((c) => moved(c));
+      } else {
+        moveDraft(path, r.path);
+      }
+      toast.ok(folder ? "폴더 이름을 변경했습니다" : "이름을 변경했습니다");
+      const reopen = touches(current) ? moved(current) : null;
       setRenameFor(null);
       await reloadTree();
-      if (wasOpen) openNote(r.path);
+      if (reopen) openNote(reopen);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "이름 변경 실패");
     }
@@ -612,6 +625,13 @@ export function Notes() {
                 오류만 나는 단추를 보여 주지 않는다(안의 항목에는 그대로 있다). */}
             {!isPinned(child.path) && (
               <>
+                {/* 폴더 이름 바꾸기 — 예전에는 문서에만 있어서, 폴더 이름을 바꾸려면 새 폴더를
+                    만들고 안의 것을 하나씩 옮겨야 했다(36차). */}
+                <button onClick={() => { setRenameFor({ path: child.path, folder: true }); setRenameName(child.name); }}
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded text-fg-muted transition-opacity hover:text-accent sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
+                  title="폴더 이름 변경" aria-label="폴더 이름 변경">
+                  <Pencil size={13} />
+                </button>
                 <a href={api.noteArchiveUrl(child.path)} download
                   onClick={(e) => e.stopPropagation()}
                   className="grid h-7 w-7 shrink-0 place-items-center rounded text-fg-muted transition-opacity hover:text-accent sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
@@ -659,7 +679,7 @@ export function Notes() {
               <span className="truncate">{fileName(n.path)}</span>
             </button>
             <RowMenu
-              onRename={() => { setRenameFor(n); setRenameName(fileName(n.path)); }}
+              onRename={() => { setRenameFor({ path: n.path, folder: false }); setRenameName(fileName(n.path)); }}
               onMove={() => { setMoveFor(n); setMoveTarget(""); }}
               onTrash={() => setDelNotePath(n.path)}
             />
@@ -1022,7 +1042,7 @@ export function Notes() {
       </ThreePane>
 
       {/* 이름 변경 */}
-      <Modal open={!!renameFor} onClose={() => setRenameFor(null)} title="이름 변경" width="max-w-sm">
+      <Modal open={!!renameFor} onClose={() => setRenameFor(null)} title={renameFor?.folder ? "폴더 이름 변경" : "이름 변경"} width="max-w-sm">
         <div className="space-y-3">
           <input autoFocus className="input" value={renameName} placeholder="새 이름"
             onChange={(e) => setRenameName(e.target.value)}
