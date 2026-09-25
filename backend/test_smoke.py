@@ -11515,6 +11515,36 @@ def test_names_with_brackets_can_be_linked():
         client.delete("/api/notes/folder", params={"path": "괄호30"})
 
 
+def test_titles_with_brackets_keep_their_name_in_links():
+    """할 일·단어 제목의 대괄호도 링크 후보·칩에 그대로 보인다(예전 `_` 모양의 링크도 열린다).
+
+    32차 실측: `[중요] 보고서` 가 후보 목록에 "_중요_ 보고서" 로 떠서, 없는 이름을 보고 골라야
+    했고 칩도 그렇게 그려졌다(segment 가 대괄호를 `_` 로 바꿨다).
+    """
+    from backend import links
+
+    _login()
+    cat = client.post("/api/todo/categories", json={"name": "링크32"}).json()
+    todo = client.post("/api/todo/create", json={"title": "[중요] 보고서", "category_id": cat["id"]}).json()
+    try:
+        items = client.get("/api/links/suggest", params={"q": "todo/링크32/"}).json()["items"]
+        hit = next(i for i in items if not i["folder"])
+        assert hit["label"] == "[중요] 보고서", hit
+        assert hit["path"] == "todo/링크32/%5B중요%5D 보고서", hit
+        assert links.plain(f"[{hit['path']}]") == "[중요] 보고서"
+        opened = client.get("/api/links/open", params={"path": hit["path"]}).json()
+        assert opened["found"] and opened["href"] == f"/todo?t={todo['id']}", opened
+        # 32차 전에 대화에 남은 모양(`_중요_`)도 여전히 그 할 일을 연다
+        old = client.get("/api/links/open", params={"path": "todo/링크32/_중요_ 보고서"}).json()
+        assert old["found"] and old["href"] == f"/todo?t={todo['id']}", old
+        # 모델에게 가는 본문에도 실린다
+        sent = client.post("/api/ai/preview", json={"message": f"[{hit['path']}] 알려줘", "mode": "assistant"}).json()
+        assert "보고서" in str(sent) and "못 찾" not in str(sent.get("missing") or "")
+    finally:
+        client.delete(f"/api/todo/{todo['id']}")
+        client.delete(f"/api/todo/categories/{cat['id']}")
+
+
 def test_a_stale_diary_tab_cannot_silently_overwrite_newer_text():
     """두 곳에서 같은 날 일기를 고치면, 옛 글에서 이어 쓴 저장은 덮지 않고 409 다.
 

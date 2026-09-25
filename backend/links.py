@@ -59,13 +59,20 @@ MAX_TOTAL_CHARS = 24000
 #: 폴더 링크를 풀 때 보여 줄 항목 수
 MAX_LISTING = 120
 
-_BAD_SEGMENT = re.compile(r"[\\/\[\]\x00-\x1f]")
+_BAD_SEGMENT = re.compile(r"[\\/\x00-\x1f]")
 
 
 def segment(name: str, fallback: str = "_") -> str:
-    """경로 한 조각. `/` 와 대괄호는 링크를 끊으므로 바꾼다."""
+    """경로 한 조각(할 일·일정·단어·논문·회의 제목). `/` 는 경로를 가르므로 `_` 로 바꾸고,
+    대괄호는 escape 로 싣는다 — 예전에는 `_` 로 바꿔서 `[중요] 보고서` 가 후보 목록과 칩에
+    "_중요_ 보고서" 로 보였다(32차, 없는 이름을 보고 골라야 했다). 보일 이름은 _shown 으로."""
     s = _BAD_SEGMENT.sub("_", str(name or "").strip()).strip()
-    return (s or fallback)[:160]
+    return escape((s or fallback)[:160])
+
+
+def _shown(seg: str) -> str:
+    """segment 의 보일 이름(대괄호를 되돌린 것)."""
+    return _unescape(seg)
 
 
 def escape(rest: str) -> str:
@@ -262,7 +269,7 @@ def _parent(rel: str) -> str:
 
 def _paper_entries(user: SessionUser, settings: Settings) -> list[Entry]:
 
-    return [Entry(f"paper/{segment(name)}", "paper", segment(name),
+    return [Entry(f"paper/{segment(name)}", "paper", _shown(segment(name)),
                   " · ".join(x for x in (str(p.get("year") or ""), str(p.get("category") or "")) if x),
                   ident=str(p["id"]))
             for p, name in mounts.named(paper_store.list_papers(user, settings), "filename")]
@@ -270,7 +277,7 @@ def _paper_entries(user: SessionUser, settings: Settings) -> list[Entry]:
 
 def _meeting_entries(user: SessionUser, settings: Settings) -> list[Entry]:
 
-    return [Entry(f"meeting/{segment(name)}", "meeting", segment(name),
+    return [Entry(f"meeting/{segment(name)}", "meeting", _shown(segment(name)),
                   " · ".join(x for x in (str(m.get("date") or ""), str(m.get("category") or "")) if x),
                   ident=str(m["id"]), when=str(m.get("date") or ""),
                   order=_days_from_today(str(m.get("date") or "")))
@@ -294,14 +301,14 @@ def _todo_entries(user: SessionUser, settings: Settings) -> list[Entry]:
     out: list[Entry] = []
     for c in cats:
         p = cat_path(str(c.get("id")))
-        out.append(Entry(f"todo/{p}", "todo", p.rsplit("/", 1)[-1], "분류", folder=True))
+        out.append(Entry(f"todo/{p}", "todo", _shown(p.rsplit("/", 1)[-1]), "분류", folder=True))
     taken: set[str] = set()
     for t in todo_store.list_todos(user, settings):
         base = cat_path(str(t.get("category_id") or ""))
         name = _unique(segment(t.get("title") or "", "(제목 없음)"), base, taken)
         due = str(t.get("due") or "")[:10]
         detail = " · ".join(x for x in (due, "완료" if t.get("done") else "") if x)
-        out.append(Entry(f"todo/{base}/{name}" if base else f"todo/{name}", "todo", name, detail,
+        out.append(Entry(f"todo/{base}/{name}" if base else f"todo/{name}", "todo", _shown(name), detail,
                          ident=str(t.get("id") or ""), when=due,
                          # 끝낸 것은 뒤로
                          order=1.0 if t.get("done") else 0.0))
@@ -331,7 +338,7 @@ def _event_entries(user: SessionUser, settings: Settings, *, fetch: bool = True)
         name = _unique(segment(e.get("title") or "", "(제목 없음)"), day, taken)
         start = str(e.get("start") or "")
         clock = start[11:16] if len(start) >= 16 else "종일"
-        out.append(Entry(f"event/{day}/{name}", "event", name, f"{day} {clock}",
+        out.append(Entry(f"event/{day}/{name}", "event", _shown(name), f"{day} {clock}",
                          ident=str(e.get("id") or ""), when=day, order=_days_from_today(day)))
         days[day] = days.get(day, 0) + 1
     for day, n in days.items():
@@ -347,7 +354,7 @@ def _vocab_entries(user: SessionUser, settings: Settings) -> list[Entry]:
     for w in vocab_store.list_words(user, settings):
         name = _unique(segment(w.get("word") or ""), "", taken)
         meanings = ", ".join(str(m) for m in (w.get("meanings") or []) if m)
-        out.append(Entry(f"vocab/{name}", "vocab", name, meanings[:80], ident=str(w.get("id") or "")))
+        out.append(Entry(f"vocab/{name}", "vocab", _shown(name), meanings[:80], ident=str(w.get("id") or "")))
     return out
 
 
@@ -500,9 +507,19 @@ def _find(items: list[Entry], rest: str) -> Entry | None:
     for e in items:
         if rest_of(e) == want:
             return e
+    # 32차 전의 링크는 제목의 대괄호를 `_` 로 바꿔 적었다(`_중요_ 보고서`). 대화 기록에 그 모양이
+    # 남아 있으니 그대로도 찾는다.
+    for e in items:
+        if _legacy(rest_of(e)) == want:
+            return e
     tail = want.rsplit("/", 1)[-1].lower()
     same = [e for e in items if not e.folder and e.label.lower() == tail]
     return same[0] if len(same) == 1 else None
+
+
+def _legacy(rest: str) -> str:
+    """32차 전 segment 가 짓던 모양 — 대괄호를 `_` 로."""
+    return rest.replace("[", "_").replace("]", "_")
 
 
 def resolve(user: SessionUser, settings: Settings, path: str) -> Resolved:
