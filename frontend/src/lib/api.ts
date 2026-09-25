@@ -65,7 +65,24 @@ export class ApiError extends Error {
  *  - 문자열: 우리 코드가 던지는 HTTPException(detail="...")
  *  - 객체: 구조화된 오류({error, message, ...})
  *  - **배열**: FastAPI 의 검증 실패(422). 이걸 처리하지 않아서 화면에 "422"만 떴다. */
+/**
+ * 서버가 이유를 적어 주지 못한 실패(응답이 JSON 이 아니다)의 말. 이런 응답은 대개 **서버에
+ * 닿기 전**에 앞단(클라우드플레어·nginx)이 돌려준 HTML 이다. 예전에는 상태 번호만 남아
+ * 토스트에 "413"·"502" 가 떴다 — 무엇을 해야 할지 알 수 없다(18차 실측).
+ */
+const NO_DETAIL: Record<number, string> = {
+  413: "보내려는 것이 너무 큽니다 — 인터넷 주소로는 요청 하나에 100MB 까지입니다(Cloudflare 제한).",
+  429: "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.",
+  502: "서버가 잠시 응답하지 않습니다(다시 시작하는 중일 수 있습니다). 잠시 후 다시 시도해 주세요.",
+  503: "서버가 잠시 응답하지 않습니다. 잠시 후 다시 시도해 주세요.",
+  504: "서버의 응답이 너무 늦습니다. 잠시 후 다시 시도해 주세요.",
+  520: "서버에 닿지 못했습니다(다시 시작하는 중일 수 있습니다). 잠시 후 다시 시도해 주세요.",
+  522: "서버에 닿지 못했습니다(다시 시작하는 중일 수 있습니다). 잠시 후 다시 시도해 주세요.",
+  524: "서버의 응답이 너무 늦습니다. 잠시 후 다시 시도해 주세요.",
+};
+
 function errorMessage(status: number, detail: unknown): string {
+  if (detail === undefined) return NO_DETAIL[status] ?? `요청이 실패했습니다(${status}).`;
   if (typeof detail === "string" && detail) return detail;
   if (Array.isArray(detail)) {
     const first = detail[0] as { loc?: unknown[]; msg?: string } | undefined;
@@ -85,7 +102,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!res.ok) {
-    let detail: unknown = `${res.status}`;
+    // JSON 이 아니면(앞단의 HTML) 이유가 없다 — errorMessage 가 상태로 말을 고른다
+    let detail: unknown = undefined;
     try {
       const body = await res.json();
       detail = body.detail ?? body;
@@ -115,6 +133,33 @@ const q = (o: Record<string, string>) => new URLSearchParams(o).toString();
 let diaryUnlock: { token: string; day: string } | null = null;
 const unlockHeader = (day: string): Record<string, string> =>
   (diaryUnlock && diaryUnlock.day === day ? { "X-Diary-Unlock": diaryUnlock.token } : {});
+
+/**
+ * 인터넷 주소(클라우드플레어)로 들어오면 요청 하나가 이만큼을 넘을 수 없다. 넘는 요청은 서버에
+ * 닿기도 전에 413 HTML 로 막힌다(18차 실측: 101MB 막힘, 50MB 통과). 서버는 문서 2GB·녹음
+ * 300MB 까지 받는다고 말하지만, 인터넷 주소로는 거기에 닿지 못한다. 양식의 경계 글자들이
+ * 조금 붙으므로 100MB 보다 조금 아래로 잡는다.
+ */
+export const EDGE_UPLOAD_LIMIT = 99_000_000;
+let behindEdge: Promise<boolean> | null = null;
+
+/** 이 화면이 클라우드플레어를 거쳐 서버에 닿는가 — 거치면 응답마다 cf-ray 가 붙는다. 한 번만 묻는다.
+ *  집 네트워크 주소로 열었으면 거치지 않으므로 서버의 상한만 적용된다. */
+function viaEdge(): Promise<boolean> {
+  behindEdge ??= fetch(`${BASE}/api/health`, { credentials: "include" })
+    .then((r) => r.headers.has("cf-ray"))
+    .catch(() => false);
+  return behindEdge;
+}
+
+/** 보내기 **전에** 크기를 본다. 몇 분을 올린 뒤에야 "413" 을 보던 것을 바로 알린다. */
+async function checkUploadSize(file: File): Promise<void> {
+  if (file.size <= EDGE_UPLOAD_LIMIT || !(await viaEdge())) return;
+  const mb = (file.size / 1_000_000).toFixed(0);
+  throw new ApiError(413,
+    `'${file.name}' 은 ${mb}MB 라 인터넷 주소로는 올릴 수 없습니다 — 요청 하나에 100MB 까지입니다`
+    + "(Cloudflare 제한). 집 네트워크 주소로 열어 올리거나, 파일을 나누거나 줄여 주세요.");
+}
 
 export const api = {
   // ── auth ──
@@ -175,7 +220,8 @@ export const api = {
     req("/api/notes/folder", jsonInit("POST", { path })),
   noteFolderDelete: (path: string) =>
     req(`/api/notes/folder?${q({ path })}`, { method: "DELETE" }),
-  noteUpload: (path: string, file: File) => {
+  noteUpload: async (path: string, file: File) => {
+    await checkUploadSize(file);
     const fd = new FormData();
     fd.append("file", file);
     return req<NoteSummary>(`/api/notes/upload?${q({ path })}`, { method: "POST", body: fd });
@@ -370,7 +416,8 @@ export const api = {
   paperList: () => req<Paper[]>("/api/papers"),
   paperCategories: () => req<{ categories: string[] }>("/api/papers/categories"),
   paperGet: (id: string) => req<Paper>(`/api/papers/${encodeURIComponent(id)}`),
-  paperUpload: (file: File) => {
+  paperUpload: async (file: File) => {
+    await checkUploadSize(file);
     const fd = new FormData();
     fd.append("file", file);
     return req<Paper>("/api/papers/upload", { method: "POST", body: fd });
@@ -429,7 +476,8 @@ export const api = {
   meetingList: () => req<Meeting[]>("/api/meetings"),
   meetingCategories: () => req<string[]>("/api/meetings/categories"),
   meetingGet: (id: string) => req<Meeting>(`/api/meetings/${encodeURIComponent(id)}`),
-  meetingUpload: (file: File, opts: { title?: string; category?: string; day?: string } = {}) => {
+  meetingUpload: async (file: File, opts: { title?: string; category?: string; day?: string } = {}) => {
+    await checkUploadSize(file);
     const fd = new FormData();
     fd.append("file", file);
     if (opts.title) fd.append("title", opts.title);
