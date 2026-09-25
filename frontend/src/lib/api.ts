@@ -161,6 +161,17 @@ async function checkUploadSize(file: File): Promise<void> {
     + "(Cloudflare 제한). 집 네트워크 주소로 열어 올리거나, 파일을 나누거나 줄여 주세요.");
 }
 
+/** 파일 하나를 양식으로 보낸다 — 크기부터 본다. 올리기는 **모두 이것을 거친다**
+ *  (새 올리기가 크기 확인을 빠뜨리면 인터넷 주소에서 다시 "413" 을 몇 분 뒤에 본다). */
+async function uploadFile<T>(url: string, file: File,
+                             fields: Record<string, string | undefined> = {}): Promise<T> {
+  await checkUploadSize(file);
+  const fd = new FormData();
+  fd.append("file", file);
+  for (const [k, v] of Object.entries(fields)) if (v) fd.append(k, v);
+  return req<T>(url, { method: "POST", body: fd });
+}
+
 export const api = {
   // ── auth ──
   login: (username: string, password: string) =>
@@ -220,12 +231,8 @@ export const api = {
     req("/api/notes/folder", jsonInit("POST", { path })),
   noteFolderDelete: (path: string) =>
     req(`/api/notes/folder?${q({ path })}`, { method: "DELETE" }),
-  noteUpload: async (path: string, file: File) => {
-    await checkUploadSize(file);
-    const fd = new FormData();
-    fd.append("file", file);
-    return req<NoteSummary>(`/api/notes/upload?${q({ path })}`, { method: "POST", body: fd });
-  },
+  noteUpload: (path: string, file: File) =>
+    uploadFile<NoteSummary>(`/api/notes/upload?${q({ path })}`, file),
   /** 원본 바이트 URL — 이미지·PDF·미디어는 인라인, download=true면 첨부 */
   noteRawUrl: (path: string, download = false) =>
     `${BASE}/api/notes/raw?${q({ path, ...(download ? { download: "true" } : {}) })}`,
@@ -416,12 +423,7 @@ export const api = {
   paperList: () => req<Paper[]>("/api/papers"),
   paperCategories: () => req<{ categories: string[] }>("/api/papers/categories"),
   paperGet: (id: string) => req<Paper>(`/api/papers/${encodeURIComponent(id)}`),
-  paperUpload: async (file: File) => {
-    await checkUploadSize(file);
-    const fd = new FormData();
-    fd.append("file", file);
-    return req<Paper>("/api/papers/upload", { method: "POST", body: fd });
-  },
+  paperUpload: (file: File) => uploadFile<Paper>("/api/papers/upload", file),
   /** PDF 원본 URL(inline). pdf.js 가 fetch 로 받는다 — 세션 쿠키가 실린다. */
   paperFileUrl: (id: string) => `${BASE}/api/papers/${encodeURIComponent(id)}/file`,
   /** keepalive: 페이지가 닫히는 중에 보내는 저장(읽던 쪽 등) */
@@ -476,15 +478,8 @@ export const api = {
   meetingList: () => req<Meeting[]>("/api/meetings"),
   meetingCategories: () => req<string[]>("/api/meetings/categories"),
   meetingGet: (id: string) => req<Meeting>(`/api/meetings/${encodeURIComponent(id)}`),
-  meetingUpload: async (file: File, opts: { title?: string; category?: string; day?: string } = {}) => {
-    await checkUploadSize(file);
-    const fd = new FormData();
-    fd.append("file", file);
-    if (opts.title) fd.append("title", opts.title);
-    if (opts.category) fd.append("category", opts.category);
-    if (opts.day) fd.append("day", opts.day);
-    return req<Meeting>("/api/meetings/upload", { method: "POST", body: fd });
-  },
+  meetingUpload: (file: File, opts: { title?: string; category?: string; day?: string } = {}) =>
+    uploadFile<Meeting>("/api/meetings/upload", file, opts),
   /** 원본 녹음 URL(inline, Range 지원) — <audio> 가 그대로 쓴다. */
   meetingAudioUrl: (id: string) => `${BASE}/api/meetings/${encodeURIComponent(id)}/audio`,
   meetingTranscript: (id: string) => req<Transcript>(`/api/meetings/${encodeURIComponent(id)}/transcript`),

@@ -17,9 +17,13 @@ test("파일을 올리는 세 곳 모두 보내기 전에 크기를 본다", () 
   for (const name of ["noteUpload", "paperUpload", "meetingUpload"]) {
     const start = api.indexOf(`  ${name}: `);
     assert.ok(start >= 0, name);
-    const body = api.slice(start, api.indexOf("\n  },", start));
-    assert.match(body, /await checkUploadSize\(file\)/, `${name} 가 크기를 보지 않고 보낸다`);
+    const body = api.slice(start, api.indexOf("\n  /**", start));
+    assert.match(body, /uploadFile</, `${name} 가 uploadFile(크기 확인)을 거치지 않는다`);
   }
+  const helper = api.slice(api.indexOf("async function uploadFile"));
+  assert.match(helper.slice(0, 400), /await checkUploadSize\(file\)/, "uploadFile 이 크기를 보지 않는다");
+  // FormData 를 직접 만드는 곳은 uploadFile 하나뿐이어야 한다
+  assert.equal((api.match(/new FormData\(\)/g) ?? []).length, 1, "크기 확인 없이 파일을 보내는 길이 또 생겼다");
   assert.match(api, /headers\.has\("cf-ray"\)/, "클라우드플레어를 거치는지 가리지 않는다(집 네트워크는 막으면 안 된다)");
 });
 
