@@ -264,11 +264,13 @@ def build_graph(
     if cached and cached[0] == fp:
         return cached[1]  # 변경 없음 → 캐시 반환(전체 파일 읽기·파싱 스킵)
 
-    if mode == "folders":
-        result = _folder_graph(notes_dir, base)
-        _remember(cache_key, fp, result)
-        return result
+    result = _folder_graph(notes_dir, base) if mode == "folders" else _link_graph(notes_dir, files)
+    _remember(cache_key, fp, result)
+    return result
 
+
+def _link_graph(notes_dir: Path, files: list[WalkedFile]) -> dict:
+    """노트 사이의 링크 그래프(위키링크·경로 링크). 폴더 지도(_folder_graph)와 짝이다."""
     notes = [f for f in files if f.rel.endswith(".md")]
     find = _Lookup()
     nodes = []
@@ -295,9 +297,7 @@ def build_graph(
                 if key not in seen:
                     seen.add(key)
                     links.append({"source": src, "target": tgt})
-    result = {"nodes": nodes, "links": links}
-    _remember(cache_key, fp, result)
-    return result
+    return {"nodes": nodes, "links": links}
 
 
 def _remember(key: tuple, fp: tuple, result: dict) -> None:
