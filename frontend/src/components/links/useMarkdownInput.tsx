@@ -198,19 +198,14 @@ export function useMarkdownInput(ref: RefObject<Field>, opts: InputOptions = {})
       if (linkKeys(e)) return;
       listKeys(e);
     };
-    node.addEventListener("keydown", onKey);
-    node.addEventListener("input", onInput);
-    node.addEventListener("click", onInput);
-    node.addEventListener("keyup", onInput);
-    node.addEventListener("compositionend", onInput);
-    node.addEventListener("blur", onBlur);
+    // 거는 것과 떼는 것을 한 표로 — 두 벌로 적으면 하나만 고쳐 처리기가 남는다
+    const handlers: [string, EventListener][] = [
+      ["keydown", onKey], ["input", onInput], ["click", onInput],
+      ["keyup", onInput], ["compositionend", onInput], ["blur", onBlur],
+    ];
+    for (const [type, fn] of handlers) node.addEventListener(type, fn);
     return () => {
-      node.removeEventListener("keydown", onKey);
-      node.removeEventListener("input", onInput);
-      node.removeEventListener("click", onInput);
-      node.removeEventListener("keyup", onInput);
-      node.removeEventListener("compositionend", onInput);
-      node.removeEventListener("blur", onBlur);
+      for (const [type, fn] of handlers) node.removeEventListener(type, fn);
     };
     // 입력칸 요소가 바뀌었을 때만 다시 건다(처리기는 live 로 늘 새 값을 본다)
     // eslint-disable-next-line react-hooks/exhaustive-deps
