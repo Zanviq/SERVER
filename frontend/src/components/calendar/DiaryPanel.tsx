@@ -143,6 +143,13 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
   const picks = useRef(0);
   //: 저장 요청을 한 줄로 세우는 꼬리. 순서가 뒤집히는 것을 막는다.
   const chain = useRef<Promise<void>>(Promise.resolve());
+  /** 저장 하나를 줄 끝에 세운다 — 도형·글 저장이 모두 이 줄을 탄다. 앞 것이 실패해도 줄은
+   *  이어진다(돌려주는 약속은 그 저장의 결과 그대로). */
+  const enqueue = <T,>(job: () => Promise<T>): Promise<T> => {
+    const run = chain.current.then(job);
+    chain.current = run.then(() => undefined, () => undefined);
+    return run;
+  };
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const onEditRef = useRef(onEdit);
@@ -239,7 +246,7 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
     setSaving(true);
     // 요청을 줄 세운다. 빠르게 두 번 누르면 두 PUT 이 동시에 날아가는데, 도착 순서가
     // 뒤집히면 **나중에 고른 것이 먼저 고른 것으로 덮인다**(서버는 받은 순서대로 쓴다).
-    chain.current = chain.current.then(async () => {
+    void enqueue(async () => {
       try {
         const saved = await api.diarySave(day, patch);
         if (dirty) {
@@ -265,25 +272,21 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
     onEditRef.current(day);
     // 저장은 도형 저장과 **한 줄로** 세운다(chain). 앞 저장의 응답(새 base)을 받기 전에 뒤 저장을
     // 보내면, 서버는 자기 앞 저장을 '다른 곳의 변경'으로 보고 409 를 준다 — 제 글끼리 합쳐진다.
-    pending.current.schedule(autosaveMs, () => {
-      const run = chain.current.then(async () => {
-        setSaving(true);
-        try {
-          const saved = await saveText(day, v);
-          onChangeRef.current(saved);
-          // 떠난 날의 저장이 늦게 끝났다면 새 날의 '입력 중' 표시를 건드리지 않는다
-          if (dateRef.current === day) setDirty(false);
-          return true;
-        } catch (e) {
-          toast.error(e instanceof Error ? e.message : "일기 저장 실패");
-          return false;
-        } finally {
-          setSaving(false);
-        }
-      });
-      chain.current = run.then(() => undefined);
-      return run;
-    });
+    pending.current.schedule(autosaveMs, () => enqueue(async () => {
+      setSaving(true);
+      try {
+        const saved = await saveText(day, v);
+        onChangeRef.current(saved);
+        // 떠난 날의 저장이 늦게 끝났다면 새 날의 '입력 중' 표시를 건드리지 않는다
+        if (dateRef.current === day) setDirty(false);
+        return true;
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "일기 저장 실패");
+        return false;
+      } finally {
+        setSaving(false);
+      }
+    }));
   };
 
   return (
