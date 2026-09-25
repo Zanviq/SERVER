@@ -26,16 +26,16 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 
-from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-UNSAFE = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+from .asgi_util import WRITE_METHODS, headers_of, refuse
+
 REFUSED = "다른 사이트에서 온 요청은 받지 않습니다."
 
 
 def is_foreign(method: str, headers: dict[str, str], allowed: frozenset[str]) -> bool:
     """이 쓰기 요청이 다른 출처의 페이지가 보낸 것인가. headers 의 이름은 소문자."""
-    if method.upper() not in UNSAFE:
+    if method.upper() not in WRITE_METHODS:
         return False
     origin = headers.get("origin", "")
     if origin and origin in allowed:
@@ -57,9 +57,7 @@ class SameOriginWrites:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
-            headers = {k.decode("latin-1").lower(): v.decode("latin-1")
-                       for k, v in scope.get("headers", [])}
-            if is_foreign(scope.get("method", "GET"), headers, self.allowed):
-                await JSONResponse({"detail": REFUSED}, status_code=403)(scope, receive, send)
+            if is_foreign(scope.get("method", "GET"), headers_of(scope), self.allowed):
+                await refuse(scope, receive, send, 403, REFUSED)
                 return
         await self.app(scope, receive, send)

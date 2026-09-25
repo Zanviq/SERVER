@@ -22,15 +22,15 @@ Content-Length 가 있으면 풀지 않고 곧바로 413. 없으면(청크 전�
 """
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from http.cookies import SimpleCookie
 
 from fastapi import HTTPException
 
+from .asgi_util import WRITE_METHODS, headers_of, refuse
+
 ANON_BODY = 64 * 1024
 JSON_BODY = 40 * 1024 * 1024
-_BODY_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 def _cookie(headers: dict[str, str], name: str) -> str:
@@ -61,9 +61,9 @@ class BodyLimit:
         self.signed_in = signed_in
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope["method"] not in _BODY_METHODS:
+        if scope["type"] != "http" or scope["method"] not in WRITE_METHODS:
             return await self.app(scope, receive, send)
-        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
+        headers = headers_of(scope)
         multipart = headers.get("content-type", "").lower().startswith("multipart/")
         known: dict[str, int] = {}
 
@@ -94,10 +94,11 @@ class BodyLimit:
             except ValueError:
                 declared = -1
             if declared < 0:
-                return await _reply(send, 400, "본문 길이(Content-Length)가 잘못되었습니다.")
+                return await refuse(scope, receive, send, 400, "본문 길이(Content-Length)가 잘못되었습니다.",
+                                    close=True)
             if too_big(declared):
                 await drain()
-                return await _reply(send, 413, _message(limit()))
+                return await refuse(scope, receive, send, 413, _message(limit()), close=True)
 
         seen = 0
 
@@ -120,11 +121,3 @@ def _message(limit: int) -> str:
         return f"요청이 너무 큽니다(로그인 전 최대 {_mb(limit)}). 로그인했는지 확인해 주세요."
     return f"요청이 너무 큽니다(최대 {_mb(limit)})."
 
-
-async def _reply(send, status: int, detail: str) -> None:
-    body = json.dumps({"detail": detail}, ensure_ascii=False).encode("utf-8")
-    await send({"type": "http.response.start", "status": status,
-                "headers": [(b"content-type", b"application/json"),
-                            (b"content-length", str(len(body)).encode()),
-                            (b"connection", b"close")]})
-    await send({"type": "http.response.body", "body": body})
