@@ -10372,6 +10372,87 @@ def test_a_full_disk_is_named_on_every_write_path(monkeypatch):
     client.request("DELETE", "/api/notes/folder", params={"path": "가득참"})
 
 
+def test_archive_zips_are_capped_and_never_left_behind():
+    """폴더·계정 전체 받기(zip): 한 사람이 동시에 여럿 만들지 못하고, 임시 zip 은 어떻게 끝나든 남지 않는다(54차).
+
+    임시 zip 은 받는 폴더 전체만 하다(계정 전체면 사진·녹음까지). 격리 서버 실측: 전체 받기 여섯을 한꺼번에
+    부르자 여섯 모두 만들어 임시 zip 이 동시에 일곱(읽기를 멈춘 받기 하나 포함). 내려받는 도중 서버를 죽이면
+    임시 zip 이 남고 치우는 곳이 없었다. 예전 뒷정리(BackgroundTask)는 끊긴 연결에 보내기가 오류를 내면
+    돌지 않는다 — 아래에서 그 모양을 흉내 낸다(이 PC 의 uvicorn 은 오류를 내지 않아 실측에서는 남지 않았다).
+    """
+    import asyncio
+    import contextlib
+    import os as _os
+    import tempfile as _tf
+    from pathlib import Path
+
+    import pytest
+    from fastapi import HTTPException
+
+    from backend import archive
+
+    s = get_settings()
+    src = Path(_tf.mkdtemp(prefix="zipsrc_"))
+    (src / "가.txt").write_text("x" * 5000, encoding="utf-8")
+
+    # 만드는 자리: 한 사람이 동시에 둘은 못 만들고(429), 서버 전체도 넘치면 503
+    archive._claim("zip-시험")
+    with pytest.raises(HTTPException) as ei:
+        archive._claim("zip-시험")
+    assert ei.value.status_code == 429, "같은 사람이 동시에 둘을 만들었다"
+    archive._claim("zip-다른이")
+    with pytest.raises(HTTPException) as ei:
+        archive._claim("zip-셋째")
+    assert ei.value.status_code == 503
+    archive._release("zip-시험")
+    archive._release("zip-다른이")
+
+    # 자리는 다 만들면 돌려준다 — 보내는 동안(받는 쪽이 읽기를 멈춰도) 쥐지 않는다
+    r = archive.zip_dir(src, filename="a.zip", settings=s, owner="zip-시험")
+    made = Path(r.path)
+    assert made.exists()
+    r_again = archive.zip_dir(src, filename="b.zip", settings=s, owner="zip-시험")
+    Path(r_again.path).unlink(missing_ok=True)
+
+    async def cancelled_download():
+        async def receive():
+            return {"type": "http.disconnect"}
+
+        async def send(msg):
+            if msg["type"] == "http.response.body":
+                raise OSError("받는 쪽이 끊었다")
+
+        with contextlib.suppress(OSError):
+            await r({"type": "http", "method": "GET", "headers": [], "path": "/"}, receive, send)
+
+    asyncio.run(cancelled_download())
+    assert not made.exists(), "받다 끊은 임시 zip 이 남았다"
+
+    async def full_download(resp):
+        async def receive():
+            return {"type": "http.request"}
+
+        async def send(msg):
+            pass
+
+        await resp({"type": "http", "method": "GET", "headers": [], "path": "/"}, receive, send)
+
+    # 자리가 돌아왔다 — 다시 만들 수 있고, 끝까지 받으면 그것도 지운다
+    r2 = archive.zip_dir(src, filename="c.zip", settings=s, owner="zip-시험")
+    asyncio.run(full_download(r2))
+    assert not Path(r2.path).exists()
+    r3 = archive.zip_dir(src, filename="d.zip", settings=s, owner="zip-시험")
+    asyncio.run(full_download(r3))
+
+    # 주인 없는 오래된 임시 zip 은 치운다(서버가 뜰 때는 모두)
+    stale = s.storage_root / ".tmp" / "남은것.zip"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_bytes(b"PK")
+    old = time.time() - archive.STALE_SECONDS - 60
+    _os.utime(stale, (old, old))
+    assert archive.sweep_stale(s) >= 1 and not stale.exists()
+
+
 def test_user_bytes_leave_only_through_user_file():
     """올린 파일을 내보내는 라우터는 FileResponse 를 직접 만들지 않는다 — user_file 을 지난다.
 

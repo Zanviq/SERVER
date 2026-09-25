@@ -9,18 +9,88 @@ from __future__ import annotations
 
 import logging
 import tempfile
+import threading
+import time
 import zipfile
 from pathlib import Path
 
+from fastapi import HTTPException
 from fastapi.responses import FileResponse
-from starlette.background import BackgroundTask
 
 from .config import Settings
 
 logger = logging.getLogger("server.archive")
 
+#: 동시에 **만드는** zip 수 — 사람마다, 서버 전체. 임시 zip 은 크기가 받는 폴더 전체만 하다(계정 전체
+#: 받기면 사진·녹음까지)이고 만드는 동안 CPU·디스크를 쓴다. 54차 실측: 전체 받기 여섯을 한꺼번에 부르자
+#: 임시 zip 여섯을 동시에 만들었다 — 파이의 외장하드를 몇 배로 채운다.
+#: 자리는 **다 만들면** 돌려준다(보내는 동안 쥐지 않는다). 받는 쪽이 읽기를 멈춘 채 연결만 붙들고 있으면
+#: (휴대폰이 뒤로 가는 등) 보내기가 끝나지 않는데, 그동안 자리를 쥐면 그 사람은 다시 받을 수도 없었다.
+MAX_PER_USER = 1
+MAX_TOTAL = 2
+#: 이보다 오래된 임시 zip 은 주인이 없다(받기가 끝났거나 서버가 도중에 내려갔다)
+STALE_SECONDS = 6 * 3600
 
-def zip_dir(target: Path, *, filename: str, settings: Settings,
+_guard = threading.Lock()
+_running: dict[str, int] = {}
+
+
+def _claim(owner: str) -> None:
+    with _guard:
+        if _running.get(owner, 0) >= MAX_PER_USER:
+            raise HTTPException(status_code=429,
+                                detail="이미 내려받기를 만들고 있습니다 — 그것이 끝난 뒤 다시 받아 주세요.")
+        if sum(_running.values()) >= MAX_TOTAL:
+            raise HTTPException(status_code=503, detail="지금 다른 내려받기가 많습니다. 잠시 뒤 다시 해 주세요.")
+        _running[owner] = _running.get(owner, 0) + 1
+
+
+def _release(owner: str) -> None:
+    with _guard:
+        n = _running.get(owner, 0) - 1
+        if n > 0:
+            _running[owner] = n
+        else:
+            _running.pop(owner, None)
+
+
+def sweep_stale(settings: Settings, max_age: float = STALE_SECONDS) -> int:
+    """주인 없는 임시 zip 을 지운다. 서버가 뜰 때는 max_age=0 — 그때 있는 것은 모두 지난 프로세스의 것이다.
+    54차 실측: 내려받는 도중 서버를 죽이자 임시 zip 이 남았고, 예전엔 그것을 치우는 곳이 없었다(배포마다
+    서버가 다시 뜬다). 받는 중인 파일을 지워도 리눅스는 열린 손잡이로 끝까지 읽힌다(윈도는 지우기가 실패할 뿐)."""
+    tmp_dir = settings.storage_root / ".tmp"
+    if not tmp_dir.is_dir():
+        return 0
+    gone = 0
+    now = time.time()
+    for p in tmp_dir.glob("*.zip"):
+        try:
+            if now - p.stat().st_mtime >= max_age:
+                p.unlink()
+                gone += 1
+        except OSError:
+            pass
+    return gone
+
+
+class _TempZipResponse(FileResponse):
+    """다 보냈든, 받는 쪽이 도중에 끊었든 임시 zip 을 지운다.
+
+    예전엔 BackgroundTask 로 지웠는데, 백그라운드 작업은 응답을 **끝까지 보낸 뒤에만** 돈다. ASGI 2.4 대로
+    끊긴 연결에 보내기가 OSError 를 내는 서버에서는 돌지 않아 임시 zip 이 남는다(시험이 그 모양을 흉내 내
+    확인한다 — 계정 전체 받기면 그 크기가 사진·녹음까지 전부다). 이 PC 의 uvicorn 은 끊긴 뒤의 보내기를
+    조용히 버려 끝까지 돌았으므로 실측에서는 남지 않았다 — 서버가 바뀌어도 남지 않게 finally 로 지운다.
+    서버가 보내는 도중 내려가는 것(배포·정전)은 이것으로 못 막는다 — sweep_stale 이 맡는다.
+    """
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            Path(self.path).unlink(missing_ok=True)
+
+
+def zip_dir(target: Path, *, filename: str, settings: Settings, owner: str,
             skip_dirs: frozenset[str] = frozenset()) -> FileResponse:
     """target 아래를 통째로 압축해 내려보낸다.
 
@@ -29,12 +99,22 @@ def zip_dir(target: Path, *, filename: str, settings: Settings,
     - FileResponse 가 RFC 5987(`filename*=UTF-8''`)을 붙여줘 한글 이름이 안 깨진다.
       직접 Content-Disposition 을 만들면 손으로 퍼센트 인코딩해야 한다.
 
-    skip_dirs 에 든 이름의 폴더는 건너뛴다(휴지통·임시 폴더).
+    skip_dirs 에 든 이름의 폴더는 건너뛴다(휴지통·임시 폴더). owner(사용자 이름)마다 동시에 하나,
+    서버 전체에 MAX_TOTAL 개까지만 **만든다** — 넘치면 429·503. 자리는 다 만들면 돌려준다.
     """
+    _claim(owner)
+    try:
+        return _build(target, filename=filename, settings=settings, skip_dirs=skip_dirs)
+    finally:
+        _release(owner)
+
+
+def _build(target: Path, *, filename: str, settings: Settings, skip_dirs: frozenset[str]) -> FileResponse:
     # 임시파일을 데이터 볼륨에 만든다 — 컨테이너 기본 /tmp 는 SD카드의 오버레이라
     # 큰 폴더를 압축하면 방금 비운 SD를 다시 채운다.
     tmp_dir = settings.storage_root / ".tmp"
     tmp_dir.mkdir(parents=True, exist_ok=True)
+    sweep_stale(settings)
     tmp = tempfile.NamedTemporaryFile(dir=tmp_dir, suffix=".zip", delete=False)
     tmp.close()
     tmp_path = Path(tmp.name)
@@ -59,7 +139,7 @@ def zip_dir(target: Path, *, filename: str, settings: Settings,
         tmp_path.unlink(missing_ok=True)
         raise
 
-    return FileResponse(
+    return _TempZipResponse(
         tmp_path,
         filename=filename,
         media_type="application/zip",
@@ -70,5 +150,4 @@ def zip_dir(target: Path, *, filename: str, settings: Settings,
             "Accept-Ranges": "none",
             "Cache-Control": "no-store",
         },
-        background=BackgroundTask(tmp_path.unlink, True),
     )

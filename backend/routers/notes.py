@@ -423,7 +423,7 @@ def archive_folder(
         raise HTTPException(status_code=404, detail="폴더를 찾을 수 없습니다.")
 
     name = (target.name if target != root else "문서") + ".zip"
-    return archive.zip_dir(target, filename=name, settings=settings)
+    return archive.zip_dir(target, filename=name, settings=settings, owner=user.username)
 
 
 @router.get("/archive/account")
@@ -444,7 +444,7 @@ def archive_account(
     if not root.exists():
         raise HTTPException(status_code=404, detail="저장된 것이 없습니다.")
     return archive.zip_dir(root, filename=f"{user.username}-백업.zip", settings=settings,
-                           skip_dirs=frozenset({".trash", ".tmp"}))
+                           owner=user.username, skip_dirs=frozenset({".trash", ".tmp"}))
 
 
 @router.post("/upload", response_model=NoteSummary)

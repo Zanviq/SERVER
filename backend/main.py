@@ -106,6 +106,13 @@ async def lifespan(app: FastAPI):
             "계정이 없습니다 — .env의 AUTH_USERS로 최초 관리자를 만들거나 가입 후 승인이 필요합니다."
         )
     _warm_note_graphs(settings)
+    # 지난 프로세스가 내려보내다 만 임시 zip — 이 프로세스에서는 아무도 받고 있지 않다(54차)
+    from . import archive
+
+    try:
+        archive.sweep_stale(settings, max_age=0)
+    except Exception:  # noqa: BLE001 - 청소 실패로 서버가 안 뜨면 안 된다
+        logger.exception("임시 zip 을 치우지 못했습니다")
     yield
 
 
