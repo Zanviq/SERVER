@@ -407,6 +407,14 @@ def update_todo(user: SessionUser, settings: Settings, tid: str, payload: dict) 
         idx = next((i for i, t in enumerate(todos) if t["id"] == tid), -1)
         if idx < 0:
             raise HTTPException(status_code=404, detail="할 일을 찾을 수 없습니다.")
+        # 화면이 고치기 시작한 설명(base_description)과 지금 설명이 다르면 덮지 않는다 — 락 안에서 본다.
+        # 설명은 치는 동안 모아 보낸다(42차). 아침에 열어 둔 PC 탭에서 한 글자만 더 쳐도 그 탭의 옛
+        # 설명 전체가 나가, 그 사이 폰에서 고친 설명이 말없이 사라진다(일기 28차와 같은 모양). 화면은
+        # 409 를 받으면 두 글을 합쳐 다시 보낸다. base 를 안 주는 쪽(AI 스킬)은 예전처럼 곧바로 쓴다.
+        base = payload.pop("base_description", None)
+        if (base is not None and payload.get("description") is not None
+                and str(todos[idx].get("description") or "") != str(base)):
+            raise HTTPException(status_code=409, detail="그 사이 할 일 설명이 다른 곳에서 바뀌었습니다.")
         if payload.get("category_id"):
             cid = str(payload["category_id"])
             if not any(c["id"] == cid for c in cats):

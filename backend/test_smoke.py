@@ -10318,6 +10318,33 @@ def test_paper_notes_do_not_overwrite_a_change_the_screen_has_not_seen():
         client.delete(f"/api/papers/{pid}")
 
 
+def test_todo_description_does_not_overwrite_a_change_the_screen_has_not_seen():
+    """할 일 설명 저장에 base_description 을 주면, 그 사이 다른 곳에서 바뀐 설명을 덮지 않는다(43차).
+
+    설명은 치는 동안 모아 보낸다. 열어 둔 옛 탭에서 한 글자만 더 쳐도 그 탭의 옛 설명 전체가 나가
+    다른 기기의 설명을 말없이 덮었다. base 를 안 주는 쪽(AI 스킬)은 예전처럼 곧바로 쓴다.
+    """
+    _login()
+    tid = client.post("/api/todo/create", json={"title": "설명 충돌"}).json()["id"]
+    try:
+        assert client.put(f"/api/todo/{tid}", json={"description": "처음"}).status_code == 200
+        r = client.put(f"/api/todo/{tid}", json={"description": "PC 에서 이어 씀", "base_description": "처음"})
+        assert r.status_code == 200 and r.json()["description"] == "PC 에서 이어 씀", r.text
+        assert "base_description" not in r.json(), "base 가 저장됐다"
+        assert client.put(f"/api/todo/{tid}", json={"description": "폰에서 고침"}).status_code == 200
+        r = client.put(f"/api/todo/{tid}", json={"description": "PC 에서 이어 씀 더", "base_description": "PC 에서 이어 씀"})
+        assert r.status_code == 409, r.text
+        todo = next(t for t in client.get("/api/todo/list").json() if t["id"] == tid)
+        assert todo["description"] == "폰에서 고침", "409 인데 덮였다"
+        # 본 것을 base 로 주면(합친 글) 받는다
+        r = client.put(f"/api/todo/{tid}", json={"description": "폰에서 고침\n\nPC 에서 이어 씀 더", "base_description": "폰에서 고침"})
+        assert r.status_code == 200
+        # 설명이 아닌 것만 고칠 때는 따지지 않는다
+        assert client.put(f"/api/todo/{tid}", json={"done": True, "base_description": "옛것"}).status_code == 200
+    finally:
+        client.delete(f"/api/todo/{tid}")
+
+
 def test_user_bytes_leave_only_through_user_file():
     """올린 파일을 내보내는 라우터는 FileResponse 를 직접 만들지 않는다 — user_file 을 지난다.
 

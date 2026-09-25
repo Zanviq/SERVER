@@ -59,6 +59,11 @@ test("다른 곳에 따로 안 보이는 긴 글 칸은 칸을 벗어날 때만 
   assert.deepEqual(bad, [], `blur 에서 곧바로 저장을 보내는 칸:\n${bad.join("\n")}`);
   const todo = readFileSync(join(SRC, "pages/Todo.tsx"), "utf8");
   assert.match(todo, /const descSave = usePendingSave\(\[selectedTodo\]\)/);
+  // 43차: 열어 둔 옛 탭의 모아 보내기가 다른 기기에서 고친 설명을 덮었다 — 기준을 싣고, 409 면 합친다
+  assert.match(todo, /base_description: base/, "할 일 설명 저장이 기준(base)을 싣지 않는다");
+  assert.match(todo, /if \(isConflict\(e\)\) \{[\s\S]{0,300}mergeDiaryText\(theirs\.description, text\)/, "409 를 받아 두 글을 합치지 않는다");
+  // 기준은 목록을 다시 받을 때 따라가면 안 된다(다른 기기의 글을 "본 것"으로 쳐서 덮는다)
+  assert.doesNotMatch(todo, /descBase\.current = [^;]*b\.todos/);
   const info = readFileSync(join(SRC, "components/papers/PaperInfo.tsx"), "utf8");
   assert.match(info, /const notesSave = usePendingSave\(\[p\.id\]\)/);
   // 모아 보내면 화면이 다시 받기 전에 저장이 나간다 — 서버가 base 로 막아야 다른 곳의 메모를 안 덮는다

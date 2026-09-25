@@ -282,7 +282,7 @@ export const api = {
     req<{ categories: TodoCategory[]; todos: Todo[]; counts: TodoCounts }>("/api/todo/board"),
   todoCreate: (body: Partial<Todo>) => req<Todo>("/api/todo/create", jsonInit("POST", body)),
   /** keepalive: 페이지가 닫히는 중에 보내는 저장(치던 설명) */
-  todoUpdate: (id: string, body: Partial<Todo>, keepalive = false) =>
+  todoUpdate: (id: string, body: Partial<Todo> & { base_description?: string }, keepalive = false) =>
     req<Todo>(`/api/todo/${encodeURIComponent(id)}`, { ...jsonInit("PUT", body), keepalive }),
   todoDelete: (id: string) =>
     req<{ ok: boolean; id: string; title: string }>(

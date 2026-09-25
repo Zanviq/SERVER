@@ -65,6 +65,8 @@ class TodoInput(BaseModel):
 class TodoPatch(BaseModel):
     title: str | None = None
     description: str | None = None
+    #: 화면이 고치기 시작한 설명. 주면 그 사이 다른 곳에서 바뀐 설명을 덮지 않는다(409).
+    base_description: str | None = None
     category_id: str | None = None
     due: str | None = None
     all_day: bool | None = None

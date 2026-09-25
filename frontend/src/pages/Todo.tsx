@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   ChevronRight,
@@ -16,7 +16,8 @@ import { TodoComposer, TodoDraft, draftToBody } from "../components/todo/TodoCom
 import { CategoryDialog, CategoryDraft } from "../components/todo/CategoryDialog";
 import { ListState } from "../components/ui/ListState";
 import { LinkTextarea } from "../components/links/LinkTextarea";
-import { api, isGone, Todo as TodoItem, TodoCategory, TodoCounts } from "../lib/api";
+import { api, isConflict, isGone, Todo as TodoItem, TodoCategory, TodoCounts } from "../lib/api";
+import { mergeDiaryText } from "../lib/diaryMerge";
 import { usePendingSave } from "../lib/usePendingSave";
 import { toast } from "../store/toast";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -363,14 +364,40 @@ export function Todo() {
   // 갈 때와 페이지가 숨겨질 때(keepalive) 남은 것을 보낸다. guard 를 타지 않는다 — 다른 조작이 도는
   // 중(busy)이면 guard 는 아무것도 안 하고 false 라, 그때 벗어난 설명은 조용히 버려졌다.
   const descSave = usePendingSave([selectedTodo]);
+  // 설명의 기준 — 이 화면이 고치기 시작한(또는 마지막으로 저장한) 서버 설명. 저장에 실어 보내 그 사이
+  // 다른 곳에서 바뀌었으면 서버가 409 로 덮지 않는다(43차). 목록을 다시 받아도(reload) 바꾸지 않는다 —
+  // 다시 받은 값을 기준으로 삼으면 다른 기기에서 바뀐 설명을 "본 것"으로 쳐서 그대로 덮는다.
+  const descBase = useRef<{ id: string; text: string } | null>(null);
+  const descRef = useRef<HTMLTextAreaElement>(null);
+  const detailId = detail?.id;
+  useEffect(() => {
+    descBase.current = detail ? { id: detail.id, text: detail.description } : null;
+  }, [detailId]); // eslint-disable-line react-hooks/exhaustive-deps
   const typeDescription = (id: string, text: string) =>
     descSave.schedule(1000, async ({ keepalive }) => {
-      try {
-        const saved = await api.todoUpdate(id, { description: text }, keepalive);
+      const put = (description: string, base?: string) =>
+        api.todoUpdate(id, { description, base_description: base }, keepalive);
+      const settle = (saved: TodoItem) => {
+        if (descBase.current?.id === id) descBase.current.text = saved.description;
         setTodos((ts) => ts.map((t) => (t.id === id ? saved : t)));
+      };
+      try {
+        settle(await put(text, descBase.current?.id === id ? descBase.current.text : undefined));
       } catch (e) {
         // 그새 지워졌다 — 보낼 곳이 없다(다시 해 봐도 영영 실패한다)
         if (isGone(e)) return;
+        if (isConflict(e)) {
+          // 다른 곳에서 바뀌었다 — 둘 다 남긴다(일기와 같은 합치기: 저쪽 글 뒤에 이 기기에서 쓴 부분)
+          const theirs = (await api.todoBoard()).todos.find((t) => t.id === id);
+          if (!theirs) return;
+          const merged = mergeDiaryText(theirs.description, text);
+          settle(await put(merged, theirs.description));
+          // 그동안 더 치지 않았으면 칸에도 합친 글을 보인다(더 쳤으면 그 글이 다음 저장에 실린다)
+          const el = descRef.current;
+          if (el && descBase.current?.id === id && el.value === text) el.value = merged;
+          toast.ok("다른 곳에서 바뀐 할 일 설명과 합쳤습니다 — 이어 붙인 부분을 확인해 주세요");
+          return;
+        }
         toast.error("할 일 설명을 저장하지 못했습니다 — 잠시 뒤 다시 보냅니다");
         throw e; // 실패로 알려야 PendingSave 가 다시 해 본다
       }
@@ -680,6 +707,7 @@ export function Todo() {
           preview
           className="input h-auto py-2"
           rows={5}
+          ref={descRef}
           key={`desc-${detail.id}`}
           defaultValue={detail.description}
           placeholder="마크다운 · [ 로 문서·일정 연결"
