@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
+from . import accounts, session_revoke
 from .config import Settings, get_settings
 
 COOKIE_NAME = "server_session"
@@ -101,13 +102,9 @@ def _verify(token: str, settings: Settings):
     if (time.time() - ts.timestamp()) > ttl:
         return None  # 만료
     # 로그아웃한 토큰은 만료 전이라도 거절한다(session_revoke — 복사된 토큰이 계속 통했다)
-    from . import session_revoke
-
     if session_revoke.is_revoked(token, settings):
         return None
     # 계정이 삭제됐거나 active가 아니게 되면(승인 취소·비활성) 즉시 무효
-    from . import accounts
-
     acc = accounts.find(username, settings)
     if acc is None or not acc.can_login:
         return None
@@ -119,8 +116,6 @@ def end_session(token: str, settings: Settings) -> None:
 
     쿠키를 지우는 것만으로는 그 전에 복사된 토큰이 계속 통한다(session_revoke).
     """
-    from . import session_revoke
-
     got = _verify(token, settings)
     if got is not None:
         session_revoke.revoke(token, got[2], settings)
