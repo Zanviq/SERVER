@@ -34,3 +34,27 @@ test("링크 후보의 안내는 휴대폰에서 할 수 없는 조작(↑↓·E
   assert.match(hook, /useTouch\(\)/, "터치 환경을 가리지 않는다");
   assert.match(hook, /touch \? "눌러서 넣기/, "휴대폰 안내가 없다");
 });
+
+test("아이콘만 있는 드롭다운 단추에는 이름(label)이 있다 — 31차", async () => {
+  // 논문·회의 목록의 … 단추가 이름 없이 "단추"로만 읽혔다(화면 전체를 훑은 실측). 컴포넌트가
+  // 이름을 받게 하고, 아이콘 하나만 그리는 쓰임은 모두 넘기는지 소스로 본다.
+  const { readdirSync, statSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const root = new URL("../src/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  const files = [];
+  const walk = (d) => { for (const n of readdirSync(d)) { const p = join(d, n); statSync(p).isDirectory() ? walk(p) : p.endsWith(".tsx") && files.push(p); } };
+  walk(root);
+  const bad = [];
+  let iconOnly = 0;
+  for (const f of files) {
+    const text = readFileSync(f, "utf8").replace(/\r\n/g, "\n");
+    for (const m of text.matchAll(/<Dropdown\b[^>]*?trigger=\{\(\) => <([A-Z]\w+) size=\{\d+\} \/>\}[^>]*>/gs)) {
+      iconOnly++;
+      if (!/\blabel="[^"]+"/.test(m[0])) bad.push(`${f.split(/[\\/]/).pop()}: ${m[1]}`);
+    }
+  }
+  assert.ok(iconOnly >= 3, `아이콘만 그리는 드롭다운을 못 찾았다 — 이 시험의 식을 확인할 것(${iconOnly})`);
+  assert.deepEqual(bad, [], `이름 없는 아이콘 드롭다운: ${bad.join(", ")}`);
+  const dd = src("components/ui/Dropdown.tsx");
+  assert.match(dd, /aria-label=\{label\}/, "드롭다운 단추가 이름을 달지 않는다");
+});

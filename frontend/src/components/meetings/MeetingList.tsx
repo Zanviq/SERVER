@@ -168,7 +168,7 @@ export function MeetingList({
                         </span>
                       </span>
                       <span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-                        <Dropdown align="end" width={170}
+                        <Dropdown align="end" width={170} label="회의 메뉴"
                           className={`tap grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-hovered hover:text-fg ${active ? "" : "sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"}`}
                           trigger={() => <MoreHorizontal size={14} />}>
                           {(close) => (

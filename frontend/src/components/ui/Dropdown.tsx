@@ -11,6 +11,9 @@ interface DropdownProps {
   align?: "start" | "end";
   disabled?: boolean;
   className?: string;
+  /** 버튼의 이름(aria-label·title). 아이콘만 있는 버튼에는 **꼭** 준다 — 없으면 화면 읽기
+   *  프로그램이 "단추"라고만 읽고, 마우스를 올려도 무엇인지 안 나온다(31차: 논문·회의 목록의 …). */
+  label?: string;
 }
 
 /**
@@ -21,7 +24,7 @@ interface DropdownProps {
  * 위치는 버튼의 화면 좌표로 매번 계산하고, 스크롤·리사이즈에 따라간다.
  */
 export function Dropdown({
-  trigger, children, width, align = "start", disabled, className = "",
+  trigger, children, width, align = "start", disabled, className = "", label,
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -89,6 +92,8 @@ export function Dropdown({
         disabled={disabled}
         aria-haspopup="true"
         aria-expanded={open}
+        aria-label={label}
+        title={label}
         onClick={() => setOpen((v) => !v)}
         className={className}
       >

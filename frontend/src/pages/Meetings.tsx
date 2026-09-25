@@ -413,7 +413,7 @@ export function Meetings() {
                     }`}>
                     {reading ? <><Eye size={11} /> 읽기</> : <><Pencil size={11} /> 편집</>}
                   </button>
-                  <Dropdown align="end" width={150} className="btn btn-ghost h-7 px-2" trigger={() => <MoreHorizontal size={14} />}>
+                  <Dropdown align="end" width={150} label="문서 메뉴" className="btn btn-ghost h-7 px-2" trigger={() => <MoreHorizontal size={14} />}>
                     {(close) => (
                       <>
                         <DropdownItem onClick={() => { setRenameFor(tab); setRenameName(tab); close(); }}>
