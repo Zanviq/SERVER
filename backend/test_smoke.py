@@ -11469,6 +11469,49 @@ def test_ai_turns_wait_on_their_own_threads():
     assert ai_lanes.inflight("cap-user") == 0, "돌지 못한 응답이 몫을 쥔 채 남았다"
 
 
+def test_big_bodies_are_refused_before_anyone_reads_them(monkeypatch):
+    """본문 크기 한도 — 로그인 전에는 작게, 읽기 전에 거절한다. 422 는 받은 값을 되읊지 않는다.
+
+    FastAPI 는 본문을 인증보다 먼저 통째로 읽는다. 25차 실측: 로그인 없이 90MB × 6 을
+    /api/notes/save 로 → 서버 메모리 +1.2GB(그러고 401), /api/auth/login 으로 → +2.5GB(422 가
+    그 본문을 응답에 되읊었다). 파이의 메모리를 인터넷 누구나 비울 수 있었다.
+    """
+    from fastapi.testclient import TestClient as _TC
+
+    from backend import body_limit
+
+    anon = _TC(app)
+    big = {"username": "x", "password": "y", "pad": "a" * (200 * 1024)}
+    r = anon.post("/api/auth/login", json=big)
+    assert r.status_code == 413 and "로그인 전" in r.json()["detail"], r.text[:200]
+    r = anon.put("/api/notes/save", json={"path": "x.md", "content": "a" * (200 * 1024)})
+    assert r.status_code == 413, r.status_code
+
+    def chunks():   # 길이를 밝히지 않는 전송(청크) — 세다가 넘는 순간 끊는다
+        for _ in range(40):
+            yield b"a" * 8192
+
+    r = anon.post("/api/auth/signup", content=chunks(), headers={"Content-Type": "application/json"})
+    assert r.status_code == 413, r.status_code
+
+    # 로그인 뒤: JSON 은 JSON_BODY 까지(시험에서는 1MB 로 줄여 본다)
+    monkeypatch.setattr(body_limit, "JSON_BODY", 1024 * 1024)
+    _login()
+    ok = client.put("/api/notes/save", json={"path": "본문한도/작은.md", "content": "a" * (500 * 1024)})
+    assert ok.status_code == 200, ok.text[:200]
+    r = client.put("/api/notes/save", json={"path": "본문한도/큰.md", "content": "a" * (2 * 1024 * 1024)})
+    assert r.status_code == 413 and "최대 1MB" in r.json()["detail"], r.text[:200]
+    # 파일 올리기는 JSON 한도가 아니라 올리기 한도를 따른다
+    up = client.post("/api/notes/upload", files={"file": ("본문한도.bin", b"x" * (2 * 1024 * 1024))},
+                     data={"path": "본문한도"})
+    assert up.status_code == 200, up.text[:200]
+
+    # 422 는 무엇이 틀렸는지만 — 받은 값(비밀번호 칸에 넣은 것)을 되돌려 주지 않는다
+    r = anon.post("/api/auth/login", json={"username": "u", "password": 98765432109})
+    assert r.status_code == 422 and "98765432109" not in r.text, r.text
+    assert r.json()["detail"][0]["loc"][-1] == "password"
+
+
 def test_heavy_background_jobs_take_turns(monkeypatch):
     """논문 추출·회의 받아쓰기는 한꺼번에 올려도 HEAVY_JOBS 개씩만 돈다(나머지는 줄을 선다).
 

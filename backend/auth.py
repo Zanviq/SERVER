@@ -111,6 +111,11 @@ def _verify(token: str, settings: Settings):
     return username, acc, ts.timestamp() + ttl
 
 
+def signed_in(token: str) -> bool:
+    """이 토큰이 지금 유효한 세션인가 — 의존성 밖(미들웨어)에서 볼 때. body_limit 이 쓴다."""
+    return bool(token) and _verify(token, get_settings()) is not None
+
+
 def end_session(token: str, settings: Settings) -> None:
     """이 토큰을 끝낸다 — 만료 시각까지 거절 목록에 올린다(유효한 토큰일 때만).
 

@@ -9,10 +9,13 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .auth import require_owner, require_session
+from .auth import COOKIE_NAME, require_owner, require_session, signed_in
+from .body_limit import BodyLimit
 from .config import get_settings
 from .same_origin import SameOriginWrites
 from .routers import (
@@ -131,6 +134,10 @@ app.add_middleware(
 # 형제 서브도메인(*.zanviq.dev)의 요청에도 실린다 — 자세한 까닭은 same_origin.py.
 # 가장 바깥에 둔다(마지막에 더한 미들웨어가 가장 먼저 받는다).
 app.add_middleware(SameOriginWrites, allowed_origins=_ALLOWED_ORIGINS)
+# 본문 크기 한도 — FastAPI 는 본문을 인증보다 먼저 통째로 읽는다. 로그인하지 않은 누구나 큰
+# 본문으로 서버 메모리를 비울 수 있었다(90MB × 6 → +1.2GB). 무엇보다 먼저 받는다(body_limit.py).
+app.add_middleware(BodyLimit, cookie_name=COOKIE_NAME,
+                   upload_limit=lambda: get_settings().max_upload_bytes, signed_in=signed_in)
 
 # 공개 라우터(인증 불필요)
 app.include_router(auth.router)
@@ -181,6 +188,18 @@ _DISK_TROUBLE = {
     errno.ENOENT: "저장 폴더를 찾을 수 없습니다(외장하드가 빠졌는지 확인하세요).",
     errno.EIO: "저장소를 읽고 쓰는 중 오류가 났습니다(디스크를 확인하세요).",
 }
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request: Request, exc: RequestValidationError):
+    """422 — 무엇이 틀렸는지(자리·까닭)만 돌려준다. **받은 값은 되읊지 않는다.**
+
+    FastAPI 기본 처리는 오류마다 받은 값(input)을 통째로 실어 보낸다. 로그인 창구에 90MB 본문을
+    보내면 그 90MB 를 응답에 다시 담아 이벤트 루프에서 JSON 으로 바꿨고(25차: 6개에 12초·
+    +2.5GB), 비밀번호 칸의 형식이 틀리면 비밀번호를 응답에 되돌려 줬다. 화면은 loc·msg 만 쓴다.
+    """
+    errors = [{k: e[k] for k in ("type", "loc", "msg") if k in e} for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
 
 @app.exception_handler(Exception)
