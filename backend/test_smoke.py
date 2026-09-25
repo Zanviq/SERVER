@@ -10289,6 +10289,19 @@ def test_a_recording_is_served_and_transcribed_as_its_extension_not_as_claimed()
         client.delete(f"/api/meetings/{mid}")
 
 
+def test_user_bytes_leave_only_through_user_file():
+    """올린 파일을 내보내는 라우터는 FileResponse 를 직접 만들지 않는다 — user_file 을 지난다.
+
+    nosniff 와 스크립트 형식의 sandbox 는 예전에 문서 원본에만 적혀 있었고, 회의 녹음·논문은
+    머리글을 손으로 따로 적었다(40차). 새 파일 응답이 그 규칙을 빠뜨리지 않게 길을 하나로 둔다.
+    """
+    import pathlib
+
+    routers = pathlib.Path(__file__).parent / "routers"
+    direct = [p.name for p in routers.glob("*.py") if "FileResponse(" in p.read_text(encoding="utf-8")]
+    assert direct == [], f"FileResponse 를 직접 만드는 라우터: {direct} — backend/user_file.user_file 을 쓸 것"
+
+
 def test_a_folder_left_behind_is_cleaned_up_but_an_upload_in_progress_is_not():
     """미아는 치우되, 올리는 중인 것은 건드리지 않는다.
 

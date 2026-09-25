@@ -5,12 +5,12 @@ import os
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from .. import orphans, paper_extract, paper_store
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
+from ..user_file import user_file
 
 router = APIRouter(prefix="/api/papers", tags=["papers"])
 
@@ -139,12 +139,11 @@ def get_file(
     path = paper_store.pdf_path(user, settings, pid)
     if not path.exists():
         raise HTTPException(status_code=410, detail="PDF 파일이 없습니다.")
-    return FileResponse(
+    return user_file(
         path,
-        media_type="application/pdf",
+        "application/pdf",
         headers={
             "Content-Disposition": "inline",
-            "X-Content-Type-Options": "nosniff",
             "Cache-Control": "private, max-age=3600",
             "X-Paper-Filename": str(p.get("filename") or "paper.pdf").encode("ascii", "ignore").decode() or "paper.pdf",
         },
