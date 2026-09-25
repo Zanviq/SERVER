@@ -28,18 +28,21 @@ def _path(user: SessionUser, settings: Settings):
     return settings.user_root(user.username) / "moved.json"
 
 
-def _rows(user: SessionUser, settings: Settings) -> list[dict]:
-    rows = json_store.read_json(_path(user, settings), [])
+def _read(path) -> list[dict]:
+    """기록 파일을 읽는다 — 망가졌거나 모양이 틀린 줄은 버린다(길잡이일 뿐이다)."""
+    rows = json_store.read_json(path, [])
     return [r for r in rows if isinstance(r, dict) and isinstance(r.get("from"), str)
             and isinstance(r.get("to"), str)] if isinstance(rows, list) else []
+
+
+def _rows(user: SessionUser, settings: Settings) -> list[dict]:
+    return _read(_path(user, settings))
 
 
 def rows_beside(notes_root) -> list[dict]:
     """문서 루트(…/사용자/data) 옆의 옮김 기록 — 사용자를 모르고 문서 루트만 아는 쪽(문서 그래프)이 쓴다.
     기록은 사용자 폴더에 있고(_path) 문서 루트는 그 아래 data 다."""
-    rows = json_store.read_json(notes_root.parent / "moved.json", [])
-    return [r for r in rows if isinstance(r, dict) and isinstance(r.get("from"), str)
-            and isinstance(r.get("to"), str)] if isinstance(rows, list) else []
+    return _read(notes_root.parent / "moved.json")
 
 
 def record(user: SessionUser, settings: Settings, old_rel: str, new_rel: str,

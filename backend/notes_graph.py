@@ -116,10 +116,10 @@ class _Lookup:
         self._notes_dir = notes_dir
         self._moved: list[dict] | None = None  # 옮김 기록 — 못 찾은 경로 링크가 있을 때만 읽는다
 
-    def add(self, path: Path, notes_dir: Path, value) -> None:
+    def add(self, path: Path, value) -> None:
         self.by_title.setdefault(path.stem.lower(), value)
         # 경로는 확장자를 붙여도 떼어도 같은 문서다(링크 열기와 같은 규칙)
-        key = path.relative_to(notes_dir).as_posix().lower()
+        key = path.relative_to(self._notes_dir).as_posix().lower()
         self.by_rel.setdefault(key, value)
         if key.endswith(".md"):
             self.by_rel.setdefault(key[:-3], value)
@@ -298,7 +298,7 @@ def _link_graph(notes_dir: Path, files: list[WalkedFile]) -> dict:
     for f in notes:
         p = f.path
         stem = p.stem
-        find.add(p, notes_dir, stem)
+        find.add(p, stem)
         nodes.append(
             {
                 "id": stem,
@@ -386,7 +386,7 @@ def _folder_graph(notes_dir: Path, base: Path) -> dict:
     all_notes = [f for f in walk_files(base, sort=False) if f.rel.endswith(".md")]
     find = _Lookup(notes_dir)
     for f in all_notes:
-        find.add(f.path, notes_dir, f.path)
+        find.add(f.path, f.path)
 
     valid_ids = {n["id"] for n in nodes}
     links = []
