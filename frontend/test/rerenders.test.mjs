@@ -44,3 +44,13 @@ test("남은 시간(remaining)은 그것을 보여 주는 곳만 받는다", () 
   }
   for (const r of readers) assert.ok(allowed.has(r), `${r} 가 1초마다 바뀌는 remaining 을 받는다`);
 });
+
+test("대화 화면은 입력칸에 칠 때마다 지도와 말풍선을 다시 계산하지 않는다", () => {
+  const panel = readFileSync(join(SRC, "components/ai/ChatPanel.tsx"), "utf8");
+  // 그리는 때마다 asTree(...) 로 새 배열을 넘기면 지도의 useMemo 가 매번 다시 돈다
+  assert.doesNotMatch(panel, /messages=\{asTree\(/, "지도에 그리는 때마다 새 배열을 넘긴다");
+  assert.match(panel, /useMemo\(\(\) => asTree\(messages\), \[messages\]\)/);
+  // 마크다운 풀이는 값이 그대로면 건너뛴다
+  const lazy = readFileSync(join(SRC, "components/notes/LazyMarkdownView.tsx"), "utf8");
+  assert.match(lazy, /export const MarkdownView = memo\(/, "말풍선 마크다운이 매번 다시 풀린다");
+});

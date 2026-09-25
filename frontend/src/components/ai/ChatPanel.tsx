@@ -766,9 +766,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
    *
    * 이 규칙은 `frontend/test/treeHost.test.mjs` 가 지킨다(엮는 자리가 하나인지 센다).
    */
+  // 나무에 넘길 모양은 **메시지가 바뀔 때만** 새로 만든다. 그리는 때마다 asTree 로 새 배열을
+  // 주면 지도의 useMemo(나무 짓기·300노드 배치·찾기)가 한 글자 칠 때마다 다시 돌았다 —
+  // 300차례 대화에서 한 글자가 화면에 나오기까지 중앙 170ms(15차 실측).
+  const treeMessages = useMemo(() => asTree(messages), [messages]);
   const tree = space ? (
     <ConversationTree
-      messages={asTree(messages)} head={liveHead} links={links}
+      messages={treeMessages} head={liveHead} links={links}
       positions={treeSpots} onMove={moveNodes}
       onGo={(id) => { void goTo(id); if (!treeAside) setShowTree(false); }}
       onEdit={editAndFork}
