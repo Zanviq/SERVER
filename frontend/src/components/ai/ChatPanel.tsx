@@ -297,6 +297,125 @@ function asTree(msgs: Msg[]): TreeMessage[] {
   }));
 }
 
+/** 사용자 말풍선 — 함께 보낸 것·못 찾은 링크·답을 못 받은 까닭·가지 옮기기까지. */
+function UserBubble({ m, openDoc, branches, onGo, onEdit, busy }: {
+  m: Msg;
+  openDoc: (title: string) => void;
+  /** 같은 자리에서 갈라진 형제들(하나뿐이면 빈 배열) */
+  branches: TreeMessage[];
+  onGo: (id: string) => void;
+  onEdit: () => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="flex flex-col items-end gap-1">
+      {(m.selections?.length || m.attachments?.length) ? (
+        <div className="flex max-w-[80%] flex-wrap justify-end gap-1">
+          {m.selections?.map((s, j) => (
+            <span key={`s${j}`} title={s.text}
+              className="inline-flex max-w-[240px] items-center gap-1 rounded-full border border-line bg-subtle px-2 py-0.5 text-[11px] text-fg-muted">
+              <Quote size={10} className="shrink-0" />
+              <span className="truncate">{s.page ? `${s.page}쪽 · ` : ""}{s.text}</span>
+            </span>
+          ))}
+          {m.attachments?.map((a, j) => (
+            <span key={`a${j}`}
+              className="inline-flex items-center gap-1 rounded-full border border-line bg-subtle px-2 py-0.5 text-[11px] text-fg-muted">
+              <ImageIcon size={10} /> {a.label || "영역 이미지"}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {m.text && (
+        // 사용자가 친 것도 마크다운이다(목록·굵게·`[note/…]` 링크)
+        <div className="md-on-accent max-w-[80%] rounded-lg rounded-br-sm bg-accent px-4 py-2.5 text-[13.5px] text-accent-contrast">
+          <MarkdownView content={m.text} onWikiClick={openDoc} />
+        </div>
+      )}
+      {m.missing && m.missing.length > 0 && (
+        <div className="max-w-[80%] text-right text-[11px] text-danger">
+          찾지 못한 링크(AI 가 내용을 못 봤습니다): {m.missing.join(", ")}
+        </div>
+      )}
+      {/* 답을 못 받은 질문 — 까닭을 남긴다. 오류 말풍선은 저장되지 않아서, 예전에는
+          다시 읽어 오는 순간 사라지고 답 없는 질문만 남았다. */}
+      {m.failed && (
+        <div role="note" className="max-w-[80%] text-right text-[11px] text-danger">
+          답을 받지 못했습니다 — {m.failed} (✎ 로 다시 물을 수 있습니다)
+        </div>
+      )}
+      {/* 이 질문에서 갈라진 가지가 여럿이면 여기서 바로 옮겨 다닌다 —
+          지도를 열지 않고도 "아까 저쪽으로 물어본 것"으로 돌아갈 수 있다. */}
+      <BranchSwitch msgs={branches} current={m.id} onGo={onGo} onEdit={onEdit} busy={busy} />
+    </div>
+  );
+}
+
+/** AI 말풍선 — 스킬 단계·답(쓰는 중이면 커서)·단어 후보. */
+function AssistantBubble({ m, openDoc, vocabTags, space }: {
+  m: Msg;
+  openDoc: (title: string) => void;
+  vocabTags?: string[];
+  space?: string;
+}) {
+  return (
+    <div className="flex gap-2.5">
+      <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-muted text-accent">
+        <Bot size={15} />
+      </div>
+      <div className="min-w-0 flex-1 space-y-2">
+        {m.steps.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {m.steps.map((s, j) => {
+              // 갈래 아이콘 + 상태 아이콘. 갈래는 "무엇을 했나"(일정·논문·
+              // 단어장…), 상태는 "됐나"를 말한다 — 둘은 다른 물음이라
+              // 하나로 합치면 어느 쪽도 알 수 없다.
+              const Kind = skillIcon(s.name);
+              return (
+                <span key={j} title={s.message}
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] ${
+                    s.ok === false ? "border-danger/30 text-danger"
+                    : s.ok ? "border-accent/30 bg-accent-muted text-accent-fg"
+                    : "border-line text-fg-muted"}`}>
+                  <Kind size={11} className="shrink-0 opacity-80" />
+                  {SKILL_LABEL[s.name] ?? s.name}
+                  {s.ok === undefined ? <Loader2 size={11} className="animate-spin" />
+                    : s.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
+                </span>
+              );
+            })}
+          </div>
+        )}
+        {m.text ? (
+          <div className="card px-4 py-2.5">
+            {/* AI 가 "[[주간정리]] 로 만들었습니다"라고 답할 때, 그 링크가
+                아무 데도 가지 않으면 이름만 알려 주고 끝난 셈이다. */}
+            <MarkdownView content={m.text} onWikiClick={openDoc} />
+            {/* 아직 쓰는 중이면 커서를 남겨 둔다 — 없으면 잘린 답을
+                다 쓴 답으로 착각한다. */}
+            {m.pending && (
+              <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-[2px] animate-pulse bg-fg-muted" />
+            )}
+          </div>
+        ) : m.pending && m.steps.length === 0 ? (
+          <div className="inline-flex items-center gap-2 text-[13px] text-fg-muted">
+            <Loader2 size={14} className="animate-spin" /> 생각 중…
+          </div>
+        ) : null}
+        {/* 단어 후보: 고른 것만 서버로 바로 가고 백그라운드에서 채워진다.
+            스킬 이름이 아니라 **후보가 들어 있는지**로 본다 — 허락 없이
+            불린 add_vocab_words 도 저장 대신 후보로 돌아온다.
+            한 답에 목록이 여럿 오면(모델이 함수 호출을 나란히 낸다) 겹치는
+            단어는 앞 목록에만 남긴다 — 두 목록에서 같은 단어를 두 번 넣게
+            되는 것을 막는다. */}
+        {dedupeProposals(m.steps).map((p) => (
+          <VocabProposal key={p.key} data={p.data} tags={vocabTags} space={space} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** 재사용 가능한 AI 채팅 패널 (AI 비서 · 캘린더 사이드 · 영어 학습 · 논문 공용) */
 export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function ChatPanel({
   suggestions = DEFAULT_SUGGESTIONS,
@@ -749,106 +868,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   // 이렇게 묶지 않으면 한 글자마다 말풍선 수백 개를 다시 지었다(15차 실측 — 운영 번들,
   // 말풍선 600개에서 한 글자 63ms 중 대부분).
   const bubbles = useMemo(() => (
-shown.map((m, i) =>
-      m.role === "user" ? (
-        <div key={m.id ?? i} className="flex flex-col items-end gap-1">
-          {(m.selections?.length || m.attachments?.length) ? (
-            <div className="flex max-w-[80%] flex-wrap justify-end gap-1">
-              {m.selections?.map((s, j) => (
-                <span key={`s${j}`} title={s.text}
-                  className="inline-flex max-w-[240px] items-center gap-1 rounded-full border border-line bg-subtle px-2 py-0.5 text-[11px] text-fg-muted">
-                  <Quote size={10} className="shrink-0" />
-                  <span className="truncate">{s.page ? `${s.page}쪽 · ` : ""}{s.text}</span>
-                </span>
-              ))}
-              {m.attachments?.map((a, j) => (
-                <span key={`a${j}`}
-                  className="inline-flex items-center gap-1 rounded-full border border-line bg-subtle px-2 py-0.5 text-[11px] text-fg-muted">
-                  <ImageIcon size={10} /> {a.label || "영역 이미지"}
-                </span>
-              ))}
-            </div>
-          ) : null}
-          {m.text && (
-            // 사용자가 친 것도 마크다운이다(목록·굵게·`[note/…]` 링크)
-            <div className="md-on-accent max-w-[80%] rounded-lg rounded-br-sm bg-accent px-4 py-2.5 text-[13.5px] text-accent-contrast">
-              <MarkdownView content={m.text} onWikiClick={openDoc} />
-            </div>
-          )}
-          {m.missing && m.missing.length > 0 && (
-            <div className="max-w-[80%] text-right text-[11px] text-danger">
-              찾지 못한 링크(AI 가 내용을 못 봤습니다): {m.missing.join(", ")}
-            </div>
-          )}
-          {/* 답을 못 받은 질문 — 까닭을 남긴다. 오류 말풍선은 저장되지 않아서, 예전에는
-              다시 읽어 오는 순간 사라지고 답 없는 질문만 남았다. */}
-          {m.failed && (
-            <div role="note" className="max-w-[80%] text-right text-[11px] text-danger">
-              답을 받지 못했습니다 — {m.failed} (✎ 로 다시 물을 수 있습니다)
-            </div>
-          )}
-          {/* 이 질문에서 갈라진 가지가 여럿이면 여기서 바로 옮겨 다닌다 —
-              지도를 열지 않고도 "아까 저쪽으로 물어본 것"으로 돌아갈 수 있다. */}
-          <BranchSwitch msgs={branchesOf(m.id)} current={m.id} onGo={goTo}
-            onEdit={() => editAndFork(m.id!, m.text)} busy={busy} />
-        </div>
-      ) : (
-        <div key={m.id ?? i} className="flex gap-2.5">
-          <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-muted text-accent">
-            <Bot size={15} />
-          </div>
-          <div className="min-w-0 flex-1 space-y-2">
-            {m.steps.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {m.steps.map((s, j) => {
-                  // 갈래 아이콘 + 상태 아이콘. 갈래는 "무엇을 했나"(일정·논문·
-                  // 단어장…), 상태는 "됐나"를 말한다 — 둘은 다른 물음이라
-                  // 하나로 합치면 어느 쪽도 알 수 없다.
-                  const Kind = skillIcon(s.name);
-                  return (
-                    <span key={j} title={s.message}
-                      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] ${
-                        s.ok === false ? "border-danger/30 text-danger"
-                        : s.ok ? "border-accent/30 bg-accent-muted text-accent-fg"
-                        : "border-line text-fg-muted"}`}>
-                      <Kind size={11} className="shrink-0 opacity-80" />
-                      {SKILL_LABEL[s.name] ?? s.name}
-                      {s.ok === undefined ? <Loader2 size={11} className="animate-spin" />
-                        : s.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
-                    </span>
-                  );
-                })}
-              </div>
-            )}
-            {m.text ? (
-              <div className="card px-4 py-2.5">
-                {/* AI 가 "[[주간정리]] 로 만들었습니다"라고 답할 때, 그 링크가
-                    아무 데도 가지 않으면 이름만 알려 주고 끝난 셈이다. */}
-                <MarkdownView content={m.text} onWikiClick={openDoc} />
-                {/* 아직 쓰는 중이면 커서를 남겨 둔다 — 없으면 잘린 답을
-                    다 쓴 답으로 착각한다. */}
-                {m.pending && (
-                  <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-[2px] animate-pulse bg-fg-muted" />
-                )}
-              </div>
-            ) : m.pending && m.steps.length === 0 ? (
-              <div className="inline-flex items-center gap-2 text-[13px] text-fg-muted">
-                <Loader2 size={14} className="animate-spin" /> 생각 중…
-              </div>
-            ) : null}
-            {/* 단어 후보: 고른 것만 서버로 바로 가고 백그라운드에서 채워진다.
-                스킬 이름이 아니라 **후보가 들어 있는지**로 본다 — 허락 없이
-                불린 add_vocab_words 도 저장 대신 후보로 돌아온다.
-                한 답에 목록이 여럿 오면(모델이 함수 호출을 나란히 낸다) 겹치는
-                단어는 앞 목록에만 남긴다 — 두 목록에서 같은 단어를 두 번 넣게
-                되는 것을 막는다. */}
-            {dedupeProposals(m.steps).map((p) => (
-              <VocabProposal key={p.key} data={p.data} tags={vocabTags} space={space} />
-            ))}
-          </div>
-        </div>
-      ),
-    )
+    shown.map((m, i) => m.role === "user" ? (
+      <UserBubble key={m.id ?? i} m={m} openDoc={openDoc} branches={branchesOf(m.id)}
+        onGo={goTo} onEdit={() => editAndFork(m.id!, m.text)} busy={busy} />
+    ) : (
+      <AssistantBubble key={m.id ?? i} m={m} openDoc={openDoc} vocabTags={vocabTags} space={space} />
+    ))
   ), [shown, openDoc, branchesOf, goTo, editAndFork, busy, vocabTags, space]);
 
   const canSend = !busy && (!!input.trim() || hasContext);
