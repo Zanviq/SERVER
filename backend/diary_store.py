@@ -155,7 +155,15 @@ def save_day(user: SessionUser, settings: Settings, day: str, patch: dict,
         days = _load(user, settings)
         cur = _entry(day, days.get(day) or {})
         if "text" in patch and patch["text"] is not None:
-            new_text = str(patch["text"])[:MAX_TEXT]
+            new_text = str(patch["text"])
+            # 넘치면 **자르지 않고** 거절한다(55차). 예전엔 앞 2만 자만 남기고 200 을 돌려줘, 긴 글·붙여넣은
+            # 글의 끝이 알림 없이 사라졌다(실측: 25,305자 → 20,000자, "마지막문장" 사라짐). 화면도 같은
+            # 상한(maxLength)을 두지만, AI 스킬·다른 기기처럼 화면을 거치지 않는 쓰기가 있다.
+            if len(new_text) > MAX_TEXT:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"기록은 하루 {MAX_TEXT:,}자까지입니다(지금 {len(new_text):,}자) — 줄이거나 나눠 적어 주세요.",
+                )
             if (base_at is not None and new_text != cur["text"]
                     and abs(cur["text_at"] - float(base_at)) > 1e-6):
                 raise TextConflict(day)

@@ -10455,6 +10455,31 @@ def test_archive_zips_are_capped_and_never_left_behind():
     assert archive.sweep_stale(s) >= 1 and not stale.exists()
 
 
+def test_a_diary_too_long_is_refused_not_cut():
+    """하루 기록이 상한을 넘으면 자르지 않고 413 으로 알린다(55차).
+
+    예전엔 앞 2만 자만 남기고 200 을 돌려줬다 — 격리 서버 실측: 25,305자를 보내자 20,000자만 남고
+    끝의 "마지막문장"이 알림 없이 사라졌다. 화면·서버가 같은 상한을 쓰는지도 본다.
+    """
+    import pathlib
+
+    from backend import diary_store
+
+    _login()
+    day = "2031-01-06"
+    over = "가" * (diary_store.MAX_TEXT + 5)
+    r = client.put(f"/api/diary/{day}", json={"text": over})
+    assert r.status_code == 413, (r.status_code, r.text[:200])
+    assert f"{diary_store.MAX_TEXT:,}" in r.json()["detail"]
+    ok = "나" * diary_store.MAX_TEXT
+    r = client.put(f"/api/diary/{day}", json={"text": ok})
+    assert r.status_code == 200 and len(r.json()["text"]) == diary_store.MAX_TEXT
+    client.put(f"/api/diary/{day}", json={"text": ""})
+    fe = (pathlib.Path(__file__).parent.parent / "frontend/src/components/calendar/DiaryPanel.tsx").read_text(encoding="utf-8")
+    assert f"const DIARY_MAX = {diary_store.MAX_TEXT};" in fe, "화면과 서버의 기록 상한이 다르다"
+    assert "maxLength={DIARY_MAX}" in fe
+
+
 def test_user_bytes_leave_only_through_user_file():
     """올린 파일을 내보내는 라우터는 FileResponse 를 직접 만들지 않는다 — user_file 을 지난다.
 

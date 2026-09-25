@@ -9,6 +9,9 @@ import { PendingSave } from "../../lib/pendingSave";
 import { AXES, AXIS_LABEL, SHAPES, SHAPE_LABEL, ShapeIcon } from "./DiaryShapes";
 import { LinkTextarea } from "../links/LinkTextarea";
 
+/** 하루 기록 글의 상한. 서버(diary_store.MAX_TEXT)와 같은 값이어야 한다 — 넘치면 서버가 거절한다. */
+const DIARY_MAX = 20000;
+
 interface Props {
   /** YYYY-MM-DD */
   date: string;
@@ -375,7 +378,15 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
             readOnly={locked}
             placeholder={locked ? "" : "오늘 어땠는지 적어 두세요. (마크다운 · [ 로 문서·일정 연결)"}
             className="input min-h-[120px] flex-1 resize-none leading-relaxed"
+            // 서버 상한과 같다 — 예전엔 칸에 상한이 없고 서버가 뒤를 말없이 잘랐다(55차)
+            maxLength={DIARY_MAX}
           />
+          {!locked && text.length > DIARY_MAX * 0.9 && (
+            <p className="mt-1 text-[11px] text-fg-muted">
+              {text.length.toLocaleString()} / {DIARY_MAX.toLocaleString()}자
+              {text.length >= DIARY_MAX && " — 더 적을 수 없습니다. 나눠 적어 주세요."}
+            </p>
+          )}
           {/* key 에 날짜를 준다 — 잠긴 날에서 잠긴 날로 옮기면 컴포넌트가 그대로
               남아, 앞 날에 치다 만 숫자와 열린 입력칸이 다음 날로 따라온다. */}
           {locked && <DiaryLock key={date} date={date} onUnlock={onUnlock} />}
