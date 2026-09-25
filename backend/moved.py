@@ -72,8 +72,13 @@ def follow(user: SessionUser, settings: Settings, rel: str,
     그 자리의 **가장 최근** 문서를 가리키므로, rel 에 직접 닿는 옮김 중 최근 것부터 거기서 끝까지
     밟아 보고, 지금 있는 자리에 닿으면 그것을 준다.
     """
+    return follow_rows(_rows(user, settings), rel, exists)
+
+
+def follow_rows(rows: list[dict], rel: str, exists: Callable[[str], bool]) -> str | None:
+    """follow 의 알맹이 — 기록을 이미 읽어 둔 쪽(여러 경로를 한꺼번에 따라가는 그래프)이 쓴다.
+    규칙과 그 까닭은 follow 에 있다."""
     start = rel.strip("/")
-    rows = _rows(user, settings)
     for s in range(len(rows) - 1, -1, -1):
         if _apply(rows[s], start) in (None, start):
             continue  # 이 옮김은 rel 에 닿지 않는다 — 여기서 시작할 까닭이 없다
