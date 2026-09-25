@@ -436,13 +436,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
    * 서버에 남지 않는 화면(비서 등 space 가 없는 곳)은 메시지가 곧 한 줄이므로
    * 그대로 쓴다. 스트리밍 중인 말풍선은 아직 id 가 없어 나무에 없으므로 뒤에 붙인다.
    */
+  // 나무 모양은 **메시지가 바뀔 때만** 한 번 만들어 모두가 같이 쓴다. 그리는 때마다 asTree 로
+  // 새 배열을 만들면 지도의 useMemo(나무 짓기·300노드 배치·찾기)가 한 글자 칠 때마다 다시 돌고,
+  // 말풍선마다 부르는 branchesOf 가 각자 또 만들어 말풍선 수의 제곱만큼 일했다(15차 실측).
+  const treeMessages = useMemo(() => asTree(messages), [messages]);
+
   const shown = useMemo(() => {
     if (!space) return messages;
     const live = messages.filter((m) => !m.id);
-    const tree = asTree(messages);
-    const ids = new Set(threadOf(tree, head).map((m) => m.id));
+    const ids = new Set(threadOf(treeMessages, head).map((m) => m.id));
     return [...messages.filter((m) => m.id && ids.has(m.id!)), ...live];
-  }, [messages, head, space]);
+  }, [messages, treeMessages, head, space]);
 
   /** 답을 기다리는 동안에는 **그 임시 노드**가 지금 자리다(지도가 거기를 비춘다). */
   const liveHead = useMemo(() => {
@@ -453,21 +457,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   /** 이 메시지와 같은 자리에서 갈라진 형제들(말풍선의 ◀ 2/3 ▶). */
   const branchesOf = useCallback((id?: string) => {
     if (!space || !id) return [] as TreeMessage[];
-    const sib = siblingsOf(asTree(messages), id);
+    const sib = siblingsOf(treeMessages, id);
     return sib.length > 1 ? sib : [];
-  }, [messages, space]);
+  }, [treeMessages, space]);
 
   /** 다른 가지로 옮겨 간다. 그 가지의 **끝까지** 따라간다. */
   const goTo = useCallback(async (id: string) => {
     if (!space) return;
-    const leaf = deepestLeaf(asTree(messages), id);
+    const leaf = deepestLeaf(treeMessages, id);
     setHead(leaf);                       // 먼저 화면을 바꾼다(기다릴 이유가 없다)
     try {
       await api.aiSpaceHead(space, leaf);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "가지를 옮기지 못했습니다");
     }
-  }, [messages, space]);
+  }, [treeMessages, space]);
 
   const firstScroll = useRef(true);
   useEffect(() => {
@@ -741,15 +745,120 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     clear,
   }), [send, clear]);
 
+  // 말풍선 목록은 **그리는 값이 바뀔 때만** 다시 짓는다. 입력칸의 글자도 이 패널의 상태라,
+  // 이렇게 묶지 않으면 한 글자마다 말풍선 수백 개를 다시 지었다(15차 실측 — 운영 번들,
+  // 말풍선 600개에서 한 글자 63ms 중 대부분).
+  const bubbles = useMemo(() => (
+shown.map((m, i) =>
+      m.role === "user" ? (
+        <div key={m.id ?? i} className="flex flex-col items-end gap-1">
+          {(m.selections?.length || m.attachments?.length) ? (
+            <div className="flex max-w-[80%] flex-wrap justify-end gap-1">
+              {m.selections?.map((s, j) => (
+                <span key={`s${j}`} title={s.text}
+                  className="inline-flex max-w-[240px] items-center gap-1 rounded-full border border-line bg-subtle px-2 py-0.5 text-[11px] text-fg-muted">
+                  <Quote size={10} className="shrink-0" />
+                  <span className="truncate">{s.page ? `${s.page}쪽 · ` : ""}{s.text}</span>
+                </span>
+              ))}
+              {m.attachments?.map((a, j) => (
+                <span key={`a${j}`}
+                  className="inline-flex items-center gap-1 rounded-full border border-line bg-subtle px-2 py-0.5 text-[11px] text-fg-muted">
+                  <ImageIcon size={10} /> {a.label || "영역 이미지"}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {m.text && (
+            // 사용자가 친 것도 마크다운이다(목록·굵게·`[note/…]` 링크)
+            <div className="md-on-accent max-w-[80%] rounded-lg rounded-br-sm bg-accent px-4 py-2.5 text-[13.5px] text-accent-contrast">
+              <MarkdownView content={m.text} onWikiClick={openDoc} />
+            </div>
+          )}
+          {m.missing && m.missing.length > 0 && (
+            <div className="max-w-[80%] text-right text-[11px] text-danger">
+              찾지 못한 링크(AI 가 내용을 못 봤습니다): {m.missing.join(", ")}
+            </div>
+          )}
+          {/* 답을 못 받은 질문 — 까닭을 남긴다. 오류 말풍선은 저장되지 않아서, 예전에는
+              다시 읽어 오는 순간 사라지고 답 없는 질문만 남았다. */}
+          {m.failed && (
+            <div role="note" className="max-w-[80%] text-right text-[11px] text-danger">
+              답을 받지 못했습니다 — {m.failed} (✎ 로 다시 물을 수 있습니다)
+            </div>
+          )}
+          {/* 이 질문에서 갈라진 가지가 여럿이면 여기서 바로 옮겨 다닌다 —
+              지도를 열지 않고도 "아까 저쪽으로 물어본 것"으로 돌아갈 수 있다. */}
+          <BranchSwitch msgs={branchesOf(m.id)} current={m.id} onGo={goTo}
+            onEdit={() => editAndFork(m.id!, m.text)} busy={busy} />
+        </div>
+      ) : (
+        <div key={m.id ?? i} className="flex gap-2.5">
+          <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-muted text-accent">
+            <Bot size={15} />
+          </div>
+          <div className="min-w-0 flex-1 space-y-2">
+            {m.steps.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {m.steps.map((s, j) => {
+                  // 갈래 아이콘 + 상태 아이콘. 갈래는 "무엇을 했나"(일정·논문·
+                  // 단어장…), 상태는 "됐나"를 말한다 — 둘은 다른 물음이라
+                  // 하나로 합치면 어느 쪽도 알 수 없다.
+                  const Kind = skillIcon(s.name);
+                  return (
+                    <span key={j} title={s.message}
+                      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] ${
+                        s.ok === false ? "border-danger/30 text-danger"
+                        : s.ok ? "border-accent/30 bg-accent-muted text-accent-fg"
+                        : "border-line text-fg-muted"}`}>
+                      <Kind size={11} className="shrink-0 opacity-80" />
+                      {SKILL_LABEL[s.name] ?? s.name}
+                      {s.ok === undefined ? <Loader2 size={11} className="animate-spin" />
+                        : s.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            {m.text ? (
+              <div className="card px-4 py-2.5">
+                {/* AI 가 "[[주간정리]] 로 만들었습니다"라고 답할 때, 그 링크가
+                    아무 데도 가지 않으면 이름만 알려 주고 끝난 셈이다. */}
+                <MarkdownView content={m.text} onWikiClick={openDoc} />
+                {/* 아직 쓰는 중이면 커서를 남겨 둔다 — 없으면 잘린 답을
+                    다 쓴 답으로 착각한다. */}
+                {m.pending && (
+                  <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-[2px] animate-pulse bg-fg-muted" />
+                )}
+              </div>
+            ) : m.pending && m.steps.length === 0 ? (
+              <div className="inline-flex items-center gap-2 text-[13px] text-fg-muted">
+                <Loader2 size={14} className="animate-spin" /> 생각 중…
+              </div>
+            ) : null}
+            {/* 단어 후보: 고른 것만 서버로 바로 가고 백그라운드에서 채워진다.
+                스킬 이름이 아니라 **후보가 들어 있는지**로 본다 — 허락 없이
+                불린 add_vocab_words 도 저장 대신 후보로 돌아온다.
+                한 답에 목록이 여럿 오면(모델이 함수 호출을 나란히 낸다) 겹치는
+                단어는 앞 목록에만 남긴다 — 두 목록에서 같은 단어를 두 번 넣게
+                되는 것을 막는다. */}
+            {dedupeProposals(m.steps).map((p) => (
+              <VocabProposal key={p.key} data={p.data} tags={vocabTags} space={space} />
+            ))}
+          </div>
+        </div>
+      ),
+    )
+  ), [shown, openDoc, branchesOf, goTo, editAndFork, busy, vocabTags, space]);
+
   const canSend = !busy && (!!input.trim() || hasContext);
   //: 끝자락(잎)이 몇 개인가 = 가지가 몇 갈래인가. 하나뿐이면 지도 단추에 숫자를
   //: 붙이지 않는다 — 가지가 없는데 "1"이 떠 있으면 무슨 수인지 알 수 없다.
   const branchCount = useMemo(() => {
     if (!space) return 0;
-    const tree = asTree(messages);
-    const parents = new Set(tree.map((m) => m.parent ?? "").filter(Boolean));
-    return tree.filter((m) => !parents.has(m.id)).length;
-  }, [messages, space]);
+    const parents = new Set(treeMessages.map((m) => m.parent ?? "").filter(Boolean));
+    return treeMessages.filter((m) => !parents.has(m.id)).length;
+  }, [treeMessages, space]);
 
   //: 사이드바로 펼 수 있는가 — `sidebars` 를 켠 화면이면서 자리도 있을 때만.
   const listAside = sidebars && !!space && roomForList;
@@ -766,10 +875,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
    *
    * 이 규칙은 `frontend/test/treeHost.test.mjs` 가 지킨다(엮는 자리가 하나인지 센다).
    */
-  // 나무에 넘길 모양은 **메시지가 바뀔 때만** 새로 만든다. 그리는 때마다 asTree 로 새 배열을
-  // 주면 지도의 useMemo(나무 짓기·300노드 배치·찾기)가 한 글자 칠 때마다 다시 돌았다 —
-  // 300차례 대화에서 한 글자가 화면에 나오기까지 중앙 170ms(15차 실측).
-  const treeMessages = useMemo(() => asTree(messages), [messages]);
   const tree = space ? (
     <ConversationTree
       messages={treeMessages} head={liveHead} links={links}
@@ -838,106 +943,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
           </div>
         )}
 
-        {shown.map((m, i) =>
-          m.role === "user" ? (
-            <div key={m.id ?? i} className="flex flex-col items-end gap-1">
-              {(m.selections?.length || m.attachments?.length) ? (
-                <div className="flex max-w-[80%] flex-wrap justify-end gap-1">
-                  {m.selections?.map((s, j) => (
-                    <span key={`s${j}`} title={s.text}
-                      className="inline-flex max-w-[240px] items-center gap-1 rounded-full border border-line bg-subtle px-2 py-0.5 text-[11px] text-fg-muted">
-                      <Quote size={10} className="shrink-0" />
-                      <span className="truncate">{s.page ? `${s.page}쪽 · ` : ""}{s.text}</span>
-                    </span>
-                  ))}
-                  {m.attachments?.map((a, j) => (
-                    <span key={`a${j}`}
-                      className="inline-flex items-center gap-1 rounded-full border border-line bg-subtle px-2 py-0.5 text-[11px] text-fg-muted">
-                      <ImageIcon size={10} /> {a.label || "영역 이미지"}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              {m.text && (
-                // 사용자가 친 것도 마크다운이다(목록·굵게·`[note/…]` 링크)
-                <div className="md-on-accent max-w-[80%] rounded-lg rounded-br-sm bg-accent px-4 py-2.5 text-[13.5px] text-accent-contrast">
-                  <MarkdownView content={m.text} onWikiClick={openDoc} />
-                </div>
-              )}
-              {m.missing && m.missing.length > 0 && (
-                <div className="max-w-[80%] text-right text-[11px] text-danger">
-                  찾지 못한 링크(AI 가 내용을 못 봤습니다): {m.missing.join(", ")}
-                </div>
-              )}
-              {/* 답을 못 받은 질문 — 까닭을 남긴다. 오류 말풍선은 저장되지 않아서, 예전에는
-                  다시 읽어 오는 순간 사라지고 답 없는 질문만 남았다. */}
-              {m.failed && (
-                <div role="note" className="max-w-[80%] text-right text-[11px] text-danger">
-                  답을 받지 못했습니다 — {m.failed} (✎ 로 다시 물을 수 있습니다)
-                </div>
-              )}
-              {/* 이 질문에서 갈라진 가지가 여럿이면 여기서 바로 옮겨 다닌다 —
-                  지도를 열지 않고도 "아까 저쪽으로 물어본 것"으로 돌아갈 수 있다. */}
-              <BranchSwitch msgs={branchesOf(m.id)} current={m.id} onGo={goTo}
-                onEdit={() => editAndFork(m.id!, m.text)} busy={busy} />
-            </div>
-          ) : (
-            <div key={m.id ?? i} className="flex gap-2.5">
-              <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-muted text-accent">
-                <Bot size={15} />
-              </div>
-              <div className="min-w-0 flex-1 space-y-2">
-                {m.steps.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {m.steps.map((s, j) => {
-                      // 갈래 아이콘 + 상태 아이콘. 갈래는 "무엇을 했나"(일정·논문·
-                      // 단어장…), 상태는 "됐나"를 말한다 — 둘은 다른 물음이라
-                      // 하나로 합치면 어느 쪽도 알 수 없다.
-                      const Kind = skillIcon(s.name);
-                      return (
-                        <span key={j} title={s.message}
-                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] ${
-                            s.ok === false ? "border-danger/30 text-danger"
-                            : s.ok ? "border-accent/30 bg-accent-muted text-accent-fg"
-                            : "border-line text-fg-muted"}`}>
-                          <Kind size={11} className="shrink-0 opacity-80" />
-                          {SKILL_LABEL[s.name] ?? s.name}
-                          {s.ok === undefined ? <Loader2 size={11} className="animate-spin" />
-                            : s.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
-                        </span>
-                      );
-                    })}
-                  </div>
-                )}
-                {m.text ? (
-                  <div className="card px-4 py-2.5">
-                    {/* AI 가 "[[주간정리]] 로 만들었습니다"라고 답할 때, 그 링크가
-                        아무 데도 가지 않으면 이름만 알려 주고 끝난 셈이다. */}
-                    <MarkdownView content={m.text} onWikiClick={openDoc} />
-                    {/* 아직 쓰는 중이면 커서를 남겨 둔다 — 없으면 잘린 답을
-                        다 쓴 답으로 착각한다. */}
-                    {m.pending && (
-                      <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-[2px] animate-pulse bg-fg-muted" />
-                    )}
-                  </div>
-                ) : m.pending && m.steps.length === 0 ? (
-                  <div className="inline-flex items-center gap-2 text-[13px] text-fg-muted">
-                    <Loader2 size={14} className="animate-spin" /> 생각 중…
-                  </div>
-                ) : null}
-                {/* 단어 후보: 고른 것만 서버로 바로 가고 백그라운드에서 채워진다.
-                    스킬 이름이 아니라 **후보가 들어 있는지**로 본다 — 허락 없이
-                    불린 add_vocab_words 도 저장 대신 후보로 돌아온다.
-                    한 답에 목록이 여럿 오면(모델이 함수 호출을 나란히 낸다) 겹치는
-                    단어는 앞 목록에만 남긴다 — 두 목록에서 같은 단어를 두 번 넣게
-                    되는 것을 막는다. */}
-                {dedupeProposals(m.steps).map((p) => (
-                  <VocabProposal key={p.key} data={p.data} tags={vocabTags} space={space} />
-                ))}
-              </div>
-            </div>
-          ),
-        )}
+        {bubbles}
         <div ref={endRef} />
       </div>
 

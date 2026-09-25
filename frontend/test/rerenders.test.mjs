@@ -54,3 +54,11 @@ test("대화 화면은 입력칸에 칠 때마다 지도와 말풍선을 다시 
   const lazy = readFileSync(join(SRC, "components/notes/LazyMarkdownView.tsx"), "utf8");
   assert.match(lazy, /export const MarkdownView = memo\(/, "말풍선 마크다운이 매번 다시 풀린다");
 });
+
+test("말풍선 목록은 입력칸의 글자와 무관하게 묶이고, 나무 모양은 한 번만 짓는다", () => {
+  const panel = readFileSync(join(SRC, "components/ai/ChatPanel.tsx"), "utf8");
+  assert.match(panel, /const bubbles = useMemo\(/, "말풍선 목록이 한 글자마다 다시 지어진다");
+  // asTree 는 treeMessages 한 곳에서만 부른다(말풍선마다 부르면 말풍선 수의 제곱만큼 일한다)
+  const calls = panel.match(/asTree\(/g) ?? [];
+  assert.equal(calls.length, 2, `asTree 를 여러 곳에서 부른다(정의 + treeMessages 만 있어야): ${calls.length}`);
+});
