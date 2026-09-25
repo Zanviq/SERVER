@@ -122,6 +122,8 @@ export function Notes() {
   // 목록에는 editable=true 로 보이지만 실제로는 뷰어·내려받기로 가야 한다.
   const [viewerOnly, setViewerOnly] = useState<Set<string>>(new Set());
   const [params, setParams] = useSearchParams();
+  /** 주소의 path 중 이미 다룬 것(열었거나, 열린 문서를 따라 이 화면이 적은 것) — 다시 열지 않는다 */
+  const handledPath = useRef<string | null>(null);
 
   const autosaveMs = prefs?.autosave_ms ?? 900;
   const tree = useMemo(() => buildTree(folders, notes, pinned), [folders, notes, pinned]);
@@ -463,10 +465,15 @@ export function Notes() {
       setParams(params, { replace: true });
     }
     if (path) {
-      // 정확한 상대경로로 열기(URL 진입·그래프 클릭 등) — openNote와 같은 동작이다
-      openNote(path);
-      params.delete("path");
-      setParams(params, { replace: true });
+      // 정확한 상대경로로 열기(URL 진입·그래프 클릭 등) — openNote와 같은 동작이다.
+      // 주소의 path 는 **지우지 않는다** — 아래 효과가 열린 문서를 따라 적는다(49차). 전에는 읽고
+      // 곧바로 지워서 주소에 열린 문서가 없었다: 새로고침·휴대폰이 뒤로 보낸 탭을 되살릴 때 빈 문서
+      // 화면으로 돌아갔고, 즐겨찾기·주소 나누기도 안 됐다. 이미 다룬 주소는 다시 열지 않는다
+      // (열린 문서가 바뀔 때마다 이 효과가 다시 돌기 때문 — 안 막으면 두 문서를 오간다).
+      if (path !== handledPath.current) {
+        handledPath.current = path;
+        if (path !== current) openNote(path);
+      }
     } else if (open && notes.length) {
       // create=0 이면 없는 문서를 만들지 않는다(AI 답변 속 링크로 들어온 경우)
       openByTitle(open, params.get("create") !== "0");
@@ -474,7 +481,23 @@ export function Notes() {
       params.delete("create");
       setParams(params, { replace: true });
     }
-  }, [params, notes, openByTitle, openNote, setParams]);
+  }, [params, notes, openByTitle, openNote, setParams, current]);
+
+  // 주소가 열린 문서를 따라간다 — 열기·이름 바꾸기·옮기기·닫기 모두(49차). 이름을 바꿔도 주소가 옛
+  // 경로면 새로고침이 없는 문서를 연다. 적은 값을 handledPath 에 남겨 위 효과가 그것을 "새로 온 주소"로
+  // 알고 다시 열지 않게 한다. 첫 문서를 여는 중(current 가 아직 null)에는 주소를 건드리지 않는다.
+  const shownPath = useRef<string | null>(null);
+  useEffect(() => {
+    if (current === shownPath.current) return;
+    shownPath.current = current;
+    handledPath.current = current;
+    const next = new URLSearchParams(params);
+    if (current) next.set("path", current);
+    else next.delete("path");
+    if (next.toString() !== params.toString()) setParams(next, { replace: true });
+    // params 는 일부러 뺀다 — 주소가 바뀔 때가 아니라 열린 문서가 바뀔 때만 적는다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current]);
 
   // 연 문서가 트리에서 **보이게** — 조상 폴더를 펼치고 그 줄까지 내린다. 링크·검색·그래프로
   // 열면 폴더가 접힌 채였다. 문서 2천 개 트리에서 지금 연 문서가 어디 있는지 찾을 수 없었고

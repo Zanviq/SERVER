@@ -57,3 +57,14 @@ test("폴더도 끌어 옮긴다 — 고정 폴더는 빼고, 제 안으로는 �
   const move = src.slice(src.indexOf("const doMoveNote"), src.indexOf("const doDeleteNotePath"));
   assert.match(move, /folder === path \|\| folder\.startsWith\(`\$\{path\}\/`\)/, "폴더를 제 안으로 놓는 것을 막지 않는다");
 });
+
+test("주소(?path=)가 열린 문서를 따라간다 — 49차", () => {
+  // 전에는 path 를 읽고 곧바로 지워, 새로고침·휴대폰이 되살린 탭이 빈 문서 화면으로 돌아갔고
+  // 이름을 바꾼 뒤에는 주소가 옛 경로였다.
+  const src = readFileSync(new URL("../src/pages/Notes.tsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  assert.doesNotMatch(src, /params\.delete\("path"\)/, "주소의 path 를 지운다 — 새로고침하면 연 문서가 사라진다");
+  assert.match(src, /if \(current\) next\.set\("path", current\);\s*else next\.delete\("path"\);/, "열린 문서를 주소에 적지 않는다");
+  // 적은 값을 다룬 것으로 남겨야 효과가 두 문서를 오가지 않는다
+  assert.match(src, /shownPath\.current = current;\s*handledPath\.current = current;/);
+  assert.match(src, /if \(path !== handledPath\.current\) \{\s*handledPath\.current = path;\s*if \(path !== current\) openNote\(path\);/);
+});
