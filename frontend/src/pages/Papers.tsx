@@ -9,7 +9,7 @@ import { PaperList, paperTitle } from "../components/papers/PaperList";
 import { PdfViewer, PdfMark, PdfRect } from "../components/papers/PdfViewer";
 import { PaperInfo } from "../components/papers/PaperInfo";
 import { VocabPanel } from "../components/vocab/VocabPanel";
-import { api, Paper } from "../lib/api";
+import { api, ApiError, Paper } from "../lib/api";
 import { isSubmitEnter } from "../lib/keys";
 import { usePendingSave } from "../lib/usePendingSave";
 import { toast } from "../store/toast";
@@ -118,6 +118,27 @@ export function Papers() {
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "저장 실패");
+    }
+  };
+
+  /**
+   * 치는 동안 모아 보내는 메모 저장(PaperInfo). 화면이 아는 메모(base)와 서버 메모가 다르면 서버가
+   * 409 로 덮지 않는다 — 그때는 목록을 다시 받아 화면이 "다른 곳에서 바뀜"을 알리게 한다.
+   * "fail" 이면 PendingSave 가 다시 해 본다.
+   */
+  const saveNotes = async (p: Paper, notes: string, base: string, keepalive: boolean): Promise<"ok" | "conflict" | "fail"> => {
+    try {
+      patch(p.id, await api.paperUpdate(p.id, { notes, base_notes: base }, keepalive));
+      return "ok";
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        void load();
+        return "conflict";
+      }
+      // 그새 지운 논문이면 다시 보내도 영영 실패한다 — 끝난 것으로 친다
+      if (e instanceof ApiError && (e.status === 404 || e.status === 410)) return "ok";
+      toast.error(e instanceof Error ? e.message : "메모 저장 실패");
+      return "fail";
     }
   };
 
@@ -314,7 +335,8 @@ export function Papers() {
           </div>
           {tab === "info" && (
             selected ? (
-              <PaperInfo paper={selected} categories={categories} onUpdate={(b) => update(selected, b)} onAsk={ask} onRetry={() => retry(selected)} />
+              <PaperInfo paper={selected} categories={categories} onUpdate={(b) => update(selected, b)}
+                onSaveNotes={(text, base, keepalive) => saveNotes(selected, text, base, keepalive)} onAsk={ask} onRetry={() => retry(selected)} />
             ) : <div className="flex flex-1 items-center justify-center text-[12.5px] text-fg-muted">논문을 고르세요</div>
           )}
           {tab === "vocab" && (

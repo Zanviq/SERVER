@@ -34,6 +34,8 @@ class PaperPatch(BaseModel):
     limitations: str | None = None
     keywords: list[str] | None = None
     notes: str | None = None
+    #: 화면이 고치기 시작한 메모. 주면 그 사이 다른 곳에서 바뀐 메모를 덮지 않는다(409).
+    base_notes: str | None = None
     starred: bool | None = None
     read_page: int | None = None
     #: 쪽수. 보통은 추출할 때 pypdf 가 채우지만, **스캔본처럼 pypdf 가 못 여는

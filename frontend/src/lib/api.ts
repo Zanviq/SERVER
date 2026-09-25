@@ -274,8 +274,9 @@ export const api = {
   todoBoard: () =>
     req<{ categories: TodoCategory[]; todos: Todo[]; counts: TodoCounts }>("/api/todo/board"),
   todoCreate: (body: Partial<Todo>) => req<Todo>("/api/todo/create", jsonInit("POST", body)),
-  todoUpdate: (id: string, body: Partial<Todo>) =>
-    req<Todo>(`/api/todo/${encodeURIComponent(id)}`, jsonInit("PUT", body)),
+  /** keepalive: 페이지가 닫히는 중에 보내는 저장(치던 설명) */
+  todoUpdate: (id: string, body: Partial<Todo>, keepalive = false) =>
+    req<Todo>(`/api/todo/${encodeURIComponent(id)}`, { ...jsonInit("PUT", body), keepalive }),
   todoDelete: (id: string) =>
     req<{ ok: boolean; id: string; title: string }>(
       `/api/todo/${encodeURIComponent(id)}`, { method: "DELETE" }),
@@ -427,7 +428,8 @@ export const api = {
   /** PDF 원본 URL(inline). pdf.js 가 fetch 로 받는다 — 세션 쿠키가 실린다. */
   paperFileUrl: (id: string) => `${BASE}/api/papers/${encodeURIComponent(id)}/file`,
   /** keepalive: 페이지가 닫히는 중에 보내는 저장(읽던 쪽 등) */
-  paperUpdate: (id: string, body: Partial<Paper>, keepalive = false) =>
+  /** base_notes: 화면이 고치기 시작한 메모 — 그 사이 바뀌었으면 서버가 409 로 덮지 않는다 */
+  paperUpdate: (id: string, body: Partial<Paper> & { base_notes?: string }, keepalive = false) =>
     req<Paper>(`/api/papers/${encodeURIComponent(id)}`, { ...jsonInit("PUT", body), keepalive }),
   paperDelete: (id: string) =>
     req<{ ok: boolean; id: string }>(`/api/papers/${encodeURIComponent(id)}`, { method: "DELETE" }),

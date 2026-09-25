@@ -10289,6 +10289,35 @@ def test_a_recording_is_served_and_transcribed_as_its_extension_not_as_claimed()
         client.delete(f"/api/meetings/{mid}")
 
 
+def test_paper_notes_do_not_overwrite_a_change_the_screen_has_not_seen():
+    """논문 메모 저장에 base_notes 를 주면, 그 사이 다른 곳에서 바뀐 메모를 덮지 않는다(42차).
+
+    화면은 메모를 치는 동안 모아 보낸다. 다른 기기가 메모를 바꾼 뒤 화면이 아직 다시 받아 오지
+    않았으면 예전엔 1.5초 만에 그쪽 내용을 말없이 덮었다(브라우저로 확인). base 를 안 주는 쪽
+    (AI 스킬·덧붙이기)은 예전처럼 곧바로 쓴다.
+    """
+    _login()
+    pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n"
+    pid = client.post("/api/papers/upload", files={"file": ("메모충돌.pdf", pdf, "application/pdf")}).json()["id"]
+    try:
+        assert client.put(f"/api/papers/{pid}", json={"notes": "처음"}).status_code == 200
+        r = client.put(f"/api/papers/{pid}", json={"notes": "화면에서 이어 씀", "base_notes": "처음"})
+        assert r.status_code == 200 and r.json()["notes"] == "화면에서 이어 씀", r.text
+        # 다른 기기가 바꿨다
+        assert client.put(f"/api/papers/{pid}", json={"notes": "다른 기기"}).status_code == 200
+        # 화면은 아직 "화면에서 이어 씀" 을 안다 — 덮으면 안 된다
+        r = client.put(f"/api/papers/{pid}", json={"notes": "화면에서 이어 씀 더", "base_notes": "화면에서 이어 씀"})
+        assert r.status_code == 409, r.text
+        assert client.get(f"/api/papers/{pid}").json()["notes"] == "다른 기기", "409 인데 덮였다"
+        # 사용자가 알림을 보고 그대로 저장하기로 하면(본 것을 base 로) 덮을 수 있다
+        r = client.put(f"/api/papers/{pid}", json={"notes": "내 것으로", "base_notes": "다른 기기"})
+        assert r.status_code == 200 and r.json()["notes"] == "내 것으로"
+        # 메모가 아닌 것만 고칠 때는 base_notes 가 있어도 따지지 않는다
+        assert client.put(f"/api/papers/{pid}", json={"title": "제목만", "base_notes": "옛것"}).status_code == 200
+    finally:
+        client.delete(f"/api/papers/{pid}")
+
+
 def test_user_bytes_leave_only_through_user_file():
     """올린 파일을 내보내는 라우터는 FileResponse 를 직접 만들지 않는다 — user_file 을 지난다.
 

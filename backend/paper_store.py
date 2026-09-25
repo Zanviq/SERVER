@@ -238,6 +238,14 @@ def update_meta(user: SessionUser, settings: Settings, pid: str, patch: dict) ->
         # 파일 이름은 메타일 뿐이다(실물은 언제나 paper.pdf) — 내려받을 때 쓰인다
         if patch.get("filename"):
             p["filename"] = pdf_filename(patch["filename"])
+        # 화면이 연 메모(base_notes)와 지금 메모가 다르면 덮지 않는다 — **이 락 안에서** 본다.
+        # 화면은 메모를 치는 동안 모아 보낸다(42차). 그 사이 다른 기기나 AI("메모에 정리해 줘")가
+        # 메모를 바꿨는데 화면이 아직 다시 받아 오지 않았으면, 예전엔 말없이 그쪽 내용을 덮었다
+        # (실측: 다른 기기가 쓴 메모가 1.5초 만에 사라졌다). 일기(28차)와 같은 규칙이다.
+        # base_notes 를 주지 않는 쪽(AI 스킬 등)은 예전처럼 곧바로 쓴다.
+        base = patch.get("base_notes")
+        if base is not None and patch.get("notes") is not None and str(p.get("notes") or "") != str(base):
+            raise HTTPException(status_code=409, detail="그 사이 메모가 다른 곳에서 바뀌었습니다.")
         for k in ("abstract", "summary", "methods", "limitations", "notes", "error"):
             if k in patch and patch[k] is not None:
                 p[k] = _s(patch[k], MAX_TEXT * 2 if k == "notes" else MAX_TEXT)

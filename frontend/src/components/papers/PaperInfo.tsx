@@ -3,6 +3,7 @@ import { AlertCircle, ChevronDown, ChevronRight, FolderClosed, Loader2, Pencil, 
 import { Paper } from "../../lib/api";
 import { formatBytes } from "../../lib/format";
 import { isSubmitEnter } from "../../lib/keys";
+import { usePendingSave } from "../../lib/usePendingSave";
 import { paperTitle } from "./PaperList";
 import { LinkTextarea } from "../links/LinkTextarea";
 import { REVEAL_ON_ROW } from "../ui/reveal";
@@ -12,6 +13,11 @@ interface Props {
   /** 쓰이고 있는 폴더 이름(자동완성) */
   categories?: string[];
   onUpdate: (patch: Partial<Paper>) => Promise<void> | void;
+  /**
+   * 치는 동안 모아 보내는 메모 저장. base 는 화면이 아는 서버 메모 — 그 사이 바뀌었으면 "conflict"
+   * (서버가 덮지 않았다). "fail" 이면 다시 해 본다. keepalive 는 페이지가 닫히는 중의 저장.
+   */
+  onSaveNotes: (text: string, base: string, keepalive: boolean) => Promise<"ok" | "conflict" | "fail">;
   /** 정보 화면에서 바로 묻기(키워드·섹션 클릭) */
   onAsk: (text: string) => void;
   onRetry: () => void;
@@ -29,7 +35,7 @@ const QUICK = [
 const MAX_NOTES = 12000;
 
 /** 오른쪽 "정보" 탭 — AI가 뽑아 둔 메타데이터·요약, 그리고 내 메모. */
-export function PaperInfo({ paper: p, categories = [], onUpdate, onAsk, onRetry }: Props) {
+export function PaperInfo({ paper: p, categories = [], onUpdate, onSaveNotes, onAsk, onRetry }: Props) {
   const [notes, setNotes] = useState(p.notes);
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(p.title);
@@ -39,6 +45,37 @@ export function PaperInfo({ paper: p, categories = [], onUpdate, onAsk, onRetry 
   const editing = useRef(false);
   //: 내가 치는 동안 서버 쪽 메모가 달라졌다(AI 가 적었거나 다른 기기에서 고쳤다)
   const [noteConflict, setNoteConflict] = useState(false);
+  // 메모는 칠 때마다 모아 두었다 보낸다(42차). 칸을 벗어날 때(blur)만 보냈더니 새로고침·탭 닫기·
+  // 휴대폰 앱 전환(blur 없이 숨겨진다)에 친 메모가 사라졌다. 다른 논문·다른 탭으로 갈 때와 페이지가
+  // 숨겨질 때(keepalive)도 usePendingSave 가 보낸다.
+  const notesSave = usePendingSave([p.id]);
+  //: 내가 마지막으로 보낸 메모(서버는 앞뒤 공백을 떼고 적는다) — 그것이 돌아온 것은 "다른 곳에서 바뀜"이 아니다
+  const sentNotes = useRef<string | null>(null);
+  //: 화면이 아는 서버 쪽 메모. 보낼 때 base 로 실어, 그 사이 다른 곳에서 바뀌었으면 서버가 덮지 않는다(409).
+  //: 모아 보내면 화면이 목록을 다시 받기 전에 저장이 나가므로, 화면 쪽 알림만으로는 늦다(실측: 다른
+  //: 기기가 쓴 메모가 1.5초 만에 사라졌다).
+  const seenNotes = useRef(p.notes);
+  seenNotes.current = p.notes;
+  const conflictRef = useRef<HTMLParagraphElement>(null);
+  const sendNotes = (text: string, ms: number) =>
+    notesSave.schedule(ms, async ({ keepalive }) => {
+      sentNotes.current = text.trim();
+      const r = await onSaveNotes(text, seenNotes.current, keepalive);
+      if (r === "conflict") {
+        // 서버가 덮지 않았다. 치던 글은 칸에 두고 알린다(목록을 다시 받으면 그쪽 내용이 온다).
+        editing.current = true;
+        setNoteConflict(true);
+      }
+      return r !== "fail"; // 실패만 다시 해 본다 — 충돌은 사용자가 고른다
+    });
+  const typeNotes = (text: string) => {
+    editing.current = true;
+    setNotes(text);
+    // 다른 곳에서 바뀐 것을 알리는 중이면 모아 보내지 않는다 — 사용자가 고르기 전에 그쪽 내용을
+    // 덮어 버린다. 그때는 예전처럼 칸을 벗어날 때 보낸다(알림이 "지금 저장하면 덮어씁니다"라고 말한다).
+    if (noteConflict) return;
+    sendNotes(text, 1500);
+  };
 
   useEffect(() => { setTitle(p.title); setEditingTitle(false); }, [p.id, p.title]);
   useEffect(() => {
@@ -46,6 +83,10 @@ export function PaperInfo({ paper: p, categories = [], onUpdate, onAsk, onRetry 
     // 메모를 쓰고 있으면, AI 가 끝나는 순간 목록을 다시 받아 오면서 여기까지
     // 새 값으로 갈아치웠다 — 치던 문장이 눈앞에서 사라진다.
     if (editing.current && p.notes !== notes) {
+      // 내가 보낸 것이 돌아왔다(그 뒤로 더 쳤을 뿐) — 다른 곳에서 바뀐 것이 아니다
+      if (p.notes === sentNotes.current) return;
+      // 모아 둔 저장이 곧 나가면 사용자가 고르기도 전에 그쪽 내용을 덮는다
+      notesSave.cancel();
       setNoteConflict(true);
       return;
     }
@@ -182,21 +223,33 @@ export function PaperInfo({ paper: p, categories = [], onUpdate, onAsk, onRetry 
             **화면에서 글이 사라진다**(저장 뒤 서버 값으로 다시 채우므로). */}
         <LinkTextarea preview className="input h-auto py-2 text-[12.5px]" rows={5} value={notes} maxLength={MAX_NOTES}
           placeholder="읽으면서 남길 메모. AI도 이 메모를 본다. (마크다운 · [ 로 문서·회의 연결)"
-          onChange={(e) => { editing.current = true; setNotes(e.target.value); }}
-          onBlur={() => {
-            if (notes !== p.notes) void onUpdate({ notes });
+          onChange={(e) => typeNotes(e.target.value)}
+          onBlur={(e) => {
+            // 알림의 단추로 가는 길이면 저장하지 않는다. 예전엔 단추를 누르는 순간(포커스가 옮겨 가며)
+            // 이 blur 가 치던 메모로 **덮어 저장하고** 알림을 내려, 단추는 눌리기도 전에 사라졌다 —
+            // "바뀐 내용 보기"는 마우스로도 키보드로도 한 번도 될 수 없었다(42차).
+            if (conflictRef.current?.contains(e.relatedTarget as Node | null)) return;
+            // 알림 중이라 모아 두지 않은 것은 여기서 보낸다 — 알림이 말한 대로 그쪽 내용을 덮는다(본 것을
+            // base 로 실으므로 서버가 받는다). 모아 둔 것은 곧바로 보낸다.
+            if (noteConflict && notes.trim() !== p.notes) sendNotes(notes, 0);
+            void notesSave.flush();
             editing.current = false;
             setNoteConflict(false);
           }} />
         {noteConflict && (
           // 어느 쪽을 살릴지는 사용자가 정한다. 말없이 덮거나 말없이 버리지 않는다.
-          <p className="mt-1 flex items-start gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1.5 text-[11.5px] text-warning">
+          <p ref={conflictRef} className="mt-1 flex items-start gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1.5 text-[11.5px] text-warning">
             <AlertCircle size={12} className="mt-[2px] shrink-0" />
             <span>
               그 사이 메모가 다른 곳에서 바뀌었습니다(AI 또는 다른 기기). 지금 저장하면
               그쪽 내용을 덮어씁니다 —{" "}
               <button type="button" className="underline"
-                onClick={() => { editing.current = false; setNotes(p.notes); setNoteConflict(false); }}>
+                // 누르는 동안 메모 칸의 포커스를 두어 blur 저장이 일지 않게(마우스). 키보드는 위 onBlur 가 거른다.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  notesSave.cancel(); // 치던 것을 보내면 방금 고른 그쪽 내용을 덮는다
+                  editing.current = false; setNotes(p.notes); setNoteConflict(false);
+                }}>
                 바뀐 내용 보기
               </button>
             </span>

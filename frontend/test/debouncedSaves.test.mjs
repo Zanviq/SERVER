@@ -41,3 +41,29 @@ test("저장 API 를 맨 타이머로 미루는 코드가 없다(PendingSave 를
   }
   assert.deepEqual(bad, [], `맨 타이머로 저장을 미루는 곳 — PendingSave 로 바꿀 것:\n${bad.join("\n")}`);
 });
+
+test("다른 곳에 따로 안 보이는 긴 글 칸은 칸을 벗어날 때만 저장하지 않는다 — 42차", () => {
+  // 할 일 설명·논문 메모는 onBlur 에서만 보냈다. 새로고침·탭 닫기·휴대폰 앱 전환은 blur 없이 페이지가
+  // 숨겨져, 친 글이 서버에 한 글자도 가지 않았다(실측 3/3). 칠 때 PendingSave 에 모아 두고 blur 는
+  // flush 만 한다 — 그래야 usePendingSave 가 페이지가 숨겨질 때 keepalive 로 보낸다.
+  const bad = [];
+  for (const f of files(SRC)) {
+    const src = readFileSync(f, "utf8").replace(/\r\n/g, "\n");
+    for (const m of src.matchAll(/<LinkTextarea\b[\s\S]*?\/>/g)) {
+      const blur = m[0].match(/onBlur=\{[\s\S]*?\}\s*\}/)?.[0] ?? "";
+      if (/(?:api\.\w+|onUpdate|patchDetail)\(/.test(blur)) {
+        bad.push(`${f.slice(SRC.length)}:${src.slice(0, m.index).split("\n").length}`);
+      }
+    }
+  }
+  assert.deepEqual(bad, [], `blur 에서 곧바로 저장을 보내는 칸:\n${bad.join("\n")}`);
+  const todo = readFileSync(join(SRC, "pages/Todo.tsx"), "utf8");
+  assert.match(todo, /const descSave = usePendingSave\(\[selectedTodo\]\)/);
+  const info = readFileSync(join(SRC, "components/papers/PaperInfo.tsx"), "utf8");
+  assert.match(info, /const notesSave = usePendingSave\(\[p\.id\]\)/);
+  // 모아 보내면 화면이 다시 받기 전에 저장이 나간다 — 서버가 base 로 막아야 다른 곳의 메모를 안 덮는다
+  assert.match(info, /onSaveNotes\(text, seenNotes\.current, keepalive\)/, "메모 저장이 화면이 아는 메모(base)를 싣지 않는다");
+  // 알림의 단추를 누르는 순간의 blur 가 치던 메모로 덮어 저장하면 '바뀐 내용 보기'는 영영 못 누른다
+  assert.match(info, /conflictRef\.current\?\.contains\(e\.relatedTarget/);
+  assert.match(info, /onMouseDown=\{\(e\) => e\.preventDefault\(\)\}/);
+});

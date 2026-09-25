@@ -16,7 +16,8 @@ import { TodoComposer, TodoDraft, draftToBody } from "../components/todo/TodoCom
 import { CategoryDialog, CategoryDraft } from "../components/todo/CategoryDialog";
 import { ListState } from "../components/ui/ListState";
 import { LinkTextarea } from "../components/links/LinkTextarea";
-import { api, Todo as TodoItem, TodoCategory, TodoCounts } from "../lib/api";
+import { api, ApiError, Todo as TodoItem, TodoCategory, TodoCounts } from "../lib/api";
+import { usePendingSave } from "../lib/usePendingSave";
 import { toast } from "../store/toast";
 import { useMediaQuery } from "../lib/useMediaQuery";
 
@@ -347,6 +348,7 @@ export function Todo() {
 
   const removeTodo = (t: TodoItem) =>
     guard(async () => {
+      await descSave.flush(); // 치던 설명까지 휴지통에 가게
       await api.todoDelete(t.id);
       setSelectedTodo(null);
     }, "휴지통으로 옮겼습니다");
@@ -355,6 +357,24 @@ export function Todo() {
     if (!detail) return;
     guard(() => api.todoUpdate(detail.id, body));
   };
+
+  // 설명은 칠 때마다 모아 두었다 보낸다(42차). 칸을 벗어날 때(blur)만 보냈더니 새로고침·탭 닫기·
+  // 휴대폰 앱 전환(blur 없이 숨겨진다)에 친 글이 사라졌다. usePendingSave 가 다른 할 일·다른 화면으로
+  // 갈 때와 페이지가 숨겨질 때(keepalive) 남은 것을 보낸다. guard 를 타지 않는다 — 다른 조작이 도는
+  // 중(busy)이면 guard 는 아무것도 안 하고 false 라, 그때 벗어난 설명은 조용히 버려졌다.
+  const descSave = usePendingSave([selectedTodo]);
+  const typeDescription = (id: string, text: string) =>
+    descSave.schedule(1000, async ({ keepalive }) => {
+      try {
+        const saved = await api.todoUpdate(id, { description: text }, keepalive);
+        setTodos((ts) => ts.map((t) => (t.id === id ? saved : t)));
+      } catch (e) {
+        // 그새 지워졌다 — 보낼 곳이 없다(다시 해 봐도 영영 실패한다)
+        if (e instanceof ApiError && (e.status === 404 || e.status === 410)) return;
+        toast.error("할 일 설명을 저장하지 못했습니다 — 잠시 뒤 다시 보냅니다");
+        throw e; // 실패로 알려야 PendingSave 가 다시 해 본다
+      }
+    });
 
   const removeCategory = (c: TodoCategory) => {
     if (!window.confirm(`'${c.name}' 카테고리를 지울까요?\n안의 할 일은 지워지지 않고 위로 올라갑니다.`))
@@ -663,9 +683,8 @@ export function Todo() {
           key={`desc-${detail.id}`}
           defaultValue={detail.description}
           placeholder="마크다운 · [ 로 문서·일정 연결"
-          onBlur={(e) => {
-            if (e.target.value !== detail.description) patchDetail({ description: e.target.value });
-          }}
+          onChange={(e) => typeDescription(detail.id, e.target.value)}
+          onBlur={() => { void descSave.flush(); }}
         />
       </label>
     </div>
