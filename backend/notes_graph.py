@@ -103,17 +103,29 @@ def _links_of(f: WalkedFile) -> NoteLinks:
     return found
 
 
-def _index_rel(by_rel: dict, rel: str, value) -> None:
-    """`[note/경로]` 를 찾을 표 — 경로는 확장자를 붙여도 떼어도 같은 문서다(링크 열기와 같은 규칙)."""
-    key = rel.lower()
-    by_rel.setdefault(key, value)
-    if key.endswith(".md"):
-        by_rel.setdefault(key[:-3], value)
+class _Lookup:
+    """링크로 노트를 찾는 표 — 위키링크는 제목(stem)으로, `[note/경로]` 는 문서 루트 기준 경로로.
 
+    링크 그래프와 폴더 지도가 같은 표를 쓴다(두 벌로 만들면 한쪽만 규칙이 바뀐다). 값은 부르는
+    쪽이 정한다(그래프는 stem, 폴더 지도는 Path). 같은 열쇠는 먼저 넣은 것이 이긴다.
+    """
 
-def _targets(ln: NoteLinks, by_key: dict, by_rel: dict) -> list:
-    """노트 하나의 링크가 닿는 것들(못 찾은 것은 None) — 위키링크는 제목으로, 경로 링크는 경로로."""
-    return [by_key.get(t.lower()) for t in ln.titles] + [by_rel.get(p.strip("/").lower()) for p in ln.paths]
+    def __init__(self) -> None:
+        self.by_title: dict = {}
+        self.by_rel: dict = {}
+
+    def add(self, path: Path, notes_dir: Path, value) -> None:
+        self.by_title.setdefault(path.stem.lower(), value)
+        # 경로는 확장자를 붙여도 떼어도 같은 문서다(링크 열기와 같은 규칙)
+        key = path.relative_to(notes_dir).as_posix().lower()
+        self.by_rel.setdefault(key, value)
+        if key.endswith(".md"):
+            self.by_rel.setdefault(key[:-3], value)
+
+    def targets(self, ln: NoteLinks) -> list:
+        """노트 하나의 링크가 닿는 것들(못 찾은 것은 None)."""
+        return ([self.by_title.get(t.lower()) for t in ln.titles]
+                + [self.by_rel.get(p.strip("/").lower()) for p in ln.paths])
 
 
 def _fingerprint(files: list[WalkedFile], dirs: list[str]) -> tuple:
@@ -258,14 +270,12 @@ def build_graph(
         return result
 
     notes = [f for f in files if f.rel.endswith(".md")]
-    by_key: dict[str, str] = {}
-    by_rel: dict[str, str] = {}
+    find = _Lookup()
     nodes = []
     for f in notes:
         p = f.path
         stem = p.stem
-        by_key.setdefault(stem.lower(), stem)
-        _index_rel(by_rel, p.relative_to(notes_dir).as_posix(), stem)
+        find.add(p, notes_dir, stem)
         nodes.append(
             {
                 "id": stem,
@@ -279,7 +289,7 @@ def build_graph(
     seen = set()
     for f in notes:
         src = f.path.stem
-        for tgt in _targets(_links_of(f), by_key, by_rel):
+        for tgt in find.targets(_links_of(f)):
             if tgt and tgt != src:
                 key = (src, tgt)
                 if key not in seen:
@@ -353,11 +363,9 @@ def _folder_graph(notes_dir: Path, base: Path) -> dict:
 
     # 전체 스템 → 경로 (base 하위만) 로 위키링크 대상 해석
     all_notes = [f for f in walk_files(base, sort=False) if f.rel.endswith(".md")]
-    by_key: dict[str, Path] = {}
-    by_rel: dict[str, Path] = {}
+    find = _Lookup()
     for f in all_notes:
-        by_key.setdefault(f.path.stem.lower(), f.path)
-        _index_rel(by_rel, f.path.relative_to(notes_dir).as_posix(), f.path)
+        find.add(f.path, notes_dir, f.path)
 
     valid_ids = {n["id"] for n in nodes}
     links = []
@@ -366,7 +374,7 @@ def _folder_graph(notes_dir: Path, base: Path) -> dict:
         g_src = group_of(f.path)
         if g_src not in valid_ids:
             continue
-        for tp in _targets(_links_of(f), by_key, by_rel):
+        for tp in find.targets(_links_of(f)):
             if not tp:
                 continue
             g_tgt = group_of(tp)
