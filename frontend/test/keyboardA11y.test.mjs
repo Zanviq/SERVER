@@ -28,3 +28,9 @@ test("설정 한 줄은 이름표를 조작에 잇는다", () => {
   assert.match(row, /role="group"/);
   assert.match(row, /aria-labelledby=/);
 });
+
+test("링크 후보의 안내는 휴대폰에서 할 수 없는 조작(↑↓·Esc)을 말하지 않는다", () => {
+  const hook = src("components/links/useMarkdownInput.tsx");
+  assert.match(hook, /useMediaQuery\("\(pointer: coarse\)"\)/, "터치 환경을 가리지 않는다");
+  assert.match(hook, /touch \? "눌러서 넣기/, "휴대폰 안내가 없다");
+});

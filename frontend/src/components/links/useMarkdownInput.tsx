@@ -8,6 +8,7 @@ import type { LinkQuery } from "../../lib/links";
 import { linkIcon } from "./LinkChip";
 import { cachedLinkPage, fetchLinkPage, linkMoreNote } from "./linkFetch";
 import type { LinkPage } from "./linkFetch";
+import { useMediaQuery } from "../../lib/useMediaQuery";
 
 /** 접어 둔 채로 두었으면 다음에도 접힌 채로 뜬다(가리는 게 싫은 사람은 계속 싫다). */
 const COLLAPSE_KEY = "links.suggest.collapsed";
@@ -51,6 +52,8 @@ export function useMarkdownInput(ref: RefObject<Field>, opts: InputOptions = {})
   const [items, setItems] = useState<LinkItem[]>([]);
   // 상한에 걸려 안 보인 후보 수("N개 더" 한 줄로 알린다)
   const [more, setMore] = useState(0);
+  // 휴대폰에는 ↑↓·Enter·Esc 가 없다 — 할 수 없는 조작을 안내하지 않는다(14차)
+  const touch = useMediaQuery("(pointer: coarse)");
   /** items 가 어느 글자에 대한 답인가. 새로 묻는 동안에는 옛 목록을 그대로 보여
    *  주지만(깜빡이지 않게) 키보드로는 고르지 않는다 — 옛 답을 넣게 된다. */
   const [itemsFor, setItemsFor] = useState<string | null>(null);
@@ -380,7 +383,8 @@ export function useMarkdownInput(ref: RefObject<Field>, opts: InputOptions = {})
             </div>
           )}
           <div className="shrink-0 border-t border-line px-2.5 py-1 text-[10.5px] text-fg-subtle">
-            ↑↓ 고르기 · Enter/Tab 넣기 · 폴더는 안으로 들어감 · Esc 닫기
+            {touch ? "눌러서 넣기 · 폴더는 안으로 들어감 · ✕ 로 닫기"
+              : "↑↓ 고르기 · Enter/Tab 넣기 · 폴더는 안으로 들어감 · Esc 닫기"}
           </div>
         </div>
       )}
