@@ -1092,6 +1092,25 @@ def test_an_open_note_renamed_or_deleted_elsewhere_is_not_brought_back_by_its_au
         for p in (old, new):
             client.delete("/api/notes/delete", params={"path": p})
 
+    # 회의 문서도 같은 모양이었다(meeting_store.write_doc 가 기준 검사를 있을 때만 했다)
+    from backend import meeting_transcribe
+
+    r = client.post("/api/meetings/upload", data={"title": "유령 시험"},
+                    files={"file": ("유령.mp3", b"fake-mp3", "audio/mpeg")})
+    mid = r.json()["id"]
+    _settle(meeting_transcribe, _tester(), mid)
+    try:
+        doc = f"/api/meetings/{mid}/docs/메모"
+        assert client.put(doc, json={"content": "원문"}).status_code == 200
+        base = client.get(doc).json()["updated_at"]
+        assert client.delete(doc).status_code == 200
+        r = client.put(doc, json={"content": "지운 뒤 친 글", "base_modified": base})
+        assert r.status_code == 410, r.text
+        assert client.get(doc).status_code == 404, "지운 회의 문서가 되살아났다"
+        assert client.put(doc, json={"content": "다시 만듦"}).status_code == 200  # 기준 없음 = 만든다
+    finally:
+        client.delete(f"/api/meetings/{mid}")
+
 
 def test_old_sessions_do_not_outlive_the_account_state_they_were_issued_for():
     """세션은 **그 계정의 그 시기**에만 통해야 한다(60차).

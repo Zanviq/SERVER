@@ -16,7 +16,7 @@ import { TranscriptView } from "../components/meetings/TranscriptView";
 import { api, Meeting, MeetingDocSummary } from "../lib/api";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
-import { isConflict } from "../lib/api";
+import { isConflict, isGone } from "../lib/api";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { Draft, draftAgeText, dropDraft, keepDraft, readDraft } from "../lib/draftBackup";
 
@@ -58,6 +58,8 @@ export function Meetings() {
   const [draft, setDraft] = useState<Draft | null>(null);
   // 다른 곳(다른 기기 또는 AI)이 같은 문서를 고쳤다
   const [conflict, setConflict] = useState(false);
+  // 열어 둔 문서가 다른 곳에서 지워졌거나 이름이 바뀌었다(저장이 410) — 63차, 노트와 같은 띠
+  const [gone, setGone] = useState(false);
   // 문서를 연 시점의 수정시각(문서별). 저장할 때 함께 보내 충돌을 잡는다.
   const baseRef = useRef<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
@@ -147,6 +149,11 @@ export function Meetings() {
         setConflict(true);
         return false;
       }
+      // 사라졌다 — 자동저장이 되살리지 않는다. 띠로 고르게 한다(밑글은 남아 있다).
+      if (isGone(e)) {
+        setGone(true);
+        return false;
+      }
       toast.error(e instanceof Error ? e.message : "저장 실패");
       return false;
     } finally {
@@ -167,6 +174,7 @@ export function Meetings() {
       setDraft(readDraft(docKey(id, name), d.content));
       baseRef.current[docKey(id, name)] = d.updated_at;
       setConflict(false);
+      setGone(false);
     } catch (e) {
       if (!openSeq.isCurrent(token)) return;
       toast.error(e instanceof Error ? e.message : "문서를 못 열었습니다");
@@ -181,6 +189,7 @@ export function Meetings() {
     setContent("");
     setDirty(false);
     setDraft(null);   // 원본 탭에는 띠가 뜰 일이 없다
+    setGone(false);
   }, [flushPendingSave, openSeq]);
 
   // 회의를 바꾸면 문서 목록을 새로 받고 원본 탭으로 돌아간다
@@ -449,6 +458,38 @@ export function Meetings() {
                   className="btn btn-ghost h-7 px-2 text-[12px]"
                 >
                   저쪽 내용 불러오기
+                </button>
+              </div>
+            )}
+            {/* 다른 곳에서 지웠거나 이름을 바꿨다(63차). 되살릴지 버릴지 고른다(노트와 같다). */}
+            {gone && docOpen && (
+              <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-line bg-[rgb(var(--danger)/0.1)] px-3 py-2 text-[12.5px]">
+                <span className="min-w-0 flex-1">
+                  이 문서는 <b>다른 곳에서 지워졌거나 이름이 바뀌었습니다.</b> 지금 화면의 글로 다시 만들거나, 버리고 닫을 수 있습니다.
+                </span>
+                <button
+                  onClick={async () => {
+                    baseRef.current[docKey(selected.id, tab)] = 0;   // 기준 없이 = 새로 만든다
+                    setGone(false);
+                    if (await saveDoc(selected.id, tab, content)) {
+                      await loadDocs(selected.id);
+                      toast.ok("다시 만들었습니다");
+                    }
+                  }}
+                  className="btn btn-secondary h-7 px-2 text-[12px]"
+                >
+                  다시 만들기
+                </button>
+                <button
+                  onClick={() => {
+                    pending.cancel();
+                    dropDraft(docKey(selected.id, tab));
+                    showTranscript();
+                    void loadDocs(selected.id);
+                  }}
+                  className="btn btn-ghost h-7 px-2 text-[12px]"
+                >
+                  버리고 닫기
                 </button>
               </div>
             )}

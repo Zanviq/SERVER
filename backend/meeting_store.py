@@ -468,6 +468,14 @@ def write_doc(user: SessionUser, settings: Settings, mid: str, name: str, conten
     # 검사를 통과한 뒤 나중 것이 앞 것을 덮는다 — 막으려던 바로 그 일이 난다.
     with json_store.lock_for(p):
         existed = p.exists()
+        if base_modified and not existed:
+            # 열어 둔 문서(기준을 실은 저장)가 그 사이 사라졌다 — 다른 기기·탭에서 지우거나 이름을
+            # 바꿨다. 예전엔 여기서 새로 만들어 지운 문서가 되살아났다(63차, 노트 저장과 같은 결함).
+            # 회의 문서의 이름 바꾸기는 옮김 기록이 없어 어디로 갔는지는 모른다 — 410 으로 알린다.
+            raise HTTPException(
+                status_code=410,
+                detail="이 문서는 다른 곳에서 지워졌거나 이름이 바뀌었습니다. 지금 화면의 글로 다시 만들 수 있습니다.",
+            )
         # mtime 은 소수 자리가 왕복하며 흔들려서 1초 여유를 둔다(노트와 같은 규칙).
         if base_modified and existed and abs(p.stat().st_mtime - base_modified) > 1.0:
             raise HTTPException(
