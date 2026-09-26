@@ -49,6 +49,11 @@ def _settle(mod, user, item_id: str, timeout: float = 10.0) -> None:
         time.sleep(0.02)
 
 
+def _open_link(path: str) -> dict:
+    """링크를 누른 것과 같은 길(/api/links/open)로 연다 — 링크가 따라가는지 보는 시험들이 같이 쓴다."""
+    return client.get("/api/links/open", params={"path": path}).json()
+
+
 def _tester(display_name: str = "T"):
     """시험 계정(tester)의 세션 — 저장소를 직접 부르는 시험이 쓴다. 저장 자리는 username 이 정한다."""
     from backend.auth import SessionUser
@@ -11535,7 +11540,7 @@ def test_old_links_follow_a_renamed_or_moved_note():
     _login()
     box = "옮김시험"
     client.put("/api/notes/save", json={"path": f"{box}/원래이름.md", "content": "본문 5521"})
-    opened = lambda p: client.get("/api/links/open", params={"path": p}).json()  # noqa: E731
+    opened = _open_link
     moved_to = lambda t: client.get("/api/notes/moved", params={"title": t}).json()["path"]  # noqa: E731
 
     assert client.post("/api/notes/rename", json={"path": f"{box}/원래이름.md",
@@ -11586,7 +11591,7 @@ def test_old_links_follow_the_latest_note_at_a_reused_place():
     — `[note/X/B.md]` 가 "찾지 못한 링크" 였다(격리 서버·브라우저에서 확인).
     """
     _login()
-    opened = lambda p: client.get("/api/links/open", params={"path": p}).json()  # noqa: E731
+    opened = _open_link
     client.put("/api/notes/save", json={"path": "재사용X/B.md", "content": "옛 B"})
     client.post("/api/notes/folder", json={"path": "재사용Y"})
     assert client.post("/api/notes/move", json={"path": "재사용X", "target_folder": "재사용Y"}).status_code == 200
@@ -11691,7 +11696,7 @@ def test_links_follow_items_whose_titles_changed():
     링크"였다(격리 서버 실측: 할 일·회의). 문서는 옮김 기록으로 이미 따라갔다.
     """
     _login()
-    opened = lambda p: client.get("/api/links/open", params={"path": p}).json()  # noqa: E731
+    opened = _open_link
 
     t = client.post("/api/todo/create", json={"title": "제목바꿀 할일"}).json()
     try:
