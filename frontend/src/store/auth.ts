@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, ApiError, SessionInfo, setUnauthorizedHandler } from "../lib/api";
+import { api, ApiError, setUnauthorizedHandler, type SessionInfo } from "../lib/api";
 import { toast } from "./toast";
 
 interface AuthState {

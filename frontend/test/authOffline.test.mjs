@@ -7,66 +7,49 @@
  * 고치면 로그인 화면이 떴다.** 사용자는 비밀번호를 다시 치고, 그것도 실패하니
  * 계정이 잘못된 줄 안다. 배포할 때마다 컨테이너가 재시작하므로 드문 일도 아니다.
  *
- * store/auth.ts 의 init 과 같은 규칙(그 파일은 zustand·TS 라 노드에서 그대로
- * 못 부른다).
+ * **진짜 store/auth 를 불러** 본다(가짜 fetch). 예전엔 zustand·TS 라 노드에서 못 불러 init 규칙을 이 파일에 베껴
+ * 적었는데, 베낀 규칙은 원본이 바뀌어도 조용히 통과한다(76차에 strip-types 로 옮기며 걷어 냈다).
+ *
+ * 돌리는 법: node --experimental-strip-types --import ./test/tsResolve.mjs --test test/authOffline.test.mjs
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-class ApiError extends Error {
-  constructor(status) { super(`http ${status}`); this.status = status; }
+/** /api/auth/session 이 answer() 대로 답하는 가짜 서버 위에서 init 을 돌린 뒤의 상태 */
+async function initWith(answer) {
+  globalThis.fetch = async () => answer();
+  const { useAuth } = await import("../src/store/auth.ts");
+  useAuth.setState({ session: null, loading: true, offline: false });
+  await useAuth.getState().init();
+  const { session, loading, offline } = useAuth.getState();
+  return { session, loading, offline };
 }
-
-function makeInit(session) {
-  const state = { session: null, loading: true, offline: false };
-  return {
-    state,
-    async init() {
-      try {
-        state.session = await session();
-        Object.assign(state, { loading: false, offline: false });
-      } catch (e) {
-        const status = e instanceof ApiError ? e.status : 0;
-        Object.assign(state, {
-          session: null, loading: false,
-          offline: status !== 401 && status !== 403,
-        });
-      }
-    },
-  };
-}
+const reply = (status, body) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+const me = { username: "me", display_name: "me", expires_at: 0, remaining: 60, role: "user", origin: "signup" };
 
 test("들어와 있으면 그대로 들어간다", async () => {
-  const a = makeInit(async () => ({ username: "me" }));
-  await a.init();
-  assert.deepEqual(a.state, { session: { username: "me" }, loading: false, offline: false });
+  assert.deepEqual(await initWith(() => reply(200, me)), { session: me, loading: false, offline: false });
 });
 
 test("401 은 진짜 로그아웃 — 로그인 화면이 맞다", async () => {
-  const a = makeInit(async () => { throw new ApiError(401); });
-  await a.init();
-  assert.equal(a.state.session, null);
-  assert.equal(a.state.offline, false, "401 에 offline 을 켜면 로그인할 길이 없어진다");
+  const s = await initWith(() => reply(401, { detail: "로그인이 필요합니다." }));
+  assert.equal(s.session, null);
+  assert.equal(s.offline, false, "401 에 offline 을 켜면 로그인할 길이 없어진다");
 });
 
 test("403 도 로그인 화면", async () => {
-  const a = makeInit(async () => { throw new ApiError(403); });
-  await a.init();
-  assert.equal(a.state.offline, false);
+  assert.equal((await initWith(() => reply(403, { detail: "x" }))).offline, false);
 });
 
 test("네트워크가 끊기면 로그인 화면이 아니라 '닿지 못했습니다'", async () => {
-  const a = makeInit(async () => { throw new TypeError("Failed to fetch"); });
-  await a.init();
-  assert.equal(a.state.offline, true, "여기서 로그인 화면을 띄우면 비밀번호를 다시 치게 된다");
+  const s = await initWith(() => { throw new TypeError("Failed to fetch"); });
+  assert.equal(s.offline, true, "여기서 로그인 화면을 띄우면 비밀번호를 다시 치게 된다");
 });
 
 test("5xx 도 마찬가지 — 서버 잘못이지 로그아웃이 아니다", async () => {
   for (const code of [500, 502, 503, 504]) {
-    const a = makeInit(async () => { throw new ApiError(code); });
-    await a.init();
-    assert.equal(a.state.offline, true, `${code} 에서 로그인 화면이 떴다`);
+    assert.equal((await initWith(() => reply(code, { detail: "x" }))).offline, true, `${code} 에서 로그인 화면이 떴다`);
   }
 });
 
