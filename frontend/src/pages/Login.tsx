@@ -2,6 +2,7 @@ import { FormEvent, useState } from "react";
 import { Lock, Loader2, ServerCog, UserPlus, CheckCircle2 } from "lucide-react";
 import { useAuth } from "../store/auth";
 import { ThemeToggle } from "../components/layout/ThemeToggle";
+import { PasswordInput } from "../components/ui/PasswordInput";
 import { api } from "../lib/api";
 
 type Mode = "login" | "signup";
@@ -114,6 +115,11 @@ export function Login() {
           }}
           autoFocus
           autoComplete="username"
+          // 휴대폰 자판이 아이디를 "고치지" 않게 — 자동 고침은 `jaemin` 을 사전 낱말로 바꿔 "아이디 또는 비밀번호가
+          // 틀렸다"는 영문 모를 실패를 냈다. 가입 규칙이 소문자라 첫 글자 대문자도 끈다(디자인 11차).
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           placeholder={mode === "signup" ? "영문 소문자·숫자·_·- 3~32자" : "아이디"}
         />
 
@@ -131,17 +137,16 @@ export function Login() {
         )}
 
         <label className="label mb-1 block">비밀번호</label>
-        <div className="relative">
-          <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-subtle" />
-          <input
-            type="password"
-            className="input mb-3 pl-9"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete={mode === "login" ? "current-password" : "new-password"}
-            placeholder={mode === "signup" ? "8자 이상" : "비밀번호"}
-          />
-        </div>
+        <PasswordInput
+          leading={<Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-subtle" />}
+          // 아래 여백은 감싼 쪽에 — 칸에 두면 감싼 높이에 여백이 들어가 자물쇠·눈이 칸 가운데보다 6px 아래에 섰다
+          wrapClassName="mb-3"
+          className="input pl-9"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete={mode === "login" ? "current-password" : "new-password"}
+          placeholder={mode === "signup" ? "8자 이상" : "비밀번호"}
+        />
 
         {shown && (
           <p className="mb-3 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger">

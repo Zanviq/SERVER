@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useId, useState } from "react";
 import { User, Bot, CalendarDays, NotebookPen, Palette, Info, Loader2, RefreshCw, Users } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
 import { ThemeToggle } from "../components/layout/ThemeToggle";
+import { PasswordInput } from "../components/ui/PasswordInput";
 import { useAuth } from "../store/auth";
 import { useSettings } from "../store/settings";
 import { toast } from "../store/toast";
@@ -156,19 +157,19 @@ function LoginPassword() {
         <form className="mt-3 flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (ready) void save(); }}>
           <label className="text-[12px] text-fg-muted">
             지금 비밀번호
-            <input value={cur} onChange={(e) => setCur(e.target.value)} type="password"
-              autoComplete="current-password" className="input mt-1 h-9 w-44" />
+            <PasswordInput value={cur} onChange={(e) => setCur(e.target.value)} wrapClassName="mt-1 w-44"
+              autoComplete="current-password" className="input h-9" />
           </label>
           <label className="text-[12px] text-fg-muted">
             새 비밀번호
-            <input value={next} onChange={(e) => setNext(e.target.value)} type="password"
-              autoComplete="new-password" minLength={8} maxLength={256} className="input mt-1 h-9 w-44" />
+            <PasswordInput value={next} onChange={(e) => setNext(e.target.value)} wrapClassName="mt-1 w-44"
+              autoComplete="new-password" minLength={8} maxLength={256} className="input h-9" />
           </label>
           <label className="text-[12px] text-fg-muted">
             새 비밀번호 한 번 더
-            <input value={again} onChange={(e) => setAgain(e.target.value)} type="password"
+            <PasswordInput value={again} onChange={(e) => setAgain(e.target.value)} wrapClassName="mt-1 w-44"
               autoComplete="new-password" maxLength={256} aria-invalid={mismatch}
-              className="input mt-1 h-9 w-44" />
+              className="input h-9" />
           </label>
           <button type="submit" className="btn btn-primary h-9" disabled={!ready}>
             {busy ? <Loader2 size={14} className="animate-spin" /> : "저장"}
