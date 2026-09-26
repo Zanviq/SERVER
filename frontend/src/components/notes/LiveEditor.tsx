@@ -16,7 +16,7 @@ import {
 } from "@codemirror/autocomplete";
 import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { EmbedResolver, eachWikiEmbed, isImagePath } from "../../lib/embeds";
-import { cmHighlightExtension, highlightTag } from "../../lib/markdownExtras";
+import { cmCjkFriendly, cmHighlightExtension, highlightTag } from "../../lib/markdownExtras";
 import { matchMarker } from "../../lib/callouts";
 import { makeSlashSource, SlashActions } from "./slashMenu";
 import { tableTools } from "./tableTools";
@@ -846,7 +846,8 @@ export function LiveEditor({
           base: markdownLanguage,
           codeLanguages: languages,
           // 형광펜(==강조==)은 표준 마크다운에 없다. 읽기 뷰와 같은 규칙을 쓴다.
-          extensions: [cmHighlightExtension],
+          // 한글 친화 강조(`**중요!**라고`)도 읽기 뷰와 같은 규칙(markdownExtras, 69차).
+          extensions: [cmHighlightExtension, cmCjkFriendly(markdownLanguage.parser)],
         })),
         // 드래그&드롭: 떨어뜨린 '그 위치'에 삽입한다(옵시디언과 동일).
         EditorView.domEventHandlers({

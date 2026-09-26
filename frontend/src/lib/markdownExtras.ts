@@ -1,15 +1,92 @@
 /**
- * 표준 마크다운에 없는 문법을 **한 곳에서** 정한다.
+ * 표준 마크다운에 없는(또는 표준과 다르게 읽는) 문법을 **한 곳에서** 정한다.
  *
- * 지금은 형광펜 하나다: `==강조==`
- * (옵시디언·노션 내보내기가 쓰는 표기라 왕복해도 깨지지 않는다)
+ * - 형광펜: `==강조==` (옵시디언·노션 내보내기가 쓰는 표기라 왕복해도 깨지지 않는다)
+ * - 한글 친화 강조(69차): `**중요!**라고`·`**함수(인자)**를` 처럼 **문장부호 바로 뒤에 조사**가 붙은
+ *   굵게·기울임·취소선. 표준(CommonMark)의 좌우 붙음(flanking) 규칙은 닫는 `**` 앞이 문장부호면 뒤가
+ *   공백·문장부호일 때만 닫혀서, 한국어에서 가장 흔한 꼴이 `**` 가 그대로 보이는 글이 됐다(편집기·읽기
+ *   보기 둘 다 실측). CommonMark 의 CJK 친화 개정안(remark-cjk-friendly)을 따른다.
  *
  * 편집기(CodeMirror)와 읽기 뷰(react-markdown)는 파서가 완전히 다르다.
  * 규칙을 각자 들고 있으면 반드시 어긋나므로(한쪽에서만 칠해지는 식)
  * 문법 정의를 여기 모아 두고 두 어댑터를 함께 내보낸다.
  */
 import { Tag, tags as t } from "@lezer/highlight";
-import type { MarkdownConfig } from "@lezer/markdown";
+import type { InlineContext, MarkdownConfig } from "@lezer/markdown";
+import type { PluggableList } from "unified";
+import {
+  classifyCharacter, classifyPrecedingCharacter, isCjk, isCjkOrIvs, isNonCjkPunctuation,
+  isSpaceOrPunctuation, isUnicodeWhitespace,
+} from "micromark-extension-cjk-friendly-util";
+import remarkCjkFriendly from "remark-cjk-friendly/parseOnly";
+import remarkCjkFriendlyStrike from "remark-cjk-friendly-gfm-strikethrough/parseOnly";
+
+/** 읽기 뷰의 한글 친화 강조 — remark-gfm **뒤에** 둔다(취소선은 gfm 의 것을 바꿔 끼운다).
+ *  singleTilde 는 gfm 과 같게(물결 하나는 취소선이 아니다 — 화학식·첨자). */
+export const remarkCjkPlugins: PluggableList = [remarkCjkFriendly, [remarkCjkFriendlyStrike, { singleTilde: false }]];
+
+/**
+ * 강조 표시(`*` `_` `~~`)가 열 수 있는가·닫을 수 있는가 — 읽기 뷰 플러그인(micromark-extension-cjk-friendly)과
+ * **같은 분류 함수로 같은 식**을 쓴다(글자 분류가 어긋나면 두 화면이 다르게 보인다). 앞뒤 글자가 CJK 나 CJK
+ * 문장부호가 아닐 때는 CommonMark 규칙과 똑같다.
+ */
+export function cjkEmphasisSides(marker: number, before: number | null, twoBefore: number | null,
+                                 after: number | null): { open: boolean; close: boolean } {
+  const b = classifyPrecedingCharacter(classifyCharacter(before), () => twoBefore, before as number);
+  const a = classifyCharacter(after);
+  const bSpaceOrPunct = isNonCjkPunctuation(b) || isUnicodeWhitespace(b);
+  const aSpaceOrPunct = isNonCjkPunctuation(a) || isUnicodeWhitespace(a);
+  let open = !aSpaceOrPunct || (isNonCjkPunctuation(a) && (bSpaceOrPunct || isCjkOrIvs(b)));
+  let close = !bSpaceOrPunct || (isNonCjkPunctuation(b) && (aSpaceOrPunct || isCjk(a)));
+  if (marker === 95 /* _ */) {
+    // 밑줄은 낱말 안에서 열고 닫지 않는다(snake_case) — 표준과 같은 덧붙임 조건
+    const o = open && (isSpaceOrPunctuation(b) || !close);
+    const c = close && (isSpaceOrPunctuation(a) || !open);
+    open = o;
+    close = c;
+  }
+  return { open, close };
+}
+
+type InlineParse = (cx: InlineContext, next: number, pos: number) => number;
+/** 인라인 문단 안의 한 코드 포인트(없으면 null — 문단 경계는 공백으로 본다). */
+function pointBefore(cx: InlineContext, pos: number): number | null {
+  const s = cx.slice(Math.max(cx.offset, pos - 2), pos);
+  const cps = Array.from(s);
+  return cps.length ? (cps[cps.length - 1].codePointAt(0) ?? null) : null;
+}
+function pointAfter(cx: InlineContext, pos: number): number | null {
+  return cx.slice(pos, Math.min(cx.end, pos + 2)).codePointAt(0) ?? null;
+}
+
+/**
+ * 편집기의 한글 친화 강조. lezer 의 기본 Emphasis·Strikethrough 해석기를 **그대로 부르고**, 그것이 방금 단
+ * 구분자의 열기·닫기만 위 규칙으로 다시 정한다 — 구분자 종류(굵게·기울임 짝 맞추기에 쓰는 내부 객체)는
+ * lezer 밖에서 만들 수 없어서다. base 는 편집기가 쓰는 마크다운 파서(GFM 포함 — markdownLanguage.parser)를
+ * 넘긴다 — 여기서 lezer 를 값으로 가져오면 읽기 뷰 묶음에도 편집기 파서가 딸려 간다. 타입이 `object` 인
+ * 것은 CodeMirror 가 그 파서를 일반 Parser 로 내놓아서다(쓰는 것은 어차피 내부 칸이다).
+ */
+export function cmCjkFriendly(base: object): MarkdownConfig {
+  const p = base as unknown as { inlineParsers: (InlineParse | undefined)[]; inlineNames: string[] };
+  const wrap = (name: string, markers: number[]) => {
+    const original = p.inlineParsers[p.inlineNames.indexOf(name)];
+    if (!original) throw new Error(`마크다운 파서에 ${name} 가 없다`);
+    const parse: InlineParse = (cx, next, start) => {
+      const end = original(cx, next, start);
+      if (end < 0 || !markers.includes(next)) return end;
+      const parts = (cx as unknown as { parts: ({ from: number; to: number; side: number } | null)[] }).parts;
+      const d = parts[parts.length - 1];
+      if (!d || d.from !== start || typeof d.side !== "number") return end;
+      const before = pointBefore(cx, d.from);
+      const twoBefore = before === null ? null : pointBefore(cx, d.from - (before > 0xffff ? 2 : 1));
+      const s = cjkEmphasisSides(next, before, twoBefore, pointAfter(cx, d.to));
+      d.side = (s.open ? 1 : 0) | (s.close ? 2 : 0);
+      return end;
+    };
+    return { name, parse };
+  };
+  return { parseInline: [wrap("Emphasis", [42, 95]), wrap("Strikethrough", [126])] };
+}
 
 /** 형광펜 구간에 붙는 커스텀 태그(에디터 하이라이트 스타일이 이걸 잡는다). */
 export const highlightTag = Tag.define();

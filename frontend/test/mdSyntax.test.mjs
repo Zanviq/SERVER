@@ -21,7 +21,7 @@ test("이 시험의 파이프라인이 화면의 것과 같다", () => {
   const view = readFileSync(new URL("./components/notes/MarkdownView.tsx", src), "utf8") +
     readFileSync(new URL("./components/notes/richPlugins.ts", src), "utf8");
   const harness = readFileSync(new URL("./mdPipeline.mjs", import.meta.url), "utf8");
-  for (const p of ["remarkGfm", "remarkBreaks", "remarkHighlight", "remarkMath",
+  for (const p of ["remarkGfm", "remarkCjkPlugins", "remarkBreaks", "remarkHighlight", "remarkMath",
                    "rehypeRaw", "rehypeSanitize", "rehypeKatex"]) {
     assert.ok(view.includes(p), `MarkdownView 가 ${p} 를 안 쓴다 — 시험 구성을 맞춰라`);
     assert.ok(harness.includes(p), `시험 파이프라인에 ${p} 가 빠졌다`);

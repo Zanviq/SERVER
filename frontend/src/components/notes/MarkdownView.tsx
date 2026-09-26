@@ -9,7 +9,7 @@ import remarkMath from "remark-math";
 import rehypeSlug from "rehype-slug";
 import type { EmbedResolver } from "../../lib/embeds";
 import { transformWiki } from "../../lib/wikiTransform";
-import { remarkHighlight } from "../../lib/markdownExtras";
+import { remarkCjkPlugins, remarkHighlight } from "../../lib/markdownExtras";
 import { CALLOUTS, parseCallout } from "../../lib/callouts";
 import { mdSanitizeSchema } from "../../lib/sanitizeSchema";
 import { LinkChip } from "../links/LinkChip";
@@ -75,7 +75,8 @@ export function MarkdownView({
         // 단일 엔터 줄바꿈(remarkBreaks) + GFM(표/체크박스/취소선/자동링크)
         // singleTilde:false — 물결 하나(`H~2~O`)를 취소선으로 보지 않는다. 화학식·
         // 첨자 표기가 통째로 <del> 이 되던 것을 막는다(취소선은 `~~두 개~~` 만).
-        remarkPlugins={[[remarkGfm, { singleTilde: false }], remarkBreaks,
+        // remarkCjkPlugins — `**중요!**라고` 처럼 문장부호 뒤에 조사가 붙은 강조(편집기와 같은 규칙, markdownExtras)
+        remarkPlugins={[[remarkGfm, { singleTilde: false }], ...remarkCjkPlugins, remarkBreaks,
                         remarkHighlight, remarkMath]}
         // 인라인 HTML/SVG 파싱(rehypeRaw) 후 살균(rehypeSanitize, svg 허용 스키마).
         // **수식은 살균 뒤에 그린다**(rehypeKatex). 앞에서 그리면 KaTeX 가 만든
