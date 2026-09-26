@@ -15,6 +15,12 @@ import { render } from "./mdPipeline.mjs";
 
 const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
 
+/** `.prose-server <선택자> { … }` 규칙의 몸통(없으면 빈 문자열). 선택자는 적은 그대로 맞춘다. */
+function ruleBody(selector) {
+  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return css.match(new RegExp(`\\.prose-server ${esc} \\{([^}]*)\\}`))?.[1] ?? "";
+}
+
 /** 화면에 나올 수 있는 것을 되도록 넓게 적는다. */
 const SAMPLES = [
   "# h1\n## h2\n### h3\n#### h4\n##### h5\n###### h6",
@@ -73,9 +79,8 @@ test("체크박스와 보통 항목이 섞인 목록에서 보통 항목의 점�
   const html = render("- [ ] 할 일\n- 글머리");
   assert.match(html, /<ul class="contains-task-list">/);
   assert.match(html, /<li>글머리<\/li>/, "보통 항목에 task-list-item 이 붙었다 — 표본이 무의미하다");
-  const rule = (sel) => css.match(new RegExp(`\\.prose-server ${sel.replace(".", "\\.")} \\{([^}]*)\\}`))?.[1] ?? "";
-  assert.doesNotMatch(rule("ul.contains-task-list"), /list-none/, "목록 전체의 점을 뺀다");
-  assert.match(rule("li.task-list-item"), /list-none/, "체크박스 항목의 점을 빼지 않는다");
+  assert.doesNotMatch(ruleBody("ul.contains-task-list"), /list-none/, "목록 전체의 점을 뺀다");
+  assert.match(ruleBody("li.task-list-item"), /list-none/, "체크박스 항목의 점을 빼지 않는다");
 });
 
 test("체크박스 항목은 보통 글 흐름이다 — 중첩 목록이 부모 글 오른쪽에 붙지 않는다(68차)", () => {
@@ -83,8 +88,8 @@ test("체크박스 항목은 보통 글 흐름이다 — 중첩 목록이 부모
   const html = render("- [ ] 부모\n  - [ ] 자식");
   assert.match(html, /<li class="task-list-item"><input[^>]*> 부모\s*<ul class="contains-task-list">/,
     "표본이 중첩 체크리스트가 아니다 — 시험이 무의미하다");
-  const item = css.match(/\.prose-server li\.task-list-item \{([^}]*)\}/)?.[1] ?? "";
-  assert.doesNotMatch(item, /\b(flex|grid|inline-flex)\b/, "체크박스 항목이 flex/grid 다 — 중첩 목록이 옆에 붙는다");
+  assert.doesNotMatch(ruleBody("li.task-list-item"), /\b(flex|grid|inline-flex)\b/,
+    "체크박스 항목이 flex/grid 다 — 중첩 목록이 옆에 붙는다");
   assert.match(css, /li\.task-list-item > input\[type="checkbox"\][^{]*\{[^}]*\babsolute\b/,
     "체크박스를 점 자리에 띄우지 않는다");
 });
