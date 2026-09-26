@@ -172,7 +172,7 @@ export function Context() {
               <List size={14} /> 목록
             </button>
           )}
-          <span className="badge" title="AI 가 늘 보는 것은 최근 하루치입니다. 그보다 옛날은 AI 가 스킬로 직접 꺼냅니다.">
+          <span className="badge max-[359px]:hidden" title="AI 가 늘 보는 것은 최근 하루치입니다. 그보다 옛날은 AI 가 스킬로 직접 꺼냅니다.">
             최근 1일 자동 · 그 이전은 AI가 검색
           </span>
         </>

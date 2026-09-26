@@ -50,11 +50,11 @@ export function English() {
       <div className="flex rounded-md border border-line p-0.5 lg:hidden" role="tablist">
         <button role="tab" aria-selected={mobileView === "chat"} onClick={() => setMobileView("chat")}
           className={`rounded-sm px-2 py-1 text-[12px] coarse:py-2 ${mobileView === "chat" ? "bg-accent-muted text-accent-fg" : "text-fg-muted"}`}>
-          <MessageSquare size={13} className="mr-1 inline" />대화
+          <MessageSquare size={13} className="mr-1 inline max-[359px]:mr-0" /><span className="max-[359px]:sr-only">대화</span>
         </button>
         <button role="tab" aria-selected={mobileView === "vocab"} onClick={() => setMobileView("vocab")}
           className={`rounded-sm px-2 py-1 text-[12px] coarse:py-2 ${mobileView === "vocab" ? "bg-accent-muted text-accent-fg" : "text-fg-muted"}`}>
-          <BookMarked size={13} className="mr-1 inline" />단어장
+          <BookMarked size={13} className="mr-1 inline max-[359px]:mr-0" /><span className="max-[359px]:sr-only">단어장</span>
         </button>
       </div>
       {/* 대화를 비우는 단추 — 한 칸 화면에서 단어장을 보고 있을 때는 감춘다. 보이지 않는 대화를 지우는 휴지통이 단어 목록

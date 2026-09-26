@@ -156,11 +156,11 @@ export function Graph() {
     <div className="inline-flex rounded-md border border-line bg-subtle p-0.5">
       <button onClick={() => setMode("links")} aria-pressed={mode === "links"}
         className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-[13px] font-medium coarse:py-1.5 ${mode === "links" ? "bg-surface text-accent shadow-sm" : "text-fg-muted hover:text-fg"}`}>
-        <Link2 size={14} /> 링크
+        <Link2 size={14} /> <span className="max-[359px]:sr-only">링크</span>
       </button>
       <button onClick={() => setMode("folders")} aria-pressed={mode === "folders"}
         className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-[13px] font-medium coarse:py-1.5 ${mode === "folders" ? "bg-surface text-accent shadow-sm" : "text-fg-muted hover:text-fg"}`}>
-        <FolderTree size={14} /> 폴더 구조
+        <FolderTree size={14} /> <span className="max-[359px]:sr-only">폴더 구조</span>
       </button>
     </div>
   );

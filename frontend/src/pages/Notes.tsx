@@ -955,10 +955,10 @@ export function Notes() {
     <div className="flex items-center gap-2">
       <a href={api.noteArchiveUrl(archiveFolder)} download className="btn btn-ghost h-8"
         title={archiveFolder ? `'${archiveFolder}' 폴더를 zip으로` : "전체 문서를 zip으로"}>
-        <Download size={14} /> {archiveFolder ? "폴더 받기" : "전체 받기"}
+        <Download size={14} /> <span className="max-[359px]:sr-only">{archiveFolder ? "폴더 받기" : "전체 받기"}</span>
       </a>
       <label className="btn btn-secondary h-8 cursor-pointer" title="현재 폴더에 파일 올리기">
-        <Upload size={14} /> 업로드
+        <Upload size={14} /> <span className="max-[359px]:sr-only">업로드</span>
         <input type="file" multiple className="hidden"
           onChange={(e) => { doUpload(e.target.files); e.currentTarget.value = ""; }} />
       </label>

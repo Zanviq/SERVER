@@ -209,7 +209,7 @@ export function Trash() {
                     title="복원"
                   >
                     {busy === e.id ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
-                    복원
+                    <span className="max-[359px]:sr-only">복원</span>
                   </button>
                   <button
                     onClick={() => setPurgeFor(e)}
