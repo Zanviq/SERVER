@@ -230,7 +230,11 @@ export function VocabPanel({ refreshKey = 0, initialTag = "", defaultTags = [], 
           </div>
         )}
         <div className="flex items-center gap-1 text-[11.5px]">
-          <Chip active={dueOnly} onClick={() => setDueOnly((v) => !v)} tone="warning">오늘 복습{stats ? ` ${stats.due}` : ""}</Chip>
+          <Chip active={dueOnly} onClick={() => setDueOnly((v) => !v)} tone="warning">
+            {/* 줄마다 붙는 주황 점(LevelDots)과 같은 점 — 그 점이 무엇인지 여기서 읽힌다(디자인 15차: 뜻이 마우스 풍선에만 있었다) */}
+            <span aria-hidden="true" className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-warning align-middle" />
+            오늘 복습{stats ? ` ${stats.due}` : ""}
+          </Chip>
           {tag && (
             <button type="button" onClick={() => { setRenaming(tag); setRenameTo(tag); }} className="btn btn-ghost h-6 gap-1 px-1.5 text-[11px]" title="태그 이름 바꾸기">
               <Pencil size={11} /> 태그 이름

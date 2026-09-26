@@ -57,6 +57,17 @@ test("'올리면 보임'은 화면 너비가 아니라 마우스가 있는지로
   assert.deepEqual(widthHidden, [], "화면 너비로 숨기는 곳이 남았다 — 태블릿에서 보이지 않는다");
 });
 
+test("점·모양으로만 드러나는 뜻은 화면 읽기 이름이 있고, 주황 점은 뜻이 화면에 적혀 있다(디자인 15차)", () => {
+  // 뜻이 title(마우스 풍선)에만 있던 곳 — 손가락 화면에서는 뜻 모를 주황 점, 화면 읽기에는 이름 없는 점들이었다
+  const card = readFileSync(join(SRC, "components/vocab/WordCard.tsx"), "utf8");
+  assert.match(card, /<span role="img" aria-label=\{`복습 단계 \$\{level\}\/\$\{MAX_LEVEL\}/);
+  const panel = readFileSync(join(SRC, "components/vocab/VocabPanel.tsx"), "utf8");
+  const chip = panel.slice(panel.indexOf("<Chip active={dueOnly}"), panel.indexOf("</Chip>", panel.indexOf("<Chip active={dueOnly}")));
+  assert.match(chip, /rounded-full bg-warning/, "'오늘 복습' 칩에 줄마다 붙는 주황 점이 없다 — 점의 뜻을 읽을 곳이 없다");
+  const diary = readFileSync(join(SRC, "components/calendar/DiaryShapes.tsx"), "utf8");
+  assert.match(diary, /className="fc-diary-row" role="img" aria-label=/);
+});
+
 test("대화 지우기는 되돌릴 수 없으니 한 번 묻는다", () => {
   const chat = readFileSync(join(SRC, "components/ai/ChatPanel.tsx"), "utf8");
   const drop = chat.slice(chat.indexOf("const dropSession"), chat.indexOf("const dropSession") + 900);

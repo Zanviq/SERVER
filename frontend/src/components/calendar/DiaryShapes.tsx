@@ -86,7 +86,9 @@ export function DiaryCell({
   return (
     <span className="fc-diary-stack">
       {anyShape && (
-        <span className="fc-diary-row" title={`육체 ${label(body)} · 마음 ${label(heart)} · 정신 ${label(mind)}`}>
+        // 모양 셋만으로는 화면 읽기가 아무것도 못 읽는다 — 그림으로 이름을 준다(디자인 15차)
+        <span className="fc-diary-row" role="img" aria-label={`육체 ${label(body)} · 마음 ${label(heart)} · 정신 ${label(mind)}`}
+          title={`육체 ${label(body)} · 마음 ${label(heart)} · 정신 ${label(mind)}`}>
           <ShapeIcon shape={body} size={size} />
           <ShapeIcon shape={heart} size={size} />
           <ShapeIcon shape={mind} size={size} />

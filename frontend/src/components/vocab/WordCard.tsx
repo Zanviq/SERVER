@@ -11,7 +11,9 @@ export const MAX_LEVEL = 7;
 /** 복습 단계를 점으로. 오늘 복습할 차례면 주황 점을 앞에 단다. */
 export function LevelDots({ level, due }: { level: number; due?: boolean }) {
   return (
-    <span className="inline-flex items-center gap-[2px]" title={`복습 단계 ${level}/${MAX_LEVEL}${due ? " · 오늘 복습" : ""}`}>
+    // 점만으로는 화면 읽기가 아무것도 못 읽는다 — 그림으로 이름을 준다(title 은 글이 아닌 span 에서 잘 안 읽힌다, 디자인 15차)
+    <span role="img" aria-label={`복습 단계 ${level}/${MAX_LEVEL}${due ? " · 오늘 복습" : ""}`}
+      className="inline-flex items-center gap-[2px]" title={`복습 단계 ${level}/${MAX_LEVEL}${due ? " · 오늘 복습" : ""}`}>
       {due && <span className="mr-0.5 h-1.5 w-1.5 rounded-full bg-warning" />}
       {Array.from({ length: MAX_LEVEL }, (_, i) => (
         <span key={i} className={`h-1.5 w-1.5 rounded-full ${i < level ? "bg-accent" : "bg-line-strong"}`} />
