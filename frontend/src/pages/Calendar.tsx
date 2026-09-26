@@ -413,7 +413,8 @@ export function Calendar() {
       <ThreePane storageKey="calendar.panes.v1" side="right" defaultWidth={380}
         mobile="toggle" centerLabel="달력" fixedLabel={diary ? "기록" : "AI 패널"}
         mobileFocusKey={diary ? String(dayPicks) : ""}>
-        <div className="card flex h-[70vh] w-full flex-col p-4 lg:h-auto">
+        {/* 달력 칸과 같은 최소 높이 — 568px 휴대폰에서 70vh 로는 색 고르기·입력칸을 빼면 대화가 101px(두 줄)이었다(디자인 39차) */}
+        <div className="card flex h-[70vh] min-h-[28rem] w-full flex-col p-4 lg:h-auto lg:min-h-0">
           {diary ? (
             <>
               <div className="mb-3 flex items-center gap-2 border-b border-line/50 pb-2 text-sm font-semibold">
