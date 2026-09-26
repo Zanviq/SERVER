@@ -132,14 +132,24 @@ export function unresolvedEmbeds(text: string, files: { path: string }[], curren
   eachWikiEmbed(text, ({ embed }) => {
     if (!resolve(embed.target)) out.add(embed.target);
   });
+  eachMdImage(text, ({ target }) => {
+    if (!resolve(target)) out.add(target);
+  });
+  return [...out].slice(0, 200);
+}
+
+/**
+ * 글의 표준 그림(`![대체](…)`) 가운데 **벌트 안** 대상 — 주소(http:·data: 등)·루트 경로(`/api/…`)는 뺀다.
+ * 읽기 보기(MarkdownView 의 img)와 같은 기준이다: 그쪽도 이런 대상만 해석기로 보낸다. `%` 로 적은 이름은 푼다.
+ */
+export function eachMdImage(text: string, cb: (m: { index: number; target: string }) => void): void {
   for (const m of text.matchAll(MD_IMAGE)) {
     const url = m[1] ?? m[2];
     if (/^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith("/")) continue;
     let target = url;
     try { target = decodeURIComponent(url); } catch { /* %가 든 이름 — 그대로 */ }
-    if (!resolve(target)) out.add(target);
+    cb({ index: m.index ?? 0, target });
   }
-  return [...out].slice(0, 200);
 }
 
 /**

@@ -38,6 +38,18 @@ test("서버에 물을 것 — 목록에서 못 찾는 임베드만, 위키·표
   assert.deepEqual(unresolvedEmbeds("![[사진.png]]", files, "여행/글.md"), [], "다 찾으면 묻지 않는다");
 });
 
+test("표준 그림은 벌트 안 대상만 — 편집기도 이것으로 그린다(73차)", async () => {
+  const { eachMdImage } = await import("../src/lib/embeds.ts");
+  const got = [];
+  eachMdImage("앞 ![a](그림/사진.png) ![b](https://x/y.png) ![c](<띄운 이름.png>) `![d](코드.png)` ![e](/api/raw.png)",
+    ({ target }) => got.push(target));
+  // 코드 안(`…`)은 여기서 가리지 않는다 — 그리는 쪽(편집기 inCodeAt·읽기 보기 파서)이 거른다
+  assert.deepEqual(got, ["그림/사진.png", "띄운 이름.png", "코드.png"]);
+  const ed = readFileSync(new URL("../src/components/notes/LiveEditor.tsx", import.meta.url), "utf8");
+  assert.match(ed, /eachMdImage\(text, \(\{ index, target \}\) =>/, "편집기가 표준 그림을 그리지 않는다");
+  assert.match(ed, /new ImageWidget\(hit\.url, target, undefined, false\)/, "표준 그림에 크기 손잡이(너비 문법 없음)가 붙는다");
+});
+
 test("문서 화면이 못 찾은 임베드를 서버에 묻고 해석기에 넘긴다", () => {
   const src = readFileSync(new URL("../src/pages/Notes.tsx", import.meta.url), "utf8");
   assert.match(src, /unresolvedEmbeds\(content, notes, current\)/);

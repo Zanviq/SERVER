@@ -18,7 +18,7 @@ import {
   autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap,
 } from "@codemirror/autocomplete";
 import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
-import { EmbedResolver, eachWikiEmbed, isImagePath } from "../../lib/embeds";
+import { EmbedResolver, eachMdImage, eachWikiEmbed, isImagePath } from "../../lib/embeds";
 import { cmCjkFriendly, cmHighlightExtension, highlightTag } from "../../lib/markdownExtras";
 import { matchMarker } from "../../lib/callouts";
 import { makeSlashSource, SlashActions } from "./slashMenu";
@@ -83,11 +83,14 @@ class ImageWidget extends WidgetType {
     readonly url: string,
     readonly target: string,
     readonly width: number | undefined,
+    /** 크기 손잡이 — `![[대상|너비]]` 를 고쳐 쓴다. 표준 그림(`![](…)`)에는 너비 문법이 없어 끈다(73차). */
+    readonly resizable: boolean = true,
   ) {
     super();
   }
   eq(o: ImageWidget) {
-    return o.url === this.url && o.target === this.target && o.width === this.width;
+    return o.url === this.url && o.target === this.target && o.width === this.width
+      && o.resizable === this.resizable;
   }
   toDOM(view: EditorView) {
     const wrap = document.createElement("div");
@@ -98,6 +101,7 @@ class ImageWidget extends WidgetType {
     img.loading = "lazy";
     if (this.width) img.style.width = `${this.width}px`;
     wrap.appendChild(img);
+    if (!this.resizable) return wrap;
 
     const grip = document.createElement("span");
     grip.className = "cm-embed-grip";
@@ -427,6 +431,22 @@ function buildEmbeds(state: EditorState): DecorationSet {
         ranges.push(
           Decoration.widget({
             widget: new ImageWidget(hit.url, embed.target, embed.width),
+            side: 1,
+            block: true,
+          }).range(end),
+        );
+      });
+    }
+    // 표준 그림(`![대체](그림/사진.png)`)도 — 예전엔 읽기 보기에만 그려지고 편집기에는 글자만 보였다(73차).
+    // 같은 해석기(옮긴 그림도 따라간다)로 찾고, 코드 안은 그 자리마다 거른다(줄 안에 인라인 코드가 섞일 수 있다).
+    if (text.includes("](")) {
+      eachMdImage(text, ({ index, target }) => {
+        if (!isImagePath(target) || inCodeAt(state, pos + index)) return;
+        const hit = resolve(target);
+        if (!hit) return;
+        ranges.push(
+          Decoration.widget({
+            widget: new ImageWidget(hit.url, target, undefined, false),
             side: 1,
             block: true,
           }).range(end),
