@@ -6,7 +6,7 @@ import shutil
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from .. import meeting_store, meeting_transcribe, orphans
@@ -130,20 +130,23 @@ def get_meeting(
 @router.get("/{mid}/audio")
 def get_audio(
     mid: str,
+    request: Request,
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    """원본 녹음. <audio> 가 구간 탐색을 하도록 Range 를 받는 파일 응답(user_file)으로 준다."""
+    """원본 녹음. <audio> 가 구간 탐색을 하도록 Range 를 받는 파일 응답(user_file)으로 준다.
+    캐시 규칙은 user_file 의 것(늘 묻기) — 예전의 max-age=3600 은 로그아웃 뒤에도 한 시간 열렸다."""
     m = meeting_store.get_meeting(user, settings, mid)
     ext = str(m.get("ext") or "")
     path = meeting_store.audio_path(user, settings, mid, ext) if ext else None
     if path is None or not path.exists():
         raise HTTPException(status_code=410, detail="녹음 파일이 없습니다.")
     return user_file(
+        request,
         path,
         # 적어 둔 mime 이 아니라 확장자로 — 옛 기록엔 올린 쪽이 밝힌 text/html 이 남아 있을 수 있다
         meeting_store.audio_mime(ext),
-        headers={"Content-Disposition": "inline", "Cache-Control": "private, max-age=3600"},
+        headers={"Content-Disposition": "inline"},
     )
 
 

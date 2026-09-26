@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from .. import orphans, paper_extract, paper_store
@@ -133,20 +133,22 @@ def get_paper(
 @router.get("/{pid}/file")
 def get_file(
     pid: str,
+    request: Request,
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    """PDF 원본. 브라우저 안(pdf.js)에서 열리도록 inline 으로 준다."""
+    """PDF 원본. 브라우저 안(pdf.js)에서 열리도록 inline 으로 준다.
+    캐시 규칙은 user_file 의 것(늘 묻기, 그대로면 304) — 예전의 max-age=3600 은 로그아웃 뒤에도 한 시간 열렸다."""
     p = paper_store.get_paper(user, settings, pid)
     path = paper_store.pdf_path(user, settings, pid)
     if not path.exists():
         raise HTTPException(status_code=410, detail="PDF 파일이 없습니다.")
     return user_file(
+        request,
         path,
         "application/pdf",
         headers={
             "Content-Disposition": "inline",
-            "Cache-Control": "private, max-age=3600",
             "X-Paper-Filename": str(p.get("filename") or "paper.pdf").encode("ascii", "ignore").decode() or "paper.pdf",
         },
     )

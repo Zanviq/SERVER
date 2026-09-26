@@ -10504,6 +10504,60 @@ def test_a_recording_is_served_and_transcribed_as_its_extension_not_as_claimed()
         client.delete(f"/api/meetings/{mid}")
 
 
+def test_private_responses_are_never_reused_from_the_browser_cache_without_asking():
+    """/api 응답은 브라우저가 서버에 묻지 않고 캐시에서 꺼내 쓰면 안 된다(62차).
+
+    예전엔 /api 에 Cache-Control 이 없었고, 파일 응답(FileResponse)은 Last-Modified 를 싣는다 — 브라우저는
+    그 나이의 10% 동안(30일 된 첨부면 3일) 캐시를 '신선하다'며 **서버에 묻지 않고** 썼다. 실측(운영
+    번들 + 격리 서버): ① 파일을 바꿔도 옛 내용이 나왔고 ② **로그아웃한 뒤에도** 같은 주소가 200 으로
+    열렸다(공용 PC 라면 다음 사람이 방문 기록에서 연다).
+    파일은 `private, no-cache` + 우리 ETag — 늘 묻되, 그대로면 304 로 가볍게(Starlette 는 1.7 에서도
+    If-None-Match 를 보지 않아 매번 통째로 보냈을 것이다). 그 밖의 /api 는 no-store(일기 JSON 이 디스크
+    캐시에 남지 않게).
+    """
+    from backend.storage import user_data_root
+
+    _login()
+    root = user_data_root(_tester(), get_settings())
+    f = root / "캐시시험.png"
+    f.write_bytes(b"VERSION-1")
+    try:
+        url = "/api/notes/raw?path=캐시시험.png"
+        r = client.get(url)
+        assert r.status_code == 200 and r.content == b"VERSION-1"
+        cc = r.headers.get("cache-control", "")
+        assert "no-cache" in cc and "private" in cc, cc
+        tag = r.headers.get("etag")
+        assert tag, r.headers
+        same = client.get(url, headers={"If-None-Match": tag})
+        assert same.status_code == 304 and same.content == b"", same.status_code
+        assert same.headers.get("etag") == tag and "no-cache" in same.headers.get("cache-control", "")
+        f.write_bytes(b"VERSION-2-longer")
+        changed = client.get(url, headers={"If-None-Match": tag})
+        assert changed.status_code == 200 and changed.content == b"VERSION-2-longer"
+        assert TestClient(app).get(url, headers={"If-None-Match": tag}).status_code == 401
+
+        j = client.get("/api/notes/list")
+        assert j.headers.get("cache-control") == "no-store", j.headers.get("cache-control")
+        assert TestClient(app).get("/api/notes/list").headers.get("cache-control") == "no-store"
+        assert client.get("/api/health").headers.get("cache-control") == "no-store"
+    finally:
+        f.unlink(missing_ok=True)
+
+    # 파일을 내보내는 모든 라우터가 요청을 넘겨 304 를 할 수 있어야 한다 — 녹음도 같은 규칙
+    r = client.post("/api/meetings/upload", data={"title": "캐시 시험"},
+                    files={"file": ("캐시.mp3", b"fake-mp3", "audio/mpeg")})
+    mid = r.json()["id"]
+    try:
+        from backend import meeting_transcribe
+        _settle(meeting_transcribe, _tester(), mid)
+        a = client.get(f"/api/meetings/{mid}/audio")
+        assert a.status_code == 200 and a.headers.get("etag")
+        assert client.get(f"/api/meetings/{mid}/audio", headers={"If-None-Match": a.headers["etag"]}).status_code == 304
+    finally:
+        client.delete(f"/api/meetings/{mid}")
+
+
 def test_paper_notes_do_not_overwrite_a_change_the_screen_has_not_seen():
     """논문 메모 저장에 base_notes 를 주면, 그 사이 다른 곳에서 바뀐 메모를 덮지 않는다(42차).
 

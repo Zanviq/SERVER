@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .api_cache import NoStoreApi
 from .auth import COOKIE_NAME, require_owner, require_session, signed_in
 from .body_limit import BodyLimit
 from .config import get_settings
@@ -169,6 +170,9 @@ app.add_middleware(SameOriginWrites, allowed_origins=_ALLOWED_ORIGINS)
 # 본문으로 서버 메모리를 비울 수 있었다(90MB × 6 → +1.2GB). 무엇보다 먼저 받는다(body_limit.py).
 app.add_middleware(BodyLimit, cookie_name=COOKIE_NAME,
                    upload_limit=lambda: get_settings().max_upload_bytes, signed_in=signed_in)
+# /api 응답을 브라우저 캐시에 남기지 않는다(파일은 user_file 이 '늘 묻기'로 따로 정한다 — api_cache.py).
+# 가장 바깥 — 위 둘이 거절한 응답(403·413)에도 붙는다.
+app.add_middleware(NoStoreApi)
 
 # 공개 라우터(인증 불필요)
 app.include_router(auth.router)

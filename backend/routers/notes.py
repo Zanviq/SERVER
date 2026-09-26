@@ -17,7 +17,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
 from .. import archive, doc_cache, meeting_store, mounts, moved, paper_store
@@ -392,6 +392,7 @@ def get_note(
 
 @router.get("/raw")
 def raw_file(
+    request: Request,
     path: str = Query(...),
     download: bool = Query(False),
     user: SessionUser = Depends(require_session),
@@ -407,8 +408,8 @@ def raw_file(
     if media:
         # inline: 브라우저 내장 뷰어(<img>, <iframe>, <video>)가 그대로 표시. 형식은 이름으로
         # 서버가 정한다. SVG 는 문서로 직접 열면 스크립트가 돌므로 user_file 이 sandbox 를 씌운다.
-        return user_file(target, media)
-    return user_file(target, "application/octet-stream", filename=target.name)
+        return user_file(request, target, media)
+    return user_file(request, target, "application/octet-stream", filename=target.name)
 
 
 @router.get("/archive")
