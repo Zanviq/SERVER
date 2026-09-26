@@ -28,7 +28,9 @@ test("파일을 올리는 세 곳 모두 보내기 전에 크기를 본다", () 
 });
 
 test("JSON 이 아닌 오류(앞단의 HTML)는 상태 번호가 아니라 말로 보인다", () => {
-  assert.match(api, /let detail: unknown = undefined;/, "HTML 오류가 '413' 같은 번호 문자열이 된다");
+  // req 는 fallback 없이 오류를 읽는다 — 그래야 JSON 이 아닌 오류가 상태에 맞는 말(아래 표)이 된다.
+  // 실제로 그 말이 나오는지는 test/apiErrors(진짜 api 모듈을 가짜 fetch 로)가 본다.
+  assert.match(api, /if \(!res\.ok\) throw await apiError\(res\);/, "HTML 오류가 '413' 같은 번호 문자열이 된다");
   for (const status of [413, 502, 504]) {
     assert.match(api, new RegExp(`\\n  ${status}: "`), `${status} 의 말이 없다`);
   }

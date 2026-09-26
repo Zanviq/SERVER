@@ -133,19 +133,23 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   noticeUnauthorized(res, path);
-  if (!res.ok) {
-    // JSON 이 아니면(앞단의 HTML) 이유가 없다 — errorMessage 가 상태로 말을 고른다
-    let detail: unknown = undefined;
-    try {
-      const body = await res.json();
-      detail = body.detail ?? body;
-    } catch {
-      /* ignore */
-    }
-    throw new ApiError(res.status, errorMessage(res.status, detail), detail);
-  }
+  if (!res.ok) throw await apiError(res);
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
+}
+
+/** 실패한 응답 → ApiError — fetch 를 직접 부르는 곳(req·AI 대화 흐름)이 같이 쓴다.
+ *  이유는 서버의 detail. JSON 이 아니면(앞단의 HTML) fallback, 그것도 없으면 errorMessage 가 상태로 말을 고른다.
+ *  fallback 을 주면 detail 없는 JSON 에도 그것을 쓴다(없으면 본문 통째 — 구조화된 오류). */
+async function apiError(res: Response, fallback?: unknown): Promise<ApiError> {
+  let detail: unknown = fallback;
+  try {
+    const body = await res.json();
+    detail = body.detail ?? (fallback === undefined ? body : fallback);
+  } catch {
+    /* JSON 이 아니다 */
+  }
+  return new ApiError(res.status, errorMessage(res.status, detail), detail);
 }
 
 const jsonInit = (method: string, body: unknown): RequestInit => ({
@@ -778,17 +782,8 @@ export async function aiChatStream(
     signal,
   });
   noticeUnauthorized(res, "/api/ai/chat");
-  if (!res.ok || !res.body) {
-    // 415(이미지 형식)·413(크기)·400(모드) 같은 거절은 이유를 그대로 보여 준다
-    let detail: unknown = "AI 요청 실패";
-    try {
-      const body = await res.json();
-      detail = body.detail ?? detail;
-    } catch {
-      /* ignore */
-    }
-    throw new ApiError(res.status, errorMessage(res.status, detail), detail);
-  }
+  // 415(이미지 형식)·413(크기)·400(모드) 같은 거절은 이유를 그대로 보여 준다
+  if (!res.ok || !res.body) throw await apiError(res, "AI 요청 실패");
   // 끝 신호(done/error) 없이 끝나면 StreamCut — 잘린 답을 다 쓴 답처럼 보이지 않게.
   await readSse(res.body, onEvent, signal);
 }
