@@ -10463,6 +10463,10 @@ def test_a_recording_is_served_and_transcribed_as_its_extension_not_as_claimed()
     assert r.status_code == 200, r.text
     mid = r.json()["id"]
     s, u = get_settings(), _tester()
+    # 아래에서 저장소를 잠금 없이 직접 읽고 쓴다 — 올리기가 세운 받아쓰기 뒷일이 같은 파일을 쓰는
+    # 중이면 겹친다(전체로 돌릴 때만 한 번 깨졌다: 앞 시험들의 뒷일이 무거운 자리 둘을 쥐고 있으면
+    # 이 뒷일이 늦게 돌아 창이 겹친다). 57차와 같은 모양 — 먼저 끝나기를 기다린다.
+    _settle(meeting_transcribe, u, mid)
     try:
         assert r.json()["mime"] == "audio/mpeg", r.json()
         a = client.get(f"/api/meetings/{mid}/audio")
