@@ -119,39 +119,34 @@ _hash_waiting = 0
 _hash_lock = threading.Lock()
 
 
-async def authenticate_async(username: str, password: str, settings: Settings) -> Account | None:
-    """authenticate 를 전용 일꾼에서. 몰려 있으면 503(잠시 뒤 다시) — 서버 전체가 느려지는
-    것보다 로그인 하나가 미뤄지는 편이 낫다."""
+async def _on_hash_worker(busy: str, fn, *args):
+    """fn 을 전용 일꾼에서 돌린다. 몰려 있으면 busy 를 담은 503(잠시 뒤 다시) — 서버 전체가
+    느려지는 것보다 한 요청이 미뤄지는 편이 낫다. 해시를 도는 모든 입구가 이 한 줄(HASH_QUEUE)에
+    함께 선다 — 입구마다 줄을 따로 두면 입구 수만큼 한도가 늘어난다."""
     global _hash_waiting
     with _hash_lock:
         if _hash_waiting >= HASH_QUEUE:
-            raise HTTPException(
-                status_code=503, headers={"Retry-After": "5"},
-                detail="로그인 요청이 몰려 지금은 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+            raise HTTPException(status_code=503, headers={"Retry-After": "5"}, detail=busy)
         _hash_waiting += 1
     try:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(_hash_pool, authenticate, username, password, settings)
+        return await asyncio.get_running_loop().run_in_executor(_hash_pool, fn, *args)
     finally:
         with _hash_lock:
             _hash_waiting -= 1
+
+
+async def authenticate_async(username: str, password: str, settings: Settings) -> Account | None:
+    """authenticate 를 전용 일꾼에서."""
+    return await _on_hash_worker(
+        "로그인 요청이 몰려 지금은 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        authenticate, username, password, settings)
 
 
 async def change_password_async(username: str, current: str, new: str, settings: Settings) -> Account:
     """change_password 를 로그인과 같은 전용 일꾼에서(해시가 세 번 — 공용 스레드를 쥐지 않게)."""
-    global _hash_waiting
-    with _hash_lock:
-        if _hash_waiting >= HASH_QUEUE:
-            raise HTTPException(
-                status_code=503, headers={"Retry-After": "5"},
-                detail="요청이 몰려 지금은 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.")
-        _hash_waiting += 1
-    try:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(_hash_pool, change_password, username, current, new, settings)
-    finally:
-        with _hash_lock:
-            _hash_waiting -= 1
+    return await _on_hash_worker(
+        "요청이 몰려 지금은 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        change_password, username, current, new, settings)
 
 
 # ── 저장소 ──
