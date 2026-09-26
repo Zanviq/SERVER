@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
-import type { EmbedResolver } from "../../lib/embeds";
+import { decodeTarget, isVaultTarget, type EmbedResolver } from "../../lib/embeds";
 import { transformWiki } from "../../lib/wikiTransform";
 import { remarkPlugins } from "../../lib/mdPlugins";
 import { CALLOUTS, parseCallout } from "../../lib/callouts";
@@ -43,15 +43,6 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   );
 }
 
-/** `100%.png` 처럼 %가 든 파일명이면 decodeURIComponent가 URIError를 던진다.
- *  여기서 던지면 렌더 도중이라 ErrorBoundary가 앱 전체를 오류 화면으로 바꾼다. */
-function safeDecode(s: string): string {
-  try {
-    return decodeURIComponent(s);
-  } catch {
-    return s;
-  }
-}
 
 export interface MarkdownViewProps {
   content: string;
@@ -123,8 +114,8 @@ export function MarkdownView({
               if (Number.isFinite(w) && w > 0) width = w;
             }
             const label = bar > 0 ? (alt ?? "").slice(0, bar) : alt;
-            if (url && !/^(https?:|data:|blob:|\/)/.test(url)) {
-              const hit = resolveEmbed?.(safeDecode(url));
+            if (isVaultTarget(url)) { // 편집기(eachMdImage)와 같은 기준 — lib/embeds
+              const hit = resolveEmbed?.(decodeTarget(url));
               if (!hit) {
                 return <span className="rounded bg-danger/10 px-1 text-[12px] text-danger">이미지 없음: {url}</span>;
               }
@@ -147,10 +138,10 @@ export function MarkdownView({
           a({ href, children, ...props }) {
             // `[note/서버/기록.md]` 같은 항목 링크(transformLinks 가 만든 것)
             if (href?.startsWith("#link/")) {
-              return <LinkChip path={safeDecode(href.slice(6))}>{children}</LinkChip>;
+              return <LinkChip path={decodeTarget(href.slice(6))}>{children}</LinkChip>;
             }
             if (href?.startsWith("#wiki/")) {
-              const title = safeDecode(href.slice(6));
+              const title = decodeTarget(href.slice(6));
               return (
                 <button
                   onClick={() => onWikiClick(title)}

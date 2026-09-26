@@ -145,10 +145,21 @@ export function unresolvedEmbeds(text: string, files: { path: string }[], curren
 export function eachMdImage(text: string, cb: (m: { index: number; target: string }) => void): void {
   for (const m of text.matchAll(MD_IMAGE)) {
     const url = m[1] ?? m[2];
-    if (/^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith("/")) continue;
-    let target = url;
-    try { target = decodeURIComponent(url); } catch { /* %가 든 이름 — 그대로 */ }
-    cb({ index: m.index ?? 0, target });
+    if (isVaultTarget(url)) cb({ index: m.index ?? 0, target: decodeTarget(url) });
+  }
+}
+
+/** 그림 주소가 벌트 안의 파일인가 — 주소(http:·https:·data:·blob:)·루트 경로(`/api/…`)가 아니면.
+ *  읽기 보기(MarkdownView 의 img)와 편집기(eachMdImage)가 이 한 기준을 쓴다. */
+export const isVaultTarget = (url: string): boolean => !!url && !/^(https?:|data:|blob:|\/)/.test(url);
+
+/** `%` 로 적은 이름을 푼다. `100%.png` 처럼 잘못된 `%` 가 든 이름이면 decodeURIComponent 가 던진다 — 렌더 도중에
+ *  던지면 ErrorBoundary 가 앱 전체를 오류 화면으로 바꾸므로 그대로 돌려준다. */
+export function decodeTarget(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
   }
 }
 
