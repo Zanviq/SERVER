@@ -13,7 +13,6 @@ import errno
 import logging
 import os
 import re
-import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import NoReturn
@@ -21,7 +20,7 @@ from typing import NoReturn
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
-from .. import archive, doc_cache, meeting_store, mounts, moved, paper_store
+from .. import archive, doc_cache, meeting_store, mounts, moved, paper_store, upload_stream
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..json_store import lock_for, write_text_atomic
@@ -479,25 +478,18 @@ async def upload(
     # 덮고 있었다). 사진을 다시 올리는 일은 흔하고, 그때 원본이 사라지면 안 된다.
     dest = _free_name(dest)
 
-    # **먼저 임시 파일에 쓰고 마지막에 갈아 끼운다.** 대상 파일을 열자마자 자르면
-    # 도중에 실패했을 때(크기 초과·연결 끊김) 원래 있던 파일이 사라진다.
-    tmp = dest.with_name(f"{dest.name}.upload{os.getpid()}.{uuid.uuid4().hex[:8]}")
-    written = 0
+    # **먼저 임시 파일에 받고 마지막에 갈아 끼운다**(upload_stream — 까닭은 거기).
+    tmp = None
     try:
         with _fs_errors_explained("업로드"):
-            with tmp.open("wb") as out:
-                while chunk := await file.read(1024 * 1024):
-                    written += len(chunk)
-                    if written > settings.max_upload_bytes:
-                        raise HTTPException(status_code=413, detail="파일이 너무 큽니다.")
-                    out.write(chunk)
+            tmp, _, _ = await upload_stream.receive(file, dest, settings.max_upload_bytes, "파일이 너무 큽니다.")
             os.replace(tmp, dest)
     except BaseException:
-        # OSError 만 잡으면 다른 예외에서 임시파일이 영구히 남는다
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
         raise
     finally:
         # 여기는 write_text_atomic을 거치지 않는 유일한 쓰기 경로다.

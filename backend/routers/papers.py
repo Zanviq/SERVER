@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import os
-import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
-from .. import orphans, paper_extract, paper_store
+from .. import orphans, paper_extract, paper_store, upload_stream
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..file_kinds import nfc
@@ -89,18 +88,10 @@ async def upload(
     d = paper_store.root(user, settings) / pid
     d.mkdir(parents=True, exist_ok=True)
     dest = d / paper_store.PDF_NAME
-    tmp = dest.with_name(f"{dest.name}.upload{os.getpid()}.{uuid.uuid4().hex[:8]}")
-    written = 0
-    head = b""
+    tmp = None
     try:
-        with tmp.open("wb") as out:
-            while chunk := await file.read(1024 * 1024):
-                if not head:
-                    head = chunk[:8]
-                written += len(chunk)
-                if written > min(MAX_PDF_BYTES, settings.max_upload_bytes):
-                    raise HTTPException(status_code=413, detail="파일이 너무 큽니다(100MB 이하).")
-                out.write(chunk)
+        tmp, written, head = await upload_stream.receive(
+            file, dest, min(MAX_PDF_BYTES, settings.max_upload_bytes), "파일이 너무 큽니다(100MB 이하).")
         if not head.startswith(b"%PDF"):
             raise HTTPException(status_code=415, detail="PDF 파일이 아닙니다.")
         if written == 0:
@@ -109,7 +100,8 @@ async def upload(
         meta = paper_store.register(user, settings, name, written, pid=pid)
     except BaseException:
         try:
-            tmp.unlink(missing_ok=True)
+            if tmp is not None:
+                tmp.unlink(missing_ok=True)
             dest.unlink(missing_ok=True)
             d.rmdir()
         except OSError:

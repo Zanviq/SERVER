@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import os
 import shutil
-import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
-from .. import meeting_store, meeting_transcribe, orphans
+from .. import meeting_store, meeting_transcribe, orphans, upload_stream
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..fast_json import json_response
@@ -87,15 +86,10 @@ async def upload(
     d = meeting_store.root(user, settings) / mid
     d.mkdir(parents=True, exist_ok=True)
     dest = d / f"audio.{ext}"
-    tmp = dest.with_name(f"{dest.name}.upload{os.getpid()}.{uuid.uuid4().hex[:8]}")
-    written = 0
+    tmp = None
     try:
-        with tmp.open("wb") as out:
-            while chunk := await file.read(1024 * 1024):
-                written += len(chunk)
-                if written > min(MAX_AUDIO_BYTES, settings.max_upload_bytes):
-                    raise HTTPException(status_code=413, detail="파일이 너무 큽니다(300MB 이하).")
-                out.write(chunk)
+        tmp, written, _ = await upload_stream.receive(
+            file, dest, min(MAX_AUDIO_BYTES, settings.max_upload_bytes), "파일이 너무 큽니다(300MB 이하).")
         if written == 0:
             raise HTTPException(status_code=400, detail="빈 녹음입니다.")
         os.replace(tmp, dest)
@@ -107,7 +101,8 @@ async def upload(
         )
     except BaseException:
         try:
-            tmp.unlink(missing_ok=True)
+            if tmp is not None:
+                tmp.unlink(missing_ok=True)
             shutil.rmtree(d, ignore_errors=True)
         except OSError:
             pass
