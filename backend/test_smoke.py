@@ -1098,6 +1098,53 @@ def test_old_sessions_do_not_outlive_the_account_state_they_were_issued_for():
         client.delete(f"/api/admin/users/{name}")
 
 
+def test_owner_can_give_a_forgotten_password_a_temporary_one():
+    """비밀번호를 잊은 사람을 도울 길이 있어야 한다 — 서버 주인만(61차).
+
+    예전엔 없었다: 지우면 문서가 앱에서 사라지고, 다시 가입해도 빈 벌트다. 주인이 파이에서 계정 파일에
+    해시를 손으로 넣는 것뿐이었다. 가입했다가 관리자로 올려진 사람은 못 한다 — 새 비밀번호를 주면 그
+    사람으로 로그인해 일기·문서를 볼 수 있는데, 그 힘은 디스크를 보는 주인에게만 원래 있다.
+    """
+    login_guard.reset()
+    _login()
+    name = "forgetful"
+    assert TestClient(app).post("/api/auth/signup", json={"username": name, "password": "forgotten-pw"}).status_code == 201
+    assert client.post(f"/api/admin/users/{name}/approve").status_code == 200
+    promoted = "promoted"
+    assert TestClient(app).post("/api/auth/signup", json={"username": promoted, "password": "promoted-pw"}).status_code == 201
+    assert client.post(f"/api/admin/users/{promoted}/approve").status_code == 200
+    assert client.post(f"/api/admin/users/{promoted}/role", params={"role": "admin"}).status_code == 200
+    try:
+        stale = TestClient(app)
+        assert stale.post("/api/auth/login", json={"username": name, "password": "forgotten-pw"}).status_code == 200
+
+        other_admin = TestClient(app)
+        assert other_admin.post("/api/auth/login", json={"username": promoted, "password": "promoted-pw"}).status_code == 200
+        assert other_admin.post(f"/api/admin/users/{name}/password").status_code == 403, "주인 아닌 관리자가 재설정했다"
+
+        r = client.post(f"/api/admin/users/{name}/password")
+        assert r.status_code == 200, r.text
+        temp = r.json()["temporary_password"]
+        assert "password_hash" not in r.json()
+        assert len(temp) == 14 and temp.count("-") == 2, temp
+        assert stale.get("/api/auth/session").status_code == 401, "재설정 전 세션이 살아 있다"
+        fresh = TestClient(app)
+        assert fresh.post("/api/auth/login", json={"username": name, "password": "forgotten-pw"}).status_code == 401
+        assert fresh.post("/api/auth/login", json={"username": name, "password": temp}).status_code == 200
+        # 받은 사람은 설정에서 자기 비밀번호로 바꾼다(59차의 길)
+        assert fresh.post("/api/auth/password", json={"current": temp, "new": "my-own-new-pw"}).status_code == 200
+
+        assert client.post("/api/admin/users/tester2/password").status_code == 400, "다른 서버 주인을 재설정했다"
+        assert client.post("/api/admin/users/tester/password").status_code == 400, "자기 자신을 재설정했다"
+        assert client.post("/api/admin/users/nobody-here/password").status_code == 404
+        # 임시 비밀번호는 평문으로 어디에도 남지 않는다
+        raw = accounts._path(get_settings()).read_text(encoding="utf-8")
+        assert temp not in raw
+    finally:
+        client.delete(f"/api/admin/users/{name}")
+        client.delete(f"/api/admin/users/{promoted}")
+
+
 def test_moving_one_occurrence_splits_it_out():
     """한 회차만 시간을 옮기면 그 회차만 떨어져 나와야 한다.
 

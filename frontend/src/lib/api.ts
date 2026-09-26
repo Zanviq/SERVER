@@ -204,6 +204,10 @@ export const api = {
     req<AdminUser>(`/api/admin/users/${encodeURIComponent(username)}/reject`, { method: "POST" }),
   adminDisable: (username: string) =>
     req<AdminUser>(`/api/admin/users/${encodeURIComponent(username)}/disable`, { method: "POST" }),
+  /** 서버 주인만 — 임시 비밀번호를 새로 만들어 이 응답에서 한 번만 돌려준다(61차) */
+  adminResetPassword: (username: string) =>
+    req<AdminUser & { temporary_password: string }>(
+      `/api/admin/users/${encodeURIComponent(username)}/password`, { method: "POST" }),
   adminDelete: (username: string) =>
     req(`/api/admin/users/${encodeURIComponent(username)}`, { method: "DELETE" }),
   session: () => req<SessionInfo>("/api/auth/session"),

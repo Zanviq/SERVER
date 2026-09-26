@@ -414,6 +414,53 @@ def change_password(username: str, current: str, new: str, settings: Settings) -
         return _to_account(row)
 
 
+#: 임시 비밀번호 글자 — 소리 내어 불러 주거나 옮겨 적기 쉽게 헷갈리는 글자(l·1·o·0·i)는 뺐다.
+_TEMP_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+
+
+def _temporary_password() -> str:
+    """xxxx-xxxx-xxxx(무작위 12자, 약 59비트) — 사람이 정하면 약한 비밀번호가 되기 쉽다."""
+    raw = "".join(secrets.choice(_TEMP_ALPHABET) for _ in range(12))
+    return f"{raw[:4]}-{raw[4:8]}-{raw[8:]}"
+
+
+def reset_password(username: str, settings: Settings) -> tuple[dict, str]:
+    """서버 주인이 다른 사람에게 **임시 비밀번호**를 새로 준다(61차). (계정 행, 임시 비밀번호).
+
+    예전엔 비밀번호를 잊은 사람을 도울 길이 없었다 — 계정을 지우면 문서가 앱에서 사라지고, 같은
+    아이디로 다시 가입해도 빈 벌트다. 주인이 파이에서 계정 파일에 PBKDF2 해시를 손으로 만들어 넣는
+    것뿐이었다. 그 사람의 세션은 모두 끊긴다(새 세대) — 비밀번호가 샌 때 쓰는 길이기도 하다.
+
+    서버 주인 계정은 여기서 바꾸지 않는다 — 주인은 설정에서 지금 비밀번호로 바꾼다(change_password).
+    """
+    temp = _temporary_password()
+    fresh = hash_password(temp)  # 잠금 밖에서(파이에서 한 번에 1초 가까이)
+    p = _path(settings)
+    with lock_for(p):
+        rows = read_json(p, None)
+        if not isinstance(rows, list):
+            raise HTTPException(
+                status_code=503,
+                detail="계정 파일을 읽을 수 없습니다. 손상됐을 수 있어 아무것도 덮어쓰지 않았습니다.",
+            )
+        row = _match(rows, username)
+        if row is None:
+            raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
+        if row.get("origin") == ORIGIN_BOOTSTRAP:
+            raise HTTPException(status_code=400, detail="서버 관리자 계정의 비밀번호는 본인이 설정에서 바꿉니다.")
+        row["password_hash"] = fresh
+        row["session_gen"] = _fresh_gen()
+        write_atomic(p, rows)
+        return _public(row), temp
+
+
+async def reset_password_async(username: str, settings: Settings) -> tuple[dict, str]:
+    """reset_password 를 로그인과 같은 전용 일꾼에서."""
+    return await _on_hash_worker(
+        "요청이 몰려 지금은 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        reset_password, username, settings)
+
+
 def _public(row: dict) -> dict:
     """관리 화면에 내보내는 계정 행 — 비밀번호 해시는 절대 싣지 않는다. 계정 행을 밖으로 내보내는
     곳은 모두 이것을 거친다(행에 감출 칸이 늘면 여기 한 곳만 고친다)."""

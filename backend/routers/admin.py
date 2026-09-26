@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 
 from .. import accounts
-from ..auth import SessionUser, require_admin
+from ..auth import SessionUser, require_admin, require_owner
 from ..config import Settings, get_settings
 
 logger = logging.getLogger("server.admin")
@@ -88,6 +88,23 @@ def change_role(
 ):
     _not_self(username, admin)
     return accounts.set_role(username, role, settings)
+
+
+@router.post("/users/{username}/password")
+async def reset_password(
+    username: str,
+    owner: SessionUser = Depends(require_owner),
+    settings: Settings = Depends(get_settings),
+):
+    """비밀번호를 잊은 사람에게 임시 비밀번호를 준다(61차). 그 사람의 세션은 모두 끊긴다.
+
+    **서버 주인만** 한다(require_admin 이 아니라). 비밀번호를 새로 주면 그 사람으로 로그인해
+    일기·문서를 볼 수 있다 — 주인은 어차피 디스크를 보지만, 가입했다가 관리자로 올려진 사람에게는
+    없던 힘이다. 임시 비밀번호는 이 응답에서 한 번만 보인다(어디에도 평문으로 남기지 않는다).
+    """
+    _not_self(username, owner)
+    row, temp = await accounts.reset_password_async(username, settings)
+    return {**row, "temporary_password": temp}
 
 
 def _archive_user_data(username: str, settings: Settings) -> tuple[str, Path | None]:
