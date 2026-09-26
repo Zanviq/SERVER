@@ -6035,6 +6035,26 @@ def test_search_palette_snippets_are_plain_and_one_per_conversation():
         (root / "시험26 발췌.md").unlink()
 
 
+def test_notes_search_snippet_is_plain_like_the_palette():
+    """문서 화면 검색의 발췌도 마크다운 기호를 뗀 글이다(디자인 27차) — 전체 검색과 같은 발췌기를 쓴다.
+
+    실측(휴대폰): "발표" 를 찾으면 `# 노트 0 - 발표 논문 0 [[노트 0786]] - 데이터 정리 1 …` 처럼 원문 기호가 보였다.
+    """
+    from backend.storage import user_data_root
+
+    _login()
+    root = user_data_root(_tester(), get_settings())
+    token = "문서발췌27"
+    (root / "시험27 발췌.md").write_text(f"# 제목\n\n- **{token}** 와 [[다른 문서]] 그리고 `코드`\n", encoding="utf-8")
+    try:
+        hit = [h for h in client.get("/api/notes/search", params={"q": token}).json() if h["path"] == "시험27 발췌.md"]
+        assert hit, "찾지 못했다"
+        s = hit[0]["snippet"]
+        assert token in s and not any(x in s for x in ("**", "[[", "`", "# ")), s
+    finally:
+        (root / "시험27 발췌.md").unlink()
+
+
 def test_unsafe_filename_characters_live_in_one_place():
     """파일 이름에 못 쓰는 글자 목록은 file_kinds.UNSAFE_CHARS 하나다(78차 — 전에는 네 모듈에 복사본이 있었다).
     복사본이 다시 생기면 한쪽만 고쳐져, 올리기는 `_` 로 바꾸는 글자를 새 이름 검사는 받아 주는 식으로 어긋난다."""

@@ -115,13 +115,14 @@ class SearchHit(BaseModel):
 
 
 def _snippet(text: str, q: str, width: int = 60) -> str:
-    low = text.lower()
-    i = low.find(q.lower())
-    if i < 0:
-        return text[:width].replace("\n", " ").strip()
-    start = max(0, i - width // 2)
-    seg = text[start : start + width].replace("\n", " ").strip()
-    return ("…" if start > 0 else "") + seg + ("…" if start + width < len(text) else "")
+    """문서 화면 검색의 발췌 — 전체 검색과 **같은 발췌기**(search_all._snippet)를 쓴다.
+
+    따로 두던 때는 원문을 그대로 잘라 `# 노트 0 - 발표 논문 0 [[노트 0786]] - …` 처럼 마크다운 기호가 보였다(디자인 27차,
+    전체 검색은 26차에 다듬었다). 두 벌이면 한쪽만 고쳐진다.
+    """
+    from ..search_all import _snippet as excerpt
+
+    return excerpt(text, q, width)
 
 
 def _on_mount(user: SessionUser, settings: Settings, rel: str) -> bool:
