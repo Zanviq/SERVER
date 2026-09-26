@@ -114,3 +114,11 @@ test("편집기의 '/' 메뉴·'[[' 후보는 손가락 크기이고 뜻 없는 
   assert.match(coarse, /"\.cm-tooltip\.cm-tooltip-autocomplete > ul > li": \{ padding: "10px 12px" \}/, "손가락 화면에서 줄이 19px");
   assert.match(ed, /icons: false,/, "'/' 메뉴 줄마다 열쇠 아이콘이 붙는다");
 });
+
+test("대화 지도의 접기 단추는 보이는 것보다 넓게 눌리고, 차례 점과 겹치지 않는다(디자인 17차)", () => {
+  const src = read("../src/components/ai/ConversationTree.tsx");
+  const fold = src.slice(src.indexOf('aria-label={folded ?'), src.indexOf('aria-label={folded ?') + 1200);
+  // 지도는 0.62배까지 줄여 맞춘다 — 보이는 동그라미(반지름 6.5)만으로는 8px 이었다
+  assert.match(fold, /<rect x=\{cx \+ DOT_R \+ 1\} y=\{DOT_R - 12\} width=\{24\} height=\{24\} fill="transparent" \/>/);
+  assert.ok(fold.indexOf("<rect") < fold.indexOf("r={6.5}"), "넓은 자리는 보이는 동그라미 앞(아래)에 그린다");
+});

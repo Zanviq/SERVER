@@ -446,6 +446,10 @@ export function ConversationTree({
                 onKeyDown={onActivate(() => toggleFold(n.id))}
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => { e.stopPropagation(); toggleFold(n.id); }}>
+                {/* 누르는 자리는 보이는 동그라미(13px)보다 넓게 — 지도는 처음에 0.62배까지 줄여 맞추므로 보이는
+                    그대로면 8px 이라 마우스로도 빗나갔다(디자인 17차). 투명하게 칠해야 누름을 받는다. 왼쪽 끝은
+                    차례 점(반지름 DOT_R) 바로 밖에서 시작한다 — 겹치면 점을 누른 것이 접기가 된다. */}
+                <rect x={cx + DOT_R + 1} y={DOT_R - 12} width={24} height={24} fill="transparent" />
                 <circle cx={cx + DOT_R + 11} cy={DOT_R} r={6.5}
                   fill="rgb(var(--bg-elevated))" stroke="rgb(var(--line-strong))" strokeWidth={1} />
                 <text x={cx + DOT_R + 11} y={DOT_R + 3} fontSize={8.5} textAnchor="middle"
