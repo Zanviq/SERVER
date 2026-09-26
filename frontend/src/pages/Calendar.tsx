@@ -4,6 +4,9 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
+// 한국어 낱말(종일·+3개·일정 없음)은 로케일 **묶음을 불러와야** 들어온다. "ko" 라는 이름만 주던 때는 날짜
+// 꼴(Intl)만 한국어이고 FC 의 낱말은 영어였다 — 주 보기의 "all-day", 넓은 화면의 "+3 more"(디자인 3차).
+import koLocale from "@fullcalendar/core/locales/ko";
 import type { DateClickArg } from "@fullcalendar/interaction";
 import type { DatesSetArg, DayCellContentArg, EventClickArg, EventContentArg } from "@fullcalendar/core";
 import { Loader2, Bot, NotebookPen } from "lucide-react";
@@ -34,6 +37,27 @@ const VIEW_BUTTONS: { key: CalView; button: string; text: string; hint: string }
 ];
 /** FullCalendar 툴바 문법: ','로 이으면 한 덩어리, 공백이면 떨어진 버튼. */
 const VIEW_GROUP = VIEW_BUTTONS.map((b) => b.button).join(",");
+
+/**
+ * 단추·칸의 화면 읽기 이름(hint). FullCalendar 의 ko 로케일에는 이것이 없어 영어 기본값이 섞여 읽혔다 —
+ * "Previous 월"·"This 월"·"월 view"·"Show 3 more events"(디자인 3차, 단추 이름을 훑다 찾았다). 단위는 FC 가
+ * 둘째 값으로 넘기는 영어 이름(month·week·day)으로 고른다("이전 월" 이 아니라 "이전 달").
+ */
+const UNIT_KO: Record<string, string> = { month: "달", week: "주", day: "날", year: "해" };
+const unitKo = (text: string, unit?: string) => UNIT_KO[unit ?? ""] ?? text;
+const FC_HINTS = {
+  buttonHints: {
+    prev: (text: string, unit?: string) => `이전 ${unitKo(text, unit)}`,
+    next: (text: string, unit?: string) => `다음 ${unitKo(text, unit)}`,
+    today: (text: string, unit?: string) => (unit === "day" ? "오늘" : `이번 ${unitKo(text, unit)}`),
+  },
+  viewHint: (text: string) => `${text} 보기`,
+  navLinkHint: (date: string) => `${date}로 가기`,
+  moreLinkHint: (n: number) => `일정 ${n}개 더 보기`,
+  closeHint: "닫기",
+  timeHint: "시각",
+  eventHint: "일정",
+};
 
 // FullCalendar의 customButtons는 text/icon만 받는다(임의 DOM 불가). 눈 아이콘은
 // 버튼이 붙은 뒤 DOM에 직접 넣는다 — 매 렌더 다시 넣으므로 FC가 다시 그려도 남는다.
@@ -457,7 +481,8 @@ export function Calendar() {
               plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
               initialView={defaultView}
               firstDay={weekStart}
-              locale="ko"
+              locale={koLocale}
+              {...FC_HINTS}
               // 좁은 화면에서 한 줄에 7개를 밀어넣으면 제목과 버튼이 서로 뭉갠다.
               // 모바일은 두 줄로 나눈다(위: 이동+제목, 아래: 보기 전환).
               customButtons={{
