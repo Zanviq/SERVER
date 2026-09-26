@@ -36,7 +36,8 @@ test("[[제목]] 은 같은 제목 중 링크를 적은 문서에서 가까운 �
 test("문서 화면의 '만들기'는 모두 만들기만 한다 — 있으면 덮지 않는다(66차)", () => {
   // 새 노트·링크로 만들기·'새 문서 만들어 링크' 셋. 화면의 '있나?' 확인은 낡은 목록을 보므로 서버가 막는다.
   const src = readFileSync(new URL("../src/pages/Notes.tsx", import.meta.url), "utf8");
-  assert.equal(src.match(/api\.noteCreate\(/g)?.length, 3, "만들기가 noteCreate 를 거치지 않는 곳이 있다");
+  assert.equal(src.match(/api\.noteCreate\(/g)?.length, 1, "noteCreate 는 makeDoc 한 곳에서만 부른다");
+  assert.equal(src.match(/await makeDoc\(/g)?.length, 3, "만들기가 makeDoc 을 거치지 않는 곳이 있다");
   assert.doesNotMatch(src, /save\(`\$\{title\}\.md`/, "링크로 만들기가 덮어쓰는 저장을 쓴다");
   assert.doesNotMatch(src, /api\.noteSave\(path, `# /, "'새 문서 만들어 링크'가 덮어쓰는 저장을 쓴다");
 });
