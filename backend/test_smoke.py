@@ -37,6 +37,18 @@ def _login():
     return r
 
 
+def _settle(mod, user, item_id: str, timeout: float = 10.0) -> None:
+    """올리기가 뒤에서 세운 뒷일(논문 추출·받아쓰기)이 끝날 때까지 기다린다.
+
+    시험이 run_sync 를 곧바로 부르면 올리기가 세운 뒷일과 **겹쳐** 둘이 같은 항목을 고친다 — 모델 키가
+    없는 시험 환경에서 뒷일은 곧 "실패"를 적는데, 그것이 시험이 적은 "준비됨"보다 늦게 닿으면 시험이
+    깨졌다(전체로 돌릴 때만 가끔). 화면·스킬은 start 로만 세워 겹치지 않는다(도는 중이면 거절).
+    """
+    deadline = time.time() + timeout
+    while mod.is_running(user, item_id) and time.time() < deadline:
+        time.sleep(0.02)
+
+
 def _tester(display_name: str = "T"):
     """시험 계정(tester)의 세션 — 저장소를 직접 부르는 시험이 쓴다. 저장 자리는 username 이 정한다."""
     from backend.auth import SessionUser
@@ -6477,6 +6489,7 @@ def test_transcription_never_stores_an_invented_meeting():
                            day="2026-09-06", mid=mid)
 
     # 모델이 "못 들었다"고 하면 실패로 남고 받아쓰기 파일이 생기지 않아야 한다
+    _settle(meeting_transcribe, u, mid)
     meeting_transcribe.run_sync(u, s, mid,
                                 asker=lambda *a, **k: {"inaudible": True, "reason": "silent"})
     m = meeting_store.get_meeting(u, s, mid)
@@ -6486,6 +6499,7 @@ def test_transcription_never_stores_an_invented_meeting():
     assert not m.get("summary"), m.get("summary")
 
     # 제대로 들었을 때는 그대로 저장된다
+    _settle(meeting_transcribe, u, mid)
     meeting_transcribe.run_sync(u, s, mid, asker=lambda *a, **k: {
         "summary": "검색 성능 개선을 논의했다",
         "segments": [{"start": "00:00", "end": "00:05", "speaker": "화자 1", "text": "회의 시작합니다"},
@@ -7283,6 +7297,7 @@ def test_every_ai_feature_names_the_same_failure_the_same_way():
         def blow(*a, **k):
             raise RuntimeError(quota)
 
+        _settle(paper_extract, u, pid)
         out = paper_extract.run_sync(u, s, pid, asker=blow)
         assert out["status"] == "failed", out
         assert "사용량 한도" in out["error"], out["error"]
@@ -7510,6 +7525,7 @@ def test_broken_pdf_text_does_not_kill_extraction(monkeypatch):
             seen["text"] = text
             return {"title": "깨진 글자가 있어도 되는 논문", "summary": "그래도 끝까지 간다"}
 
+        _settle(paper_extract, u, pid)
         out = paper_extract.run_sync(u, s, pid, asker=ask)
         assert out["status"] == paper_store.STATUS_READY, out
         assert out["title"] == "깨진 글자가 있어도 되는 논문", out
@@ -7547,6 +7563,7 @@ def test_paper_upload_extracts_in_background_and_ai_context(monkeypatch):
 
     def fake_start(user, settings, pid):
         started.append(pid)
+        _settle(paper_extract, user, pid)
         paper_extract.run_sync(user, settings, pid, asker=fake_ask)
         return True
 
@@ -8740,6 +8757,7 @@ def test_extraction_never_stores_the_models_excuse_as_the_title():
 
         me = _tester()
         st = get_settings()
+        _settle(paper_extract, me, pid)
         paper_extract.run_sync(me, st, pid, asker=lambda *a, **k: {
             "title": "Unable to extract title.",
             "summary": "문서 내용이 제공되지 않아 논문의 요약을 생성할 수 없습니다.",
@@ -8790,6 +8808,7 @@ def test_a_paper_with_no_text_keeps_its_fields_empty():
         me = _tester()
         st = get_settings()
         # 글자를 못 뽑은 상황을 흉내 낸다 — 모델도 빈 값을 돌려준다
+        _settle(paper_extract, me, pid)
         paper_extract.run_sync(me, st, pid, asker=lambda *a, **k: {
             "title": "", "authors": [], "year": "", "summary": "", "abstract": ""})
         p = paper_store.find_paper(me, st, pid)
@@ -10225,6 +10244,7 @@ def test_deleting_a_meeting_mid_transcription_leaves_nothing_behind():
         meeting_store.delete_meeting(u, s, mid)
         return {"segments": seg, "summary": "요약"}
 
+    _settle(meeting_transcribe, u, mid)
     meeting_transcribe.run_sync(u, s, mid, asker=slow_ask)
 
     assert not d.exists(), f"지운 회의 폴더가 되살아났다: {list(d.iterdir()) if d.exists() else ''}"
@@ -10283,6 +10303,7 @@ def test_a_recording_is_served_and_transcribed_as_its_extension_not_as_claimed()
             seen.append(mime)
             return {"segments": [{"start": "00:00", "end": "00:01", "speaker": "화자 1", "text": "네"}], "summary": ""}
 
+        _settle(meeting_transcribe, u, mid)
         meeting_transcribe.run_sync(u, s, mid, asker=ask)
         assert seen == ["audio/mp4"], f"모델에 넘긴 형식: {seen}"
     finally:
