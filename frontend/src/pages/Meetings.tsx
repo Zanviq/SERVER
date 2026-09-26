@@ -233,13 +233,15 @@ export function Meetings() {
     }
   }, [load, loadDocs, selectedId, docOpen, tab, docs, dirty, pending, openDoc, showTranscript]);
 
+  // 창은 **서버가 받아 준 뒤에** 닫는다 — 먼저 닫으면 이름이 거절될 때 적은 것이 사라진다(디자인 19차, 문서
+  // 화면의 만들기 창과 같은 까닭 — 18차).
   const createDoc = async () => {
     const name = newDocName.trim();
     if (!name || !selectedId) return;
-    setNewDocOpen(false);
-    setNewDocName("");
     try {
       const r = await api.meetingDocWrite(selectedId, name, "");
+      setNewDocOpen(false);
+      setNewDocName("");
       await loadDocs(selectedId);
       patch(selectedId, { docs: (selected?.docs ?? 0) + (r.created ? 1 : 0) });
       await openDoc(selectedId, r.name);
@@ -252,9 +254,9 @@ export function Meetings() {
     const next = renameName.trim();
     if (!renameFor || !next || !selectedId) return;
     if (tab === renameFor && !(await flushPendingSave())) return;
-    setRenameFor(null);
     try {
       const r = await api.meetingDocRename(selectedId, renameFor, next);
+      setRenameFor(null); // 받아 준 뒤에 닫는다(createDoc 과 같은 까닭)
       await loadDocs(selectedId);
       if (tab === renameFor) setTab(r.name);
       toast.ok("이름을 바꿨습니다");
@@ -264,7 +266,9 @@ export function Meetings() {
   };
 
   const deleteDoc = async (name: string) => {
-    if (!selectedId || !confirm(`"${name}" 문서를 지울까요? 되돌릴 수 없습니다.`)) return;
+    // 회의 문서도 휴지통을 거친다(meeting_store.delete_doc) — "되돌릴 수 없습니다" 는 unlink 하던 때의 말이 남은 것이라
+    // 실제보다 겁을 줬다(디자인 19차).
+    if (!selectedId || !confirm(`"${name}" 문서를 휴지통으로 옮길까요? 휴지통에서 되살릴 수 있습니다.`)) return;
     if (tab === name) pending.cancel(); // 남은 타이머가 지운 문서를 되살리지 않게
     try {
       await api.meetingDocDelete(selectedId, name);

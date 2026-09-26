@@ -28,8 +28,51 @@ test("새 노트 창은 서버가 받아 준 뒤에 닫는다", () => {
   assert.match(b, /creating\.current/, "도는 동안 Enter 를 또 누르면 두 번 보낸다");
 });
 
+test("앱 전체: 창을 닫은 다음에 서버에 보내는 함수는 허락한 것뿐이다(디자인 19차)", async () => {
+  // 회의 문서 만들기·이름 바꾸기가 같은 모양이었다(19차에 고침). 남은 것은 까닭이 있는 것들:
+  const ALLOWED = new Set([
+    "pages/Notes.tsx:createNote",   // '이미 있는 문서' 갈래만 먼저 닫는다(보내지 않고 그 문서를 연다)
+    "pages/Notes.tsx:doRenameNote", // 이름을 안 바꿨을 때만 먼저 닫는다(보낼 것이 없다)
+    "pages/Notes.tsx:delNote",      // 확인 창 — 잃을 입력이 없다
+    "pages/Trash.tsx:doEmpty",      // 확인 창 — 잃을 입력이 없다
+  ]);
+  const { readdirSync, statSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const root = new URL("../src/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  const files = [];
+  (function walk(d) { for (const n of readdirSync(d)) { const p = join(d, n); statSync(p).isDirectory() ? walk(p) : /\.tsx$/.test(n) && files.push(p); } })(root);
+  const CLOSE = /\bset\w*(?:Open|Dialog|For|Edit|Modal)\w*\((?:false|null|""|undefined)\)/;
+  const found = [];
+  for (const f of files) {
+    const text = readFileSync(f, "utf8").replace(/\r\n/g, "\n");
+    for (const m of text.matchAll(/(?:const (\w+) = (?:useCallback\()?)?async \([^)]*\) => \{/g)) {
+      let depth = 0, end = -1;
+      for (let i = m.index + m[0].length - 1; i < text.length; i++) {
+        if (text[i] === "{") depth++;
+        else if (text[i] === "}" && --depth === 0) { end = i; break; }
+      }
+      const b = text.slice(m.index, end);
+      const close = b.search(CLOSE);
+      const send = b.search(/await (?:api\.|makeDoc|onSave|onSubmit|save\(|props\.on)/);
+      if (close >= 0 && send >= 0 && close < send) found.push(`${f.slice(root.length).replace(/\\/g, "/")}:${m[1] ?? "?"}`);
+    }
+  }
+  assert.ok(found.length >= ALLOWED.size, `훑은 것이 이상하다: ${found}`);
+  assert.deepEqual(found.filter((k) => !ALLOWED.has(k)), [],
+    "창을 닫은 다음에 서버에 보낸다 — 거절되면 적은 것이 사라진다. 받아 준 뒤에 닫을 것");
+});
+
 test("새 폴더 창도 받아 준 뒤에 닫는다", () => {
   const b = body("createFolder");
   assert.ok(b.indexOf("setNewFolderOpen(false)") > b.indexOf("await api.noteFolderCreate(path)"));
   assert.match(b, /finally \{\s*creating\.current = false;/);
+});
+
+test("회의 문서 지우기는 휴지통으로 간다고 말한다 — 실제보다 겁주지 않는다(디자인 19차)", () => {
+  const m = readFileSync(new URL("../src/pages/Meetings.tsx", import.meta.url), "utf8");
+  const del = m.slice(m.indexOf("const deleteDoc"), m.indexOf("const deleteDoc") + 600);
+  // 주석이 아니라 사용자에게 뜨는 확인 문구만 본다
+  const said = del.match(/confirm\(`([^`]*)`\)/)?.[1] ?? "";
+  assert.doesNotMatch(said, /되돌릴 수 없습니다/, "meeting_store.delete_doc 은 휴지통으로 옮긴다");
+  assert.match(said, /휴지통으로 옮길까요/);
 });
