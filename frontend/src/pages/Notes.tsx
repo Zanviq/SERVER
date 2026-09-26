@@ -777,7 +777,7 @@ export function Notes() {
                 <RowMenu
                   name={child.name}
                   onRename={() => { setRenameFor({ path: child.path, folder: true }); setRenameName(child.name); }}
-                  onMove={() => { setMoveFor({ path: child.path, folder: true }); setMoveTarget(""); }}
+                  onMove={() => { setMoveFor({ path: child.path, folder: true }); setMoveTarget(parentDir(child.path)); }}
                   onTrash={() => setDelFolder(child.path)}
                 />
               </>
@@ -818,7 +818,7 @@ export function Notes() {
             <RowMenu
               name={fileName(n.path)}
               onRename={() => { setRenameFor({ path: n.path, folder: false }); setRenameName(fileName(n.path)); }}
-              onMove={() => { setMoveFor({ path: n.path, folder: false }); setMoveTarget(""); }}
+              onMove={() => { setMoveFor({ path: n.path, folder: false }); setMoveTarget(parentDir(n.path)); }}
               onTrash={() => setDelNotePath(n.path)}
             />
           </div>
@@ -1276,6 +1276,14 @@ export function Notes() {
       {/* 이동 */}
       <Modal open={!!moveFor} onClose={() => setMoveFor(null)} title={moveFor?.folder ? "폴더 이동" : "노트 이동"} width="max-w-sm">
         <div className="space-y-3">
+          {/* 무엇을·어디서 옮기는지 — 제목이 "노트 이동" 뿐이라, 휴대폰에서 … 메뉴로 연 뒤에는 어느 문서의 창인지 알 수
+              없었다(디자인 28차) */}
+          {moveFor && (
+            <p className="text-[12.5px] text-fg-muted">
+              <span className="font-medium text-fg">{fileName(moveFor.path)}</span>
+              {" · 지금 "}{parentDir(moveFor.path) || "맨 위"}
+            </p>
+          )}
           <label className="block">
             <span className="label">대상 폴더</span>
             <select value={moveTarget} onChange={(e) => setMoveTarget(e.target.value)}
@@ -1289,7 +1297,9 @@ export function Notes() {
           </label>
           <div className="flex justify-end gap-2">
             <button onClick={() => setMoveFor(null)} className="btn btn-ghost">취소</button>
-            <button onClick={() => moveFor && doMoveNote(moveFor.path, moveTarget)} className="btn btn-primary">
+            {/* 지금 있는 폴더를 고른 채로는 옮길 것이 없다 — 누를 수 없게 둔다 */}
+            <button onClick={() => moveFor && doMoveNote(moveFor.path, moveTarget)} className="btn btn-primary"
+              disabled={!moveFor || moveTarget === parentDir(moveFor.path)}>
               <FolderInput size={14} /> 이동
             </button>
           </div>

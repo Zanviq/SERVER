@@ -76,3 +76,12 @@ test("회의 문서 지우기는 휴지통으로 간다고 말한다 — 실제�
   assert.doesNotMatch(said, /되돌릴 수 없습니다/, "meeting_store.delete_doc 은 휴지통으로 옮긴다");
   assert.match(said, /휴지통으로 옮길까요/);
 });
+
+test("이동 창은 무엇을 어디서 옮기는지 보이고, 처음엔 지금 폴더라 그냥 누르면 아무 데도 안 간다(디자인 28차)", () => {
+  // 처음 고른 것이 '(루트)' 이던 때는 창을 열고 바로 이동을 누르면 문서가 맨 위로 가 버렸다
+  assert.equal(src.match(/setMoveTarget\(""\)/g), null, "이동 창이 맨 위(루트)를 고른 채 열린다");
+  assert.equal(src.match(/setMoveTarget\(parentDir\((?:child|n)\.path\)\)/g)?.length, 2, "폴더 줄·문서 줄 모두");
+  const dlg = src.slice(src.indexOf('title={moveFor?.folder ? "폴더 이동" : "노트 이동"}'), src.indexOf("</Modal>", src.indexOf('title={moveFor?.folder ? "폴더 이동"')));
+  assert.match(dlg, /\{fileName\(moveFor\.path\)\}/, "무엇을 옮기는지 안 보인다");
+  assert.match(dlg, /disabled=\{!moveFor \|\| moveTarget === parentDir\(moveFor\.path\)\}/);
+});
