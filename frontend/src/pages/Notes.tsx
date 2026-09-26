@@ -765,6 +765,9 @@ export function Notes() {
                 오류만 나는 단추를 보여 주지 않는다(안의 항목에는 그대로 있다). */}
             {!isPinned(child.path) && (
               <>
+                {/* 붙여 온 것의 안쪽(논문 하나의 폴더 등)도 zip 으로 받을 수 없다 — 서버가 404("폴더를 찾을 수
+                    없습니다")라 누르면 실패한 내려받기만 남았다(디자인 33차). 받기는 그 논문·회의 화면에서. */}
+                {!onMount(child.path) && (
                 <a href={api.noteArchiveUrl(child.path)} download
                   onClick={(e) => e.stopPropagation()}
                   // 누를 자리는 … 단추와 같은 28px(붙은 단추가 작으면 휴대폰에서 옆 것이 눌린다).
@@ -774,6 +777,7 @@ export function Notes() {
                   title="폴더를 zip으로 내려받기" aria-label="폴더 다운로드">
                   <Download size={13} />
                 </a>
+                )}
                 {/* 이름 바꾸기·옮기기·지우기는 문서 줄과 같은 … 메뉴로. 옮기기가 끌기뿐이면 휴대폰
                     (터치는 끌어 놓기가 안 된다)과 키보드로는 폴더를 옮길 길이 없었다(38차). */}
                 <RowMenu
@@ -931,11 +935,13 @@ export function Notes() {
     return null;
   }, [curFolder, reloadTree, notes]);
 
+  // 머리의 받기: 지금 폴더가 붙여 온 곳('논문'·'회의'와 그 안)이면 폴더 zip 이 없다(서버 404) — 전체 받기로 둔다(디자인 33차)
+  const archiveFolder = curFolder && !isPinned(curFolder) && !onMount(curFolder) ? curFolder : "";
   const actions = (
     <div className="flex items-center gap-2">
-      <a href={api.noteArchiveUrl(curFolder)} download className="btn btn-ghost h-8"
-        title={curFolder ? `'${curFolder}' 폴더를 zip으로` : "전체 문서를 zip으로"}>
-        <Download size={14} /> {curFolder ? "폴더 받기" : "전체 받기"}
+      <a href={api.noteArchiveUrl(archiveFolder)} download className="btn btn-ghost h-8"
+        title={archiveFolder ? `'${archiveFolder}' 폴더를 zip으로` : "전체 문서를 zip으로"}>
+        <Download size={14} /> {archiveFolder ? "폴더 받기" : "전체 받기"}
       </a>
       <label className="btn btn-secondary h-8 cursor-pointer" title="현재 폴더에 파일 올리기">
         <Upload size={14} /> 업로드

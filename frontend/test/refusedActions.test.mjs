@@ -25,3 +25,13 @@ test("붙여 온 줄의 … 메뉴에는 '이동'이 없다", () => {
   const server = readFileSync(new URL("../../backend/routers/notes.py", import.meta.url), "utf8");
   assert.match(server, /_reject_mount_reshape\(user, settings, req\.path, "옮길"\)/);
 });
+
+test("붙여 온 곳은 폴더 zip 받기를 권하지 않는다 — 서버가 404(디자인 33차)", () => {
+  const notes = read("../src/pages/Notes.tsx");
+  // 줄의 받기 아이콘: 고정 폴더 자체(isPinned)와 그 안쪽(onMount) 모두 없다
+  const row = notes.slice(notes.indexOf("{!isPinned(child.path) && ("), notes.indexOf('aria-label="폴더 다운로드"'));
+  assert.match(row, /\{!onMount\(child\.path\) && \(/, "논문 하나의 폴더 줄에 받기 아이콘이 뜬다(누르면 404)");
+  // 머리의 받기: 붙여 온 곳에 있으면 전체 받기로
+  assert.match(notes, /const archiveFolder = curFolder && !isPinned\(curFolder\) && !onMount\(curFolder\) \? curFolder : "";/);
+  assert.match(notes, /href=\{api\.noteArchiveUrl\(archiveFolder\)\}/);
+});
