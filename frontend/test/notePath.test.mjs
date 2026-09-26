@@ -34,10 +34,11 @@ test("[[제목]] 은 같은 제목 중 링크를 적은 문서에서 가까운 �
 });
 
 test("문서 화면의 '만들기'는 모두 만들기만 한다 — 있으면 덮지 않는다(66차)", () => {
-  // 새 노트·링크로 만들기·'새 문서 만들어 링크' 셋. 화면의 '있나?' 확인은 낡은 목록을 보므로 서버가 막는다.
+  // 새 노트·링크로 만들기·'새 문서 만들어 링크'·표준 링크로 만들기(79차 openDocLink) 넷. 화면의 '있나?' 확인은
+  // 낡은 목록을 보므로 서버가 막는다.
   const src = readFileSync(new URL("../src/pages/Notes.tsx", import.meta.url), "utf8");
   assert.equal(src.match(/api\.noteCreate\(/g)?.length, 1, "noteCreate 는 makeDoc 한 곳에서만 부른다");
-  assert.equal(src.match(/await makeDoc\(/g)?.length, 3, "만들기가 makeDoc 을 거치지 않는 곳이 있다");
+  assert.equal(src.match(/await makeDoc\(/g)?.length, 4, "만들기가 makeDoc 을 거치지 않는 곳이 있다");
   assert.doesNotMatch(src, /save\(`\$\{title\}\.md`/, "링크로 만들기가 덮어쓰는 저장을 쓴다");
   assert.doesNotMatch(src, /api\.noteSave\(path, `# /, "'새 문서 만들어 링크'가 덮어쓰는 저장을 쓴다");
 });
@@ -105,8 +106,20 @@ test("마크다운과 평문은 확장자로 가린다 — 평문은 글자 그�
   // 평문을 마크다운으로 열면 `# 주석` 이 제목으로, `**kw` 의 별표가 사라져 보였다
   const ed = readFileSync(new URL("../src/components/notes/LiveEditor.tsx", import.meta.url), "utf8");
   assert.match(ed, /const md = \(\.\.\.e: Extension\[\]\): Extension\[\] => \(plain \? \[\] : e\);/);
-  for (const ext of ["markdown\\(\\{", "livePreview", "embedDeco", "itemLinks\\(\\{", "autocompletion\\(\\{", "tableTools\\(\\)"]) {
-    assert.match(ed, new RegExp(`\\.\\.\\.md\\([\\s\\S]{0,400}${ext}`), `${ext} 가 평문에서도 켜진다`);
+  // `...md(` 묶음의 **실제 안쪽**(괄호 짝으로 자른 것) — 글자 거리로 보던 때는 묶음에 하나를 더 넣자 뒤의 것이
+  // 거리 밖으로 밀려 거짓으로 깨졌다(79차)
+  const groups = [...ed.matchAll(/\.\.\.md\(/g)].map((m) => {
+    let depth = 0;
+    for (let i = m.index + 5; i < ed.length; i++) {
+      if (ed[i] === "(") depth++;
+      else if (ed[i] === ")" && --depth === 0) return ed.slice(m.index, i + 1);
+    }
+    return "";
+  });
+  assert.ok(groups.length >= 2 && groups.every(Boolean), "…md( 묶음을 못 찾았다");
+  for (const ext of ["markdown\\(\\{", "livePreview", "embedDeco", "itemLinks\\(\\{", "autocompletion\\(\\{", "tableTools\\(\\)",
+    "mdLinkClick\\("]) {
+    assert.ok(groups.some((g) => new RegExp(ext).test(g)), `${ext} 가 평문에서도 켜진다`);
   }
   const notes = readFileSync(new URL("../src/pages/Notes.tsx", import.meta.url), "utf8");
   assert.match(notes, /plain=\{!isMarkdown\}/);

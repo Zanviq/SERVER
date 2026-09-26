@@ -10,7 +10,8 @@
  * 두 렌더러가 각자 확장자 목록·경로 규칙을 들고 있으면 반드시 어긋나므로
  * (한쪽에서만 이미지가 보이는 식) 여기 한 곳에서만 정한다.
  */
-import { stripMarkdownExt } from "./notePath";
+import { looksLikeExtension } from "./names";
+import { parentDir, stripMarkdownExt } from "./notePath";
 
 const IMAGE_EXT = new Set([
   "png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "ico", "svg",
@@ -161,6 +162,41 @@ export function decodeTarget(s: string): string {
   } catch {
     return s;
   }
+}
+
+/**
+ * 표준 링크 `[글](대상)` 이 **벌트 안 문서**를 가리키면 그 대상(풀어 쓴 경로, `#섹션` 뗀 것) — 아니면 null.
+ *
+ * 79차: 읽기 보기는 이런 링크를 모두 바깥 주소로 보고 새 탭에 열어(`/보고서.md` → 앱이 모르는 주소라 첫 화면),
+ * 편집기는 Ctrl+클릭해도 아무 일이 없었다 — 앱이 아는 링크가 `[[제목]]`·`[note/…]` 뿐이었다. 두 곳이 이것 하나로
+ * 가른다. 주소(`https:`·`mailto:` 처럼 스킴이 있는 것, `//…`)·같은 문서 앵커(`#…`)·앱 주소(`/api/…`·`?` 가 든 것)는 아니다.
+ */
+export function docLinkTarget(href: string | undefined | null): string | null {
+  if (!href || href.startsWith("#") || href.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(href)) return null;
+  const path = href.split("#")[0];
+  if (!path || path.includes("?") || /^\/api\//.test(path)) return null;
+  // `/calendar` 같은 앱 화면 주소 — 문서로 보면 누르는 순간 `calendar.md` 가 새로 생긴다. 맨 위 기준 문서 링크는
+  // 확장자까지 적은 것만(`/폴더/보고서.md`).
+  if (path.startsWith("/") && !looksLikeExtension(path)) return null;
+  return decodeTarget(path);
+}
+
+/**
+ * 링크 대상(docLinkTarget)을 벌트 경로로 — **링크를 적은 문서의 폴더** 기준(`/` 로 시작하면 벌트 맨 위 기준),
+ * `.`·`..` 은 풀어서. 벌트 밖으로 나가거나 비면 null. 표준 마크다운의 상대 링크 규칙이다(깃허브·옵시디언과 같다).
+ */
+export function joinVaultPath(target: string, from: string | null): string | null {
+  const parts = target.startsWith("/") || !from ? [] : parentDir(from).split("/").filter(Boolean);
+  for (const seg of target.split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") {
+      if (!parts.length) return null;
+      parts.pop();
+    } else {
+      parts.push(seg);
+    }
+  }
+  return parts.length ? parts.join("/") : null;
 }
 
 /**

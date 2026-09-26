@@ -20,7 +20,7 @@ import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { Draft, draftAgeText, dropDraft, keepDraft, moveDraft, moveDraftsUnder, readDraft } from "../lib/draftBackup";
 import { EditorBanner } from "../components/ui/EditorBanner";
 import { isSubmitEnter } from "../lib/keys";
-import { embedMarkdownFor, makeResolver, unresolvedEmbeds } from "../lib/embeds";
+import { embedMarkdownFor, joinVaultPath, makeResolver, unresolvedEmbeds } from "../lib/embeds";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
 
@@ -494,6 +494,46 @@ export function Notes() {
   );
   /** 열린 문서 안의 링크(읽기 보기·편집기) — 이 문서를 기준으로 가까운 것을 연다 */
   const openFromHere = useCallback((title: string) => openByTitle(title, true, current), [openByTitle, current]);
+  /**
+   * 표준 링크 `[글](대상)`(79차 — 전엔 읽기 보기는 새 탭의 모르는 주소로, 편집기는 아무 일도 없었다).
+   * 링크를 적은 문서의 폴더 기준 경로(joinVaultPath)에서 찾고, 이름만 적었으면 가까운 같은 이름(옵시디언과 같다),
+   * 그다음 옮겨 간 자리(옮김 기록 — 경로라 제목으로 묻는 noteMoved 가 아니라 그림과 같은 noteEmbedLocations),
+   * 그래도 없으면 `[[제목]]` 처럼 그 자리에 만든다(마크다운이 아닌 없는 파일은 알리기만).
+   */
+  const openDocLink = useCallback((target: string) => {
+    const path = joinVaultPath(target, current);
+    if (!path) {
+      toast.error(`문서 공간 밖을 가리키는 링크입니다: ${target}`);
+      return;
+    }
+    const bare = !looksLikeExtension(path);
+    const at = notes.find((n) => n.path === path) ?? (bare ? notes.find((n) => n.path === `${path}.md`) : undefined);
+    const near = at ?? (target.includes("/") ? undefined : pickByTitle(notes, stripMarkdownExt(target), current));
+    if (near) {
+      openNote(near.path);
+      return;
+    }
+    const name = bare ? `${path}.md` : path;
+    void (async () => {
+      const moved = (await api.noteEmbedLocations([name], current ?? "").catch(() => null))?.moved[name];
+      if (moved) {
+        toast.ok(`'${target}' 은 옮겨졌습니다 → ${moved}`);
+        openNote(moved);
+        return;
+      }
+      if (!isMarkdownPath(name)) {
+        toast.error(`문서를 찾을 수 없습니다: ${target}`);
+        return;
+      }
+      const made = await makeDoc(name, `# ${stripMarkdownExt(fileName(name))}\n\n`);
+      if (!made.ok && !made.exists) {
+        toast.error(made.message);
+        return;
+      }
+      await reloadTree();
+      openNote(name);
+    })();
+  }, [notes, current, openNote, reloadTree]);
 
   useEffect(() => {
     const open = params.get("open");
@@ -1134,7 +1174,8 @@ export function Notes() {
             </div>
           ) : reading && isMarkdown ? (
             <div className="flex-1 overflow-auto p-4">
-              <MarkdownView content={content} onWikiClick={openFromHere} resolveEmbed={resolveEmbed} />
+              <MarkdownView content={content} onWikiClick={openFromHere} resolveEmbed={resolveEmbed}
+                            onDocLink={openDocLink} />
             </div>
           ) : (
             <LiveEditor
@@ -1153,6 +1194,7 @@ export function Notes() {
               {...(isMarkdown ? { onDropFiles, onDropPath, onCreateDoc } : {})}
               // 읽기 뷰와 같은 동작 — 편집 화면에서도 `[[제목]]` 을 누르면 연다
               onOpenTitle={openFromHere}
+              onOpenLink={openDocLink}
             />
           )}
           {/* current도 본다 — 닫은 뒤 늦게 도착한 save 응답이 detail을 다시 채울 수 있다 */}

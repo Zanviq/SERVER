@@ -28,6 +28,7 @@ import { toast } from "../../store/toast";
 import { TOUCH, useMediaQuery } from "../../lib/useMediaQuery";
 import { NOTE_PATH_MIME, isOurDrag } from "./dragTypes";
 import { itemLinks, linkCompletionSource } from "../links/cmLinks";
+import { mdLinkClick } from "./mdLinkClick";
 import { openLink } from "../links/linkFetch";
 
 /**
@@ -700,6 +701,8 @@ export interface LiveEditorProps {
   onCreateDoc?: () => Promise<string | null>;
   /** `[[제목]]` 칩을 눌렀을 때. 없으면 위키링크는 칩으로 바꾸지 않는다. */
   onOpenTitle?: (title: string) => void;
+  /** 표준 링크 `[글](다른 문서.md)` 을 Ctrl(⌘)+클릭했을 때 — 대상은 적힌 그대로(읽기 보기의 onDocLink 와 같다). */
+  onOpenLink?: (target: string) => void;
   /**
    * 평문(.txt·.py·.json…) — 마크다운으로 해석하지 않고 **글자를 그대로** 보인다(50차). 예전엔 모든
    * 글을 마크다운으로 열어, 평문 파일의 `# 주석` 이 제목으로 커지고 `- ` 가 •로, `**kwargs` 의 별표가
@@ -720,6 +723,7 @@ export function LiveEditor({
   onDropPath,
   onCreateDoc,
   onOpenTitle,
+  onOpenLink,
   plain = false,
 }: LiveEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -727,11 +731,11 @@ export function LiveEditor({
   const navigate = useNavigate();
   const cbs = useRef({
     onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey, onCreateDoc, navigate,
-    onOpenTitle,
+    onOpenTitle, onOpenLink,
   });
   cbs.current = {
     onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey, onCreateDoc, navigate,
-    onOpenTitle,
+    onOpenTitle, onOpenLink,
   };
   const fileRef = useRef<HTMLInputElement>(null);
   // 터치 기기이거나 화면이 좁을 때. 터치엔 드래그앤드롭이 없고, 좁은 창에서는
@@ -984,6 +988,13 @@ export function LiveEditor({
             override: [wikiComplete, linkCompletionSource, slashSource],
             // 슬래시 메뉴는 고르는 목록이라 첫 항목이 미리 선택돼 있어야 Enter로 바로 넣는다
             defaultKeymap: true,
+          }),
+          // 표준 링크 `[글](대상)` — Ctrl(⌘)+클릭으로 연다(79차)
+          mdLinkClick((target) => {
+            const open = cbs.current.onOpenLink;
+            if (!open) return false;
+            open(target);
+            return true;
           }),
         ),
         EditorView.updateListener.of((u) => {

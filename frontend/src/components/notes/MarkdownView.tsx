@@ -4,7 +4,8 @@ import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
-import { decodeTarget, isVaultTarget, type EmbedResolver } from "../../lib/embeds";
+import { decodeTarget, docLinkTarget, isVaultTarget, type EmbedResolver } from "../../lib/embeds";
+import { stripMarkdownExt } from "../../lib/notePath";
 import { transformWiki } from "../../lib/wikiTransform";
 import { remarkPlugins } from "../../lib/mdPlugins";
 import { CALLOUTS, parseCallout } from "../../lib/callouts";
@@ -49,12 +50,15 @@ export interface MarkdownViewProps {
   onWikiClick: (title: string) => void;
   /** ![[대상]]·상대경로 이미지를 실제 URL로 바꾼다(문서 목록 기준). */
   resolveEmbed?: EmbedResolver;
+  /** 표준 링크 `[글](다른 문서.md)` 를 눌렀을 때 — 대상은 적힌 그대로(lib/embeds.docLinkTarget). 없으면 onWikiClick. */
+  onDocLink?: (target: string) => void;
 }
 
 export function MarkdownView({
   content,
   onWikiClick,
   resolveEmbed,
+  onDocLink,
 }: MarkdownViewProps) {
   const rich = useRichPlugins(content);
   return (
@@ -152,6 +156,18 @@ export function MarkdownView({
               );
             }
             const { node: _n, className: _c, ...rest } = props as Record<string, unknown>;
+            // `[보고서](보고서.md)` 같은 벌트 안 문서 링크는 앱 안에서 연다(79차 — 전엔 새 탭의 모르는 주소 → 첫 화면).
+            // 여는 쪽이 없으면(대화·단어장 등) 위키링크처럼 제목으로 넘긴다.
+            const doc = docLinkTarget(href);
+            if (doc !== null) {
+              const open = onDocLink ?? ((t: string) => onWikiClick(stripMarkdownExt(t)));
+              return (
+                <a {...rest} href={href} onClick={(e) => { e.preventDefault(); open(doc); }}
+                   className="text-info underline">
+                  {children}
+                </a>
+              );
+            }
             // 같은 문서 안 앵커(각주 등)는 새 탭으로 열면 안 된다 — 빈 탭만 뜨고
             // 정작 각주로 이동하지 않는다.
             if (href?.startsWith("#")) {
