@@ -472,7 +472,7 @@ function TurnFoot({ ts, onDelete }: { ts: number; onDelete: () => void }) {
       <span className="text-[10.5px] text-fg-subtle">{fmtTime(ts)}</span>
       <button type="button" onClick={onDelete} title="이 말 지우기 (다음 대화의 맥락에서 뺀다)"
         aria-label="이 말 지우기"
-        className="transition-opacity hover:text-danger sm:opacity-0 sm:group-hover/foot:opacity-100 sm:focus:opacity-100">
+        className="transition-opacity hover:text-danger hoverable:opacity-0 hoverable:group-hover/foot:opacity-100 hoverable:focus-visible:opacity-100">
         <Trash2 size={11} className="text-fg-subtle hover:text-danger" />
       </button>
     </span>

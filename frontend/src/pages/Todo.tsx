@@ -135,9 +135,10 @@ function CatRow({
         </button>
         {/* 터치 기기엔 hover 가 없다. opacity-0 인 채로 두면 보이지도 않는데
             탭은 먹혀서, 행 오른쪽을 누르면 아무 표시 없이 편집 창이나 삭제
-            confirm 이 뜬다. 좁은 화면은 항상 보이게 두고, 넓은 화면에서는
-            hover·포커스로 켠다(포커스도 켜야 키보드로 닿는다). */}
-        <span className="flex shrink-0 items-center transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+            confirm 이 뜬다. 손가락 화면은 항상 보이게 두고, 마우스 화면(hoverable)에서만
+            hover·포커스로 켠다(포커스도 켜야 키보드로 닿는다). 화면 너비(sm:)로 가르던 때는
+            넓은 태블릿에서 보이지 않았다(디자인 8차, REVEAL_ON_ROW 와 같은 규칙). */}
+        <span className="flex shrink-0 items-center transition-opacity hoverable:opacity-0 hoverable:group-hover:opacity-100 hoverable:focus-within:opacity-100">
           <button
             type="button"
             onClick={() => onEdit(cat)}

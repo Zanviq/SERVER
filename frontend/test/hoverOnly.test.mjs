@@ -38,11 +38,23 @@ test("마우스로만 드러나는 단추에는 손가락 화면에서 드러나
       seen++;
       if (/pointer-events-none/.test(cls)) continue;            // 누를 수 없는 풍선
       if (/coarse:opacity-100/.test(cls)) continue;
+      if (/hoverable:opacity-0/.test(cls)) continue;              // 마우스 화면에서만 숨김(REVEAL_ON_ROW 꼴)
       bad.push(`${f.slice(SRC.length)}: ${cls.slice(0, 90)}`);
     }
   }
   assert.ok(seen >= 3, `훑은 것이 너무 적다 — 이 시험의 정규식을 확인할 것(${seen})`);
   assert.deepEqual(bad, [], "손가락 화면에서는 보이지 않은 채 눌린다");
+});
+
+test("'올리면 보임'은 화면 너비가 아니라 마우스가 있는지로 가른다(태블릿)", () => {
+  // 디자인 8차: sm:opacity-0 로 숨기던 때 820×1180 태블릿(손가락)에서 문서 트리 줄 23개의 … ·폴더 받기와 논문 줄
+  // 메뉴가 보이지 않은 채 눌렸다. 넓다고 마우스가 있는 것이 아니다.
+  const config = readFileSync(new URL("../tailwind.config.js", import.meta.url), "utf8");
+  assert.match(config, /addVariant\("hoverable", "@media \(hover: hover\) and \(pointer: fine\)"\)/);
+  const reveal = readFileSync(join(SRC, "components/ui/reveal.ts"), "utf8");
+  assert.match(reveal, /REVEAL_ON_ROW = "hoverable:opacity-0 hoverable:group-hover:opacity-100 hoverable:focus-visible:opacity-100"/);
+  const widthHidden = files.filter((f) => /\bsm:opacity-0\b/.test(readFileSync(f, "utf8"))).map((f) => f.slice(SRC.length));
+  assert.deepEqual(widthHidden, [], "화면 너비로 숨기는 곳이 남았다 — 태블릿에서 보이지 않는다");
 });
 
 test("대화 지우기는 되돌릴 수 없으니 한 번 묻는다", () => {

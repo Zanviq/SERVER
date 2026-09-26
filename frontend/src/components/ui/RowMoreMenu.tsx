@@ -1,6 +1,7 @@
 import { ReactNode } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { Dropdown } from "./Dropdown";
+import { REVEAL_ON_ROW } from "./reveal";
 
 /**
  * 목록 줄 끝의 … 메뉴. 논문·회의 목록이 같은 모양(누름이 줄로 번지지 않게 막는 겉, 줄에 올렸을
@@ -10,14 +11,14 @@ import { Dropdown } from "./Dropdown";
 export function RowMoreMenu({ label, width, active, children }: {
   label: string;
   width: number;
-  /** 고른 줄이면 넓은 화면에서도 늘 보인다(아니면 줄에 올렸을 때·포커스일 때만) */
+  /** 고른 줄이면 마우스 화면에서도 늘 보인다(아니면 줄에 올렸을 때·포커스일 때만 — REVEAL_ON_ROW) */
   active: boolean;
   children: (close: () => void) => ReactNode;
 }) {
   return (
     <span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
       <Dropdown align="end" width={width} label={label}
-        className={`tap grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-hovered hover:text-fg ${active ? "" : "sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"}`}
+        className={`tap grid h-6 w-6 place-items-center rounded text-fg-muted hover:bg-hovered hover:text-fg ${active ? "" : REVEAL_ON_ROW}`}
         trigger={() => <MoreHorizontal size={14} />}>
         {children}
       </Dropdown>

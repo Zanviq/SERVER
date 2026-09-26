@@ -66,5 +66,9 @@ export default {
     // `coarse:` — 손가락으로 쓰는 화면에서만(마우스 화면의 모양은 그대로 둔다). 목록 줄·작은 단추를 손가락 크기로
     // 넓힐 때 쓴다 — 화면 너비(sm:)로 가르면 넓은 태블릿은 마우스 크기로, 좁은 창의 마우스는 손가락 크기로 갈린다.
     ({ addVariant }) => addVariant("coarse", "@media (pointer: coarse)"),
+    // `hoverable:` — 마우스처럼 **올려 둘 수 있는** 화면에서만. '올리면 보이는' 단추는 이것으로 숨긴다. 화면 너비(sm:)로
+    // 숨기던 때는 태블릿(넓지만 손가락)에서 문서 트리의 … 가 보이지 않은 채 눌렸다 — 이름 바꾸기·옮기기의 유일한 길인데
+    // (디자인 8차).
+    ({ addVariant }) => addVariant("hoverable", "@media (hover: hover) and (pointer: fine)"),
   ],
 };
