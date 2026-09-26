@@ -19,7 +19,8 @@ const MENU_H = 104;
 
 export function RowMenu({ onRename, onMove, onTrash, name }: {
   onRename: () => void;
-  onMove: () => void;
+  /** 없으면 '이동'을 두지 않는다 — 논문·회의에서 붙여 온 줄은 서버가 옮기기를 늘 거절한다(디자인 32차). */
+  onMove?: () => void;
   onTrash: () => void;
   /** 이 줄의 이름 — 화면 읽기 이름을 `폴더00 더보기` 로. 줄마다 "더보기" 뿐이면 수천 개가(아래 탭바의 더보기까지)
    *  같은 이름이라 무엇의 메뉴인지 들리지 않았다(디자인 6차). */
@@ -101,7 +102,7 @@ export function RowMenu({ onRename, onMove, onTrash, name }: {
           onMouseDown={(e) => e.stopPropagation()}
         >
           <MenuItem icon={Pencil} label="이름 변경" onClick={() => { setOpen(false); onRename(); }} />
-          <MenuItem icon={FolderInput} label="이동" onClick={() => { setOpen(false); onMove(); }} />
+          {onMove && <MenuItem icon={FolderInput} label="이동" onClick={() => { setOpen(false); onMove(); }} />}
           <MenuItem icon={Trash2} label="휴지통으로" danger onClick={() => { setOpen(false); onTrash(); }} />
         </div>,
         document.body,

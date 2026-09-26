@@ -711,6 +711,8 @@ export function Notes() {
   // 재귀 폴더 렌더
   /** 다른 화면이 관리하는 폴더인가(논문·회의). 서버가 준 목록으로만 판단한다. */
   const isPinned = (path: string) => pinned.includes(path);
+  // 논문·회의에서 붙여 온 것(고정 폴더의 안쪽) — 서버가 옮기기를 늘 거절하므로 이동을 권하지 않는다(디자인 32차)
+  const onMount = (path: string) => pinned.some((p) => path.startsWith(`${p}/`));
 
   const renderNode = (node: TreeNode, depth: number): JSX.Element[] => {
     const rows: JSX.Element[] = [];
@@ -777,7 +779,7 @@ export function Notes() {
                 <RowMenu
                   name={child.name}
                   onRename={() => { setRenameFor({ path: child.path, folder: true }); setRenameName(child.name); }}
-                  onMove={() => { setMoveFor({ path: child.path, folder: true }); setMoveTarget(parentDir(child.path)); }}
+                  onMove={onMount(child.path) ? undefined : () => { setMoveFor({ path: child.path, folder: true }); setMoveTarget(parentDir(child.path)); }}
                   onTrash={() => setDelFolder(child.path)}
                 />
               </>
@@ -818,7 +820,7 @@ export function Notes() {
             <RowMenu
               name={fileName(n.path)}
               onRename={() => { setRenameFor({ path: n.path, folder: false }); setRenameName(fileName(n.path)); }}
-              onMove={() => { setMoveFor({ path: n.path, folder: false }); setMoveTarget(parentDir(n.path)); }}
+              onMove={onMount(n.path) ? undefined : () => { setMoveFor({ path: n.path, folder: false }); setMoveTarget(parentDir(n.path)); }}
               onTrash={() => setDelNotePath(n.path)}
             />
           </div>
