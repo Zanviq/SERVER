@@ -3,16 +3,10 @@ import { Trash2, RotateCcw, XCircle, Loader2, FolderOpen, FileText, NotebookPen,
 import { Shell } from "../components/layout/Shell";
 import { Modal } from "../components/ui/Modal";
 import { api, TrashEntry } from "../lib/api";
-import { formatBytes } from "../lib/format";
-import { isMarkdownPath } from "../lib/notePath";
+import { formatBytes, formatIsoDay, formatStamp } from "../lib/format";
+import { isMarkdownPath, parentDir } from "../lib/notePath";
 import { ListState } from "../components/ui/ListState";
 import { toast } from "../store/toast";
-
-function fmt(ts: number): string {
-  const d = new Date(ts * 1000);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
 
 /** 휴지통 갈래. 문서·일정·할 일이 섞이면 찾기 어려워 탭으로 나눈다.
  *  백엔드(trash.KIND_*)와 **같은 갈래를 다 알아야 한다** — 빠진 갈래는
@@ -179,27 +173,33 @@ export function Trash() {
               const isMeeting = e.kind === "meeting";
               const isMeetingDoc = e.kind === "meeting_doc";
               const Icon = isEvent ? CalendarDays : isTodo ? ListChecks : isVocab ? BookMarked : isPaper ? GraduationCap : isMeeting ? AudioLines : isMeetingDoc ? FileText : icon(e);
-              const due = (e.todo_due ?? "").slice(0, 16).replace("T", " ");
+              const due = formatIsoDay(e.todo_due);
               const vocabTags = e.vocab_tags?.length ? ` · ${e.vocab_tags.join(", ")}` : "";
+              // 문서·폴더는 **있던 폴더**를 적는다 — 경로 전체를 적던 때는 맨 위의 것이 제 이름을 한 번 더 적었다.
+              const from = parentDir(e.orig_rel);
+              const detail = isEvent
+                ? `일정 · ${formatIsoDay(e.event_start)}`
+                : isTodo
+                ? `할 일${e.todo_done ? " · 완료" : ""}${due ? ` · ${due}` : ""}`
+                : isVocab
+                ? `단어${e.vocab_meaning ? ` · ${e.vocab_meaning}` : ""}${vocabTags}`
+                : isPaper
+                ? `논문${e.paper_filename ? ` · ${e.paper_filename}` : ""}`
+                : isMeeting
+                ? `회의${e.meeting_date ? ` · ${e.meeting_date}` : ""}${e.meeting_category ? ` · ${e.meeting_category}` : ""}`
+                : isMeetingDoc
+                ? `회의 문서${e.meeting_title ? ` · ${e.meeting_title}` : ""}`
+                : `${e.is_dir ? "폴더" : "문서"} · ${from ? `${from}/` : "맨 위"}`;
               return (
                 <li key={e.id} className="flex items-center gap-3 px-4 py-2.5">
                   <Icon size={16} className="shrink-0 text-fg-muted" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13.5px] font-medium">{e.name}</p>
-                    <p className="truncate text-[11.5px] text-fg-muted">
-                      {isEvent
-                        ? `일정 · ${(e.event_start ?? "").slice(0, 16).replace("T", " ")} · 삭제 ${fmt(e.deleted_at)}`
-                        : isTodo
-                        ? `할 일${e.todo_done ? " · 완료" : ""}${due ? ` · ${due}` : ""} · 삭제 ${fmt(e.deleted_at)}`
-                        : isVocab
-                        ? `단어${e.vocab_meaning ? ` · ${e.vocab_meaning}` : ""}${vocabTags} · 삭제 ${fmt(e.deleted_at)}`
-                        : isPaper
-                        ? `논문${e.paper_filename ? ` · ${e.paper_filename}` : ""} · 삭제 ${fmt(e.deleted_at)}`
-                        : isMeeting
-                        ? `회의${e.meeting_date ? ` · ${e.meeting_date}` : ""}${e.meeting_category ? ` · ${e.meeting_category}` : ""} · 삭제 ${fmt(e.deleted_at)}`
-                        : isMeetingDoc
-                        ? `회의 문서${e.meeting_title ? ` · ${e.meeting_title}` : ""} · 삭제 ${fmt(e.deleted_at)}`
-                        : `${e.orig_rel} · ${fmt(e.deleted_at)}`}
+                    {/* 지운 때는 늘 보인다 — 한 줄로 이어 쓰던 때는 휴대폰에서 끝의 날짜부터 잘렸다(디자인 5차).
+                        줄어드는 것은 앞의 설명 쪽이다. */}
+                    <p className="flex min-w-0 text-[11.5px] text-fg-muted">
+                      <span className="truncate">{detail}</span>
+                      <span className="shrink-0 whitespace-pre"> · 삭제 {formatStamp(e.deleted_at)}</span>
                     </p>
                   </div>
                   <button
