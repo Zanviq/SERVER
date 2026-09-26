@@ -22,6 +22,8 @@ test("오른쪽 칸은 두 크기 모두 높이가 못 박혀 있다 — 목록�
     "좁은 화면: flex-1 이면 높이(60vh)가 내용 크기로 풀려 카드가 목록 길이만큼 자란다");
   assert.ok(cls.includes("lg:h-view-9"), "넓은 화면: h-auto 면 안쪽 카드의 flex-1 이 내용 크기로 풀린다");
   assert.ok(!cls.includes("lg:h-auto"));
+  // 짧은 휴대폰(568px): 60vh 로는 추가 칸을 빼면 할 일이 한 개만 보였다(디자인 38차)
+  assert.ok(cls.includes("min-h-[26rem]") && cls.includes("lg:min-h-0"), "짧은 휴대폰에서 목록이 한 줄로 쪼그라든다");
   // 목록이 칸 안에서 구르는 쪽이어야 위의 높이가 뜻을 가진다
   assert.match(src, /const timeline = \(\s*<div className="min-h-0 flex-1 overflow-auto/);
 });

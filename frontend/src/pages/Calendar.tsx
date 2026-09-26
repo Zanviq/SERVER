@@ -474,7 +474,9 @@ export function Calendar() {
           )}
         </div>
 
-        <div className="card fc-server flex min-w-0 flex-col p-4 h-[70vh] lg:h-auto">
+        {/* 짧은 휴대폰(568px)에서는 70vh 로는 한 달 여섯 주 가운데 세 주만 보이고 나머지는 달력 안에서 굴러야 했다 —
+            최소 28rem 이면 한 달이 한눈에 들어오고, 모자라면 화면이 구른다(디자인 38차) */}
+        <div className="card fc-server flex min-w-0 flex-col p-4 h-[70vh] min-h-[28rem] lg:h-auto lg:min-h-0">
           <div className="min-h-0 flex-1">
             <FullCalendar
               ref={calRef}

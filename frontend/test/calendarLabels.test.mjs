@@ -37,6 +37,11 @@ test("ko 묶음에 없는 단추 이름(hint)을 한국어로 준다", () => {
   for (const s of said) assert.doesNotMatch(s, /[A-Za-z]{2,}/, `영어 낱말이 섞였다: ${s}`);
 });
 
+test("짧은 휴대폰에서도 한 달 여섯 주가 달력 안에서 구르지 않고 다 보인다(디자인 38차)", () => {
+  // 320×568 에서 70vh 로는 여섯 주 가운데 세 주만 보이고 나머지는 달력 안에서 굴러야 했다
+  assert.match(cal, /<div className="card fc-server flex min-w-0 flex-col p-4 h-\[70vh\] min-h-\[28rem\] lg:h-auto lg:min-h-0">/);
+});
+
 test("누른 단추에 초점 테두리가 남지 않는다 — 자판으로 올 때만", () => {
   assert.match(css, /\.fc-server \.fc-button:focus \{\s*box-shadow: none !important;/);
   assert.match(css, /\.fc-server \.fc-button:focus-visible \{/);

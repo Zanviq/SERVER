@@ -829,8 +829,9 @@ export function Todo() {
             기준 크기(0%)가 내용 크기로 풀려 h-[60vh] 가 무시됐고, 카드가 할 일 600개 길이(3만 8천 px)로 자라
             추가 칸이 목록 맨 끝에 묻혔다 — 휴대폰에서 하나를 더하려면 전부를 굴려 내려가야 했다(디자인 2차).
             넓은 화면도 같았다(lg:h-auto 라 안쪽 카드의 flex-1 이 내용 크기로 풀려 추가 칸이 y=26,594) — 왼쪽 카드와
-            같은 화면 높이로 못 박는다. */}
-        <div className="flex h-[60vh] min-h-0 flex-none flex-col lg:h-view-9 lg:flex-1">{rightPane}</div>
+            같은 화면 높이로 못 박는다. 짧은 휴대폰(568px)에서는 60vh 가 340px 라 추가 칸을 빼면 목록에 할 일이 한 개만
+            보였다 — 최소 26rem 을 두고 모자라면 화면이 구른다(디자인 38차). */}
+        <div className="flex h-[60vh] min-h-[26rem] flex-none flex-col lg:h-view-9 lg:min-h-0 lg:flex-1">{rightPane}</div>
       </div>
 
       <CategoryDialog
