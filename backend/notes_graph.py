@@ -152,8 +152,16 @@ class _Lookup:
         pick = nearest([r for r, _ in cands], from_rel)
         return next(v for r, v in cands if r == pick)
 
-    def targets(self, ln: NoteLinks, from_rel: str | None = None) -> list:
-        """노트 하나의 링크가 닿는 것들(못 찾은 것은 None). from_rel 은 그 노트의 경로(문서 루트 기준)."""
+    def rel(self, f: WalkedFile) -> str:
+        """문서 루트 기준 경로 — 훑은 뿌리(폴더 그래프면 그 폴더)가 아니라 문서 루트가 기준이다."""
+        return f.path.relative_to(self._notes_dir).as_posix()
+
+    def targets_of(self, f: WalkedFile) -> list:
+        """노트 하나의 링크가 닿는 것들(못 찾은 것은 None). 링크를 적은 자리(f)를 **늘** 함께 넘긴다 —
+        자리를 빼먹으면 같은 제목 중 엉뚱한 것을 고른다(65차). 그래서 자리 없는 길을 따로 두지 않는다."""
+        return self._targets(_links_of(f), self.rel(f))
+
+    def _targets(self, ln: NoteLinks, from_rel: str) -> list:
         out = [self._title(t, from_rel) for t in ln.titles]
         for p in ln.paths:
             rel = p.strip("/")
@@ -321,16 +329,15 @@ def build_graph(
 def _link_graph(notes_dir: Path, files: list[WalkedFile]) -> dict:
     """노트 사이의 링크 그래프(위키링크·경로 링크). 폴더 지도(_folder_graph)와 짝이다."""
     notes = [f for f in files if f.rel.endswith(".md")]
-    rel_of = {f.abspath: f.path.relative_to(notes_dir).as_posix() for f in notes}
+    find = _Lookup(notes_dir)
     # 노드 id 는 제목이다 — 다만 제목이 겹치면 경로로(65차). 제목만 쓰면 두 문서가 한 노드로 합쳐져
     # 어느 쪽을 가리킨 간선인지 사라진다. 겹치지 않는 문서의 id 는 예전 그대로다.
     many = Counter(f.path.stem.lower() for f in notes)
 
     def node_id(f: WalkedFile) -> str:
         stem = f.path.stem
-        return stem if many[stem.lower()] == 1 else rel_of[f.abspath].removesuffix(".md")
+        return stem if many[stem.lower()] == 1 else find.rel(f).removesuffix(".md")
 
-    find = _Lookup(notes_dir)
     nodes = []
     for f in notes:
         nid = node_id(f)
@@ -339,7 +346,7 @@ def _link_graph(notes_dir: Path, files: list[WalkedFile]) -> dict:
             {
                 "id": nid,
                 "title": f.path.stem,
-                "path": rel_of[f.abspath],
+                "path": find.rel(f),
                 "type": "note",
             }
         )
@@ -348,7 +355,7 @@ def _link_graph(notes_dir: Path, files: list[WalkedFile]) -> dict:
     seen = set()
     for f in notes:
         src = node_id(f)
-        for tgt in find.targets(_links_of(f), rel_of[f.abspath]):
+        for tgt in find.targets_of(f):
             if tgt and tgt != src:
                 key = (src, tgt)
                 if key not in seen:
@@ -431,7 +438,7 @@ def _folder_graph(notes_dir: Path, base: Path) -> dict:
         g_src = group_of(f.path)
         if g_src not in valid_ids:
             continue
-        for tp in find.targets(_links_of(f), f.path.relative_to(notes_dir).as_posix()):
+        for tp in find.targets_of(f):
             if not tp:
                 continue
             g_tgt = group_of(tp)
