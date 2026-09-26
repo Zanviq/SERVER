@@ -763,6 +763,7 @@ export function Notes() {
                 {/* 이름 바꾸기·옮기기·지우기는 문서 줄과 같은 … 메뉴로. 옮기기가 끌기뿐이면 휴대폰
                     (터치는 끌어 놓기가 안 된다)과 키보드로는 폴더를 옮길 길이 없었다(38차). */}
                 <RowMenu
+                  name={child.name}
                   onRename={() => { setRenameFor({ path: child.path, folder: true }); setRenameName(child.name); }}
                   onMove={() => { setMoveFor({ path: child.path, folder: true }); setMoveTarget(""); }}
                   onTrash={() => setDelFolder(child.path)}
@@ -803,6 +804,7 @@ export function Notes() {
               <span className="truncate">{fileName(n.path)}</span>
             </button>
             <RowMenu
+              name={fileName(n.path)}
               onRename={() => { setRenameFor({ path: n.path, folder: false }); setRenameName(fileName(n.path)); }}
               onMove={() => { setMoveFor({ path: n.path, folder: false }); setMoveTarget(""); }}
               onTrash={() => setDelNotePath(n.path)}

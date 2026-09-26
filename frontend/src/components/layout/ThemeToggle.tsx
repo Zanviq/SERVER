@@ -17,7 +17,7 @@ export function ThemeToggle() {
           onClick={() => setMode(m)}
           title={label}
           aria-label={label}
-          className={`grid h-7 w-7 place-items-center rounded-sm transition-colors ${
+          className={`grid h-7 w-7 place-items-center rounded-sm transition-colors coarse:h-9 coarse:w-10 ${
             mode === m
               ? "bg-surface text-accent shadow-sm"
               : "text-fg-muted hover:text-fg"

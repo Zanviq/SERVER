@@ -84,3 +84,12 @@ test("문서 머리는 꺾이지 않고, 좁으면 폴더 쪽부터 줄인다(�
   // 한 칸 화면에서 백링크는 접힌다 — 넓은 화면은 늘 펼침
   assert.match(notes, /lg:flex lg:max-h-none lg:overflow-visible \$\{linksOpen \? "flex" : "hidden"\}/);
 });
+
+test("더보기 시트의 테마 단추는 손가락 크기, 줄 끝 메뉴는 줄마다 다른 이름(디자인 6차)", () => {
+  assert.match(read("../src/components/layout/ThemeToggle.tsx"), /coarse:h-9 coarse:w-10/, "테마 단추가 28px 이다");
+  const menu = read("../src/components/notes/RowMenu.tsx");
+  assert.match(menu, /aria-label=\{name \? `\$\{name\} 더보기` : "더보기"\}/);
+  const notes = read("../src/pages/Notes.tsx");
+  assert.equal(notes.match(/<RowMenu\s+name=\{/g)?.length, 2, "폴더 줄·문서 줄 모두 이름을 넘겨야 한다");
+  assert.match(read("../src/components/layout/Sidebar.tsx"), /<nav aria-label="화면 이동"/, "아래 탭바가 이름 없는 목록이다");
+});

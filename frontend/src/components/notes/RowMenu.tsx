@@ -17,10 +17,13 @@ import { useMenuFocus } from "../ui/useMenuFocus";
 const MENU_W = 132;
 const MENU_H = 104;
 
-export function RowMenu({ onRename, onMove, onTrash }: {
+export function RowMenu({ onRename, onMove, onTrash, name }: {
   onRename: () => void;
   onMove: () => void;
   onTrash: () => void;
+  /** 이 줄의 이름 — 화면 읽기 이름을 `폴더00 더보기` 로. 줄마다 "더보기" 뿐이면 수천 개가(아래 탭바의 더보기까지)
+   *  같은 이름이라 무엇의 메뉴인지 들리지 않았다(디자인 6차). */
+  name?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -79,7 +82,7 @@ export function RowMenu({ onRename, onMove, onTrash }: {
       <button
         ref={btnRef}
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-        title="더보기" aria-label="더보기" aria-expanded={open}
+        title="더보기" aria-label={name ? `${name} 더보기` : "더보기"} aria-expanded={open}
         // 보이는 때의 까닭은 REVEAL_ON_ROW. 열려 있는 동안은 늘 보인다. 손가락으로는 .tap 으로 44px 을 누른다
         // (28px 이던 것 — 목록 줄마다 있는 주된 조작이다, 디자인 1차).
         className={`tap grid h-7 w-7 place-items-center rounded text-fg-muted transition-opacity hover:text-fg ${

@@ -169,7 +169,7 @@ export function Sidebar() {
       </aside>
 
       {/* 모바일 하단 탭바 — 5칸을 폭에 맞춰 나눠 쓴다(잘리는 항목이 없어야 한다) */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-line bg-sidebar px-1 pb-[env(safe-area-inset-bottom)] pt-1 sm:hidden">
+      <nav aria-label="화면 이동" className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-line bg-sidebar px-1 pb-[env(safe-area-inset-bottom)] pt-1 sm:hidden">
         {tabs.map((n) => (
           <NavLink
             key={n.to}
