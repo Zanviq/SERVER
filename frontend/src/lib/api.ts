@@ -228,6 +228,10 @@ export const api = {
   // 저장 공간은 사용자당 하나뿐이라 scope/base 인자가 없다.
   noteList: () => req<NoteSummary[]>("/api/notes/list"),
   noteGet: (path: string) => req<NoteDetail>(`/api/notes/get?${q({ path })}`),
+  /** 글에 넣은 그림·첨부 가운데 목록에 없는 것 — 이름을 바꾸거나 옮겨 간 지금 자리(73차). 모르는 것은 빠진다.
+   *  읽기다(POST 는 대상 목록을 본문에 싣기 위해서) — 이름에 Move 가 없어야 '맨 타이머 저장' 검사에 안 걸린다. */
+  noteEmbedLocations: (targets: string[], source: string) =>
+    req<{ moved: Record<string, string> }>("/api/notes/embeds/moved", jsonInit("POST", { targets, source })),
   /** 새 문서를 **만들기만** 한다 — 이미 있으면 409(덮지 않는다). 화면의 만들기는 모두 이것을 쓴다(66차:
    *  `[[폴더/제목]]` 을 누르면 '만들기'가 있던 문서를 제목 한 줄로 덮었다). */
   noteCreate: (path: string, content: string) =>

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import archive, doc_cache, meeting_store, mounts, moved, paper_store, upload_stream
 from ..auth import SessionUser, require_session
@@ -28,7 +28,7 @@ from ..file_kinds import (
     BadName, doc_title, inline_media_type, is_editable, kind_of, looks_like_extension, nfc, renamed,
     split_ext,
 )
-from ..notes_graph import backlinks_for, backlinks_of, build_graph, parse_wikilinks
+from ..notes_graph import backlinks_for, backlinks_of, build_graph, nearest, parse_wikilinks
 from ..security_paths import safe_join, to_rel
 from ..storage import resolve, taken_by_another, user_data_root, walk_all, walk_files
 from ..trash import move_to_trash
@@ -97,6 +97,13 @@ class NoteTree(BaseModel):
     #: 목록 맨 위에 고정하고 다른 색으로 그릴 폴더(논문·회의처럼 다른 화면이
     #: 관리하는 것들). 화면이 이름을 박아 두지 않도록 서버가 알려 준다.
     pinned: list[str] = []
+
+
+class EmbedTargets(BaseModel):
+    #: 문서에 넣은 그림·첨부 가운데 화면의 목록에서 못 찾은 것(`사진.png`·`그림/사진.png`)
+    targets: list[str] = Field(default_factory=list, max_length=200)
+    #: 그 글이 있는 문서 — 상대경로와 같은 이름 여럿을 가를 때 기준
+    source: str = ""
 
 
 class FolderRequest(BaseModel):
@@ -760,6 +767,50 @@ def moved_title(
     root = user_data_root(user, settings)
     now = moved.follow_title(user, settings, title, lambda r: safe_join(root, r).is_file())
     return {"path": now}
+
+
+@router.post("/embeds/moved")
+def embeds_moved(
+    req: EmbedTargets,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """문서에 넣은 그림·첨부(`![[사진.png]]`·`![](그림/사진.png)`) 가운데 화면이 못 찾은 것 — 이름을 바꾸거나
+    옮겨 간 지금 자리(73차).
+
+    예전엔 그림 이름을 바꾸면 그 그림을 넣어 둔 모든 문서에서 그림이 사라지고 "없음"이 떴다(실측 3 → 0). 링크
+    (`[note/…]`·`[[옛제목]]`)는 옮김 기록을 따라가는데(10·46·48차) 임베드는 화면이 목록에서만 찾았다. 남의 문서를
+    고쳐 쓰지 않는다는 규칙(moved.py)은 그대로 — 보여 줄 때 옮김 기록을 따라간다. 파일 이름만 적은 것은 옛 이름이
+    그것인 기록에서 찾고, 여럿이면 그 글에서 가까운 것(notes_graph.nearest — 위키 링크와 같은 규칙).
+    """
+    root = user_data_root(user, settings)
+    rows = moved.rows_beside(root)
+    if not rows:
+        return {"moved": {}}
+
+    def exists(rel: str) -> bool:
+        try:
+            return safe_join(root, rel).is_file()
+        except HTTPException:
+            return False
+
+    here = req.source.rpartition("/")[0]
+    out: dict[str, str] = {}
+    for t in req.targets:
+        clean = t.removeprefix("./").strip().strip("/")
+        if not clean:
+            continue
+        if "/" in clean:
+            cands = [clean] + ([f"{here}/{clean}"] if here else [])
+            now = next((n for c in cands if not exists(c) and (n := moved.follow_rows(rows, c, exists))), None)
+        else:
+            olds = {r["from"] for r in rows
+                    if not r["from"].endswith("/") and r["from"].rsplit("/", 1)[-1] == clean}
+            hits = sorted({n for o in olds if (n := moved.follow_rows(rows, o, exists))})
+            now = nearest(hits, req.source or None) if hits else None
+        if now:
+            out[t] = now
+    return {"moved": out}
 
 
 @router.get("/search", response_model=list[SearchHit])

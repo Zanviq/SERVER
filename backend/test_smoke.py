@@ -1097,6 +1097,35 @@ def test_a_wiki_link_goes_to_the_nearest_of_same_titled_notes():
         client.delete("/api/notes/folder", params={"path": top})
 
 
+def test_an_embedded_picture_is_found_after_it_is_renamed():
+    """그림 이름을 바꿔도 그 그림을 넣어 둔 문서(`![[사진.png]]`)에서 계속 보인다(73차).
+
+    예전엔 화면이 목록에서만 찾아, 이름을 바꾸면 넣어 둔 모든 곳이 "없음"이 됐다(실측: 읽기 보기 그림 3 → 0).
+    링크처럼 옮김 기록을 따라간다 — 화면이 목록에서 못 찾은 대상을 이 창구에 묻는다(남의 문서는 고쳐 쓰지 않는다).
+    """
+    from backend.storage import user_data_root
+
+    _login()
+    top = "그림73"
+    root = user_data_root(_tester(), get_settings())
+    (root / top / "그림").mkdir(parents=True, exist_ok=True)
+    (root / top / "그림" / "사진.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    try:
+        assert client.post("/api/notes/rename", json={"path": f"{top}/그림/사진.png", "new_name": "고양이"}).status_code == 200
+        r = client.post("/api/notes/embeds/moved", json={
+            "targets": ["사진.png", f"{top}/그림/사진.png", "그림/사진.png", "없는그림.png"],
+            "source": f"{top}/글.md"})
+        assert r.status_code == 200, r.text
+        now = f"{top}/그림/고양이.png"
+        assert r.json()["moved"] == {"사진.png": now, f"{top}/그림/사진.png": now, "그림/사진.png": now}, r.json()
+        # 폴더째 옮겨도(폴더 이름 바꾸기) 경로로 적은 임베드가 따라간다
+        assert client.post("/api/notes/rename", json={"path": f"{top}/그림", "new_name": "사진첩"}).status_code == 200
+        r = client.post("/api/notes/embeds/moved", json={"targets": ["그림/사진.png"], "source": f"{top}/글.md"})
+        assert r.json()["moved"] == {"그림/사진.png": f"{top}/사진첩/고양이.png"}, r.json()
+    finally:
+        client.delete("/api/notes/folder", params={"path": top})
+
+
 def test_a_note_renamed_to_another_markdown_extension_keeps_its_links():
     """`메모.md` 를 `메모.MD`·`메모.markdown` 으로 바꿔도 역링크·그래프에 남는다(72차).
 

@@ -20,7 +20,7 @@ import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { Draft, draftAgeText, dropDraft, keepDraft, moveDraft, moveDraftsUnder, readDraft } from "../lib/draftBackup";
 import { EditorBanner } from "../components/ui/EditorBanner";
 import { isSubmitEnter } from "../lib/keys";
-import { embedMarkdownFor, makeResolver } from "../lib/embeds";
+import { embedMarkdownFor, makeResolver, unresolvedEmbeds } from "../lib/embeds";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
 
@@ -800,9 +800,23 @@ export function Notes() {
 
   /** `![[사진.png]]` 같은 임베드를 실제 파일로 이어 준다. 편집기와 읽기 뷰가
    *  같은 해석기를 써야 한쪽에서만 이미지가 보이는 일이 없다. */
+  //: 목록에서 못 찾은 임베드의 지금 자리(서버가 옮김 기록으로 찾아 준 것, 73차) — 그림 이름을 바꿔도 넣어 둔
+  //: 문서에서 계속 보이게. 글이 바뀔 때마다 묻지 않게 잠깐 기다리고, 못 찾은 것이 없으면 묻지 않는다.
+  const [embedMoved, setEmbedMoved] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!current || !isMarkdownPath(current)) return;
+    const t = window.setTimeout(() => {
+      const missing = unresolvedEmbeds(content, notes, current);
+      if (!missing.length) return;
+      api.noteEmbedLocations(missing, current)
+        .then((r) => setEmbedMoved((prev) => ({ ...prev, ...r.moved })))
+        .catch(() => { /* 못 물으면 예전처럼 '없음' — 글쓰기를 막을 일은 아니다 */ });
+    }, 500);
+    return () => window.clearTimeout(t);
+  }, [content, notes, current]);
   const resolveEmbed = useMemo(
-    () => makeResolver(notes, current, (p) => api.noteRawUrl(p)),
-    [notes, current],
+    () => makeResolver(notes, current, (p) => api.noteRawUrl(p), embedMoved),
+    [notes, current, embedMoved],
   );
 
   /** 편집기에 파일을 떨어뜨렸을 때 — 현재 폴더에 올리고 삽입할 문자열을 돌려준다. */

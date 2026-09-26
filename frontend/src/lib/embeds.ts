@@ -67,13 +67,32 @@ export function makeResolver(
   files: { path: string }[],
   currentPath: string | null,
   toUrl: (path: string) => string,
+  moved?: Record<string, string>,
 ): EmbedResolver {
   // 루트 문서(경로에 "/"가 없다)에서 replace가 아무것도 못 지워 파일명이 통째로
   // 폴더로 잡히는 실수를 막는다 — "메모.md" → curDir "" 이어야 한다.
   const slash = currentPath ? currentPath.lastIndexOf("/") : -1;
   const curDir = slash >= 0 ? currentPath!.slice(0, slash) : "";
   const byPath = new Set(files.map((f) => f.path));
+  const base = resolveIn(files, byPath, curDir, toUrl);
 
+  // 4) 목록에 없으면 — 이름을 바꾸거나 옮겨 간 곳(서버가 옮김 기록으로 찾아 준 것, 73차). 예전엔 그림 이름을
+  //    바꾸면 그 그림을 넣은 문서마다 "없음"이 됐다.
+  return (target: string) => {
+    const hit = base(target);
+    if (hit) return hit;
+    const now = moved?.[target];
+    return now && byPath.has(now) ? { path: now, url: toUrl(now) } : null;
+  };
+}
+
+/** 목록만으로 찾는 해석(1~3) — 목록에서 못 찾은 것을 서버에 물을지 가를 때도 쓴다(unresolvedEmbeds). */
+function resolveIn(
+  files: { path: string }[],
+  byPath: Set<string>,
+  curDir: string,
+  toUrl: (path: string) => string,
+): EmbedResolver {
   return (target: string) => {
     const clean = target.replace(/^\.\//, "").trim();
     if (!clean) return null;
@@ -98,6 +117,29 @@ export function makeResolver(
     if (hits.length) return { path: hits[0].path, url: toUrl(hits[0].path) };
     return null;
   };
+}
+
+/** 표준 그림 문법의 대상(`![대체](그림/사진.png)`·`![대체](<띄운 이름.png>)`) — 꺾쇠 안은 공백이 들어갈 수 있다. */
+const MD_IMAGE = /!\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^)\s]+))(?:\s+"[^"]*")?\s*\)/g;
+
+/**
+ * 글에 넣은 그림·첨부 가운데 **목록에서 못 찾는 것**(73차) — 서버에 옮겨 간 자리를 물을 대상.
+ * `![[…]]` 과 표준 그림(`![](…)`) 둘 다. 코드 안인지는 가리지 않는다 — 묻기만 하고, 그리는 쪽이 코드를 거른다.
+ */
+export function unresolvedEmbeds(text: string, files: { path: string }[], currentPath: string | null): string[] {
+  const resolve = makeResolver(files, currentPath, (p) => p);
+  const out = new Set<string>();
+  eachWikiEmbed(text, ({ embed }) => {
+    if (!resolve(embed.target)) out.add(embed.target);
+  });
+  for (const m of text.matchAll(MD_IMAGE)) {
+    const url = m[1] ?? m[2];
+    if (/^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith("/")) continue;
+    let target = url;
+    try { target = decodeURIComponent(url); } catch { /* %가 든 이름 — 그대로 */ }
+    if (!resolve(target)) out.add(target);
+  }
+  return [...out].slice(0, 200);
 }
 
 /**
