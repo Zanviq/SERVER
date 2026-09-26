@@ -7,6 +7,7 @@ import { Shell } from "../components/layout/Shell";
 import { SystemMonitor } from "../components/system/SystemMonitor";
 import { SshCard } from "../components/system/SshCard";
 import { api, NoteSummary, CalEvent, Todo } from "../lib/api";
+import { fileName, parentDir } from "../lib/notePath";
 import { useAuth } from "../store/auth";
 
 const SHORTCUTS = [
@@ -74,15 +75,17 @@ export function Dashboard() {
 
         <SystemMonitor />
 
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {/* 좁은 화면은 세 칸 — 두 칸이던 때는 바로가기 셋 중 'AI 비서'가 혼자 한 줄을 차지해 반쪽이 비었다
+            (디자인 13차). 휴대폰에서는 설명을 뺀다(칸이 좁고, 아래 탭바에 같은 셋이 있다). 넓은 화면은 그대로. */}
+        <div className="grid grid-cols-3 gap-2 sm:gap-3 lg:grid-cols-4">
           {SHORTCUTS.map((s) => (
-            <Link key={s.to} to={s.to} className="card card-hover flex flex-col gap-2 p-4">
+            <Link key={s.to} to={s.to} className="card card-hover flex flex-col gap-2 p-3 sm:p-4">
               <div className="grid h-9 w-9 place-items-center rounded-md bg-accent-muted text-accent">
                 <s.icon size={18} />
               </div>
               <div>
                 <p className="text-sm font-semibold">{s.label}</p>
-                <p className="text-[12px] text-fg-muted">{s.desc}</p>
+                <p className="hidden text-[12px] text-fg-muted sm:block">{s.desc}</p>
               </div>
             </Link>
           ))}
@@ -104,10 +107,18 @@ export function Dashboard() {
             <ul className="divide-y divide-line">
               {notes.map((n) => (
                 <li key={n.path}>
-                  <button onClick={() => navigate(`/notes?open=${encodeURIComponent(n.title)}`)}
+                  {/* **경로로** 연다(그래프와 같다). 제목으로 열던 때는 제목이 같은 두 문서(`가/메모.markdown`·
+                      `나/메모.py`)의 줄이 둘 다 한쪽을 열었고, 목록이 낡았으면 없는 제목으로 빈 노트를 새로 만들었다.
+                      보이는 것도 파일 이름(확장자까지)과 폴더 — 제목만으로는 두 줄이 똑같이 "메모" 였다(디자인 13차). */}
+                  <button onClick={() => navigate(`/notes?path=${encodeURIComponent(n.path)}`)}
                     className="flex w-full items-center gap-2 px-4 py-2.5 text-left hover:bg-hovered">
                     <FileText size={14} className="shrink-0 text-fg-muted" />
-                    <span className="truncate text-[13px]">{n.title}</span>
+                    <span className="min-w-0 truncate text-[13px]">{fileName(n.path)}</span>
+                    {parentDir(n.path) && (
+                      <span className="ml-auto min-w-0 max-w-[45%] shrink-0 truncate text-[11.5px] text-fg-subtle">
+                        {parentDir(n.path)}
+                      </span>
+                    )}
                   </button>
                 </li>
               ))}
