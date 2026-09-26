@@ -16,6 +16,7 @@ import re
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from typing import NoReturn
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
@@ -502,6 +503,28 @@ async def upload(
     return _summary(root, dest)
 
 
+def _refuse_vanished(user: SessionUser, settings: Settings, root: Path, target: Path) -> NoReturn:
+    """**열어 둔** 문서(base_modified 를 실은 저장)가 그 사이 사라졌다 — 새로 만들지 않는다(63차).
+
+    다른 기기·탭에서 이름을 바꾸거나 지웠다. 예전엔 옛 경로에 새 파일을 만들어 200 을 줬다 — 이름을
+    바꾼 문서의 옛 이름이 이 기기의 글로 **다시 생기고**, 새 이름 문서엔 그 글이 없었다(두 브라우저로
+    실측: 이름 바꾸기가 적용되지 않은 것처럼 보인다). 지운 문서도 같은 길로 되살아났다.
+    옮겨 간 곳을 알면 409 + moved_to(화면이 그리로 따라가 다시 저장한다 — 이름 바꾸기는 수정 시각을
+    그대로 두므로 같은 기준으로 통한다), 모르면 410. 기준 없는 저장(새 문서·AI 쓰기)은 예전처럼 만든다.
+    """
+    now = moved.follow(user, settings, to_rel(root, target), lambda r: safe_join(root, r).is_file())
+    if now:
+        raise HTTPException(status_code=409, detail={
+            "error": "moved",
+            "moved_to": now,
+            "message": f"이 문서는 다른 곳에서 '{now}'(으)로 옮겨졌습니다.",
+        })
+    raise HTTPException(
+        status_code=410,
+        detail="이 문서는 다른 곳에서 지워졌습니다. 지금 화면의 글로 다시 만들 수 있습니다.",
+    )
+
+
 @router.put("/save", response_model=NoteSummary)
 def save_note(
     req: SaveNote,
@@ -530,6 +553,8 @@ def save_note(
     # 되짚어 주는 읽기 전용 규칙인데, 쓰기에 쓰면 '새 노트'에 `회의` 라고 친 순간
     # 이미 있던 `회의.md` 의 내용이 통째로 덮인다.
     target = safe_join(root, req.path)
+    if req.base_modified and not target.exists():
+        _refuse_vanished(user, settings, root, target)
     if not target.exists() and not looks_like_extension(req.path):
         twin = safe_join(root, f"{req.path}.md")
         if twin.exists():

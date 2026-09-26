@@ -1058,6 +1058,41 @@ def test_deleted_account_data_is_not_inherited():
     client.delete("/api/admin/users/leaver")
 
 
+def test_an_open_note_renamed_or_deleted_elsewhere_is_not_brought_back_by_its_autosave():
+    """다른 기기·탭에서 이름을 바꾸거나 지운 문서를, 열어 둔 쪽의 자동저장이 되살리면 안 된다(63차).
+
+    예전엔 기준(base_modified)을 실은 저장이 경로가 없으면 그냥 새로 만들었다 — 두 브라우저로 실측:
+    A 가 `메모`→`회의` 로 바꾼 뒤 B 가 한 글자 치자 `메모.md` 가 B 의 글로 다시 생기고 `회의.md` 엔 그
+    글이 없었다(이름 바꾸기가 적용되지 않은 것처럼 보인다). 지운 문서도 같은 길로 되살아났다.
+    """
+    _login()
+    old, new = "유령시험63/메모.md", "유령시험63/회의.md"
+    assert client.put("/api/notes/save", json={"path": old, "content": "원문"}).status_code == 200
+    base = client.get("/api/notes/get", params={"path": old}).json()["modified"]
+    try:
+        assert client.post("/api/notes/rename", json={"path": old, "new_name": "회의"}).status_code == 200
+        r = client.put("/api/notes/save", json={"path": old, "content": "원문 B", "base_modified": base})
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"]["moved_to"] == new, r.json()
+        paths = [n["path"] for n in client.get("/api/notes/list").json()]
+        assert old not in paths, "옛 이름이 되살아났다"
+        # 화면은 새 자리로 따라가 **같은 기준**으로 다시 저장한다 — 이름 바꾸기가 수정 시각을 그대로 둬야 통한다
+        r = client.put("/api/notes/save", json={"path": new, "content": "원문 B", "base_modified": base})
+        assert r.status_code == 200, r.text
+        assert client.get("/api/notes/get", params={"path": new}).json()["content"] == "원문 B"
+
+        base = r.json()["modified"]
+        assert client.delete("/api/notes/delete", params={"path": new}).status_code == 200
+        r = client.put("/api/notes/save", json={"path": new, "content": "지운 뒤 친 글", "base_modified": base})
+        assert r.status_code == 410, r.text
+        assert new not in [n["path"] for n in client.get("/api/notes/list").json()], "지운 문서가 되살아났다"
+        # 사용자가 '다시 만들기'를 고르면(기준 없음) 만든다
+        assert client.put("/api/notes/save", json={"path": new, "content": "지운 뒤 친 글"}).status_code == 200
+    finally:
+        for p in (old, new):
+            client.delete("/api/notes/delete", params={"path": p})
+
+
 def test_old_sessions_do_not_outlive_the_account_state_they_were_issued_for():
     """세션은 **그 계정의 그 시기**에만 통해야 한다(60차).
 

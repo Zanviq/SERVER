@@ -84,6 +84,14 @@ const NO_DETAIL: Record<number, string> = {
 /** 서버가 "그 사이 다른 곳에서 바뀌었다"며 덮지 않았다(409) — 문서·회의 문서·일기·논문 메모. */
 export const isConflict = (e: unknown): e is ApiError => e instanceof ApiError && e.status === 409;
 
+/** 저장하려던 문서가 그새 **다른 곳에서 이름이 바뀌거나 옮겨졌다**(409 + moved_to) — 지금 있는 자리.
+ *  isConflict 보다 먼저 본다: 보통 충돌로 다루면 "내 글로 덮어쓰기"가 옛 이름을 되살린다(63차). */
+export const movedTo = (e: unknown): string | null => {
+  if (!(e instanceof ApiError) || e.status !== 409) return null;
+  const to = (e.detail as { moved_to?: unknown } | null)?.moved_to;
+  return typeof to === "string" && to ? to : null;
+};
+
 /** 대상이 그새 지워졌다(404·410). 모아 보내는 저장은 다시 해 봐도 영영 실패하므로 끝난 것으로 친다. */
 export const isGone = (e: unknown): e is ApiError =>
   e instanceof ApiError && (e.status === 404 || e.status === 410);

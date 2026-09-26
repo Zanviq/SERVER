@@ -13,7 +13,7 @@ import { REVEAL_ON_ROW } from "../components/ui/reveal";
 import { LiveEditor } from "../components/notes/LazyLiveEditor";
 import { NOTE_PATH_MIME } from "../components/notes/dragTypes";
 import { Modal } from "../components/ui/Modal";
-import { api, ApiError, isConflict, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
+import { api, ApiError, isConflict, isGone, movedTo, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
 import { looksLikeExtension } from "../lib/names";
 import { ancestorsOf, fileName, isMarkdownPath, parentDir } from "../lib/notePath";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
@@ -91,6 +91,8 @@ export function Notes() {
   const [draft, setDraft] = useState<Draft | null>(null);
   // 다른 기기에서 같은 문서를 고쳤을 때. 경로를 담아 둔다.
   const [conflict, setConflict] = useState<string | null>(null);
+  // 열어 둔 문서가 다른 곳에서 지워졌다(저장이 410). 되살릴지 버릴지는 사용자가 고른다(63차).
+  const [gone, setGone] = useState<string | null>(null);
   // 문서를 연 시점의 수정시각(경로별). 저장할 때 함께 보내 충돌을 잡는다.
   const baseRef = useRef<Record<string, number>>({});
   const [newNoteOpen, setNewNoteOpen] = useState(false);
@@ -155,7 +157,7 @@ export function Notes() {
    *  매번 무효화된다). 타이핑 중에 그걸 반복할 이유가 없다 — 문서 집합이 바뀌는
    *  동작(생성·삭제·이름변경)에서만 갱신한다. */
   const save = useCallback(
-    async (path: string, text: string, quiet = false): Promise<boolean> => {
+    async (path: string, text: string, quiet = false, hops = 0): Promise<boolean> => {
       setSaving(true);
       try {
         // 이 문서를 연 시점의 수정시각을 함께 보낸다. 그 사이 다른 기기에서
@@ -174,6 +176,24 @@ export function Notes() {
         }
         return true;
       } catch (e) {
+        // 다른 기기·탭에서 이름을 바꿨다(63차). 예전엔 서버가 옛 이름으로 새 파일을 만들어 이름
+        // 바꾸기가 되돌려진 것처럼 보였다. 이제 서버가 새 자리를 알려 주면 **그리로 따라가** 거기에
+        // 저장한다 — 이름 바꾸기는 수정 시각을 그대로 두므로 같은 기준으로 통하고, 저쪽이 그 뒤에
+        // 고쳤으면 새 자리의 충돌(409) 띠가 된다.
+        const to = movedTo(e);
+        if (to && hops < 3) {
+          baseRef.current[to] = baseRef.current[path] ?? 0;
+          delete baseRef.current[path];
+          moveDraft(path, to);
+          setCurrent((c) => (c === path ? to : c));
+          toast.ok(`다른 곳에서 이름이 바뀌어 '${to}' 에 이어서 저장합니다`);
+          return await save(to, text, false, hops + 1);
+        }
+        // 다른 곳에서 지웠다 — 자동저장이 되살리지 않는다. 띠로 알리고 고르게 한다(밑글은 남아 있다).
+        if (isGone(e)) {
+          setGone(path);
+          return false;
+        }
         // 409 = 다른 곳에서 바뀌었다. 자동저장이 1초마다 같은 토스트를 쏟지
         // 않게 띠로 알리고, 덮어쓸지는 사용자가 고른다(밑글은 이미 남아 있다).
         if (isConflict(e)) {
@@ -266,6 +286,7 @@ export function Notes() {
         setDraft(readDraft(d.path, d.content));
         baseRef.current[d.path] = d.modified;
         setConflict(null);
+        setGone(null);
         // 열린 노트의 상위 폴더를 현재 폴더로
         setCurFolder(parentDir(d.path));
       } catch (e) {
@@ -999,6 +1020,38 @@ export function Notes() {
                 className="btn btn-ghost h-7 px-2 text-[12px]"
               >
                 저쪽 내용 불러오기
+              </button>
+            </div>
+          )}
+          {/* 다른 기기·탭에서 이 문서를 지웠다(63차). 자동저장이 조용히 되살리지 않는다 — 고르게 한다.
+              고르기 전엔 이 글이 서버에 없으니 다른 문서로도 옮기지 못한다(openNote 가 막는다). */}
+          {gone && gone === current && (
+            <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-line bg-[rgb(var(--danger)/0.1)] px-3 py-2 text-[12.5px]">
+              <span className="min-w-0 flex-1">
+                이 문서는 <b>다른 곳에서 지워졌습니다.</b> 지금 화면의 글로 다시 만들거나, 버리고 닫을 수 있습니다.
+              </span>
+              <button
+                onClick={async () => {
+                  // 기준을 지우면 서버가 새로 만든다(사용자가 고른 것이다)
+                  baseRef.current[gone] = 0;
+                  setGone(null);
+                  if (await save(gone, content)) toast.ok("다시 만들었습니다");
+                }}
+                className="btn btn-secondary h-7 px-2 text-[12px]"
+              >
+                다시 만들기
+              </button>
+              <button
+                onClick={() => {
+                  cancelPendingSave();
+                  dropDraft(gone);
+                  setGone(null);
+                  closeNote();
+                  void reloadTree();
+                }}
+                className="btn btn-ghost h-7 px-2 text-[12px]"
+              >
+                버리고 닫기
               </button>
             </div>
           )}
