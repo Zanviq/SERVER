@@ -1118,6 +1118,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
       width="max-w-[1500px]"
       height="h-[92vh]"
       bodyClass="flex min-h-0 flex-1 flex-col overflow-hidden"
+      // 보려고 여는 창 — 첫 입력칸('가지 찾기')에 포커스를 두면 휴대폰에서 자판이 지도를 가린다(디자인 21차)
+      initialFocus="panel"
     >
       {tree}
     </Modal>

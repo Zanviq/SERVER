@@ -24,6 +24,12 @@ interface ModalProps {
    * 내용(지도·그래프)은 `flex min-h-0 flex-1 flex-col` 처럼 바꿔 준다.
    */
   bodyClass?: string;
+  /**
+   * 열릴 때 포커스를 둘 곳. 기본은 첫 입력칸(이름 짓기처럼 **치려고 여는** 창). 보려고 여는 창(대화 지도)은 `"panel"` —
+   * 첫 입력칸이 지도의 '가지 찾기' 라, 휴대폰에서 열자마자 자판이 올라와 지도의 반을 가렸다(디자인 21차). 창 자체에
+   * 두면 Esc·Tab 가두기·화면 읽기는 그대로다.
+   */
+  initialFocus?: "first" | "panel";
 }
 
 /** 대화상자 **밖에서** 마지막으로 포커스를 가졌던 요소.
@@ -53,7 +59,7 @@ if (typeof document !== "undefined") {
 
 export function Modal({
   open, onClose, title, children, width = "max-w-lg",
-  height = "max-h-[92vh]", chrome = true, bodyClass = "overflow-y-auto p-4 sm:p-5",
+  height = "max-h-[92vh]", chrome = true, bodyClass = "overflow-y-auto p-4 sm:p-5", initialFocus = "first",
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -67,6 +73,10 @@ export function Modal({
     const opener = lastOutsideDialog;
     // 열릴 때 첫 입력 요소로 포커스 이동
     const focusTimer = window.setTimeout(() => {
+      if (initialFocus === "panel") {
+        panelRef.current?.focus();
+        return;
+      }
       const el = panelRef.current?.querySelector<HTMLElement>(
         "input, textarea, select, button:not([aria-label='닫기'])",
       );
@@ -115,7 +125,9 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`card my-auto flex w-full flex-col ${height} ${width} animate-in shadow-lg`}
+        // 창 자체도 포커스를 받을 수 있게(initialFocus="panel") — Tab 순서에는 들지 않는다
+        tabIndex={-1}
+        className={`card my-auto flex w-full flex-col outline-none ${height} ${width} animate-in shadow-lg`}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={trapTab}
       >
