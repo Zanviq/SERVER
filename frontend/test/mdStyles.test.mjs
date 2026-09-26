@@ -78,6 +78,17 @@ test("체크박스와 보통 항목이 섞인 목록에서 보통 항목의 점�
   assert.match(rule("li.task-list-item"), /list-none/, "체크박스 항목의 점을 빼지 않는다");
 });
 
+test("체크박스 항목은 보통 글 흐름이다 — 중첩 목록이 부모 글 오른쪽에 붙지 않는다(68차)", () => {
+  // flex·grid 로 만들면 항목 안의 자식(글·굵게·링크·중첩 목록)이 모두 한 줄의 칸이 된다.
+  const html = render("- [ ] 부모\n  - [ ] 자식");
+  assert.match(html, /<li class="task-list-item"><input[^>]*> 부모\s*<ul class="contains-task-list">/,
+    "표본이 중첩 체크리스트가 아니다 — 시험이 무의미하다");
+  const item = css.match(/\.prose-server li\.task-list-item \{([^}]*)\}/)?.[1] ?? "";
+  assert.doesNotMatch(item, /\b(flex|grid|inline-flex)\b/, "체크박스 항목이 flex/grid 다 — 중첩 목록이 옆에 붙는다");
+  assert.match(css, /li\.task-list-item > input\[type="checkbox"\][^{]*\{[^}]*\babsolute\b/,
+    "체크박스를 점 자리에 띄우지 않는다");
+});
+
 test("표는 감싸는 칸이 가로 넘침을 맡는다", () => {
   // 표 자체를 block 스크롤로 만들면 너비 100%가 안 먹혀 좁은 표가 쪼그라든다.
   const view = readFileSync(

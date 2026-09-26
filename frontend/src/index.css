@@ -260,11 +260,16 @@
   .prose-server ul.contains-task-list {
     @apply pl-5;
   }
+  /* 체크박스 항목은 **보통 글 흐름**(block)으로 두고 체크박스만 점 자리(왼쪽 여백)에 띄운다(68차).
+     예전엔 항목을 flex 로 만들어 체크박스 옆에 글을 붙였는데, 그러면 항목 안의 모든 것이 한 줄의
+     칸이 된다 — **중첩 목록이 부모 글 오른쪽에 붙고**(`부모 할 일 ☐ 자식`), 굵게·링크도 따로 떨어진
+     칸이 됐다. 깃허브와 같은 방식: 글은 보통 항목과 같은 자리에서 시작하고 넘어간 줄도 글에 맞춰 꺾인다. */
   .prose-server li.task-list-item {
-    @apply -ml-4 flex list-none items-start gap-1.5;
+    @apply relative list-none;
   }
-  .prose-server li.task-list-item > input[type="checkbox"] {
-    @apply mt-[3px] shrink-0 accent-[rgb(var(--accent))];
+  .prose-server li.task-list-item > input[type="checkbox"],
+  .prose-server li.task-list-item > p:first-child > input[type="checkbox"] {
+    @apply absolute -left-[1.15rem] top-[0.3em] m-0 accent-[rgb(var(--accent))];
   }
   .prose-server blockquote {
     @apply my-2 border-l-2 border-accent pl-3 text-fg-muted;
