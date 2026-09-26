@@ -478,6 +478,9 @@ export const api = {
     req<UsageSummary>(`/api/usage/user/${encodeURIComponent(username)}?${q({ month })}`),
 
   diaryLockState: () => req<{ is_default: boolean }>("/api/diary/lock"),
+  /** 로그인 비밀번호 바꾸기 — 다른 기기의 세션은 끊기고 이 기기는 새 세션을 받는다(59차) */
+  changePassword: (current: string, next: string) =>
+    req<{ ok: boolean; message: string }>("/api/auth/password", jsonInit("POST", { current, new: next })),
   diaryChangePin: (current: string, next: string) =>
     req<{ ok: boolean; is_default: boolean }>("/api/diary/pin", jsonInit("PUT", { current, next })),
   diaryRelock: () => { diaryUnlock = null; },

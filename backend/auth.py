@@ -69,14 +69,18 @@ def _payload_ttl(data: dict, settings: Settings) -> int:
     return clamp_ttl(raw, settings) if raw is not None else settings.session_ttl
 
 
-def issue_token(username: str, settings: Settings | None = None, ttl: int | None = None) -> str:
-    """username에 대한 서명 세션 토큰 발급. ttl(초) 지정 시 토큰에 포함해 그 값으로 만료."""
+def issue_token(username: str, settings: Settings | None = None, ttl: int | None = None,
+                gen: int = 0) -> str:
+    """username에 대한 서명 세션 토큰 발급. ttl(초) 지정 시 토큰에 포함해 그 값으로 만료.
+    gen 은 그 계정의 세션 세대(accounts.Account.session_gen) — 비밀번호를 바꾸면 올라가 옛 세션이 끊긴다."""
     settings = settings or get_settings()
     # j: 토큰마다 다른 값. 서명의 시각은 초 단위라, 같은 사람이 같은 초에 두 기기에서
     # 들어오면 **똑같은 토큰**이 나왔다 — 한쪽을 로그아웃하면 다른 쪽까지 끊겼다(시험이 잡았다).
     payload: dict = {"u": username, "j": secrets.token_urlsafe(9)}
     if ttl is not None:
         payload["ttl"] = int(ttl)
+    if gen:
+        payload["g"] = int(gen)  # 0 이면 싣지 않는다(예전 토큰과 같은 모양)
     return _serializer(settings).dumps(payload)
 
 
@@ -107,6 +111,13 @@ def _verify(token: str, settings: Settings):
     # 계정이 삭제됐거나 active가 아니게 되면(승인 취소·비활성) 즉시 무효
     acc = accounts.find(username, settings)
     if acc is None or not acc.can_login:
+        return None
+    # 비밀번호를 바꾸기 전 세대의 세션은 끊는다(59차 — 샌 쿠키를 끊을 길이 없었다)
+    try:
+        gen = int(data.get("g") or 0)
+    except (TypeError, ValueError):
+        return None
+    if gen != acc.session_gen:
         return None
     return username, acc, ts.timestamp() + ttl
 

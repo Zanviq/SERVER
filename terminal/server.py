@@ -50,8 +50,12 @@ PORT = int(os.getenv("TERMINAL_PORT", "7681"))
 HOST_SHELL = ["nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "bash", "-l"]
 
 
-def _is_owner(username: str) -> bool:
-    """accounts.json에서 서버 주인인지 확인. 파일이 없거나 못 읽으면 거부."""
+def _is_owner(username: str, gen: int) -> bool:
+    """accounts.json에서 서버 주인인지 확인. 파일이 없거나 못 읽으면 거부.
+
+    비밀번호를 바꾸기 전 세대의 세션도 거부한다(backend/auth.py 와 같은 규칙, session_gen) —
+    그렇지 않으면 비밀번호를 바꿔도 샌 쿠키로 **호스트 셸**이 계속 열렸다(59차).
+    """
     try:
         with open(ACCOUNTS_FILE, encoding="utf-8") as f:
             rows = json.load(f)
@@ -59,10 +63,15 @@ def _is_owner(username: str) -> bool:
         return False
     for r in rows if isinstance(rows, list) else []:
         if r.get("username") == username:
+            try:
+                current = int(r.get("session_gen") or 0)
+            except (TypeError, ValueError):
+                return False
             return (
                 r.get("origin") == "bootstrap"
                 and r.get("role") == "admin"
                 and r.get("status") == "active"
+                and gen == current
             )
     return False
 
@@ -93,7 +102,11 @@ def _verify(token: str) -> str | None:
     if not u or u not in ADMINS:
         return None
     # 이름 대조만으로는 부족하다 — 실제 계정이 서버 주인이어야 한다.
-    return u if _is_owner(u) else None
+    try:
+        gen = int(data.get("g") or 0)
+    except (TypeError, ValueError):
+        return None
+    return u if _is_owner(u, gen) else None
 
 
 def _headers(ws):

@@ -113,6 +113,73 @@ function DiaryPin() {
   );
 }
 
+/** 로그인 비밀번호 바꾸기(59차). 예전엔 바꿀 길이 없었다 — 샜다고 의심돼도 그대로 써야 했고,
+ *  빠져나간 세션을 끊을 수도 없었다. 바꾸면 다른 기기의 세션은 모두 끊기고 이 기기는 그대로 이어진다.
+ *  지금 비밀번호를 맞혀야 한다(로그인된 화면 앞에 앉은 사람이 바꾸지 못하게). */
+function LoginPassword() {
+  const [open, setOpen] = useState(false);
+  const [cur, setCur] = useState("");
+  const [next, setNext] = useState("");
+  const [again, setAgain] = useState("");
+  const [busy, setBusy] = useState(false);
+  const mismatch = again.length > 0 && again !== next;
+  const ready = !!cur && next.length >= 8 && next === again && !busy;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const r = await api.changePassword(cur, next);
+      setOpen(false);
+      setCur("");
+      setNext("");
+      setAgain("");
+      toast.ok(r.message);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "바꾸지 못했습니다");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="border-b border-line py-3">
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[13.5px] font-medium">로그인 비밀번호</p>
+          <p className="text-[12px] text-fg-muted">바꾸면 다른 기기에서는 다시 로그인해야 합니다 · 8자 이상</p>
+        </div>
+        <button className="btn btn-secondary shrink-0" onClick={() => setOpen((v) => !v)}>
+          {open ? "닫기" : "변경"}
+        </button>
+      </div>
+      {open && (
+        <form className="mt-3 flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (ready) void save(); }}>
+          <label className="text-[12px] text-fg-muted">
+            지금 비밀번호
+            <input value={cur} onChange={(e) => setCur(e.target.value)} type="password"
+              autoComplete="current-password" className="input mt-1 h-9 w-44" />
+          </label>
+          <label className="text-[12px] text-fg-muted">
+            새 비밀번호
+            <input value={next} onChange={(e) => setNext(e.target.value)} type="password"
+              autoComplete="new-password" minLength={8} maxLength={256} className="input mt-1 h-9 w-44" />
+          </label>
+          <label className="text-[12px] text-fg-muted">
+            새 비밀번호 한 번 더
+            <input value={again} onChange={(e) => setAgain(e.target.value)} type="password"
+              autoComplete="new-password" maxLength={256} aria-invalid={mismatch}
+              className="input mt-1 h-9 w-44" />
+          </label>
+          <button type="submit" className="btn btn-primary h-9" disabled={!ready}>
+            {busy ? <Loader2 size={14} className="animate-spin" /> : "저장"}
+          </button>
+          {mismatch && <p className="w-full text-[12px] text-danger">새 비밀번호 두 칸이 다릅니다.</p>}
+        </form>
+      )}
+    </div>
+  );
+}
+
 /** 숫자 설정 입력.
  *
  *  글자를 칠 때마다 범위로 다듬으면 원하는 값을 넣을 수 없다 — `900` 을 치려고
@@ -258,6 +325,7 @@ export function Settings() {
                   <option value={43200}>30일</option>
                 </select>
               </Row>
+              <LoginPassword />
               <DiaryPin />
               <Row label="세션" desc="지금 로그아웃">
                 <button onClick={logout} className="btn btn-danger">로그아웃</button>

@@ -133,7 +133,7 @@ async def login(
     # **저장된 이름**으로 발급한다. 사용자가 친 문자열을 그대로 쓰면 대소문자에 따라
     # 설정이 따로 놀고(세션 시간이 무시된다) 세션 신원도 흔들린다.
     ttl = user_settings.get_session_ttl(acc.username, settings)  # 사용자 설정 TTL(전역 폴백)
-    token = issue_token(acc.username, settings, ttl=ttl)
+    token = issue_token(acc.username, settings, ttl=ttl, gen=acc.session_gen)
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
@@ -151,6 +151,54 @@ async def login(
         role=acc.role,
         origin=acc.origin,
     )
+
+
+class PasswordChange(BaseModel):
+    current: str
+    new: str
+
+
+@router.post("/password")
+async def change_password(
+    req: PasswordChange,
+    request: Request,
+    response: Response,
+    user: SessionUser = Depends(require_session),
+    settings: Settings = Depends(get_settings),
+):
+    """로그인 비밀번호 바꾸기(59차). 지금 비밀번호를 확인하고, **다른 기기의 세션은 모두 끊는다** — 이
+    기기는 새 세션을 받아 그대로 이어 쓴다.
+
+    예전엔 바꿀 길이 없었다. 지금 비밀번호 확인은 로그인과 같은 시도 한도를 쓴다 — 샌 세션 쿠키를 쥔
+    쪽이 여기서 비밀번호를 맞혀 보는 창구가 되지 않게(틀린 수가 로그인 잠금과 함께 센다).
+    """
+    ip = _client_ip(request)
+    ip_wait = login_guard.ip_wait(ip)
+    if ip_wait:
+        raise _too_many(ip_wait)
+    wait = login_guard.begin_attempt(user.username, client_ip=ip)
+    if wait:
+        raise _too_many(wait)
+    try:
+        acc = await accounts.change_password_async(user.username, req.current, req.new, settings)
+    except HTTPException as e:
+        if e.status_code == 401:
+            login_guard.record_failure(user.username, client_ip=ip)
+        raise
+    finally:
+        login_guard.end_attempt(user.username, client_ip=ip)
+    login_guard.record_success(user.username, client_ip=ip)
+    ttl = user_settings.get_session_ttl(acc.username, settings)
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=issue_token(acc.username, settings, ttl=ttl, gen=acc.session_gen),
+        max_age=ttl,
+        httponly=True,
+        samesite="lax",
+        secure=_cookie_secure(request, settings),
+        path="/",
+    )
+    return {"ok": True, "message": "비밀번호를 바꿨습니다. 다른 기기에서는 다시 로그인해야 합니다."}
 
 
 @router.post("/signup", status_code=201)

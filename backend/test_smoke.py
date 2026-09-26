@@ -74,6 +74,49 @@ def test_the_suite_never_reaches_a_real_model_or_google():
 
 
 # ── 인증 ──
+def test_changing_the_password_ends_other_sessions():
+    """로그인 비밀번호를 바꿀 수 있고, 바꾸면 **다른 기기의 세션은 끊긴다**(59차).
+
+    예전엔 바꿀 길이 아예 없었다(화면에도 API 에도). 비밀번호가 샜다고 의심돼도 바꿀 수 없고, 이미
+    빠져나간 세션 쿠키를 끊을 수도 없었다. 바꾼 이 기기는 새 세션을 받아 그대로 이어 쓴다.
+    """
+    import pathlib
+
+    from backend import accounts
+
+    other = TestClient(app)  # 다른 기기
+    assert other.post("/api/auth/login", json={"username": "tester", "password": "pw123"}).status_code == 200
+    _login()
+    assert other.get("/api/notes/list").status_code == 200
+    try:
+        r = client.post("/api/auth/password", json={"current": "틀린것", "new": "새비밀번호1234"})
+        assert r.status_code == 401, r.text
+        r = client.post("/api/auth/password", json={"current": "pw123", "new": "짧음"})
+        assert r.status_code == 400, r.text
+        r = client.post("/api/auth/password", json={"current": "pw123", "new": "새비밀번호1234"})
+        assert r.status_code == 200, r.text
+        assert client.get("/api/notes/list").status_code == 200, "바꾼 이 기기가 끊겼다"
+        assert other.get("/api/notes/list").status_code == 401, "다른 기기의 세션이 살아 있다"
+        fresh = TestClient(app)
+        assert fresh.post("/api/auth/login", json={"username": "tester", "password": "pw123"}).status_code == 401
+        assert fresh.post("/api/auth/login", json={"username": "tester", "password": "새비밀번호1234"}).status_code == 200
+        r = client.post("/api/auth/password", json={"current": "새비밀번호1234", "new": "새비밀번호1234"})
+        assert r.status_code == 400, "지금과 같은 비밀번호로 바꿨다"
+    finally:
+        # 시험 계정의 비밀번호(pw123)는 새 규칙(8자)보다 짧아 API 로는 되돌릴 수 없다 — 저장소에서 되돌린다
+        p = accounts._path(get_settings())
+        with accounts.lock_for(p):
+            rows = accounts._load(get_settings())
+            for row in rows:
+                if row.get("username") == "tester":
+                    row["password_hash"] = accounts.hash_password("pw123")
+            accounts._save(rows, get_settings())
+        _login()
+    # 웹 터미널(따로 도는 서버)도 같은 세대 규칙으로 세션을 본다 — 호스트 셸이 옛 쿠키로 열리지 않게
+    term = (pathlib.Path(__file__).resolve().parent.parent / "terminal" / "server.py").read_text(encoding="utf-8")
+    assert 'int(r.get("session_gen") or 0)' in term and "gen == current" in term
+
+
 def test_unauthenticated_blocked():
     fresh = TestClient(app)
     assert fresh.get("/api/notes/list").status_code == 401

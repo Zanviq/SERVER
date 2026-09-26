@@ -63,6 +63,10 @@ class Account:
     # 계정이 어떻게 생겼는지. role과 직교한다 —
     # role의 세 번째 값으로 만들면 _admin_count 기반 "마지막 관리자" 가드가 깨진다.
     origin: str = ORIGIN_SIGNUP
+    #: 세션의 세대. 토큰에 실린 세대가 이것과 다르면 무효 — 비밀번호를 바꾸면 하나 올려 다른 기기의
+    #: 세션을 끊는다(59차). 시각으로 가르면 토큰의 발급 시각이 초 단위라, 바꾼 그 초에 발급된 세션이
+    #: 살아남거나(초를 내리면) 새로 준 세션까지 죽는다(올리면) — 세대 번호는 그런 틈이 없다.
+    session_gen: int = 0
 
     @property
     def is_admin(self) -> bool:
@@ -133,6 +137,23 @@ async def authenticate_async(username: str, password: str, settings: Settings) -
             _hash_waiting -= 1
 
 
+async def change_password_async(username: str, current: str, new: str, settings: Settings) -> Account:
+    """change_password 를 로그인과 같은 전용 일꾼에서(해시가 세 번 — 공용 스레드를 쥐지 않게)."""
+    global _hash_waiting
+    with _hash_lock:
+        if _hash_waiting >= HASH_QUEUE:
+            raise HTTPException(
+                status_code=503, headers={"Retry-After": "5"},
+                detail="요청이 몰려 지금은 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+        _hash_waiting += 1
+    try:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_hash_pool, change_password, username, current, new, settings)
+    finally:
+        with _hash_lock:
+            _hash_waiting -= 1
+
+
 # ── 저장소 ──
 
 def _path(settings: Settings) -> Path:
@@ -187,7 +208,16 @@ def _to_account(row: dict) -> Account:
         role=row.get("role", "user"),
         status=row.get("status", STATUS_ACTIVE),
         origin=row.get("origin", ORIGIN_SIGNUP),
+        session_gen=_gen(row),
     )
+
+
+def _gen(row: dict) -> int:
+    """계정 행의 세션 세대(없거나 망가졌으면 0)."""
+    try:
+        return int(row.get("session_gen") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def ensure_seed(settings: Settings) -> None:
@@ -332,6 +362,43 @@ def authenticate(username: str, password: str, settings: Settings) -> Account | 
     if not verify_password(password, row.get("password_hash", "")):
         return None
     return _to_account(row)
+
+
+def change_password(username: str, current: str, new: str, settings: Settings) -> Account:
+    """지금 비밀번호를 확인하고 새 비밀번호로 바꾼다. **다른 기기의 세션은 모두 끊긴다**(59차).
+
+    예전엔 비밀번호를 바꿀 길이 아예 없었다(화면에도 API 에도 — 서버 주인이 파이에서 파일을 고치는
+    것뿐). 비밀번호가 샜다고 의심돼도 바꿀 수 없고, 이미 빠져나간 세션 쿠키를 끊을 수도 없었다.
+
+    해시(수십만 번 반복)는 **잠금 밖에서** 계산한다 — 파이에서 한 번에 몇 초라, 잠금 안에서 하면 그동안
+    가입·승인 같은 다른 쓰기가 줄을 선다. 잠금 안에서는 확인한 해시가 그대로인지만 보고 쓴다.
+    세션 세대(session_gen)를 하나 올린다 — 그 전 세대로 발급된 세션은 모두 무효(auth._verify).
+    """
+    if len(new or "") < MIN_PASSWORD:
+        raise HTTPException(status_code=400, detail=f"새 비밀번호는 {MIN_PASSWORD}자 이상이어야 합니다.")
+    if len(new) > MAX_PASSWORD:
+        raise HTTPException(status_code=400, detail=f"새 비밀번호는 {MAX_PASSWORD}자까지입니다.")
+    row = next((r for r in _load(settings) if r.get("username") == username), None)
+    if row is None:
+        raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
+    seen = row.get("password_hash", "")
+    if not verify_password(current or "", seen):
+        raise HTTPException(status_code=401, detail="지금 비밀번호가 올바르지 않습니다.")
+    if verify_password(new, seen):
+        raise HTTPException(status_code=400, detail="지금과 다른 비밀번호를 정해 주세요.")
+    fresh = hash_password(new)
+    p = _path(settings)
+    with lock_for(p):
+        rows = _load(settings)
+        row = next((r for r in rows if r.get("username") == username), None)
+        if row is None:
+            raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
+        if row.get("password_hash", "") != seen:
+            raise HTTPException(status_code=409, detail="그 사이 비밀번호가 바뀌었습니다. 다시 해 주세요.")
+        row["password_hash"] = fresh
+        row["session_gen"] = _gen(row) + 1
+        _save(rows, settings)
+        return _to_account(row)
 
 
 def list_all(settings: Settings) -> list[dict]:
