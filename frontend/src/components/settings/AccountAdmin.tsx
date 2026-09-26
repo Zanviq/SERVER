@@ -157,7 +157,9 @@ export function AccountAdmin({ me }: { me: string }) {
                   @{u.username} · {u.role === "admin" ? "관리자" : "사용자"} · {STATUS_LABEL[u.status]}
                 </p>
               </button>
-              {u.status === "active" && (
+              {/* 내 줄에는 비활성화·삭제를 두지 않는다 — 서버가 자기 자신은 거절한다(_not_self, 400). 두던 때는
+                  "계정을 삭제할까요?" 를 묻고 확인하면 늘 오류가 났다(디자인 31차). */}
+              {u.status === "active" && u.username !== me && (
                 <button disabled={busy === u.username} className="btn btn-ghost h-8 hover:text-danger"
                   title="비활성화 (세션도 즉시 만료됩니다)"
                   onClick={() => act(u.username, () => api.adminDisable(u.username), `${u.username} 비활성화됨`)}>
@@ -192,6 +194,7 @@ export function AccountAdmin({ me }: { me: string }) {
               {/* 문구는 **실제 동작**을 말해야 한다. 예전에는 "문서는 남습니다"였는데,
                   지금은 그 사람의 벌트 전체가 앱 밖(deleted-users/)으로 옮겨진다 —
                   앱에서는 사라지고, 되돌리는 버튼도 없다. */}
+              {u.username !== me && (
               <button disabled={busy === u.username} className="btn btn-ghost h-8 hover:text-danger"
                 title="계정 삭제 (문서·일정·할 일이 앱에서 사라집니다)"
                 onClick={() => {
@@ -210,6 +213,7 @@ export function AccountAdmin({ me }: { me: string }) {
                 }}>
                 <Trash2 size={14} />
               </button>
+              )}
             </li>
           ))}
         </ul>
