@@ -23,7 +23,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from . import json_store
+from . import json_store, renamed_items
 from .auth import SessionUser
 from .config import Settings
 from .datetimes import BadDateTime
@@ -426,8 +426,11 @@ def update_todo(user: SessionUser, settings: Settings, tid: str, payload: dict) 
             raise HTTPException(status_code=400, detail=str(e)) from e
         merged["id"] = tid
         merged.setdefault("created_at", todos[idx].get("created_at", _now()))
+        old_title = str(todos[idx].get("title") or "")
         todos[idx] = merged
         _save(data, user, settings)
+    # 제목을 바꿨으면 옛 링크 `[todo/…/옛 제목]` 이 따라오게 적어 둔다(57차, renamed_items)
+    renamed_items.record(user, settings, "todo", tid, old_title, merged["title"])
     return merged
 
 

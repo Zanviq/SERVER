@@ -26,7 +26,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from . import json_store, storage
+from . import json_store, renamed_items, storage
 from .auth import SessionUser
 from .config import Settings
 
@@ -329,8 +329,11 @@ def update_meta(user: SessionUser, settings: Settings, mid: str, patch: dict) ->
         # 문서 수만 다시 세는 건 "수정"이 아니다
         if set(patch) - {"docs", "segments"}:
             m["updated_at"] = _now()
+        old_title = str(items[i].get("title") or "")
         items[i] = m
         _save(items, user, settings)
+    # 제목을 바꿨으면 옛 링크 `[meeting/옛 제목]` 이 따라오게 적어 둔다(57차, renamed_items)
+    renamed_items.record(user, settings, "meeting", mid, old_title, str(m.get("title") or ""))
     return m
 
 

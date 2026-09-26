@@ -11684,6 +11684,72 @@ def test_note_graphs_are_warmed_when_the_server_starts():
     client.request("DELETE", "/api/notes/folder", params={"path": "미리그래프"})
 
 
+def test_links_follow_items_whose_titles_changed():
+    """할 일·회의·단어의 제목을 바꿔도 옛 이름의 링크가 그 항목을 연다(57차).
+
+    그 갈래의 링크는 이름으로 적힌다. 예전엔 제목을 한 번 바꾸면 그것을 가리키던 링크가 모두 "찾지 못한
+    링크"였다(격리 서버 실측: 할 일·회의). 문서는 옮김 기록으로 이미 따라갔다.
+    """
+    _login()
+    opened = lambda p: client.get("/api/links/open", params={"path": p}).json()  # noqa: E731
+
+    t = client.post("/api/todo/create", json={"title": "제목바꿀 할일"}).json()
+    try:
+        assert opened("todo/제목바꿀 할일")["found"]
+        client.put(f"/api/todo/{t['id']}", json={"title": "바뀐 할일"})
+        got = opened("todo/제목바꿀 할일")
+        assert got["found"] and got["href"].endswith(t["id"]), got
+        # 두 번 바꿔도(사슬) 처음 이름으로 찾아간다
+        client.put(f"/api/todo/{t['id']}", json={"title": "또 바뀐 할일"})
+        assert opened("todo/제목바꿀 할일")["href"].endswith(t["id"])
+        assert opened("todo/바뀐 할일")["href"].endswith(t["id"])
+        # 옛 이름으로 새 할 일을 만들면 그것이 열린다(지금 이름이 먼저)
+        t2 = client.post("/api/todo/create", json={"title": "제목바꿀 할일"}).json()
+        assert opened("todo/제목바꿀 할일")["href"].endswith(t2["id"])
+        client.delete(f"/api/todo/{t2['id']}")
+    finally:
+        client.delete(f"/api/todo/{t['id']}")
+
+    m = client.post("/api/meetings/upload", data={"title": "제목바꿀 회의"},
+                    files={"file": ("r.webm", b"fake-audio", "audio/webm")}).json()
+    try:
+        assert opened("meeting/제목바꿀 회의")["found"]
+        client.put(f"/api/meetings/{m['id']}", json={"title": "바뀐 회의"})
+        got = opened("meeting/제목바꿀 회의")
+        assert got["found"] and got["href"].endswith(m["id"]), got
+    finally:
+        client.delete(f"/api/meetings/{m['id']}")
+
+    w = client.post("/api/vocab/words", json={"word": "adequat"}).json()["word"]
+    try:
+        assert client.put(f"/api/vocab/words/{w['id']}", json={"word": "adequate"}).status_code == 200
+        got = opened("vocab/adequat")
+        assert got["found"] and got["href"].endswith(w["id"]), got
+    finally:
+        client.delete(f"/api/vocab/words/{w['id']}")
+
+    pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n"
+    p = client.post("/api/papers/upload", files={"file": ("제목바꿀논문.pdf", pdf, "application/pdf")}).json()
+    try:
+        old = client.get(f"/api/papers/{p['id']}").json()["title"]
+        assert opened(f"paper/{old}")["found"]
+        client.put(f"/api/papers/{p['id']}", json={"title": "진짜 논문 제목"})
+        got = opened(f"paper/{old}")
+        assert got["found"] and got["href"].endswith(p["id"]), got
+    finally:
+        client.delete(f"/api/papers/{p['id']}")
+
+    ev = client.post("/api/calendar/events", json={"title": "제목바꿀 일정", "start": "2026-11-03T10:00:00",
+                                                   "end": "2026-11-03T11:00:00"}).json()
+    try:
+        assert opened("event/2026-11-03/제목바꿀 일정")["found"]  # 받아 둔 일정에 올라간다
+        client.put(f"/api/calendar/events/{ev['id']}", json={"title": "바뀐 일정"})
+        got = opened("event/2026-11-03/제목바꿀 일정")
+        assert got["found"] and "바뀐 일정" in got["path"], got
+    finally:
+        client.delete(f"/api/calendar/events/{ev['id']}")
+
+
 def test_link_suggestions_say_how_many_more_there_are():
     """후보 상한(30)에 걸려 안 보이는 것이 있으면 그 수를 알린다.
 

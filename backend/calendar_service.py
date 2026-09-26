@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import functools
 
-from . import calendar_store, event_cache
+from . import calendar_store, event_cache, renamed_items
 from .calendar_ids import is_instance
 from .auth import SessionUser
 from .calendar_google import get_google_calendar
@@ -58,10 +58,14 @@ def update_event(user: SessionUser, settings: Settings, eid: str, payload: dict)
     그 회차로 해석하므로, base_id로 접으면 "그날 것만" 요청이 시리즈 전체를 바꾼다.
     시리즈 단위로 다뤄야 하는 것은 일괄 스킬(update_many)이고 거기서만 접는다.
     """
+    # 제목을 바꾸면 옛 링크 `[event/날/옛 제목]` 이 따라오게 적어 둔다(57차, renamed_items). 옛 제목은
+    # 받아 둔 일정에서 — 구글에 한 번 더 묻지 않는다(없으면 적지 못할 뿐 고치기는 그대로 된다).
+    old = next((str(e.get("title") or "") for e in (event_cache.warm(user) or []) if e.get("id") == eid), None)
     gc = get_google_calendar(settings, user.username)
-    if gc:
-        return gc.update(eid, payload)
-    return calendar_store.update_event(user, settings, eid, payload)
+    out = gc.update(eid, payload) if gc else calendar_store.update_event(user, settings, eid, payload)
+    if old is not None and "title" in payload:
+        renamed_items.record(user, settings, "event", eid, old, str(out.get("title") or ""))
+    return out
 
 
 @_changes_events

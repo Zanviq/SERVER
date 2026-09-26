@@ -27,8 +27,8 @@ from urllib.parse import quote
 
 from fastapi import HTTPException
 
-from . import (diary_store, event_cache, meeting_store, mounts, moved, paper_store, todo_store,
-               vocab_store)
+from . import (diary_store, event_cache, meeting_store, mounts, moved, paper_store, renamed_items,
+               todo_store, vocab_store)
 from .auth import SessionUser
 from .config import Settings
 from .doc_cache import text_of
@@ -543,9 +543,15 @@ def resolve(user: SessionUser, settings: Settings, path: str) -> Resolved:
             return _resolve_note(user, settings, rest)
         items = entries(user, settings, kind)
         e = _find(items, rest)
+        was = None
+        if e is None:
+            e = _renamed(user, settings, kind, rest, items)
+            was = rest.rsplit("/", 1)[-1] if e is not None else None
         if e is None:
             return Resolved(shown, kind, note="이 경로의 항목을 찾지 못했습니다.")
         r = Resolved(e.path, kind, e.label, True, href=href_of(e))
+        if was is not None:
+            r.note = f"이름이 바뀐 항목입니다(옛 이름 {was} → 지금 {e.label})."
         if e.folder:
             kids = [x for x in items if x.path.startswith(e.path + "/")]
             r.content = _listing(kids)
@@ -554,6 +560,20 @@ def resolve(user: SessionUser, settings: Settings, path: str) -> Resolved:
         return r
     except HTTPException as ex:
         return Resolved(shown, kind, note=str(ex.detail))
+
+
+def _renamed(user: SessionUser, settings: Settings, kind: str, rest: str, items: list[Entry]) -> Entry | None:
+    """이름을 바꾼 항목을 **옛 이름**으로 적은 링크 — 바꿀 때 적어 둔 기록(renamed_items)에서 id 를 찾아
+    지금의 그 항목을 준다(57차). 예전엔 할 일·회의·논문·단어·일정의 제목을 한 번 바꾸면 그것을 가리키던
+    링크가 모두 "찾지 못한 링크"였다. 옛 이름은 링크 경로의 마지막 조각과 같은 모양(segment)으로 맞댄다 —
+    분류(할 일)·날(일정)이 바뀐 것은 이미 _find 가 이름만으로 찾는다. 가장 최근에 바꾼 것부터 본다.
+    """
+    label = rest.rsplit("/", 1)[-1]
+    alive = {e.ident: e for e in items if e.ident and not e.folder}
+    for r in reversed(renamed_items.rows(user, settings)):
+        if r["kind"] == kind and r["id"] in alive and _shown(segment(r["title"])) == label:
+            return alive[r["id"]]
+    return None
 
 
 def _listing(items: list[Entry]) -> str:

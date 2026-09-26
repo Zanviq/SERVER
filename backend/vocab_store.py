@@ -31,7 +31,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from . import json_store
+from . import json_store, renamed_items
 from .auth import SessionUser
 from .config import Settings
 
@@ -441,8 +441,11 @@ def update_word(user: SessionUser, settings: Settings, wid: str, payload: dict) 
             raise HTTPException(status_code=409, detail="같은 단어가 이미 있습니다.")
         merged["id"] = wid
         merged.setdefault("created_at", words[idx].get("created_at", _now()))
+        old_word = str(words[idx].get("word") or "")
         words[idx] = merged
         _save(data, user, settings)
+    # 표제어를 바꿨으면 옛 링크 `[vocab/옛 단어]` 가 따라오게(57차, renamed_items)
+    renamed_items.record(user, settings, "vocab", wid, old_word, str(merged.get("word") or ""))
     return merged
 
 

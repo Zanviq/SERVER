@@ -27,7 +27,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from . import json_store, storage
+from . import json_store, renamed_items, storage
 from .auth import SessionUser
 from .config import Settings
 from .edit_conflict import refuse_if_changed
@@ -295,6 +295,9 @@ def update_meta(user: SessionUser, settings: Settings, pid: str, patch: dict) ->
         papers[i] = p
         _save(papers, user, settings)
     _follow_title_in_vocab(user, settings, old_title, str(p.get("title") or ""))
+    # 옛 링크 `[paper/옛 제목]` 도 따라오게(57차, renamed_items). 올린 직후의 제목은 파일 이름이고
+    # 정보 추출이 끝나면 진짜 제목으로 바뀐다 — 그 사이에 적은 링크가 저절로 죽었다.
+    renamed_items.record(user, settings, "paper", pid, old_title, str(p.get("title") or ""))
     return p
 
 
