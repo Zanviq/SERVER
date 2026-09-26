@@ -95,7 +95,7 @@ def _notes(user: SessionUser, settings: Settings, q: str) -> tuple[list[dict], b
     ('로드맵' 을 찾는데 본문 일치 30개 뒤의 '로드맵.md' 가 안 나왔다 — 13차 실측).
     """
     from backend import doc_cache
-    from backend.file_kinds import is_editable
+    from backend.file_kinds import doc_title, is_editable, is_markdown
     from backend.storage import user_data_root, walk_files
 
     root = user_data_root(user, settings)
@@ -105,7 +105,8 @@ def _notes(user: SessionUser, settings: Settings, q: str) -> tuple[list[dict], b
     capped = False
     for f in walk_files(root):
         name = f.name
-        title = name[:-3] if name.endswith(".md") else name
+        # 마크다운이면 확장자를 뗀 제목(`.MD`·`.markdown` 도 — 72차), 그 밖의 파일은 이름 그대로
+        title = doc_title(name) if is_markdown(name) else name
         if ql in title.lower():
             out.append(_hit("note", f.rel, title, "", "", "노트", _score(q, title)))
         elif is_editable(name):

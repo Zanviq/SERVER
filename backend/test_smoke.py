@@ -1097,6 +1097,58 @@ def test_a_wiki_link_goes_to_the_nearest_of_same_titled_notes():
         client.delete("/api/notes/folder", params={"path": top})
 
 
+def test_a_note_renamed_to_another_markdown_extension_keeps_its_links():
+    """`메모.md` 를 `메모.MD`·`메모.markdown` 으로 바꿔도 역링크·그래프에 남는다(72차).
+
+    예전엔 종류는 그대로 마크다운('md')인데 문서 그래프가 `endswith(".md")` 를 따로 써서, 바꾼 문서가 역링크·
+    그래프에서 사라지고 그 문서의 `[[링크]]` 도 세지 않았다(실측: 역링크 2 → 0, 간선 4 → 0). 사용자가 짚은
+    "확장자를 바꾸면 적용이 안 된다"의 한 갈래.
+    """
+    _login()
+    top = "확장자72"
+    save = lambda p, c: client.put("/api/notes/save", json={"path": p, "content": c}).status_code  # noqa: E731
+    assert save(f"{top}/출발.md", "[[대상]] [[위]] [[아래.markdown]]") == 200
+    for name in ("대상", "위", "아래"):
+        assert save(f"{top}/{name}.md", "본문 [[출발]]") == 200
+    try:
+        for old, new in (("대상.md", "대상.MD"), ("위.md", "위.markdown"), ("아래.md", "아래.markdown")):
+            assert client.post("/api/notes/rename", json={"path": f"{top}/{old}", "new_name": new}).status_code == 200
+        d = client.get("/api/notes/get", params={"path": f"{top}/출발.md"}).json()
+        assert sorted(d["backlinks"]) == ["대상", "아래", "위"], d["backlinks"]
+        back = client.get("/api/notes/get", params={"path": f"{top}/위.markdown"}).json()["backlinks"]
+        assert back == ["출발"], "확장자를 바꾼 문서로 가는 링크를 못 셌다"
+        g = client.get("/api/notes/graph", params={"folder": top}).json()
+        assert sorted(n["path"].split("/")[-1] for n in g["nodes"]) == ["대상.MD", "아래.markdown", "위.markdown", "출발.md"]
+        assert len(g["links"]) == 6, g["links"]
+        hits = client.get("/api/search", params={"q": "대상"}).json()["hits"]
+        assert any(h["title"] == "대상" for h in hits), [h["title"] for h in hits]
+    finally:
+        client.delete("/api/notes/folder", params={"path": top})
+
+    # 구조로도 막는다: 마크다운인지를 `.md` 꼬리로 따로 판단하는 곳이 다시 생기지 않게(file_kinds.is_markdown 하나)
+    import pathlib
+    import re
+
+    here = pathlib.Path(__file__).resolve().parent
+    own_rule = re.compile(r"""endswith\(\s*["']\.md["']\s*\)|suffix\s*==\s*["']\.md["']""")
+    # `md-pair` 표시가 있는 줄은 일부러 정확히 `.md` 만 보는 짝(AI 스킬의 식별자 ↔ _resolve)이다
+    found = [f"{p.relative_to(here)}:{i}" for p in here.rglob("*.py") if p.name != "test_smoke.py"
+             for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+             if own_rule.search(line) and "md-pair" not in line]
+    assert found == [], f"마크다운 판단을 따로 한다(file_kinds.is_markdown 을 써라): {found}"
+
+    # AI 스킬도 확장자를 바꾼 문서를 제목으로 찾는다(모델은 흔히 이름만 준다)
+    from backend.ai.skills import documents
+    from backend.storage import user_data_root
+
+    root = user_data_root(_tester(), get_settings())
+    assert save(f"{top}/위.markdown", "본문") == 200
+    try:
+        assert [p.name for p in documents._find_by_name(root, "위")] == ["위.markdown"]
+    finally:
+        client.delete("/api/notes/folder", params={"path": top})
+
+
 def test_making_a_note_never_overwrites_one_that_is_there():
     """'만들기'는 만들기만 한다 — 있으면 409, 원래 내용 그대로(66차).
 

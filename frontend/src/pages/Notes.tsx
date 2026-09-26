@@ -1240,7 +1240,7 @@ export function Notes() {
       <Modal open={delOpen} onClose={() => setDelOpen(false)} title="노트 삭제" width="max-w-sm">
         <div className="space-y-4">
           <p className="text-[13.5px] text-fg2">
-            <span className="font-mono text-danger">{current?.replace(/\.md$/, "")}</span> 노트를 휴지통으로 옮길까요? 휴지통에서 복원할 수 있습니다.
+            <span className="font-mono text-danger">{current?.replace(/\.(md|markdown)$/i, "")}</span> 노트를 휴지통으로 옮길까요? 휴지통에서 복원할 수 있습니다.
           </p>
           <div className="flex justify-end gap-2">
             <button onClick={() => setDelOpen(false)} className="btn btn-ghost">취소</button>

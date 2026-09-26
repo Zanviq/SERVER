@@ -111,5 +111,6 @@ export function embedMarkdownFor(path: string, files?: { path: string }[]): stri
   const ambiguous =
     !!files && files.filter((f) => (f.path.split("/").pop() ?? f.path) === name).length > 1;
   const target = ambiguous ? path : name;
-  return isImagePath(path) ? `![[${target}]]` : `[[${target.replace(/\.md$/, "")}]]`;
+  // 마크다운 확장자는 대소문자·`.markdown` 까지 뗀다(72차 — `.md` 만 떼면 `[[메모.MD]]` 가 들어갔다)
+  return isImagePath(path) ? `![[${target}]]` : `[[${target.replace(/\.(md|markdown)$/i, "")}]]`;
 }

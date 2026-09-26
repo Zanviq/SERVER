@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import doc_cache, moved
+from .file_kinds import doc_title, is_markdown, split_ext
 from .storage import WalkedFile, walk_all, walk_files
 
 logger = logging.getLogger("server.graph")
@@ -137,14 +138,17 @@ class _Lookup:
     def add(self, path: Path, value) -> None:
         rel = path.relative_to(self._notes_dir).as_posix()
         self.by_title.setdefault(path.stem.lower(), []).append((rel, value))
-        # 경로는 확장자를 붙여도 떼어도 같은 문서다(링크 열기와 같은 규칙)
+        # 경로는 확장자를 붙여도 떼어도 같은 문서다(링크 열기와 같은 규칙) — `.MD`·`.markdown` 도(72차)
         key = rel.lower()
         self.by_rel.setdefault(key, value)
-        if key.endswith(".md"):
-            self.by_rel.setdefault(key[:-3], value)
+        if is_markdown(key):
+            self.by_rel.setdefault(split_ext(key)[0], value)
 
     def _title(self, title: str, from_rel: str | None):
         cands = self.by_title.get(title.lower())
+        if not cands and is_markdown(title):
+            # `[[메모.md]]` 처럼 확장자까지 적은 위키 링크(화면 pickByTitle 은 파일 이름으로 찾는다)
+            cands = self.by_title.get(doc_title(title).lower())
         if not cands:
             # `[[폴더/제목]]` — 제목이 겹칠 때 옵시디언이 쓰는 꼴. 경로로 찾는다(66차, 화면 pickByTitle 과 같다)
             return self.by_rel.get(title.strip("/").lower()) if "/" in title else None
@@ -203,7 +207,7 @@ def _fingerprint(files: list[WalkedFile], dirs: list[str]) -> tuple:
     mx = total = 0
     h = hashlib.blake2b(digest_size=16)
     for f in files:
-        if f.rel.endswith(".md"):
+        if is_markdown(f.rel):
             md += 1
             total += f.stat.st_size
             h.update(f.rel.encode("utf-8", "surrogatepass"))
@@ -329,7 +333,8 @@ def build_graph(
 
 def _link_graph(notes_dir: Path, files: list[WalkedFile]) -> dict:
     """노트 사이의 링크 그래프(위키링크·경로 링크). 폴더 지도(_folder_graph)와 짝이다."""
-    notes = [f for f in files if f.rel.endswith(".md")]
+    # 마크다운인지는 file_kinds 한 곳의 규칙으로(`.MD`·`.markdown` 도 — 72차)
+    notes = [f for f in files if is_markdown(f.rel)]
     find = _Lookup(notes_dir)
     # 노드 id 는 제목이다 — 다만 제목이 겹치면 경로로(65차). 제목만 쓰면 두 문서가 한 노드로 합쳐져
     # 어느 쪽을 가리킨 간선인지 사라진다. 겹치지 않는 문서의 id 는 예전 그대로다.
@@ -337,7 +342,7 @@ def _link_graph(notes_dir: Path, files: list[WalkedFile]) -> dict:
 
     def node_id(f: WalkedFile) -> str:
         stem = f.path.stem
-        return stem if many[stem.lower()] == 1 else find.rel(f).removesuffix(".md")
+        return stem if many[stem.lower()] == 1 else split_ext(find.rel(f))[0]
 
     nodes = []
     for f in notes:
@@ -394,12 +399,12 @@ def _folder_graph(notes_dir: Path, base: Path) -> dict:
     except OSError:
         entries = []
     subdirs = [d for d in entries if d.is_dir()]
-    loose_notes = [p for p in entries if p.is_file() and p.suffix == ".md"]
+    loose_notes = [p for p in entries if p.is_file() and is_markdown(p.name)]
 
     nodes: list[dict] = []
     for d in subdirs:
         rel = d.relative_to(notes_dir).as_posix()
-        count = sum(1 for f in walk_files(d, sort=False) if f.rel.endswith(".md"))
+        count = sum(1 for f in walk_files(d, sort=False) if is_markdown(f.rel))
         nodes.append(
             {"id": f"f:{rel}", "title": d.name, "path": rel,
              "type": "folder", "count": count}
@@ -427,7 +432,7 @@ def _folder_graph(notes_dir: Path, base: Path) -> dict:
         return "f:" + (base / rel_parts[0]).relative_to(notes_dir).as_posix()
 
     # 전체 스템 → 경로 (base 하위만) 로 위키링크 대상 해석
-    all_notes = [f for f in walk_files(base, sort=False) if f.rel.endswith(".md")]
+    all_notes = [f for f in walk_files(base, sort=False) if is_markdown(f.rel)]
     find = _Lookup(notes_dir)
     for f in all_notes:
         find.add(f.path, f.path)

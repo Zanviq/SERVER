@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from ... import doc_cache, mounts, moved
-from ...file_kinds import BadName, doc_title, is_editable, kind_of, looks_like_extension, renamed
+from ...file_kinds import BadName, doc_title, is_editable, is_markdown, kind_of, looks_like_extension, renamed
 from ...json_store import lock_for, write_text_atomic
 from ...notes_graph import backlinks_for
 from ...security_paths import safe_join, to_rel
@@ -40,7 +40,7 @@ _PATH_PROP = {
 
 def _ident_rel(rel: str, known: set[str]) -> str:
     """이미 상대경로를 알고 있을 때의 식별자(파일시스템을 건드리지 않는다)."""
-    if not rel.endswith(".md"):
+    if not rel.endswith(".md"):  # md-pair: _resolve 가 ".md" 를 붙여 되찾는 짝이라 정확히 .md 만 뗀다
         return rel
     stem = rel[:-3]
     return rel if stem in known else stem
@@ -59,7 +59,7 @@ def _ident(root: Path, p: Path, known: set[str] | None = None) -> str:
     한 번씩** 나간다(문서 200개에서 list_documents가 114ms였다).
     """
     rel = to_rel(root, p)
-    if not rel.endswith(".md"):
+    if not rel.endswith(".md"):  # md-pair: 위와 같다(`.MD`·`.markdown` 은 이름 그대로가 식별자)
         return rel
     stem = rel[:-3]
     sibling = (stem in known) if known is not None else (root / stem).exists()
@@ -117,13 +117,15 @@ def _find_by_name(root: Path, ident: str, *, editable_only: bool = False) -> lis
     이름을 glob 패턴에 끼워 넣지 않는다 — '*'·'[' 가 든 이름의 오매칭 방지.
     """
     name = ident.rsplit("/", 1)[-1]
-    stem = name[:-3] if name.endswith(".md") else name
+    # 마크다운 확장자는 `.MD`·`.markdown` 까지 떼고 견준다(72차) — `.md` 만 떼면 확장자를 바꾼 `위.markdown` 을
+    # 모델이 "위" 로 찾지 못했다(화면·역링크와 같은 규칙, file_kinds.is_markdown).
+    stem = doc_title(name) if is_markdown(name) else name
     out = []
     for f in walk_files(root):
         if editable_only and not is_editable(f.name):
             continue  # 쓰기 대상 탐색에서는 이미지·PDF를 후보로 삼지 않는다
         fname = f.name
-        fstem = fname[:-3] if fname.endswith(".md") else fname
+        fstem = doc_title(fname) if is_markdown(fname) else fname
         if fname == name or fstem == stem:
             out.append(f.path)
     return out

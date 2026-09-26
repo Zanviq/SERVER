@@ -4,6 +4,7 @@ import { Shell } from "../components/layout/Shell";
 import { Modal } from "../components/ui/Modal";
 import { api, TrashEntry } from "../lib/api";
 import { formatBytes } from "../lib/format";
+import { isMarkdownPath } from "../lib/notePath";
 import { ListState } from "../components/ui/ListState";
 import { toast } from "../store/toast";
 
@@ -94,7 +95,7 @@ export function Trash() {
   };
 
   const icon = (e: TrashEntry) =>
-    e.is_dir ? FolderOpen : e.name.endsWith(".md") ? NotebookPen : FileText;
+    e.is_dir ? FolderOpen : isMarkdownPath(e.name) ? NotebookPen : FileText;
 
   return (
     <Shell

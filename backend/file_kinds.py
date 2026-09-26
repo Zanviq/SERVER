@@ -142,6 +142,16 @@ def kind_of(name: str) -> str:
     return "other"
 
 
+def is_markdown(name: str) -> bool:
+    """마크다운 문서인가 — `.md`·`.markdown`, 대소문자 무관(kind_of 와 같은 규칙).
+
+    72차: 문서 그래프·역링크가 이것 대신 `.md` 꼬리만 따로 봐서, `메모.md` 를 `메모.MD`·`메모.markdown`
+    으로 바꾸면 종류는 그대로 마크다운인데 **역링크·그래프에서 사라지고** 그 문서의 `[[링크]]` 도 세지 않았다
+    (실측: 역링크 2 → 0, 간선 4 → 0). 마크다운인지는 이 함수 하나로 묻는다.
+    """
+    return kind_of(name) == "md"
+
+
 def is_editable(name: str) -> bool:
     """텍스트 편집기로 열 수 있는가(자동저장 대상)."""
     return kind_of(name) in ("md", "text")
