@@ -53,10 +53,13 @@ def user_file(request: Request, path: Path, media_type: str, *, filename: str | 
               headers: dict[str, str] | None = None) -> Response:
     """`media_type` 은 서버가 정한 값만 넘긴다(올린 쪽이 밝힌 Content-Type 을 넘기지 말 것).
     `filename` 을 주면 내려받기(attachment)가 된다. request 는 304 판단(If-None-Match)에 쓴다."""
-    h = {"X-Content-Type-Options": "nosniff", "Cache-Control": FILE_CACHE}
+    h = {"X-Content-Type-Options": "nosniff"}
     if media_type in SCRIPTABLE_MEDIA:
         h["Content-Security-Policy"] = _SANDBOX
-    h.update(headers or {})
+    h.update({k: v for k, v in (headers or {}).items() if k.lower() != "cache-control"})
+    # 캐시 규칙은 부르는 쪽이 바꾸지 못한다 — 녹음·PDF 가 max-age=3600 을 손으로 적어 로그아웃 뒤에도
+    # 한 시간 열렸다(62차). 누가 다시 적어도 여기서 이긴다.
+    h["Cache-Control"] = FILE_CACHE
     st = path.stat()
     h["ETag"] = _etag(st)
     if _still_fresh(request.headers.get("if-none-match", ""), h["ETag"]):
