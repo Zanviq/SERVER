@@ -158,7 +158,7 @@ class _Lookup:
             # 가리키는 링크(`[[나중에 쓸 글]]`)는 흔하다 — 옛 제목에 없는 것은 기록을 훑지 않는다.
             if title.strip().lower() not in self._old_titles():
                 return None
-            now = moved.follow_title_rows(self._moved_rows(), title, lambda r: r.lower() in self.by_rel)
+            now = moved.follow_title_rows(self._moved_rows(), title, self._known)
             return self.by_rel.get(now.lower()) if now else None
         if len(cands) == 1:
             return cands[0][1]
@@ -170,6 +170,10 @@ class _Lookup:
         if self._moved is None:
             self._moved = moved.rows_beside(self._notes_dir)
         return self._moved
+
+    def _known(self, rel: str) -> bool:
+        """옮김 기록을 따라가다 닿은 자리가 지금 있는 문서인가 — 경로 링크·옛 제목 링크가 같은 기준을 쓴다."""
+        return rel.lower() in self.by_rel
 
     def _old_titles(self) -> set[str]:
         """옮김 기록에 옛 이름으로 남은 문서 제목들(소문자) — 한 번 만든다."""
@@ -200,9 +204,8 @@ class _Lookup:
         남의 문서의 링크를 고쳐 쓰지 않는다는 규칙(moved.py)은 그대로다."""
         if not self._moved_rows():
             return None
-        exists = lambda r: r.lower() in self.by_rel  # noqa: E731
         for cand in (rel, f"{rel}.md"):  # 확장자 없이 적은 옛 링크도(링크 열기와 같은 규칙)
-            now = moved.follow_rows(self._moved, cand, exists)
+            now = moved.follow_rows(self._moved_rows(), cand, self._known)
             if now is not None:
                 return self.by_rel.get(now.lower())
         return None
