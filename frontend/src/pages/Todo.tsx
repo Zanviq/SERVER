@@ -110,7 +110,7 @@ function CatRow({
           type="button"
           aria-label={hasKids ? (isOpen ? "접기" : "펼치기") : undefined}
           onClick={() => onToggle(cat.id)}
-          className={`grid h-5 w-5 shrink-0 place-items-center text-fg-subtle ${
+          className={`grid h-5 w-5 shrink-0 place-items-center text-fg-subtle coarse:h-9 coarse:w-8 ${
             hasKids ? "" : "invisible"
           }`}
         >
@@ -122,7 +122,7 @@ function CatRow({
         <button
           type="button"
           onClick={() => onSelect(cat.id)}
-          className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left"
+          className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left coarse:py-2.5"
         >
           <span
             className="h-2.5 w-2.5 shrink-0 rounded-full"
@@ -142,7 +142,7 @@ function CatRow({
             type="button"
             onClick={() => onEdit(cat)}
             title="카테고리 편집" aria-label={`${cat.name} 카테고리 편집`}
-            className="grid h-6 w-6 place-items-center text-fg-subtle hover:text-fg"
+            className="grid h-6 w-6 place-items-center text-fg-subtle hover:text-fg coarse:h-9 coarse:w-9"
           >
             <Pencil size={12} />
           </button>
@@ -150,7 +150,7 @@ function CatRow({
             type="button"
             onClick={() => onRemove(cat)}
             title="카테고리 삭제" aria-label={`${cat.name} 카테고리 삭제`}
-            className="grid h-6 w-6 place-items-center text-fg-subtle hover:text-danger"
+            className="grid h-6 w-6 place-items-center text-fg-subtle hover:text-danger coarse:h-9 coarse:w-9"
           >
             <X size={13} />
           </button>
@@ -495,7 +495,7 @@ export function Todo() {
           type="button"
           onClick={addCategory}
           title={selectedCat ? "선택한 카테고리 아래에 추가" : "카테고리 추가"}
-          className="grid h-7 w-7 place-items-center rounded-md text-fg-muted hover:bg-hovered hover:text-fg"
+          className="tap grid h-7 w-7 place-items-center rounded-md text-fg-muted hover:bg-hovered hover:text-fg"
         >
           <FolderPlus size={15} />
         </button>
@@ -507,7 +507,7 @@ export function Todo() {
             setSelectedCat(null);
             setSelectedTodo(null);
           }}
-          className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-sm ${
+          className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-sm coarse:py-2.5 ${
             selectedCat === null ? "bg-accent-muted text-accent-fg" : "hover:bg-hovered"
           }`}
         >
@@ -537,7 +537,7 @@ export function Todo() {
               setSelectedCat(UNCATEGORIZED);
               setSelectedTodo(null);
             }}
-            className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-sm ${
+            className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-sm coarse:py-2.5 ${
               selectedCat === UNCATEGORIZED ? "bg-accent-muted text-accent-fg" : "hover:bg-hovered"
             }`}
             style={{ paddingLeft: 4 + 20 }}
@@ -573,11 +573,11 @@ export function Todo() {
             return (
               <li key={t.id} data-todo-id={t.id} className="relative py-1.5">
                 <span
-                  className="absolute -left-[21px] top-3 h-2.5 w-2.5 rounded-full ring-2 ring-surface"
+                  className="absolute -left-[21px] top-3 h-2.5 w-2.5 rounded-full ring-2 ring-surface coarse:top-4"
                   style={{ background: t.done ? "rgb(var(--fg-subtle))" : hex }}
                 />
                 <div
-                  className={`group flex items-start gap-2 rounded-md px-2 py-1.5 ${
+                  className={`group flex items-start gap-2 rounded-md px-2 ${
                     selectedTodo === t.id ? "bg-accent-muted" : "hover:bg-hovered"
                   }`}
                 >
@@ -585,7 +585,8 @@ export function Todo() {
                     type="button"
                     onClick={() => toggleDone(t)}
                     title={t.done ? "미완료로" : "완료"}
-                    className="mt-0.5 shrink-0 text-fg-subtle hover:text-accent"
+                    // 16px 동그라미가 곧 누를 자리였다 — 손가락으로는 .tap 으로 44px(디자인 2차)
+                    className="tap mt-0.5 shrink-0 py-1.5 text-fg-subtle hover:text-accent coarse:py-2.5"
                   >
                     {t.done ? (
                       <CheckCircle2 size={16} className="text-accent" />
@@ -596,7 +597,7 @@ export function Todo() {
                   <button
                     type="button"
                     onClick={() => setSelectedTodo(t.id)}
-                    className="min-w-0 flex-1 text-left"
+                    className="min-w-0 flex-1 py-1.5 text-left coarse:py-2.5"
                   >
                     <div
                       className={`flex min-w-0 items-baseline gap-1 text-sm ${
@@ -616,11 +617,15 @@ export function Todo() {
                       )}
                       <span className="truncate">{t.title}</span>
                     </div>
-                    <div className="mt-0.5 flex items-center gap-2 text-[11px]">
-                      <span className={t.done ? "text-fg-subtle" : tone.cls}>
-                        {t.due ? `${dueLabel(t.due, t.all_day)} · ${tone.label}` : tone.label}
-                      </span>
-                    </div>
+                    {/* 기한이 없으면 둘째 줄을 두지 않는다 — 줄마다 "기한 없음" 이 되풀이되어 목록이 그 말로
+                        덮였고(휴대폰 한 화면에 여덟 번), 정작 기한이 있는 것이 눈에 안 띄었다(디자인 2차). */}
+                    {t.due && (
+                      <div className="mt-0.5 flex items-center gap-2 text-[11px]">
+                        <span className={t.done ? "text-fg-subtle" : tone.cls}>
+                          {`${dueLabel(t.due, t.all_day)} · ${tone.label}`}
+                        </span>
+                      </div>
+                    )}
                   </button>
                 </div>
               </li>
@@ -777,7 +782,7 @@ export function Todo() {
             <button
               type="button"
               onClick={() => setSelectedTodo(null)}
-              className="text-sm text-fg-muted hover:text-fg"
+              className="tap text-sm text-fg-muted hover:text-fg"
             >
               ← 목록
             </button>
@@ -819,7 +824,12 @@ export function Todo() {
         {/* max-h 만 주고 overflow 를 안 주면 카테고리가 6개만 넘어도 카드가
             상자 밖으로 흘러넘쳐 아래 할 일 카드 위에 겹쳐 그려진다. */}
         <div className={isNarrow ? "max-h-[32vh] overflow-y-auto" : ""}>{leftPane}</div>
-        <div className="flex min-h-0 flex-1 flex-col h-[60vh] lg:h-auto">{rightPane}</div>
+        {/* 좁은 화면은 **높이를 못 박는다**(flex-none). flex-1 이던 때는 높이가 정해지지 않은 세로 flex 안이라
+            기준 크기(0%)가 내용 크기로 풀려 h-[60vh] 가 무시됐고, 카드가 할 일 600개 길이(3만 8천 px)로 자라
+            추가 칸이 목록 맨 끝에 묻혔다 — 휴대폰에서 하나를 더하려면 전부를 굴려 내려가야 했다(디자인 2차).
+            넓은 화면도 같았다(lg:h-auto 라 안쪽 카드의 flex-1 이 내용 크기로 풀려 추가 칸이 y=26,594) — 왼쪽 카드와
+            같은 화면 높이로 못 박는다. */}
+        <div className="flex h-[60vh] min-h-0 flex-none flex-col lg:h-view-9 lg:flex-1">{rightPane}</div>
       </div>
 
       <CategoryDialog

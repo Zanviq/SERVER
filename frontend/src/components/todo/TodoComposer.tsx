@@ -151,7 +151,7 @@ export function TodoComposer({ cats, selectedCat, busy, onSubmit }: Props) {
   const colorHex = draft.color ? GCAL_COLORS[draft.color] : catColor ? GCAL_COLORS[catColor] : undefined;
 
   const chip = (active: boolean) =>
-    `inline-flex h-7 max-w-[11rem] items-center gap-1 rounded-full border px-2.5 text-[12px] transition-colors ${
+    `inline-flex h-7 max-w-[11rem] items-center gap-1 rounded-full border px-2.5 text-[12px] transition-colors coarse:h-9 ${
       active
         ? "border-accent/40 bg-accent-muted text-accent-fg"
         : "border-line text-fg-muted hover:border-line-strong hover:text-fg"
