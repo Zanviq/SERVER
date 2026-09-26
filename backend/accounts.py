@@ -407,12 +407,15 @@ def change_password(username: str, current: str, new: str, settings: Settings) -
         return _to_account(row)
 
 
+def _public(row: dict) -> dict:
+    """관리 화면에 내보내는 계정 행 — 비밀번호 해시는 절대 싣지 않는다. 계정 행을 밖으로 내보내는
+    곳은 모두 이것을 거친다(행에 감출 칸이 늘면 여기 한 곳만 고친다)."""
+    return {k: v for k, v in row.items() if k != "password_hash"}
+
+
 def list_all(settings: Settings) -> list[dict]:
-    """관리 화면용 — 비밀번호 해시는 절대 내보내지 않는다."""
-    return [
-        {k: v for k, v in row.items() if k != "password_hash"}
-        for row in sorted(_load(settings), key=lambda r: r.get("created_at", 0))
-    ]
+    """관리 화면용."""
+    return [_public(row) for row in sorted(_load(settings), key=lambda r: r.get("created_at", 0))]
 
 
 def signup(username: str, password: str, display_name: str, settings: Settings) -> Account:
@@ -543,7 +546,7 @@ def set_status(username: str, status: str, actor: str, settings: Settings) -> di
             row["approved_at"] = time.time()
             row["approved_by"] = actor
         write_atomic(p, rows)
-    return {k: v for k, v in row.items() if k != "password_hash"}
+    return _public(row)
 
 
 def set_role(username: str, role: str, settings: Settings) -> dict:
@@ -561,7 +564,7 @@ def set_role(username: str, role: str, settings: Settings) -> dict:
             raise HTTPException(status_code=400, detail="마지막 서버 관리자는 강등할 수 없습니다.")
         row["role"] = role
         write_atomic(p, rows)
-    return {k: v for k, v in row.items() if k != "password_hash"}
+    return _public(row)
 
 
 def delete(username: str, settings: Settings) -> None:
