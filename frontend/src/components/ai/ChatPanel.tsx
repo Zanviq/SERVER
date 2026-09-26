@@ -1070,8 +1070,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
           // 잠가 두면 Esc 로 중단할 방법도 함께 사라진다.
           // 한 줄 칸이라 안내 글이 칸보다 길면 두 줄로 꺾여 아랫줄이 반쯤 잘려 보였다(달력·논문의
           // 좁은 대화 칸, 27차) — 안내 글은 한 줄로 두고 넘치는 끝만 숨긴다(placeholder:truncate).
+          // 높이는 h-auto 로 .input 의 h-9 만 지운다 — `!h-auto`(height:auto !important) 이던 때는 위의 자동 늘이기가
+          // 넣는 인라인 높이를 이겨, 일곱 줄을 써도 칸이 한 줄(44px)이라 쓴 글을 되짚어 볼 수 없었다(디자인 4차).
+          // .input 은 components 층이라 유틸리티(h-auto)가 !important 없이도 이긴다.
           rows={1}
-          className="input flex-1 resize-none !h-auto min-h-[2.25rem] py-2 leading-relaxed placeholder:truncate [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="input h-auto flex-1 resize-none min-h-[2.25rem] py-2 leading-relaxed placeholder:truncate [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           style={{ maxHeight: 160, overflowY: "auto" }}
         />
         {linkPanel}
