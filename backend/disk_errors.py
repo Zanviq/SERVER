@@ -27,6 +27,10 @@ _DISK_TROUBLE = {
 
 def disk_trouble(exc: BaseException) -> HTTPException | None:
     """디스크 문제면 사용자에게 보일 응답(가득 참은 507), 아니면 None."""
+    if isinstance(exc, OSError) and exc.errno == errno.ENAMETOOLONG:
+        # 디스크 탈이 아니라 이름·경로가 긴 것이다 — 사용자가 고칠 수 있다(75차). 경로는 safe_join 이 먼저 막지만
+        # 그 밖의 길(다른 저장소의 이름 등)에서도 "외장하드" 경보 대신 이 말이 나가게 둔다.
+        return HTTPException(status_code=400, detail="이름이나 경로가 너무 깁니다 — 줄여 주세요.")
     if isinstance(exc, OSError) and exc.errno in _DISK_TROUBLE:
         return HTTPException(status_code=507 if exc.errno == errno.ENOSPC else 500,
                              detail=_DISK_TROUBLE[exc.errno])

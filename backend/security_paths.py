@@ -18,6 +18,11 @@ _BAD_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 #: 한글 300자는 900바이트가 되어 OSError로 500이 났다.
 _MAX_COMPONENT_BYTES = 200
 
+#: 문서 루트 기준 **전체** 경로의 최대 길이(75차). 칸마다 200바이트 안이어도 25겹을 쌓으면 4.5KB 가 되어 리눅스의
+#: 경로 한계(4096바이트, 루트 앞부분 포함)를 넘는다 — 그러면 OS 가 거절한 것을 디스크 탈이로 읽어 500 "외장하드가
+#: 빠졌는지 확인하세요" 가 났다(실측). 한글 폴더 열 겹도 1KB 안이라 실제 쓰임에는 넉넉하다.
+_MAX_PATH_BYTES = 1024
+
 
 def safe_join(root: Path, rel: str) -> Path:
     """root 기준으로 rel을 해석하되 root를 벗어나면 400 에러.
@@ -56,6 +61,11 @@ def safe_join(root: Path, rel: str) -> Path:
                 status_code=400,
                 detail=f"이름이 너무 깁니다(최대 {_MAX_COMPONENT_BYTES}바이트).",
             )
+    if len(str(rel_clean).encode("utf-8")) > _MAX_PATH_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"경로가 너무 깁니다(최대 {_MAX_PATH_BYTES}바이트) — 폴더를 덜 깊게 두거나 이름을 줄여 주세요.",
+        )
 
     target = (root / rel_clean).resolve()
 

@@ -1097,6 +1097,33 @@ def test_a_wiki_link_goes_to_the_nearest_of_same_titled_notes():
         client.delete("/api/notes/folder", params={"path": top})
 
 
+def test_a_too_deep_path_is_a_clear_400_not_a_missing_disk_500():
+    """구성요소마다는 짧아도 **전체 경로**가 너무 길면 400 으로 알린다(75차).
+
+    예전엔 이름 한 칸 길이(200바이트)만 봤다. 짧은 폴더 이름을 25겹 쌓은 4.5KB 경로로 저장·새 폴더를 부르면 OS 가
+    거절한 것을 디스크 탈이로 읽어 **500 "저장 폴더를 찾을 수 없습니다(외장하드가 빠졌는지 확인하세요)"** 가 났다
+    (격리 서버 실측) — 사용자 입력 문제인데 서버 고장처럼, 그것도 외장하드 경보로 보였다. 리눅스(파이)의 경로 한계는
+    4096바이트다.
+    """
+    _login()
+    deep = "/".join(["가" * 60] * 25) + "/x.md"  # 칸마다 180바이트 — 칸 한계(200) 안, 합은 4.5KB
+    for r in (client.put("/api/notes/save", json={"path": deep, "content": "x"}),
+              client.post("/api/notes/folder", json={"path": deep}),
+              client.get("/api/notes/get", params={"path": deep})):
+        assert r.status_code == 400, (r.status_code, r.text)
+        assert "경로가 너무 깁니다" in r.json()["detail"], r.text
+    # 그 밖의 길에서 OS 가 '너무 길다'(ENAMETOOLONG)고 해도 디스크 경보가 아니다
+    import errno as _errno
+
+    from backend.disk_errors import disk_trouble
+    e = disk_trouble(OSError(_errno.ENAMETOOLONG, "File name too long"))
+    assert e is not None and e.status_code == 400 and "외장하드" not in e.detail
+    # 보통 깊이는 그대로 된다
+    ok = "/".join(["깊이75"] * 8) + "/문서.md"
+    assert client.put("/api/notes/save", json={"path": ok, "content": "x"}).status_code == 200
+    client.delete("/api/notes/folder", params={"path": "깊이75"})
+
+
 def test_a_wiki_link_by_the_old_title_still_counts_as_a_backlink():
     """이름을 바꾼 문서를 옛 제목으로 가리키는 `[[메모]]` 도 역링크·그래프에 센다(74차).
 
