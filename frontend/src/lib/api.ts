@@ -228,6 +228,10 @@ export const api = {
   // 저장 공간은 사용자당 하나뿐이라 scope/base 인자가 없다.
   noteList: () => req<NoteSummary[]>("/api/notes/list"),
   noteGet: (path: string) => req<NoteDetail>(`/api/notes/get?${q({ path })}`),
+  /** 새 문서를 **만들기만** 한다 — 이미 있으면 409(덮지 않는다). 화면의 만들기는 모두 이것을 쓴다(66차:
+   *  `[[폴더/제목]]` 을 누르면 '만들기'가 있던 문서를 제목 한 줄로 덮었다). */
+  noteCreate: (path: string, content: string) =>
+    req<NoteSummary>("/api/notes/save", jsonInit("PUT", { path, content, create_only: true })),
   /** baseModified 를 주면 그 사이 다른 곳에서 바뀐 문서를 덮어쓰지 않고 409 로 멈춘다. */
   noteSave: (path: string, content: string, baseModified = 0) =>
     req<NoteSummary>("/api/notes/save",

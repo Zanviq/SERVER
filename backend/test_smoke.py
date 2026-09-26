@@ -1097,6 +1097,27 @@ def test_a_wiki_link_goes_to_the_nearest_of_same_titled_notes():
         client.delete("/api/notes/folder", params={"path": top})
 
 
+def test_making_a_note_never_overwrites_one_that_is_there():
+    """'만들기'는 만들기만 한다 — 있으면 409, 원래 내용 그대로(66차).
+
+    실측: `[[폴더/제목]]` 을 누르면 제목으로만 찾아 못 찾았다며 같은 경로로 '만들기'를 해, 있던 문서가
+    `# 폴더/제목` 한 줄로 덮였다. 이제 그 링크는 경로로 찾고(역링크에도 센다), 만들기는 create_only 다.
+    """
+    _login()
+    top = "만들기66"
+    assert client.put("/api/notes/save", json={"path": f"{top}/메모.md", "content": "소중한 원래 내용"}).status_code == 200
+    assert client.put("/api/notes/save", json={"path": f"{top}/출발.md", "content": f"[[{top}/메모]]"}).status_code == 200
+    try:
+        r = client.put("/api/notes/save", json={"path": f"{top}/메모.md", "content": "# 덮기", "create_only": True})
+        assert r.status_code == 409, r.text
+        assert client.get("/api/notes/get", params={"path": f"{top}/메모.md"}).json()["content"] == "소중한 원래 내용"
+        assert client.put("/api/notes/save", json={"path": f"{top}/새것.md", "content": "새", "create_only": True}).status_code == 200
+        d = client.get("/api/notes/get", params={"path": f"{top}/메모.md"}).json()
+        assert list(zip(d["backlinks"], d["backlink_paths"])) == [("출발", f"{top}/출발.md")], "[[폴더/제목]] 을 못 셌다"
+    finally:
+        client.delete("/api/notes/folder", params={"path": top})
+
+
 def test_names_from_a_mac_are_stored_the_way_a_keyboard_types_them():
     """맥에서 온 이름(NFD, 자모가 풀린 한글)은 자판으로 친 이름(NFC)으로 적힌다(64차).
 

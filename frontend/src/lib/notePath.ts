@@ -41,6 +41,9 @@ export function pickByTitle<T extends { path: string; title: string }>(
     return [...same].sort((a, b) => depth(a.path) - depth(b.path) || byPath(a, b))[0];
   }
   return notes.find((n) => n.path.toLowerCase() === key)
+    // `[[폴더/제목]]` — 제목이 겹칠 때 옵시디언이 쓰는 꼴(66차, 서버 _Lookup 과 같다). 못 찾으면 화면은
+    // 그 이름으로 '만들기'를 했다.
+    ?? (key.includes("/") ? notes.find((n) => n.path.toLowerCase().replace(/\.(md|markdown)$/, "") === key) : undefined)
     ?? notes.find((n) => fileName(n.path).toLowerCase() === key);
 }
 

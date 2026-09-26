@@ -70,6 +70,10 @@ class SaveNote(BaseModel):
     #: 열 때 받은 modified. 그 사이 파일이 바뀌었으면 409 로 돌려보낸다.
     #: 비우면(0) 검사하지 않는다 — AI 스킬·스크립트처럼 기준이 없는 쓰기.
     base_modified: float = 0.0
+    #: 새로 **만들기만** 한다 — 이미 있으면 409(덮지 않는다). 화면의 만들기(새 노트·링크로 만들기·
+    #: '새 문서 만들어 링크')가 쓴다. 66차: `[[폴더/제목]]` 을 누르면 못 찾았다며 같은 경로로 '만들기'를
+    #: 해 **있던 문서를 제목 한 줄로 덮었다**(실측). 화면의 '있나?' 확인은 낡은 목록을 보므로 서버가 막는다.
+    create_only: bool = False
 
 
 class RenameNote(BaseModel):
@@ -585,6 +589,12 @@ def save_note(
         target.parent.mkdir(parents=True, exist_ok=True)
         # AI 쓰기와 같은 락·원자성 규약을 쓴다(자동저장과 AI append가 서로 덮어썼다)
         with lock_for(target):
+            # 있는지는 잠금 안에서 본다 — 밖에서 보면 두 기기가 나란히 '없다'를 보고 뒤의 것이 덮는다
+            if req.create_only and target.exists():
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"같은 이름의 문서가 이미 있습니다: {to_rel(root, target)}",
+                )
             write_text_atomic(target, req.content)
     return _summary(root, target)
 

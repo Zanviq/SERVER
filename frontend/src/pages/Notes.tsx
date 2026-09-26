@@ -351,9 +351,14 @@ export function Notes() {
     // 'todo.txt'처럼 확장자를 적지 않으면 뭘 만들든 마크다운이 됐다.
     // 마크다운일 때만 제목 줄을 넣는다(.txt/.py에 '# 이름'이 들어가면 곤란하다).
     const isMd = /\.(md|markdown)$/i.test(name);
+    // 만들기만 한다(noteCreate) — 위 확인은 이 화면의 목록이라 낡았을 수 있다(다른 기기가 방금 만든 것).
     // 서버가 거절하면(같은 이름 등) 열지 않는다 — 없는 문서를 열어 404 를 또 띄운다
-    const made = await save(path, isMd ? `# ${name.replace(/\.[^.]+$/, "")}\n\n` : "");
-    if (!made) return;
+    try {
+      await api.noteCreate(path, isMd ? `# ${name.replace(/\.[^.]+$/, "")}\n\n` : "");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "문서 생성 실패");
+      return;
+    }
     await reloadTree();
     if (curFolder) setExpanded((s) => new Set(s).add(curFolder));
     openNote(path);
@@ -461,13 +466,23 @@ export function Notes() {
           return;
         }
         // 위키링크에는 확장자를 쓰지 않으므로 여기서 마크다운으로 정한다
-        // (백엔드는 더 이상 확장자를 추측하지 않는다).
-        await save(`${title}.md`, `# ${title}\n\n`);
+        // (백엔드는 더 이상 확장자를 추측하지 않는다). **만들기만** 한다 — 못 찾은 까닭이 이 화면의
+        // 목록이 낡아서라면 그 자리에 문서가 있다. 예전엔 여기서 덮어써 원래 내용이 사라졌다(66차).
+        const path = `${title}.md`;
+        try {
+          await api.noteCreate(path, `# ${title}\n\n`);
+        } catch (e) {
+          if (!isConflict(e)) {
+            toast.error(e instanceof Error ? e.message : "문서 생성 실패");
+            return;
+          }
+          // 이미 있다 — 덮지 않고 그것을 연다
+        }
         await reloadTree();
-        openNote(`${title}.md`);
+        openNote(path);
       })();
     },
-    [notes, openNote, save, reloadTree],
+    [notes, openNote, reloadTree],
   );
   /** 열린 문서 안의 링크(읽기 보기·편집기) — 이 문서를 기준으로 가까운 것을 연다 */
   const openFromHere = useCallback((title: string) => openByTitle(title, true, current), [openByTitle, current]);
@@ -824,10 +839,14 @@ export function Notes() {
       return title; // 링크는 그대로 이어 준다(이미 있는 문서를 가리킨다)
     }
     try {
-      await api.noteSave(path, `# ${title}\n\n`);
+      await api.noteCreate(path, `# ${title}\n\n`); // 만들기만(낡은 목록이면 위 확인을 지나친다)
       await reloadTree();
       return title;
     } catch (e) {
+      if (isConflict(e)) {
+        toast.error(`'${title}' 문서가 이미 있습니다.`);
+        return title; // 위와 같이 — 링크는 이미 있는 문서를 가리킨다
+      }
       toast.error(e instanceof Error ? e.message : "문서 생성 실패");
       return null;
     }

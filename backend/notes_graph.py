@@ -146,7 +146,8 @@ class _Lookup:
     def _title(self, title: str, from_rel: str | None):
         cands = self.by_title.get(title.lower())
         if not cands:
-            return None
+            # `[[폴더/제목]]` — 제목이 겹칠 때 옵시디언이 쓰는 꼴. 경로로 찾는다(66차, 화면 pickByTitle 과 같다)
+            return self.by_rel.get(title.strip("/").lower()) if "/" in title else None
         if len(cands) == 1:
             return cands[0][1]
         pick = nearest([r for r, _ in cands], from_rel)

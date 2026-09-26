@@ -25,8 +25,20 @@ test("[[제목]] 은 같은 제목 중 링크를 적은 문서에서 가까운 �
   assert.equal(pickByTitle([n("가/하나.md")], "하나", "나/x.md")?.path, "가/하나.md");
   assert.equal(pickByTitle([n("가/todo.txt")], "가/todo.txt")?.path, "가/todo.txt"); // 경로로도
   assert.equal(pickByTitle(two, "없음", "나/x.md"), undefined);
+  // [[폴더/제목]] — 제목이 겹칠 때 쓰는 꼴(66차: 못 찾아서 '만들기'가 있던 문서를 덮었다)
+  assert.equal(pickByTitle(two, "나/메모", "가/x.md")?.path, "나/메모.md");
+  assert.equal(pickByTitle(two, "가/메모.md", null)?.path, "가/메모.md");
+  assert.equal(pickByTitle(two, "다/메모", null), undefined);
   const src = readFileSync(new URL("../src/pages/Notes.tsx", import.meta.url), "utf8");
   assert.match(src, /pickByTitle\(notes, title, from\)/, "문서 화면이 이 규칙으로 찾지 않는다");
+});
+
+test("문서 화면의 '만들기'는 모두 만들기만 한다 — 있으면 덮지 않는다(66차)", () => {
+  // 새 노트·링크로 만들기·'새 문서 만들어 링크' 셋. 화면의 '있나?' 확인은 낡은 목록을 보므로 서버가 막는다.
+  const src = readFileSync(new URL("../src/pages/Notes.tsx", import.meta.url), "utf8");
+  assert.equal(src.match(/api\.noteCreate\(/g)?.length, 3, "만들기가 noteCreate 를 거치지 않는 곳이 있다");
+  assert.doesNotMatch(src, /save\(`\$\{title\}\.md`/, "링크로 만들기가 덮어쓰는 저장을 쓴다");
+  assert.doesNotMatch(src, /api\.noteSave\(path, `# /, "'새 문서 만들어 링크'가 덮어쓰는 저장을 쓴다");
 });
 
 test("파일명·부모 폴더", () => {
