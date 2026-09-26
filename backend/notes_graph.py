@@ -466,16 +466,20 @@ def warm_up(roots: list[Path]) -> None:
             logger.exception("문서 그래프를 미리 만들지 못했습니다: %s", root)
 
 
+def _links_with_nodes(graph: dict) -> list[tuple[dict, dict]]:
+    """링크 그래프의 간선마다 (출발 노드, 도착 노드). 역링크 둘(backlinks_for·backlinks_of)이 같은 그래프를
+    같은 방식으로 읽게 한 곳에 — 노드 id 는 제목이 겹치면 경로라(65차) id 를 제목으로 읽으면 틀린다.
+    그래프는 부르는 쪽이 한 번 만들어 넘긴다(build_graph 는 캐시여도 지문을 내려고 매번 트리를 훑는다)."""
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    return [(by_id[e["source"]], by_id[e["target"]]) for e in graph["links"]
+            if e["source"] in by_id and e["target"] in by_id]
+
+
 def backlinks_for(notes_dir: Path, stem: str) -> list[str]:
     """제목(stem)이 이것인 노트 **어느 것이든** 가리키는 다른 노트들의 제목 — 제목만 아는 쪽(AI 스킬).
     문서 하나를 아는 쪽은 backlinks_of 를 쓴다(같은 제목의 다른 문서로 간 링크는 빼야 한다)."""
-    graph = build_graph(notes_dir)
-    title = {n["id"]: n["title"] for n in graph["nodes"]}
-    return [
-        title.get(link["source"], link["source"])
-        for link in graph["links"]
-        if title.get(link["target"], link["target"]).lower() == stem.lower()
-    ]
+    want = stem.lower()
+    return [src["title"] for src, dst in _links_with_nodes(build_graph(notes_dir)) if dst["title"].lower() == want]
 
 
 def backlinks_of(notes_dir: Path, rel: str) -> list[tuple[str, str]] | None:
@@ -486,12 +490,6 @@ def backlinks_of(notes_dir: Path, rel: str) -> list[tuple[str, str]] | None:
     같은 제목의 다른 문서를 열 수 있다.
     """
     graph = build_graph(notes_dir)
-    by_id = {n["id"]: n for n in graph["nodes"]}
-    me = next((n["id"] for n in graph["nodes"] if n["path"] == rel), None)
-    if me is None:
+    if not any(n["path"] == rel for n in graph["nodes"]):
         return None
-    return [
-        (by_id[link["source"]]["title"], by_id[link["source"]]["path"])
-        for link in graph["links"]
-        if link["target"] == me and link["source"] in by_id
-    ]
+    return [(src["title"], src["path"]) for src, dst in _links_with_nodes(graph) if dst["path"] == rel]
