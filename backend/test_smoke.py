@@ -82,8 +82,6 @@ def test_changing_the_password_ends_other_sessions():
     """
     import pathlib
 
-    from backend import accounts
-
     other = TestClient(app)  # 다른 기기
     assert other.post("/api/auth/login", json={"username": "tester", "password": "pw123"}).status_code == 200
     _login()
@@ -103,18 +101,75 @@ def test_changing_the_password_ends_other_sessions():
         r = client.post("/api/auth/password", json={"current": "새비밀번호1234", "new": "새비밀번호1234"})
         assert r.status_code == 400, "지금과 같은 비밀번호로 바꿨다"
     finally:
-        # 시험 계정의 비밀번호(pw123)는 새 규칙(8자)보다 짧아 API 로는 되돌릴 수 없다 — 저장소에서 되돌린다
-        p = accounts._path(get_settings())
-        with accounts.lock_for(p):
-            rows = accounts._load(get_settings())
-            for row in rows:
-                if row.get("username") == "tester":
-                    row["password_hash"] = accounts.hash_password("pw123")
-            accounts._save(rows, get_settings())
+        _restore_tester_password()
         _login()
     # 웹 터미널(따로 도는 서버)도 같은 세대 규칙으로 세션을 본다 — 호스트 셸이 옛 쿠키로 열리지 않게
     term = (pathlib.Path(__file__).resolve().parent.parent / "terminal" / "server.py").read_text(encoding="utf-8")
     assert 'int(r.get("session_gen") or 0)' in term and "gen == current" in term
+
+
+def _restore_tester_password() -> None:
+    """시험 계정의 비밀번호(pw123)는 새 규칙(8자)보다 짧아 API 로는 되돌릴 수 없다 — 저장소에서 되돌린다.
+    잠금 안에서는 read_json 으로만 읽는다(_load 는 같은 잠금을 다시 잡을 수 있다 — 아래 시험)."""
+    p = accounts._path(get_settings())
+    with accounts.lock_for(p):
+        rows = json_store.read_json(p, [])
+        for row in rows:
+            if row.get("username") == "tester":
+                row["password_hash"] = accounts.hash_password("pw123")
+        json_store.write_atomic(p, rows)
+
+
+def test_account_writes_never_take_the_account_lock_twice(monkeypatch):
+    """계정 잠금(json_store.lock_for — 다시 들어갈 수 없는 Lock)을 쥔 채 그 잠금을 또 잡으면 그 스레드는
+    영영 멈추고, 잠금을 기다리는 **모든 로그인·가입·승인**이 함께 멈춘다(61차).
+
+    59차의 비밀번호 바꾸기가 잠금 안에서 _load 를 불렀다 — _load 는 origin 이 빠진 행을 보면
+    _backfill_origin 으로 같은 잠금을 잡는다. 평소엔 잠금 밖의 첫 _load 가 먼저 채워 둬 안 걸리지만,
+    그 사이 파일이 바뀌면(파이에서 손으로 행을 더함) 걸린다. 여기서는 채울 것이 늘 있다고 흉내 낸다.
+    """
+    import ast
+    import pathlib
+    import threading
+
+    real = accounts._apply_origin
+    monkeypatch.setattr(accounts, "_apply_origin", lambda rows, settings: real(rows, settings) or True)
+    lk = accounts.lock_for(accounts._path(get_settings()))
+    got: list = []
+
+    def run():
+        try:
+            accounts.change_password("tester", "pw123", "잠금시험-비밀번호", get_settings())
+            got.append("ok")
+        except Exception as e:  # noqa: BLE001 — 무엇이든 시험 실패로 보여 준다
+            got.append(repr(e))
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(10)
+    stuck = t.is_alive()
+    if stuck:
+        lk.release()  # Lock 은 다른 스레드도 풀 수 있다 — 뒤 시험들까지 멈추지 않게
+        t.join(10)
+    monkeypatch.setattr(accounts, "_apply_origin", real)
+    _restore_tester_password()
+    _login()
+    assert not stuck, "비밀번호 바꾸기가 계정 잠금을 두 번 잡아 멈췄다"
+    assert got == ["ok"], got
+
+    # 구조로도 막는다: accounts.py 의 `with lock_for(...)` 안에서는 잠금을 잡는 읽기를 부르지 않는다
+    takes_lock = {"_load", "find", "find_for_login", "authenticate", "list_all", "ensure_seed", "_backfill_origin"}
+    tree = ast.parse(pathlib.Path(accounts.__file__).read_text(encoding="utf-8"))
+    bad = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.With) and any(
+            isinstance(i.context_expr, ast.Call) and getattr(i.context_expr.func, "id", "") == "lock_for"
+            for i in node.items
+        ):
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Call) and getattr(inner.func, "id", "") in takes_lock:
+                    bad.append(f"{inner.func.id} (줄 {inner.lineno})")
+    assert bad == [], f"계정 잠금 안에서 잠금을 잡는 함수를 부른다: {bad}"
 
 
 def test_unauthenticated_blocked():

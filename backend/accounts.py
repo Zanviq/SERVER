@@ -395,8 +395,15 @@ def change_password(username: str, current: str, new: str, settings: Settings) -
     fresh = hash_password(new)
     p = _path(settings)
     with lock_for(p):
-        rows = _load(settings)
-        row = next((r for r in rows if r.get("username") == username), None)
+        # 잠금 안에서는 read_json 으로만 읽는다 — _load 는 origin 을 채울 행이 보이면 같은 잠금을 다시
+        # 잡고(다시 들어갈 수 없는 Lock) 이 스레드와 로그인 전부가 멈춘다(61차, 시험이 지킨다).
+        rows = read_json(p, None)
+        if not isinstance(rows, list):
+            raise HTTPException(
+                status_code=503,
+                detail="계정 파일을 읽을 수 없습니다. 손상됐을 수 있어 아무것도 덮어쓰지 않았습니다.",
+            )
+        row = next((r for r in rows if isinstance(r, dict) and r.get("username") == username), None)
         if row is None:
             raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
         if row.get("password_hash", "") != seen:
