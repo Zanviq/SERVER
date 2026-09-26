@@ -48,29 +48,35 @@ export interface Edit {
  * 커서 자리에서 줄을 바꿀 때의 결과. 목록·인용 줄이 아니면 null(보통 줄바꿈).
  */
 export function continueList(text: string, caret: number): Edit | null {
-  const lineStart = text.lastIndexOf("\n", caret - 1) + 1;
-  const nl = text.indexOf("\n", caret);
-  const lineEnd = nl < 0 ? text.length : nl;
-  const line = text.slice(lineStart, lineEnd);
+  const { start: lineStart, line } = lineAround(text, caret);
   const before = text.slice(lineStart, caret);
   if (insideFence(text, lineStart)) return null;   // 코드 안 — 보통 줄바꿈
 
   const end = endsBlock(text, caret);
   if (end) return end;
   const m = LIST.exec(line);
-  if (m && before.length >= m[0].length) {
-    const marker = m[3] !== undefined ? `${Number(m[3]) + 1}${m[4]}` : m[2];
-    const task = m[6] ? "[ ] " : "";
-    const insert = `\n${m[1]}${marker}${m[5]}${task}`;
-    return { text: text.slice(0, caret) + insert + text.slice(caret), caret: caret + insert.length };
-  }
-
+  if (m && before.length >= m[0].length) return insertAt(text, caret, `\n${m[1]}${nextMarker(m)}`);
   const q = QUOTE.exec(line);
-  if (q && before.length >= q[0].length) {
-    const insert = `\n${q[1]}`;
-    return { text: text.slice(0, caret) + insert + text.slice(caret), caret: caret + insert.length };
-  }
+  if (q && before.length >= q[0].length) return insertAt(text, caret, `\n${q[1]}`);
   return null;
+}
+
+/** 커서가 있는 줄 — 시작·끝(줄바꿈 앞)·글. */
+function lineAround(text: string, caret: number): { start: number; end: number; line: string } {
+  const start = text.lastIndexOf("\n", caret - 1) + 1;
+  const nl = text.indexOf("\n", caret);
+  const end = nl < 0 ? text.length : nl;
+  return { start, end, line: text.slice(start, end) };
+}
+
+function insertAt(text: string, caret: number, insert: string): Edit {
+  return { text: text.slice(0, caret) + insert + text.slice(caret), caret: caret + insert.length };
+}
+
+/** 목록 줄(LIST 맞춤)의 **다음** 항목 표시 — 번호는 하나 올리고 체크박스는 빈 칸. 들여쓰기는 빼고. */
+function nextMarker(m: RegExpExecArray): string {
+  const marker = m[3] !== undefined ? `${Number(m[3]) + 1}${m[4]}` : m[2];
+  return `${marker}${m[5]}${m[6] ? "[ ] " : ""}`;
 }
 
 /**
@@ -83,10 +89,7 @@ export function continueList(text: string, caret: number): Edit | null {
  * 하나 둔다. 들여쓴 빈 항목은 끝내지 않고 한 단계 바깥 목록의 새 항목으로 옮긴다(편집기 CM6 와 같은 규칙).
  */
 export function endsBlock(text: string, caret: number): Edit | null {
-  const lineStart = text.lastIndexOf("\n", caret - 1) + 1;
-  const nl = text.indexOf("\n", caret);
-  const lineEnd = nl < 0 ? text.length : nl;
-  const line = text.slice(lineStart, lineEnd);
+  const { start: lineStart, end: lineEnd, line } = lineAround(text, caret);
   const m = LIST.exec(line);
   const q = QUOTE.exec(line);
   const emptyItem = m && !line.slice(m[0].length).trim() ? m : null;
@@ -114,10 +117,7 @@ function parentMarker(text: string, lineStart: number, indent: number): string |
     const start = text.lastIndexOf("\n", end - 1) + 1;
     const l = text.slice(start, end);
     const pm = LIST.exec(l);
-    if (pm && pm[1].length < indent) {
-      const marker = pm[3] !== undefined ? `${Number(pm[3]) + 1}${pm[4]}` : pm[2];
-      return `${pm[1]}${marker}${pm[5]}${pm[6] ? "[ ] " : ""}`;
-    }
+    if (pm && pm[1].length < indent) return `${pm[1]}${nextMarker(pm)}`;
     // 들여쓰기가 더 얕은 보통 글줄을 만나면 바깥 목록이 아니다
     if (!pm && /\S/.test(l) && (/^\s*/.exec(l)?.[0].length ?? 0) < indent) return null;
     end = start - 1;
