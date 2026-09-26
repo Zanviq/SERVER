@@ -10,6 +10,7 @@
  */
 
 import { plainRefs } from "./links";
+import { plainLine } from "./plainLine";
 
 export interface TreeMessage {
   id: string;
@@ -164,7 +165,8 @@ export function buildTurns(msgs: TreeMessage[], head: string): Turn[] {
       // 갈라지는 자리의 질문은 "1번 더 자세히" 처럼 앞말에 기대는 짧은 말이 많다 —
       // 이름이 있으면 그걸 쓴다. 그것이 지도에서 알고 싶은 바로 그 정보다.
       // `[note/서버/기록.md]` 는 지도에서 `기록.md` 로 — 좁은 노드에 경로가 다 먹는다
-      label: fitLabel(userMsg.branchName?.trim() || plainRefs(userMsg.text)),
+      // 원문의 마크다운 기호(`## `·`**`·`- [ ]`)가 좁은 이름 칸을 먼저 채웠다 — 뜻 있는 글만(plainLine, 디자인 25차)
+      label: fitLabel(userMsg.branchName?.trim() || plainLine(plainRefs(userMsg.text))),
       named: !!userMsg.branchName?.trim(),
       // '기다리는 중'은 답을 받아 적는 중일 때뿐이다. 예전에는 답이 **없는** 차례도
       // 기다리는 중으로 그려서, 실패한 질문이 새로 열어도 영원히 돌았다(9차 실측).

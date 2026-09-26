@@ -5984,6 +5984,27 @@ def test_new_names_refuse_characters_windows_cannot_use():
     assert sorted(p.name for p in uroot.iterdir()) == ["회의록 - 9월 26일.md"]
 
 
+def test_context_preview_is_plain_text():
+    """컨텍스트 세션 미리보기는 마크다운 기호를 뗀 한 줄이다(디자인 25차) — 화면(lib/plainLine)과 **같은 표본**으로 본다.
+
+    원문을 그대로 이으면 `## 시험51 제목 - **굵게** 와 \\`코드\\` - [ ] 할 일 > 인용 | 가 | 나` 처럼 기호가 글보다 먼저
+    보였다. 표본은 frontend/test/plainLineCases.json 하나 — 한쪽 규칙만 고치면 이 시험이나 화면 시험이 깨진다.
+    """
+    import json
+    import pathlib
+
+    from backend import context_store
+
+    cases = json.loads((pathlib.Path(__file__).parent.parent / "frontend" / "test" / "plainLineCases.json")
+                       .read_text(encoding="utf-8"))
+    assert len(cases) >= 8
+    for md, want in cases:
+        assert context_store._plain_line(md) == want, (md, context_store._plain_line(md), want)
+    # 미리보기는 사용자가 먼저 한 말 — 기호만 있는 말이면 다음 것으로
+    sess = [{"role": "user", "text": "## \n- "}, {"role": "user", "text": "**중요** 질문"}]
+    assert context_store._preview(sess) == "중요 질문"
+
+
 def test_unsafe_filename_characters_live_in_one_place():
     """파일 이름에 못 쓰는 글자 목록은 file_kinds.UNSAFE_CHARS 하나다(78차 — 전에는 네 모듈에 복사본이 있었다).
     복사본이 다시 생기면 한쪽만 고쳐져, 올리기는 `_` 로 바꾸는 글자를 새 이름 검사는 받아 주는 식으로 어긋난다."""
