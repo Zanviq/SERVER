@@ -85,3 +85,10 @@ test("이동 창은 무엇을 어디서 옮기는지 보이고, 처음엔 지금
   assert.match(dlg, /\{fileName\(moveFor\.path\)\}/, "무엇을 옮기는지 안 보인다");
   assert.match(dlg, /disabled=\{!moveFor \|\| moveTarget === parentDir\(moveFor\.path\)\}/);
 });
+
+test("이름 바꾸기 창은 확장자 앞까지 골라 둔 채 열린다(디자인 35차)", () => {
+  // 칸 끝에 커서만 두던 때는 휴대폰에서 이름을 한 글자씩 지우다 `.md` 까지 지우기 쉬웠다
+  assert.match(src, /<input ref=\{renameRef\} autoFocus className="input" value=\{renameName\}/);
+  assert.match(src, /el\.setSelectionRange\(0, renameFor\.folder \? el\.value\.length : splitExt\(el\.value\)\[0\]\.length\);/);
+  assert.match(src, /\}, \[renameFor\]\);/, "창을 열 때 한 번만 골라야 한다(누를 때마다 고르면 고치던 자리가 풀린다)");
+});

@@ -14,7 +14,7 @@ import { LiveEditor } from "../components/notes/LazyLiveEditor";
 import { NOTE_PATH_MIME } from "../components/notes/dragTypes";
 import { Modal } from "../components/ui/Modal";
 import { api, ApiError, isConflict, isGone, movedTo, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
-import { looksLikeExtension } from "../lib/names";
+import { looksLikeExtension, splitExt } from "../lib/names";
 import { ancestorsOf, fileName, isMarkdownPath, parentDir, pickByTitle, stripMarkdownExt } from "../lib/notePath";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { Draft, draftAgeText, dropDraft, keepDraft, moveDraft, moveDraftsUnder, readDraft } from "../lib/draftBackup";
@@ -117,6 +117,20 @@ export function Notes() {
   // 이름 바꿀 것 — 문서이거나 폴더(36차: 폴더는 화면에서 이름을 바꿀 길이 없었다)
   const [renameFor, setRenameFor] = useState<TreeItem | null>(null);
   const [renameName, setRenameName] = useState("");
+  const renameRef = useRef<HTMLInputElement>(null);
+  // 이름 바꾸기 창을 열면 **확장자 앞까지** 골라 둔다(폴더는 전부) — 파일 탐색기들과 같다. 칸 끝에 커서만 두던 때는
+  // 휴대폰에서 이름을 한 글자씩 지우다 `.md` 까지 지우기 쉬웠다(디자인 35차). 확장자를 안 적으면 원래 것이 붙는다
+  // (file_kinds.renamed). 창을 열 때 한 번만 — 다시 누를 때마다 고르면 고치던 자리가 풀린다.
+  useEffect(() => {
+    if (!renameFor) return;
+    const t = window.setTimeout(() => {
+      const el = renameRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(0, renameFor.folder ? el.value.length : splitExt(el.value)[0].length);
+    }, 30);
+    return () => window.clearTimeout(t);
+  }, [renameFor]);
   const [moveFor, setMoveFor] = useState<TreeItem | null>(null);
   const [moveTarget, setMoveTarget] = useState("");
   const [delNotePath, setDelNotePath] = useState<string | null>(null);
@@ -1271,7 +1285,7 @@ export function Notes() {
       {/* 이름 변경 */}
       <Modal open={!!renameFor} onClose={() => setRenameFor(null)} title={renameFor?.folder ? "폴더 이름 변경" : "이름 변경"} width="max-w-sm">
         <div className="space-y-3">
-          <input autoFocus className="input" value={renameName} placeholder="새 이름"
+          <input ref={renameRef} autoFocus className="input" value={renameName} placeholder="새 이름"
             onChange={(e) => setRenameName(e.target.value)}
             onKeyDown={(e) => { if (isSubmitEnter(e)) doRenameNote(); if (e.key === "Escape") setRenameFor(null); }} />
           <div className="flex justify-end gap-2">
