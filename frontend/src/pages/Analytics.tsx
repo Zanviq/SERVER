@@ -76,6 +76,41 @@ function Stat({ label: k, value, sub }: { label: string; value: string; sub?: st
   );
 }
 
+type DayUse = { seconds: number; tokens: number };
+
+/**
+ * 날짜별 세로 막대 — 막대를 누르면(또는 자판으로 고르면) 그날의 값이 아래 줄에 나온다(처음엔 마지막 날).
+ * 값이 마우스를 올려야 뜨는 풍선(title)에만 있던 때는 휴대폰에서 **어느 날 얼마를 썼는지 읽을 길이 없었다**
+ * — 막대 높이만 보였다(디자인 14차).
+ */
+function DayBars({ days, maxDay }: { days: [string, DayUse][]; maxDay: number }) {
+  const [picked, setPicked] = useState<string | null>(null);
+  const cur = days.find(([d]) => d === picked) ?? days[days.length - 1];
+  return (
+    <>
+      <div className="flex items-end gap-1 overflow-x-auto pb-1">
+        {days.map(([d, v]) => (
+          <button key={d} type="button" onClick={() => setPicked(d)} aria-pressed={cur?.[0] === d}
+            aria-label={`${d} · ${hhmm(v.seconds)} · 토큰 ${num(v.tokens)}`}
+            className="group flex w-8 shrink-0 flex-col items-center gap-1 rounded-sm">
+            <span className="flex h-24 w-full items-end">
+              <span className={`w-full rounded-t ${cur?.[0] === d ? "bg-accent" : "bg-accent/55 group-hover:bg-accent/80"}`}
+                style={{ height: `${maxDay ? Math.max(3, Math.round((v.seconds / maxDay) * 96)) : 3}px` }} />
+            </span>
+            <span className={`text-[10px] tabular-nums ${cur?.[0] === d ? "font-semibold text-fg" : "text-fg-subtle"}`}>{d.slice(8)}</span>
+          </button>
+        ))}
+      </div>
+      {cur && (
+        <p className="mt-1 text-[12px] tabular-nums text-fg-muted" aria-live="polite">
+          <span className="font-medium text-fg">{Number(cur[0].slice(5, 7))}월 {Number(cur[0].slice(8))}일</span>
+          {" · "}{hhmm(cur[1].seconds)} · 토큰 {num(cur[1].tokens)}
+        </p>
+      )}
+    </>
+  );
+}
+
 /** 가로 막대 하나. 값은 전부 수치라 폭으로 견주면 바로 읽힌다. */
 function Bar({ name, value, max, right }: { name: string; value: number; max: number; right: string }) {
   const pct = max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 0;
@@ -284,18 +319,7 @@ export function Analytics() {
             {days.length === 0 ? (
               <p className="py-6 text-center text-[12.5px] text-fg-muted">아직 기록이 없습니다.</p>
             ) : (
-              <div className="flex items-end gap-1 overflow-x-auto pb-1">
-                {days.map(([d, v]) => (
-                  <div key={d} className="flex w-8 shrink-0 flex-col items-center gap-1"
-                    title={`${d} · ${hhmm(v.seconds)} · 토큰 ${num(v.tokens)}`}>
-                    <span className="flex h-24 w-full items-end">
-                      <span className="w-full rounded-t bg-accent"
-                        style={{ height: `${maxDay ? Math.max(3, Math.round((v.seconds / maxDay) * 96)) : 3}px` }} />
-                    </span>
-                    <span className="text-[10px] tabular-nums text-fg-subtle">{d.slice(8)}</span>
-                  </div>
-                ))}
-              </div>
+              <DayBars days={days} maxDay={maxDay} />
             )}
           </section>
         </div>
