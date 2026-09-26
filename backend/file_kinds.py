@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 MARKDOWN = {".md", ".markdown"}
 
@@ -74,6 +75,17 @@ def doc_title(name: str) -> str:
     return split_ext(name.rsplit("/", 1)[-1])[0]
 
 
+def nfc(name: str) -> str:
+    """이름을 NFC(한글 음절이 한 글자로 붙은 꼴)로 — **이름이 들어오는 곳**(올리기·이름 바꾸기·새 폴더)에서.
+
+    맥에서 올린 파일 이름은 NFD(자모가 풀린 꼴)로 오기도 한다. 화면엔 똑같이 보여도 바이트가 달라,
+    자판으로 친 이름(NFC)으로는 검색·링크·경로 열기가 못 찾았고(404), 같은 이름으로 새로 만들면 눈에
+    똑같은 문서가 둘 생겼다(64차 실측). 저장소 전체가 NFC 하나로 적히게 들어올 때 바꾼다 — 비교하는
+    곳마다(검색만 스무 곳) 맞추면 한 곳을 놓치는 순간 다시 샌다.
+    """
+    return unicodedata.normalize("NFC", name)
+
+
 class BadName(ValueError):
     """사용자가 준 새 이름을 쓸 수 없다(빈 이름·경로 조각)."""
 
@@ -92,7 +104,7 @@ def renamed(old_name: str, new_name: str, *, folder: bool = False) -> str:
       다만 이미지·PDF·녹음처럼 글이 아닌 파일은 떼지 않는다 — 확장자가 없으면 글로 보고
       편집기로 열어, 한 글자만 쳐도 원본을 글로 덮어쓴다.
     """
-    new = (new_name or "").strip()
+    new = nfc((new_name or "").strip())  # 맥에서 복사해 붙인 이름도 자판으로 친 것과 같게(nfc)
     if not new or "/" in new or "\\" in new or ".." in new:
         raise BadName("잘못된 이름입니다.")
     # 폴더에는 확장자가 없다 — 적은 이름 그대로. 확장자 규칙을 걸던 때는 `project.v1` 폴더를

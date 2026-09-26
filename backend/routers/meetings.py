@@ -13,6 +13,7 @@ from .. import meeting_store, meeting_transcribe, orphans
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..fast_json import json_response
+from ..file_kinds import nfc
 from ..user_file import user_file
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
@@ -77,7 +78,7 @@ async def upload(
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    name = file.filename or "recording"
+    name = nfc(file.filename or "recording")  # 맥의 NFD 이름을 자판으로 친 이름과 같게(file_kinds.nfc)
     ext = meeting_store.audio_ext(name, file.content_type or "")
     if not ext:
         raise HTTPException(status_code=415, detail="지원하지 않는 녹음 형식입니다(mp3·m4a·wav·webm·ogg·flac).")

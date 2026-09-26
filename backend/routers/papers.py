@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from .. import orphans, paper_extract, paper_store
 from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
+from ..file_kinds import nfc
 from ..user_file import user_file
 
 router = APIRouter(prefix="/api/papers", tags=["papers"])
@@ -81,7 +82,7 @@ async def upload(
     user: SessionUser = Depends(require_session),
     settings: Settings = Depends(get_settings),
 ):
-    name = file.filename or ""
+    name = nfc(file.filename or "")  # 맥의 NFD 이름을 자판으로 친 이름과 같게(file_kinds.nfc)
     if not name.lower().endswith(".pdf"):
         raise HTTPException(status_code=415, detail="PDF 파일만 올릴 수 있습니다.")
     pid = paper_store.new_id()

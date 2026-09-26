@@ -1058,6 +1058,53 @@ def test_deleted_account_data_is_not_inherited():
     client.delete("/api/admin/users/leaver")
 
 
+def test_names_from_a_mac_are_stored_the_way_a_keyboard_types_them():
+    """맥에서 온 이름(NFD, 자모가 풀린 한글)은 자판으로 친 이름(NFC)으로 적힌다(64차).
+
+    예전엔 올린 이름을 바이트 그대로 적었다. 격리 서버 실측: NFD 이름의 문서를 NFC 로 검색하면 0건,
+    NFC 경로로 열면 404, 같은 이름으로 새로 만들면 **눈에 똑같은 문서가 둘**.
+    """
+    import unicodedata
+
+    _login()
+    word = "맥회의록64"
+    nfd = unicodedata.normalize("NFD", word)
+    assert nfd != word
+    made: list[str] = []
+    try:
+        r = client.post("/api/notes/upload", files={"file": (f"{nfd}.md", "본문".encode(), "text/markdown")})
+        assert r.status_code == 200, r.text
+        made.append(r.json()["path"])
+        assert r.json()["path"] == f"{word}.md", "NFD 이름을 그대로 적었다"
+        assert client.get("/api/notes/get", params={"path": f"{word}.md"}).status_code == 200
+        assert any(h["path"] == f"{word}.md" for h in client.get("/api/notes/search", params={"q": word}).json())
+
+        # 이름 바꾸기에 맥에서 복사한 이름을 붙여도
+        r = client.post("/api/notes/rename", json={"path": f"{word}.md", "new_name": unicodedata.normalize("NFD", "맥새이름64")})
+        assert r.status_code == 200, r.text
+        made.append(r.json()["path"])
+        assert r.json()["path"] == "맥새이름64.md", r.json()
+
+        # 새 폴더 — 앞의 폴더는 있는 그대로, 새 끝 이름만
+        r = client.post("/api/notes/folder", json={"path": unicodedata.normalize("NFD", "맥폴더64")})
+        assert r.status_code == 200 and r.json()["path"] == "맥폴더64", r.text
+
+        # 논문 — 처음 제목이 파일 이름에서 온다
+        pdf = b"%PDF-1.4\n%fake\n"
+        r = client.post("/api/papers/upload", files={"file": (unicodedata.normalize("NFD", "맥논문64.pdf"), pdf, "application/pdf")})
+        assert r.status_code == 200, r.text
+        pid = r.json()["id"]
+        from backend import paper_extract
+        _settle(paper_extract, _tester(), pid)
+        p = client.get(f"/api/papers/{pid}").json()
+        assert unicodedata.is_normalized("NFC", str(p.get("filename") or "")), p.get("filename")
+        client.delete(f"/api/papers/{pid}")
+    finally:
+        for path in made:
+            client.delete("/api/notes/delete", params={"path": path})
+        client.delete("/api/notes/folder", params={"path": "맥폴더64"})
+
+
 def test_an_open_note_renamed_or_deleted_elsewhere_is_not_brought_back_by_its_autosave():
     """다른 기기·탭에서 이름을 바꾸거나 지운 문서를, 열어 둔 쪽의 자동저장이 되살리면 안 된다(63차).
 

@@ -26,7 +26,7 @@ from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..json_store import lock_for, write_text_atomic
 from ..file_kinds import (
-    BadName, doc_title, inline_media_type, is_editable, kind_of, looks_like_extension, renamed,
+    BadName, doc_title, inline_media_type, is_editable, kind_of, looks_like_extension, nfc, renamed,
     split_ext,
 )
 from ..notes_graph import backlinks_for, build_graph, parse_wikilinks
@@ -250,7 +250,7 @@ def _free_name(dest: Path) -> Path:
 
 
 def _sanitize_filename(name: str) -> str:
-    base = Path(name).name
+    base = nfc(Path(name).name)  # 맥의 NFD 이름을 자판으로 친 이름과 같게(file_kinds.nfc)
     cleaned = _ILLEGAL_FILENAME.sub("_", base).strip().strip(".")
     return cleaned or "untitled"
 
@@ -316,7 +316,9 @@ def create_folder(
 ):
     root = user_data_root(user, settings)
     mounts.reject_write(user, settings, req.path)
-    target = safe_join(root, req.path)
+    # 새로 생기는 것은 끝 이름뿐이다 — 앞의 폴더들은 이미 있는 그대로(바이트까지) 찾아야 한다
+    parent, _, leaf = req.path.rstrip("/").rpartition("/")
+    target = safe_join(root, f"{parent}/{nfc(leaf)}" if parent else nfc(leaf))
     if target == root:
         raise HTTPException(status_code=400, detail="폴더 이름이 비어 있습니다.")
     if target.exists():
