@@ -31,6 +31,7 @@ from . import json_store, renamed_items, storage
 from .auth import SessionUser
 from .config import Settings
 from .edit_conflict import refuse_if_changed
+from .file_kinds import UNSAFE_CHARS
 
 logger = logging.getLogger("server.papers")
 
@@ -47,12 +48,11 @@ STATUS_PENDING = "pending"
 STATUS_READY = "ready"
 STATUS_FAILED = "failed"
 
-_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 
 
 def sanitize_filename(name: str) -> str:
     base = Path(str(name or "")).name
-    cleaned = _ILLEGAL.sub("_", base).strip().strip(".")
+    cleaned = UNSAFE_CHARS.sub("_", base).strip().strip(".")
     return (cleaned or "paper.pdf")[:200]
 
 

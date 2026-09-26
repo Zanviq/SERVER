@@ -91,9 +91,10 @@ class BadName(ValueError):
     """사용자가 준 새 이름을 쓸 수 없다(빈 이름·경로 조각)."""
 
 
-#: 새 이름에 쓸 수 없는 글자 — 윈도우가 파일 이름에 못 쓰는 것들. 올리기는 전부터 이것을 `_` 로 바꿨다
-#: (notes._sanitize_filename). 제어 문자는 safe_join 이 먼저 막는다.
-_WINDOWS_BAD = re.compile(r'[<>:"|?*]')
+#: 파일 이름에 쓸 수 없는 글자 — 경로 구분자·제어 문자와 윈도우가 못 쓰는 것들. **여기 한 곳에만** 둔다:
+#: 올리기(notes·논문·회의)와 마운트 폴더 이름은 이것을 `_` 로 바꾸고, 새 이름 검사(check_new_name)는 거절한다.
+#: 예전에는 같은 정규식이 네 모듈에 따로 복사돼 있었다.
+UNSAFE_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 
 
 def check_new_name(name: str) -> None:
@@ -103,8 +104,9 @@ def check_new_name(name: str) -> None:
     풀리지 않는다. 윈도우에서 서버를 돌리면 더 나쁘다 — `시험: 콜론.md` 는 400 이 나면서도 콜론 앞 `시험` 이라는 빈
     파일이 남았다(NTFS 의 대체 데이터 스트림, 실측). 끝의 점·공백도 윈도우가 떼어 버려 이름이 바뀐다.
     이미 있는 파일은 읽기·고치기를 막지 않는다 — 새로 생기는 이름만 본다.
+    (`/`·`\\`·제어 문자는 safe_join 이 먼저 거르므로 여기 닿는 것은 윈도우 글자들이다.)
     """
-    if _WINDOWS_BAD.search(name):
+    if UNSAFE_CHARS.search(name):
         raise BadName('이름에 쓸 수 없는 글자(< > : " | ? *)가 있습니다 — 다른 글자로 바꿔 주세요.')
     if name != name.rstrip(" ."):
         raise BadName("이름 끝에 점이나 공백은 쓸 수 없습니다.")

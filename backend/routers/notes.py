@@ -12,7 +12,6 @@ from __future__ import annotations
 import errno
 import logging
 import os
-import re
 from contextlib import contextmanager
 from pathlib import Path
 from typing import NoReturn
@@ -25,7 +24,7 @@ from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..json_store import lock_for, write_text_atomic
 from ..file_kinds import (
-    BadName, check_new_path, doc_title, inline_media_type, is_editable, kind_of, looks_like_extension, nfc,
+    UNSAFE_CHARS, BadName, check_new_path, doc_title, inline_media_type, is_editable, kind_of, looks_like_extension, nfc,
     renamed, split_ext,
 )
 from ..notes_graph import backlinks_for, backlinks_of, build_graph, nearest, parse_wikilinks
@@ -38,7 +37,6 @@ from ..disk_errors import disk_trouble
 logger = logging.getLogger("server.notes")
 router = APIRouter(prefix="/api/notes", tags=["notes"])
 
-_ILLEGAL_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 class NoteSummary(BaseModel):
@@ -271,7 +269,7 @@ def _check_new_path(root: Path, target: Path) -> None:
 
 def _sanitize_filename(name: str) -> str:
     base = nfc(Path(name).name)  # 맥의 NFD 이름을 자판으로 친 이름과 같게(file_kinds.nfc)
-    cleaned = _ILLEGAL_FILENAME.sub("_", base).strip().strip(".")
+    cleaned = UNSAFE_CHARS.sub("_", base).strip().strip(".")
     return cleaned or "untitled"
 
 

@@ -5984,6 +5984,25 @@ def test_new_names_refuse_characters_windows_cannot_use():
     assert sorted(p.name for p in uroot.iterdir()) == ["회의록 - 9월 26일.md"]
 
 
+def test_unsafe_filename_characters_live_in_one_place():
+    """파일 이름에 못 쓰는 글자 목록은 file_kinds.UNSAFE_CHARS 하나다(78차 — 전에는 네 모듈에 복사본이 있었다).
+    복사본이 다시 생기면 한쪽만 고쳐져, 올리기는 `_` 로 바꾸는 글자를 새 이름 검사는 받아 주는 식으로 어긋난다."""
+    import pathlib
+    import re as _re
+
+    backend = pathlib.Path(__file__).parent
+    copies = []
+    for f in backend.rglob("*.py"):
+        if f.name in ("file_kinds.py", "test_smoke.py") or "__pycache__" in f.parts:
+            continue
+        src = f.read_text(encoding="utf-8")
+        # 윈도우 금지 글자 가운데 셋 이상을 한 글자 모음([...])에 담은 정규식
+        for m in _re.finditer(r"re\.compile\(r?['\"](\[[^\]]*\])", src):
+            if sum(c in m.group(1) for c in '<>:"|?*') >= 3:
+                copies.append(f"{f.relative_to(backend)}: {m.group(1)}")
+    assert copies == [], copies
+
+
 def test_saving_over_a_folder_is_a_clean_conflict():
     """폴더와 같은 이름으로 저장하면 500이 아니라 409."""
     _login()

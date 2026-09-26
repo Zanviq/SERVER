@@ -34,7 +34,6 @@
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +42,7 @@ from fastapi import HTTPException
 from . import meeting_store, paper_store
 from .auth import SessionUser
 from .config import Settings
+from .file_kinds import UNSAFE_CHARS
 
 #: 트리에 보일 이름. 사용자가 만든 폴더와 겹치면 마운트를 접는다(아래 참조).
 PAPERS_DIR = "논문"
@@ -50,12 +50,10 @@ MEETINGS_DIR = "회의"
 
 MOUNT_DIRS = (PAPERS_DIR, MEETINGS_DIR)
 
-_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
-
 
 def _folder_name(title: str, fallback: str) -> str:
     """항목 하나를 담을 폴더 이름. 제목을 쓰되 경로에 못 쓰는 글자는 바꾼다."""
-    name = _ILLEGAL.sub("_", str(title or "").strip()).strip(". ")
+    name = UNSAFE_CHARS.sub("_", str(title or "").strip()).strip(". ")
     return (name or fallback)[:120]
 
 
