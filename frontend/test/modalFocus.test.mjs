@@ -21,3 +21,13 @@ test("Modal 은 창 자체에 포커스를 둘 수 있고, 대화 지도는 그�
   const popup = chat.slice(chat.indexOf("const treePopup"), chat.indexOf("</Modal>", chat.indexOf("const treePopup")));
   assert.match(popup, /initialFocus="panel"/, "지도를 열자마자 휴대폰 자판이 뜬다");
 });
+
+test("손가락 화면에서 치려고 여는 게 아닌 창은 입력칸에 포커스를 두지 않는다(디자인 22차)", () => {
+  // 녹음 창: 제목은 미리 채워져 있고 여는 까닭은 녹음 — 자판이 녹음 단추를 가렸다
+  const rec = read("../src/components/meetings/Recorder.tsx");
+  assert.match(rec, /title="회의 녹음" width="max-w-md" initialFocus=\{touch \? "panel" : "first"\}/);
+  // 있던 일정: 보거나 지우려고 여는 때가 많다. 새 일정은 제목부터 친다
+  const ev = read("../src/components/calendar/EventDialog.tsx");
+  assert.match(ev, /initialFocus=\{isEdit && touch \? "panel" : "first"\}/);
+  assert.match(ev, /<input autoFocus=\{!\(isEdit && touch\)\}/, "제목칸의 autoFocus 가 창의 선택을 이긴다");
+});

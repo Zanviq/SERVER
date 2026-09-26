@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { Modal } from "../ui/Modal";
+import { useTouch } from "../../lib/useMediaQuery";
 import { CalEvent } from "../../lib/api";
 import { LinkTextarea } from "../links/LinkTextarea";
 import { followEnd } from "../../lib/eventTimes";
@@ -81,6 +82,7 @@ export function EventDialog({
   }, [initial]);
 
   const isEdit = !!initial?.id;
+  const touch = useTouch();
 
   /** 적다 만 일정을 Esc 한 번으로 잃지 않게. 손댄 것이 없으면 그냥 닫는다. */
   const guardedClose = () => {
@@ -108,11 +110,14 @@ export function EventDialog({
   };
 
   return (
-    <Modal open={open} onClose={guardedClose} title={isEdit ? "일정 수정" : "새 일정"} width="max-w-md">
+    // 있던 일정을 여는 것은 보거나 지우려는 것일 때가 많다 — 손가락 화면에서 제목칸에 포커스를 두면 자판부터 올라와
+    // 창을 가렸다(디자인 21차). 새 일정은 제목부터 치므로 그대로.
+    <Modal open={open} onClose={guardedClose} title={isEdit ? "일정 수정" : "새 일정"} width="max-w-md"
+      initialFocus={isEdit && touch ? "panel" : "first"}>
       <div className="space-y-3">
         <div>
           <label className="label mb-1 block">제목</label>
-          <input autoFocus className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="일정 제목" />
+          <input autoFocus={!(isEdit && touch)} className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="일정 제목" />
         </div>
         <div>
           <label className="label mb-1 block">설명</label>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Download, Loader2, Mic, Square, Upload } from "lucide-react";
 import { Modal } from "../ui/Modal";
+import { useTouch } from "../../lib/useMediaQuery";
 
 interface Props {
   open: boolean;
@@ -132,6 +133,7 @@ function micProblem(e: unknown): string {
  */
 export function Recorder({ open, onClose, categories, onSave }: Props) {
   const [phase, setPhase] = useState<Phase>("idle");
+  const touch = useTouch();
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("");
   const [day, setDay] = useState(today);
@@ -442,7 +444,9 @@ export function Recorder({ open, onClose, categories, onSave }: Props) {
   );
 
   return (
-    <Modal open={open} onClose={guardedClose} title="회의 녹음" width="max-w-md">
+    // 제목은 미리 채워져 있고 여는 까닭은 녹음이다 — 손가락 화면에서 제목칸에 포커스를 두면 자판이 올라와 녹음 단추를
+    // 가렸다(디자인 21차). 창 자체에 둔다.
+    <Modal open={open} onClose={guardedClose} title="회의 녹음" width="max-w-md" initialFocus={touch ? "panel" : "first"}>
       <div className="space-y-3">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <label className="block sm:col-span-2">
