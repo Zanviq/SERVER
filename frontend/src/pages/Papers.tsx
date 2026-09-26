@@ -2,6 +2,7 @@ import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { useSearchParams } from "react-router-dom";
 import { BookMarked, FileText, Info, List, MessageSquare, Trash2 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
+import { useTouch } from "../lib/useMediaQuery";
 import { Modal } from "../components/ui/Modal";
 import { ThreePane } from "../components/notes/ThreePane";
 import { ChatPanel, ChatPanelHandle, ChatAttachment, ChatSelection } from "../components/ai/ChatPanel";
@@ -30,6 +31,9 @@ const uid = () => Math.random().toString(36).slice(2, 10);
  */
 export function Papers() {
   const [papers, setPapers] = useState<Paper[] | null>(null);
+  // 좁은 화면에서 AI 패널(곁칸)을 보고 있는가 — 머리의 '대화 비우기'는 그때만 둔다(ThreePane.onMobileTab)
+  const [paneTab, setPaneTab] = useState<"center" | "side">("center");
+  const touch = useTouch();
   const [failed, setFailed] = useState(false);   // 목록을 못 받아왔는가
   const [categories, setCategories] = useState<string[]>([]);
   // "새 폴더…" — 이름을 받아 그 논문을 옮긴다(폴더는 이름일 뿐이라 논문이 있어야 남는다)
@@ -278,7 +282,8 @@ export function Papers() {
         </button>
       )}
       {selected && (
-        <button onClick={clearChat} className="btn btn-ghost h-8 px-2" title="이 논문의 대화 비우기" aria-label="대화 비우기">
+        <button onClick={clearChat} className={`btn btn-ghost h-8 px-2 ${paneTab === "side" ? "" : "hidden lg:inline-flex"}`}
+          title="이 논문의 대화 비우기" aria-label="대화 비우기">
           <Trash2 size={15} />
         </button>
       )}
@@ -287,7 +292,7 @@ export function Papers() {
 
   return (
     <Shell title="논문" actions={actions}>
-      <ThreePane storageKey="papers.panes.v1" showDetail={!!selected} fixedLabel="논문 목록"
+      <ThreePane storageKey="papers.panes.v1" showDetail={!!selected} fixedLabel="논문 목록" onMobileTab={setPaneTab}
         sideLabel="AI 패널" centerLabel="PDF" mobileFocusKey={String(aiPokes)}>
         <PaperList papers={papers ?? []} failed={failed} onReload={() => void load()}
           categories={categories} selectedId={selectedId} onSelect={select} onUpload={upload}
@@ -327,7 +332,8 @@ export function Papers() {
                 onClearContext={clearContext} onRestoreContext={restoreContext}
                 emptyTitle={paperTitle(selected)}
                 emptySubtitle="논문 본문·정보·다른 논문에서 나눈 대화까지 보고 답합니다"
-                placeholder="논문에 대해 물어보세요… (글을 드래그하거나 영역을 오려 붙일 수 있어요)"
+                // 손가락 화면에서는 끌어 놓기 안내가 칸보다 길어 "…(글을" 에서 잘렸고, 끌어 놓을 마우스도 없다(디자인 9차)
+                placeholder={touch ? "논문에 대해 물어보세요…" : "논문에 대해 물어보세요… (글을 드래그하거나 영역을 오려 붙일 수 있어요)"}
                 onToolSuccess={(m) => { if (m === "vocab") setVocabKey((k) => k + 1); if (m === "paper") void load(); }} />
             ) : (
               <div className="flex flex-1 items-center justify-center text-[12.5px] text-fg-muted">논문을 고르면 대화가 열립니다</div>

@@ -112,6 +112,11 @@ interface Props {
   sideLabel?: string;
   /** 모바일 전환 단추에 쓸 본문 칸의 이름("PDF", "본문"…) */
   centerLabel?: string;
+  /**
+   * 좁은 화면(switch 배치)에서 본문·곁칸 중 무엇을 보고 있는지 알린다. 머리의 '대화 비우기'처럼 **곁칸(AI 패널)에
+   * 딸린** 단추를 그 칸이 보일 때만 두려고 — PDF 를 보는 중에 머리에 휴지통이 있으면 논문을 지우는 것으로 읽혔다(디자인 9차).
+   */
+  onMobileTab?: (tab: "center" | "side") => void;
 }
 
 export function ThreePane({
@@ -125,10 +130,12 @@ export function ThreePane({
   sideLabel = "곁 패널",
   centerLabel = "본문",
   mobileFocusKey = "",
+  onMobileTab,
 }: Props) {
   const [left, center, right] = Children.toArray(children);
   //: 모바일에서 본문과 곁칸 중 무엇을 보고 있는가. 문서를 새로 열면 본문부터 본다.
   const [mobileTab, setMobileTab] = useState<"center" | "side">("center");
+  useEffect(() => { onMobileTab?.(mobileTab); }, [mobileTab, onMobileTab]);
   //: toggle 배치에서 고정칸(패널)을 보고 있는가. 처음에는 본문(달력)부터 본다.
   const [fixedOpen, setFixedOpen] = useState(false);
   const focusRef = useRef(mobileFocusKey);

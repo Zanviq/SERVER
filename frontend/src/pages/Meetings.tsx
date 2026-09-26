@@ -40,6 +40,8 @@ const TRANSCRIPT_TAB = "\0transcript";
 export function Meetings() {
   const autosaveMs = useSettings((st) => st.settings?.notes.autosave_ms ?? 900);
   const [meetings, setMeetings] = useState<Meeting[] | null>(null);
+  // 좁은 화면에서 AI 패널(곁칸)을 보고 있는가 — 머리의 '대화 비우기'는 그때만 둔다(ThreePane.onMobileTab)
+  const [paneTab, setPaneTab] = useState<"center" | "side">("center");
   const [loadFailed, setLoadFailed] = useState(false);   // 목록을 못 받아왔는가
   const [categories, setCategories] = useState<string[]>([]);
   const [params, setParams] = useSearchParams();
@@ -374,7 +376,8 @@ export function Meetings() {
         </button>
       )}
       {selected && (
-        <button onClick={clearChat} className="btn btn-ghost h-8 px-2" title="이 회의의 대화 비우기" aria-label="대화 비우기">
+        <button onClick={clearChat} className={`btn btn-ghost h-8 px-2 ${paneTab === "side" ? "" : "hidden lg:inline-flex"}`}
+          title="이 회의의 대화 비우기" aria-label="대화 비우기">
           <Trash2 size={15} />
         </button>
       )}
@@ -383,7 +386,7 @@ export function Meetings() {
 
   return (
     <Shell title="회의" actions={actions}>
-      <ThreePane storageKey="meetings.panes.v1" showDetail={!!selected} fixedLabel="회의 목록" sideLabel="AI 패널" centerLabel="회의">
+      <ThreePane storageKey="meetings.panes.v1" showDetail={!!selected} fixedLabel="회의 목록" onMobileTab={setPaneTab} sideLabel="AI 패널" centerLabel="회의">
         <MeetingList meetings={meetings ?? []} failed={loadFailed} onReload={() => void load()}
           categories={categories} selectedId={selectedId} onSelect={select}
           onRecord={() => setRecOpen(true)} onUpload={(fs) => upload(fs)} onDelete={remove} onRetry={retry}
