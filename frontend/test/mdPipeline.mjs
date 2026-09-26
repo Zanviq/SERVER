@@ -10,9 +10,6 @@
  */
 import { unified } from "unified";
 import remarkParse from "remark-parse";
-import remarkGfm from "remark-gfm";
-import remarkBreaks from "remark-breaks";
-import remarkMath from "remark-math";
 import remarkRehype from "remark-rehype";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
@@ -21,21 +18,15 @@ import rehypeSlug from "rehype-slug";
 import rehypeHighlight from "rehype-highlight";
 import rehypeStringify from "rehype-stringify";
 
-const { remarkHighlight, remarkCjkPlugins, remarkKoreanUrlTail } = await import("../src/lib/markdownExtras.ts");
+// 문법 단계(remark)는 화면과 **같은 목록**을 그대로 쓴다 — 베껴 적지 않는다
+const { remarkPlugins } = await import("../src/lib/mdPlugins.ts");
 const { mdSanitizeSchema } = await import("../src/lib/sanitizeSchema.ts");
 const { transformWiki } = await import("../src/lib/wikiTransform.ts");
 
 /** MarkdownView 와 같은 차례로 엮는다. */
 export function render(md, { wiki = false, resolve } = {}) {
-  const proc = unified()
-    .use(remarkParse)
-    .use(remarkGfm, { singleTilde: false });
-  for (const p of remarkCjkPlugins) proc.use(...(Array.isArray(p) ? p : [p]));
+  const proc = unified().use(remarkParse).use(remarkPlugins);
   proc
-    .use(remarkKoreanUrlTail)
-    .use(remarkBreaks)
-    .use(remarkHighlight)
-    .use(remarkMath)
     // react-markdown 은 raw HTML 을 살리려고 allowDangerousHtml 로 넘긴다
     .use(remarkRehype, { allowDangerousHtml: true })
     .use(rehypeRaw)

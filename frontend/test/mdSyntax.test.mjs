@@ -21,8 +21,11 @@ test("이 시험의 파이프라인이 화면의 것과 같다", () => {
   const view = readFileSync(new URL("./components/notes/MarkdownView.tsx", src), "utf8") +
     readFileSync(new URL("./components/notes/richPlugins.ts", src), "utf8");
   const harness = readFileSync(new URL("./mdPipeline.mjs", import.meta.url), "utf8");
-  for (const p of ["remarkGfm", "remarkCjkPlugins", "remarkKoreanUrlTail", "remarkBreaks", "remarkHighlight", "remarkMath",
-                   "rehypeRaw", "rehypeSanitize", "rehypeKatex"]) {
+  // 문법 단계(remark)는 둘이 **같은 목록**(lib/mdPlugins)을 쓴다 — 이름을 대조할 필요가 없게 한 곳으로 모았다
+  assert.match(view, /remarkPlugins=\{remarkPlugins\}/, "MarkdownView 가 lib/mdPlugins 의 목록을 안 쓴다");
+  assert.match(harness, /import\("\.\.\/src\/lib\/mdPlugins\.ts"\)/, "시험 파이프라인이 lib/mdPlugins 의 목록을 안 쓴다");
+  // 그림 단계(rehype)는 화면이 필요할 때 불러 끼우는 것이 있어 이름으로 대조한다
+  for (const p of ["rehypeRaw", "rehypeSanitize", "rehypeKatex"]) {
     assert.ok(view.includes(p), `MarkdownView 가 ${p} 를 안 쓴다 — 시험 구성을 맞춰라`);
     assert.ok(harness.includes(p), `시험 파이프라인에 ${p} 가 빠졌다`);
   }
