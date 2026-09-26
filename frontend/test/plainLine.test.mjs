@@ -22,3 +22,9 @@ test("대화 지도의 차례 이름이 이 규칙을 쓴다", () => {
   const src = readFileSync(new URL("../src/lib/chatTree.ts", import.meta.url), "utf8");
   assert.match(src, /plainLine\(plainRefs\(userMsg\.text\)\)/);
 });
+
+test("컨텍스트 화면의 대화 검색 발췌도 이 규칙으로 보인다(디자인 26차)", () => {
+  // 서버의 대화 검색 발췌는 모델도 읽어 원문 그대로 둔다 — 사람에게 보일 때 다듬는다
+  const src = readFileSync(new URL("../src/pages/Context.tsx", import.meta.url), "utf8");
+  assert.match(src, /\{plainLine\(h\.snippet\)\}/);
+});

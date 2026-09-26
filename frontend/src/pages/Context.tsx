@@ -6,6 +6,7 @@ import {
   FileSearch,
 } from "lucide-react";
 import { Shell } from "../components/layout/Shell";
+import { plainLine } from "../lib/plainLine";
 import { ThreePane } from "../components/notes/ThreePane";
 import { MarkdownView } from "../components/notes/LazyMarkdownView";
 import { AccentBubble } from "../components/ui/AccentBubble";
@@ -214,7 +215,7 @@ export function Context() {
                       <span className="flex items-center gap-1.5 text-[11.5px] text-fg-muted">
                         {h.label} · {fmtTime(h.ts)} · {h.role === "user" ? "나" : "AI"}
                       </span>
-                      <span className="mt-0.5 block text-[12.5px] text-fg2">{h.snippet}</span>
+                      <span className="mt-0.5 block text-[12.5px] text-fg2">{plainLine(h.snippet)}</span>
                     </button>
                   </li>
                 ))}

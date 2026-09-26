@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from backend.auth import SessionUser
 from backend.config import Settings
+from backend.plain_text import plain_line
 
 KINDS =("note", "paper", "meeting", "vocab", "todo", "event", "chat")
 
@@ -34,13 +35,15 @@ def _snippet(text: str, q: str, width: int = SNIPPET) -> str:
     raw = text or ""
     if not raw:
         return ""
+    # 잘라 낸 조각은 마크다운 기호를 떼고 보인다(plain_line) — 문서·대화 발췌가 `## 제목 - **굵게** \`코드\``
+    # 처럼 기호부터 보였다(디자인 26차). 조각만 다듬으므로 비용은 그대로다.
     i = raw.lower().find(q.lower())
     if i < 0:
-        head = " ".join(raw[: width * 3].split())
+        head = plain_line(raw[: width * 3])
         return head[:width] + ("…" if len(head) > width or len(raw) > width * 3 else "")
     lo = max(0, i - width)
     hi = min(len(raw), i + len(q) + width * 2)
-    cut = " ".join(raw[lo:hi].split())
+    cut = plain_line(raw[lo:hi])
     j = cut.lower().find(q.lower())
     start = max(0, (j if j >= 0 else 0) - width // 3)
     end = min(len(cut), start + width)
@@ -318,14 +321,21 @@ def _chats(user: SessionUser, settings: Settings, q: str) -> list[dict]:
     import datetime
 
     out = []
-    for h in context_store.search(user, settings, q, limit=PER_KIND * 2):
+    seen: set[str] = set()
+    for h in context_store.search(user, settings, q, limit=PER_KIND * 4):
+        # 결과 하나는 **대화 하나**(누르면 그 세션이 열린다). 같은 세션의 말 여러 개가 따로 걸리면 똑같이 생긴 줄이
+        # 여덟 개 쌓여 다른 갈래(노트)를 화면 밖으로 밀었다(디자인 26차) — 세션마다 가장 잘 맞은 말 하나만.
+        ident = f"{h.get('space')}|{h.get('session')}"
+        if ident in seen:
+            continue
+        seen.add(ident)
         ts = float(h.get("ts") or 0)
         when = datetime.date.fromtimestamp(ts).isoformat() if ts else ""
         # 대화 점수는 낱말 수 기준이라 자릿수가 다르다. 제목 일치(60~100)와
         # 나란히 세우면 대화가 늘 아래로 밀린다 — 본문 일치(20)쯤으로 맞춘다.
-        out.append(_hit("chat", f"{h.get('space')}|{h.get('session')}",
+        out.append(_hit("chat", ident,
                         str(h.get("label") or h.get("space") or "대화"),
-                        str(h.get("snippet") or ""), when, "대화",
+                        plain_line(str(h.get("snippet") or "")), when, "대화",
                         20.0 + min(15.0, float(h.get("score") or 0))))
     return out
 

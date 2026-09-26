@@ -5994,15 +5994,45 @@ def test_context_preview_is_plain_text():
     import pathlib
 
     from backend import context_store
+    from backend.plain_text import plain_line
 
     cases = json.loads((pathlib.Path(__file__).parent.parent / "frontend" / "test" / "plainLineCases.json")
                        .read_text(encoding="utf-8"))
     assert len(cases) >= 8
     for md, want in cases:
-        assert context_store._plain_line(md) == want, (md, context_store._plain_line(md), want)
+        assert plain_line(md) == want, (md, plain_line(md), want)
     # 미리보기는 사용자가 먼저 한 말 — 기호만 있는 말이면 다음 것으로
     sess = [{"role": "user", "text": "## \n- "}, {"role": "user", "text": "**중요** 질문"}]
     assert context_store._preview(sess) == "중요 질문"
+
+
+def test_search_palette_snippets_are_plain_and_one_per_conversation():
+    """전체 검색(팔레트)의 발췌는 마크다운 기호를 뗀 글이고, 대화는 **세션 하나에 한 줄**이다(디자인 26차).
+
+    실측(휴대폰): "굵게" 를 찾으면 대화 발췌가 `## 시험51 제목 - **굵게** 와 \\`코드\\` - [ ] 할…` 였고, 같은 세션의 말
+    여덟 개가 똑같은 줄 여덟 개로 쌓여 노트 결과를 화면 밖으로 밀었다(누르면 모두 같은 세션이 열린다).
+    """
+    from backend import chat_store, context_store
+    from backend.storage import user_data_root
+
+    _login()
+    tester = _tester()
+    token = "평문발췌26"
+    root = user_data_root(tester, get_settings())
+    (root / "시험26 발췌.md").write_text(f"# 제목\n\n- **{token}** 와 `코드` 그리고 [링크](a.md)\n", encoding="utf-8")
+    path = context_store.space_path(tester, get_settings(), "assistant")
+    for _ in range(3):
+        chat_store.append(path, chat_store.message("user", f"## 질문\n- **{token}** 를 `다시` 묻는다"))
+    try:
+        hits = client.get("/api/search", params={"q": token}).json()["hits"]
+        note = [h for h in hits if h["kind"] == "note" and h["title"] == "시험26 발췌"]
+        chats = [h for h in hits if h["kind"] == "chat"]
+        assert note and "**" not in note[0]["snippet"] and "`" not in note[0]["snippet"], note
+        assert token in note[0]["snippet"]
+        assert len(chats) == len({h["id"] for h in chats}), [h["id"] for h in chats]
+        assert chats and not any(s in chats[0]["snippet"] for s in ("##", "**", "`")), chats[0]["snippet"]
+    finally:
+        (root / "시험26 발췌.md").unlink()
 
 
 def test_unsafe_filename_characters_live_in_one_place():

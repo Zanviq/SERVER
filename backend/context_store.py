@@ -24,6 +24,7 @@ from fastapi import HTTPException
 
 from . import chat_store, meeting_store, paper_store
 from .auth import SessionUser
+from .plain_text import plain_line
 from .config import Settings
 
 #: 이 시간 이상 말이 없으면 다음 메시지부터 새 세션으로 본다
@@ -226,51 +227,14 @@ def session_id(session: list[dict]) -> str:
     return f"s-{int(ts)}" if ts else "s-0"
 
 
-_LINE_RULES = [
-    (re.compile(r"^\s*```.*$"), ""),                                   # 코드 울타리 줄(안의 코드는 남긴다)
-    (re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$"), ""),  # 표 구분 줄
-    (re.compile(r"^\s*(?:>\s?)+"), ""),                                # 인용
-    (re.compile(r"^\s*#{1,6}\s+"), ""),                                # 제목
-    (re.compile(r"^\s*(?:[-*+]|\d{1,9}[.)])\s+"), ""),                 # 목록 표시
-    (re.compile(r"^\s*\[[ xX]\]\s+"), ""),                             # 체크 표시
-]
-_INLINE_RULES = [
-    (re.compile(r"!?\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]"), r"\1"),       # 위키링크·임베드 → 제목
-    (re.compile(r"!\[([^\]]*)\]\([^)]*\)"), r"\1"),                    # 그림 → 대체 글
-    (re.compile(r"\[([^\]]+)\]\((?:[^)(]|\([^)]*\))*\)"), r"\1"),      # 링크 → 보이는 글
-    (re.compile(r"\*\*|__|~~|=="), ""),                                # 굵게·취소·형광
-    (re.compile(r"(^|[^\w*])[*_](?=\S)([^*_]*?\S)[*_](?![\w*])"), r"\1\2"),  # 기울임
-    (re.compile(r"`+"), ""),                                           # 코드 기호
-    (re.compile(r"\s*\|\s*"), " "),                                    # 표 세로줄
-    (re.compile(r"\s+"), " "),
-]
-
-
-def _plain_line(md: str) -> str:
-    """마크다운 한 덩이 → 한 줄 평문(디자인 25차). 화면의 lib/plainLine 과 **같은 규칙**이다.
-
-    세션 미리보기가 원문을 그대로 한 줄로 이어 `## 시험51 제목 - **굵게** 와 \\`코드\\` - [ ] 할 일 > 인용 | 가 | 나`
-    처럼 기호가 글보다 먼저 보였다(휴대폰 한 줄에서는 기호만 남고 잘렸다). 뜻을 가진 글만 남긴다.
-    """
-    lines = []
-    for line in (md or "").splitlines():
-        for pat, rep in _LINE_RULES:
-            line = pat.sub(rep, line)
-        lines.append(line)
-    out = " ".join(lines)
-    for pat, rep in _INLINE_RULES:
-        out = pat.sub(rep, out)
-    return out.strip()
-
-
 def _preview(session: list[dict]) -> str:
-    """세션 목록에 보일 한 줄 — 사용자가 먼저 한 말이 가장 알아보기 쉽다. 마크다운 기호는 뗀다(_plain_line)."""
+    """세션 목록에 보일 한 줄 — 사용자가 먼저 한 말이 가장 알아보기 쉽다. 마크다운 기호는 뗀다(plain_text.plain_line)."""
     for m in session:
-        if m.get("role") == "user" and _plain_line(str(m.get("text") or "")):
-            return _plain_line(str(m["text"]))[:120]
+        if m.get("role") == "user" and plain_line(str(m.get("text") or "")):
+            return plain_line(str(m["text"]))[:120]
     for m in session:
-        if _plain_line(str(m.get("text") or "")):
-            return _plain_line(str(m["text"]))[:120]
+        if plain_line(str(m.get("text") or "")):
+            return plain_line(str(m["text"]))[:120]
     return "(빈 대화)"
 
 
