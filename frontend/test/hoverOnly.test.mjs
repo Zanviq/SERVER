@@ -68,6 +68,12 @@ test("점·모양으로만 드러나는 뜻은 화면 읽기 이름이 있고, �
   assert.match(diary, /className="fc-diary-row" role="img" aria-label=/);
 });
 
+test("기록 패널은 고른 도형의 뜻을 글로 보인다(디자인 36차)", () => {
+  // ★·●·▲·■·⬟ 의 뜻("매우 좋음"…)이 title 에만 있어 휴대폰에서는 무엇을 고르는지 알 길이 없었다
+  const panel = readFileSync(join(SRC, "components/calendar/DiaryPanel.tsx"), "utf8");
+  assert.match(panel, /\{cur\[axis\] \? SHAPE_LABEL\[cur\[axis\] as Exclude<DiaryShape, "">\] : ""\}/);
+});
+
 test("대화 지우기는 되돌릴 수 없으니 한 번 묻는다", () => {
   const chat = readFileSync(join(SRC, "components/ai/ChatPanel.tsx"), "utf8");
   const drop = chat.slice(chat.indexOf("const dropSession"), chat.indexOf("const dropSession") + 900);

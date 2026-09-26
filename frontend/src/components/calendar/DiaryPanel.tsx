@@ -314,7 +314,7 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
                     // 도형이 제 색을 쓰므로 고른 것을 색으로 알릴 수 없다. 고른
                     // 것은 테두리와 배경으로, 안 고른 것은 흐리게 — 그래도 색은
                     // 남아 있어서 무엇을 고르는 중인지 보인다.
-                    className={`rounded-md p-1.5 transition-all hover:bg-hovered ${
+                    className={`rounded-md p-1.5 transition-all hover:bg-hovered coarse:p-2 ${
                       on ? "bg-accent-muted ring-1 ring-inset ring-accent" : "opacity-60 hover:opacity-100"
                     }`}
                   >
@@ -323,6 +323,11 @@ export function DiaryPanel({ date, entry, events, onChange, locked, onUnlock, on
                 );
               })}
             </div>
+            {/* 고른 도형의 뜻을 글로 — 뜻이 마우스 풍선(title)에만 있어 휴대폰에서는 ★·●·▲·■·⬟ 가 무엇인지 알 길이
+                없었다(디자인 36차). 누르면 바로 "매우 좋음"… 이 보여 도형의 차례를 익힌다. */}
+            <span className="min-w-0 truncate text-[12px] text-fg-muted" aria-hidden="true">
+              {cur[axis] ? SHAPE_LABEL[cur[axis] as Exclude<DiaryShape, "">] : ""}
+            </span>
           </div>
         ))}
       </div>
