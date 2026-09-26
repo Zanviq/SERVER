@@ -1,7 +1,8 @@
 // 백엔드 API 클라이언트. 세션 쿠키 사용(credentials: include).
 import { readSse } from "./sseStream";
 
-const BASE = import.meta.env.VITE_API_BASE ?? "";
+// `?.` — 시험(노드)에서도 이 모듈을 불러 행동을 볼 수 있게(노드엔 import.meta.env 가 없다). Vite 는 그대로 바꿔 넣는다.
+const BASE = import.meta.env?.VITE_API_BASE ?? "";
 
 
 export interface SessionInfo {
@@ -111,11 +112,21 @@ function errorMessage(status: number, detail: unknown): string {
   return status === 422 ? "입력한 값을 확인해 주세요." : `${status}`;
 }
 
+/** 요청이 401(로그인이 끊김)을 받으면 부를 것 — 인증 상태가 **곧바로** 다시 확인하게(76차).
+ *  예전엔 60초마다 도는 확인만 기다려, 다른 곳에서 로그아웃하거나 비밀번호를 바꾼 뒤에도 이 탭이 최대 1분 동안
+ *  저장이 안 되는 편집기를 그대로 보여 줬다(실측: 25초 동안 로그인 화면이 뜨지 않음). api 가 store 를 가져오면
+ *  서로를 가져와 돌게 되어 store 가 여기에 건다(store/auth). 로그인·세션 확인 창구 자체의 401 은 부르지 않는다. */
+let onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: (() => void) | null): void {
+  onUnauthorized = fn;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     credentials: "include",
     ...init,
   });
+  if (res.status === 401 && !path.startsWith("/api/auth/")) onUnauthorized?.();
   if (!res.ok) {
     // JSON 이 아니면(앞단의 HTML) 이유가 없다 — errorMessage 가 상태로 말을 고른다
     let detail: unknown = undefined;

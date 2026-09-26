@@ -70,6 +70,31 @@ test("5xx 도 마찬가지 — 서버 잘못이지 로그아웃이 아니다", a
   }
 });
 
+test("어떤 요청이든 401 을 받으면 곧바로 세션을 다시 본다 — 60초를 기다리지 않는다(76차)", async () => {
+  // 다른 곳에서 로그아웃·비밀번호 바꾸기(59차)·비활성화(60차) 뒤에도 이 탭이 최대 1분 동안 저장이 안 되는 편집기를
+  // 보여 줬다(실측: 25초 동안 로그인 화면이 안 뜸). 실제 api 모듈을 가짜 fetch 로 불러 본다.
+  const calls = [];
+  const statusOf = { "/api/notes/save": 401, "/api/auth/password": 401, "/api/notes/list": 200 };
+  globalThis.fetch = async (url) => {
+    const path = String(url).replace(/^https?:\/\/[^/]+/, "").split("?")[0];
+    const status = statusOf[path] ?? 200;
+    return new Response(JSON.stringify(status === 200 ? [] : { detail: "로그인이 필요합니다." }),
+      { status, headers: { "Content-Type": "application/json" } });
+  };
+  const { api, setUnauthorizedHandler } = await import("../src/lib/api.ts");
+  setUnauthorizedHandler(() => calls.push("check"));
+  await api.noteSave("a.md", "x").catch(() => {});
+  assert.deepEqual(calls, ["check"], "401 인데 세션을 다시 보지 않는다");
+  await api.changePassword("wrong", "new-password").catch(() => {});
+  assert.deepEqual(calls, ["check"], "로그인·비밀번호 창구의 401(틀린 비밀번호)로 세션을 끊으려 한다");
+  await api.noteTree().catch(() => {});
+  assert.equal(calls.length, 1, "잘 된 요청에도 세션을 다시 본다");
+  setUnauthorizedHandler(null);
+
+  const auth = readFileSync(new URL("../src/store/auth.ts", import.meta.url), "utf8");
+  assert.match(auth, /setUnauthorizedHandler\(\(\) => \{/, "인증 상태가 401 알림을 받지 않는다");
+});
+
 test("화면이 실제로 그렇게 갈린다", () => {
   const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(app, /if \(offline\) return/, "offline 일 때는 Login 보다 먼저 갈라져야 한다");

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, ApiError, SessionInfo } from "../lib/api";
+import { api, ApiError, SessionInfo, setUnauthorizedHandler } from "../lib/api";
 import { toast } from "./toast";
 
 interface AuthState {
@@ -89,7 +89,20 @@ export const useAuth = create<AuthState>((set, get) => ({
       // 도는데, 예전에는 5xx·연결 실패에도 세션을 지워서 쿠키가 멀쩡한데도
       // 로그인 화면으로 튕기고 쓰던 화면(편집 중인 글 포함)을 잃었다.
       const status = e instanceof ApiError ? e.status : 0;
-      if (status === 401 || status === 403) set({ session: null, remaining: 0 });
+      if ((status === 401 || status === 403) && get().session) {
+        set({ session: null, remaining: 0 });
+        // 쓰던 글은 이 브라우저에 밑글로 남아 있다 — 다시 로그인해 그 문서를 열면 되살리기 띠가 뜬다
+        toast.error("세션이 끝났습니다(다른 곳에서 로그아웃했거나 비밀번호가 바뀌었을 수 있습니다). 다시 로그인하면 쓰던 글을 되살릴 수 있습니다.");
+      }
     }
   },
 }));
+
+// 어떤 요청이든 401 을 받으면 60초를 기다리지 않고 곧바로 세션을 다시 본다(76차 — api.setUnauthorizedHandler).
+// 한꺼번에 여럿이 401 을 받아도 확인은 한 번만.
+let checking = false;
+setUnauthorizedHandler(() => {
+  if (checking || !useAuth.getState().session) return;
+  checking = true;
+  void useAuth.getState().refresh().finally(() => { checking = false; });
+});
