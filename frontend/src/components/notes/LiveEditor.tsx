@@ -1051,7 +1051,9 @@ export function LiveEditor({
   };
 
   return (
-    <div className="relative h-full min-h-0">
+    // data-fab — 아래의 떠 있는 첨부 단추가 있으면 글 끝에 그만큼 자리를 둔다(index.css). 없던 때는 문서 끝까지 내려도
+    // 마지막 줄의 오른쪽이 단추 밑에 남아 읽을 수도 누를 수도 없었다(디자인 24차).
+    <div className="relative h-full min-h-0" data-fab={needsAttachButton && onDropFiles ? "" : undefined}>
       <div ref={hostRef} className="h-full min-h-0 overflow-hidden" />
       {/* `/이미지` 메뉴와 첨부 버튼이 함께 여는 파일 선택. 화면에는 보이지 않는다.
           입력을 둘로 두면 accept·초기화 규칙이 서로 어긋난다. */}

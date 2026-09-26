@@ -701,6 +701,13 @@
   padding: 8px;
 }
 
+/* 편집기 위에 첨부 단추가 떠 있으면(LiveEditor 의 data-fab — 손가락·좁은 화면) 글 끝에 단추만큼 자리를 둔다. 없으면
+   문서 끝까지 내려도 마지막 줄의 오른쪽이 단추(44px + 여백 12px) 밑에 남았다(디자인 24차). 편집기 테마의 padding
+   (16px)은 런타임에 나중에 들어오는 스타일이라 !important 로 아래쪽만 덮는다. */
+[data-fab] .cm-content {
+  padding-bottom: 4.5rem !important;
+}
+
 /* iOS Safari는 글자가 16px 미만인 입력에 포커스하면 페이지를 확대하고 되돌리지 않는다.
    데스크톱의 조밀한 13.5px은 그대로 두고 좁은 화면에서만 올린다.
 

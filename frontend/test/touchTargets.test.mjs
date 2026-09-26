@@ -122,3 +122,11 @@ test("대화 지도의 접기 단추는 보이는 것보다 넓게 눌리고, �
   assert.match(fold, /<rect x=\{cx \+ DOT_R \+ 1\} y=\{DOT_R - 12\} width=\{24\} height=\{24\} fill="transparent" \/>/);
   assert.ok(fold.indexOf("<rect") < fold.indexOf("r={6.5}"), "넓은 자리는 보이는 동그라미 앞(아래)에 그린다");
 });
+
+test("떠 있는 첨부 단추가 있으면 편집기 글 끝에 그만큼 자리가 있다(디자인 24차)", () => {
+  const ed = read("../src/components/notes/LiveEditor.tsx");
+  assert.match(ed, /data-fab=\{needsAttachButton && onDropFiles \? "" : undefined\}/, "단추가 있는지 CSS 가 알 길이 없다");
+  const css = read("../src/index.css");
+  assert.match(css, /\[data-fab\] \.cm-content \{\s*padding-bottom: 4\.5rem !important;/,
+    "문서 끝까지 내려도 마지막 줄의 오른쪽이 첨부 단추 밑에 남는다");
+});
