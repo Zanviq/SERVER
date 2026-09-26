@@ -49,15 +49,18 @@ export function English() {
     <>
       <div className="flex rounded-md border border-line p-0.5 lg:hidden" role="tablist">
         <button role="tab" aria-selected={mobileView === "chat"} onClick={() => setMobileView("chat")}
-          className={`rounded-sm px-2 py-1 text-[12px] ${mobileView === "chat" ? "bg-accent-muted text-accent-fg" : "text-fg-muted"}`}>
+          className={`rounded-sm px-2 py-1 text-[12px] coarse:py-1.5 ${mobileView === "chat" ? "bg-accent-muted text-accent-fg" : "text-fg-muted"}`}>
           <MessageSquare size={13} className="mr-1 inline" />대화
         </button>
         <button role="tab" aria-selected={mobileView === "vocab"} onClick={() => setMobileView("vocab")}
-          className={`rounded-sm px-2 py-1 text-[12px] ${mobileView === "vocab" ? "bg-accent-muted text-accent-fg" : "text-fg-muted"}`}>
+          className={`rounded-sm px-2 py-1 text-[12px] coarse:py-1.5 ${mobileView === "vocab" ? "bg-accent-muted text-accent-fg" : "text-fg-muted"}`}>
           <BookMarked size={13} className="mr-1 inline" />단어장
         </button>
       </div>
-      <button onClick={clearChat} className="btn btn-ghost h-8 px-2" title="대화 비우기" aria-label="대화 비우기">
+      {/* 대화를 비우는 단추 — 한 칸 화면에서 단어장을 보고 있을 때는 감춘다. 보이지 않는 대화를 지우는 휴지통이 단어 목록
+          위에 있으면 단어장을 비우는 것으로 읽혔다(디자인 7차). 넓은 화면은 둘이 나란히 보여 그대로 둔다. */}
+      <button onClick={clearChat} className={`btn btn-ghost h-8 px-2 ${mobileView === "vocab" ? "hidden lg:inline-flex" : ""}`}
+        title="대화 비우기" aria-label="대화 비우기">
         <Trash2 size={15} />
       </button>
     </>

@@ -87,15 +87,18 @@ export function ChatSessionList({
                       {s.turns > 0 ? `${s.turns}턴 · ` : ""}{when(s.updated_at)}
                     </span>
                   </span>
-                  <span className="flex shrink-0 self-start opacity-0 group-hover:opacity-100">
+                  {/* 마우스는 올리면 보이고, **손가락·자판으로는 늘 보인다**(디자인 7차). opacity-0 만 두던 때는 휴대폰에서
+                      보이지 않는 채 눌렸고, .tap 으로 넓힌 자리가 시각 글자 위를 덮어 한 번 스치면 대화가 지워졌다 — 이제
+                      넓히지 않고(붙은 두 단추의 넓힌 자리가 겹치면 옆 것이 눌린다) 손가락 화면에서 크기를 키운다. */}
+                  <span className="flex shrink-0 self-start opacity-0 group-hover:opacity-100 focus-within:opacity-100 coarse:opacity-100">
                     <button type="button" aria-label={`${s.title} 이름 바꾸기`}
                       onClick={(e) => { e.stopPropagation(); setEditing(s.id); }}
-                      className="tap grid h-6 w-6 place-items-center rounded hover:bg-hovered">
+                      className="grid h-6 w-6 place-items-center rounded hover:bg-hovered coarse:h-8 coarse:w-8">
                       <Pencil size={11} />
                     </button>
                     <button type="button" aria-label={`${s.title} 지우기`}
                       onClick={(e) => { e.stopPropagation(); onDrop(s.id); }}
-                      className="tap grid h-6 w-6 place-items-center rounded hover:bg-hovered hover:text-danger">
+                      className="grid h-6 w-6 place-items-center rounded hover:bg-hovered hover:text-danger coarse:h-8 coarse:w-8">
                       <X size={12} />
                     </button>
                   </span>
@@ -180,12 +183,12 @@ export function ChatSessionPicker({
                   </span>
                   <button type="button" aria-label={`${s.title} 이름 바꾸기`}
                     onClick={(e) => { e.stopPropagation(); setEditing(s.id); }}
-                    className="tap grid h-6 w-6 shrink-0 place-items-center rounded opacity-0 hover:bg-hovered group-hover:opacity-100">
+                    className="grid h-6 w-6 shrink-0 place-items-center rounded opacity-0 hover:bg-hovered group-hover:opacity-100 focus-visible:opacity-100 coarse:h-8 coarse:w-8 coarse:opacity-100">
                     <Pencil size={11} />
                   </button>
                   <button type="button" aria-label={`${s.title} 지우기`}
                     onClick={(e) => { e.stopPropagation(); onDrop(s.id); }}
-                    className="tap grid h-6 w-6 shrink-0 place-items-center rounded opacity-0 hover:bg-hovered hover:text-danger group-hover:opacity-100">
+                    className="grid h-6 w-6 shrink-0 place-items-center rounded opacity-0 hover:bg-hovered hover:text-danger group-hover:opacity-100 focus-visible:opacity-100 coarse:h-8 coarse:w-8 coarse:opacity-100">
                     <Trash2 size={11} />
                   </button>
                 </>

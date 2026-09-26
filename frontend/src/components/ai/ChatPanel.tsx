@@ -810,8 +810,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   }, [space, soak]);
 
   const dropSession = useCallback((id: string) => {
+    // 대화 지우기는 **되돌릴 수 없다**(휴지통에 가지 않는다, chat_store.drop_session) — 한 번 묻는다. 묻지 않던 때는
+    // 휴대폰에서 보이지 않는 지우기 단추가 목록 줄의 시각 자리를 덮고 있어 한 번 스치면 대화가 통째로 사라졌다(디자인 7차).
+    const full = sessions.find((s) => s.id === id)?.title || "이 대화";
+    const title = full.length > 40 ? `${full.slice(0, 40)}…` : full;
+    if (!window.confirm(`'${title}' 대화를 지울까요? 되돌릴 수 없습니다.`)) return;
     void runSession(() => api.aiSessionDrop(space!, id));
-  }, [runSession, space]);
+  }, [runSession, space, sessions]);
 
   /** 과거 질문을 고쳐 새 가지로 다시 묻는다 — 그 질문의 **부모**에 붙인다. */
   const editAndFork = useCallback((userMsgId: string, text: string) => {

@@ -1,0 +1,53 @@
+/**
+ * 마우스를 올려야만 보이는 단추는 손가락 화면에서도 보여야 한다(디자인 7차).
+ *
+ * 실측(390px, 대화 고르기): 대화마다 붙은 이름 바꾸기·지우기 단추가 `opacity-0 group-hover:opacity-100` 뿐이라
+ * 휴대폰에서는 **보이지 않는 채 눌렸다**. `.tap` 으로 넓힌 자리가 시각 글자 위를 덮어 한 번 스치면 대화가 통째로
+ * 지워졌다(되돌릴 수 없다 — 휴지통에 가지 않는다). 이제 손가락·자판으로는 늘 보이고, 지우기는 한 번 묻는다.
+ *
+ * 규칙: 클래스에 `opacity-0` 과 `group-hover:opacity-100` 이 함께 있으면 손가락 화면에서 보이는 길이 있어야 한다 —
+ * `coarse:opacity-100`, 또는 좁은 화면에서만 숨기는 꼴(`sm:opacity-0 …`, REVEAL_ON_ROW). 누를 수 없는 풍선
+ * (`pointer-events-none`)은 뺀다.
+ *
+ * 돌리는 법: node --test test/hoverOnly.test.mjs
+ */
+import assert from "node:assert/strict";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+
+const SRC = fileURLToPath(new URL("../src/", import.meta.url));
+const files = [];
+(function walk(dir) {
+  for (const n of readdirSync(dir)) {
+    const p = join(dir, n);
+    if (statSync(p).isDirectory()) walk(p);
+    else if (/\.tsx$/.test(n)) files.push(p);
+  }
+})(SRC);
+
+test("마우스로만 드러나는 단추에는 손가락 화면에서 드러나는 길이 있다", () => {
+  const bad = [];
+  let seen = 0;
+  for (const f of files) {
+    const src = readFileSync(f, "utf8");
+    for (const m of src.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g)) {
+      const cls = m[1] ?? m[2];
+      if (!/(^|\s)opacity-0(\s|$)/.test(cls) || !/group-hover:opacity-100/.test(cls)) continue;
+      seen++;
+      if (/pointer-events-none/.test(cls)) continue;            // 누를 수 없는 풍선
+      if (/coarse:opacity-100/.test(cls)) continue;
+      bad.push(`${f.slice(SRC.length)}: ${cls.slice(0, 90)}`);
+    }
+  }
+  assert.ok(seen >= 3, `훑은 것이 너무 적다 — 이 시험의 정규식을 확인할 것(${seen})`);
+  assert.deepEqual(bad, [], "손가락 화면에서는 보이지 않은 채 눌린다");
+});
+
+test("대화 지우기는 되돌릴 수 없으니 한 번 묻는다", () => {
+  const chat = readFileSync(join(SRC, "components/ai/ChatPanel.tsx"), "utf8");
+  const drop = chat.slice(chat.indexOf("const dropSession"), chat.indexOf("const dropSession") + 900);
+  assert.match(drop, /window\.confirm\(/, "대화를 묻지 않고 지운다");
+  assert.ok(drop.indexOf("window.confirm(") < drop.indexOf("api.aiSessionDrop"), "지운 다음에 묻는다");
+});
