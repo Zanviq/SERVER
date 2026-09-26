@@ -121,12 +121,18 @@ export function setUnauthorizedHandler(fn: (() => void) | null): void {
   onUnauthorized = fn;
 }
 
+/** fetch 로 **직접** 부르는 곳(req·AI 대화 흐름)이 모두 이것을 지난다 — 한 곳이라도 빠지면 그 창구의 401 은 60초를
+ *  기다린다(77차: AI 대화 흐름이 req 를 거치지 않아 빠져 있었다). */
+function noticeUnauthorized(res: Response, path: string): void {
+  if (res.status === 401 && !path.startsWith("/api/auth/")) onUnauthorized?.();
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     credentials: "include",
     ...init,
   });
-  if (res.status === 401 && !path.startsWith("/api/auth/")) onUnauthorized?.();
+  noticeUnauthorized(res, path);
   if (!res.ok) {
     // JSON 이 아니면(앞단의 HTML) 이유가 없다 — errorMessage 가 상태로 말을 고른다
     let detail: unknown = undefined;
@@ -771,6 +777,7 @@ export async function aiChatStream(
     body: JSON.stringify({ message, history, ...payload }),
     signal,
   });
+  noticeUnauthorized(res, "/api/ai/chat");
   if (!res.ok || !res.body) {
     // 415(이미지 형식)·413(크기)·400(모드) 같은 거절은 이유를 그대로 보여 준다
     let detail: unknown = "AI 요청 실패";

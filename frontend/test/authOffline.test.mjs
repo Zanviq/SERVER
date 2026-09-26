@@ -72,7 +72,19 @@ test("어떤 요청이든 401 을 받으면 곧바로 세션을 다시 본다 �
   assert.deepEqual(calls, ["check"], "로그인·비밀번호 창구의 401(틀린 비밀번호)로 세션을 끊으려 한다");
   await api.noteTree().catch(() => {});
   assert.equal(calls.length, 1, "잘 된 요청에도 세션을 다시 본다");
+  // AI 대화 흐름은 req 를 거치지 않는다 — 거기서 받은 401 도(77차)
+  statusOf["/api/ai/chat"] = 401;
+  const { aiChatStream } = await import("../src/lib/api.ts");
+  await aiChatStream("안녕", [], () => {}).catch(() => {});
+  assert.equal(calls.length, 2, "AI 대화의 401 로 세션을 다시 보지 않는다");
   setUnauthorizedHandler(null);
+
+  // 구조로도: fetch 를 직접 부르는 곳은 모두 noticeUnauthorized 를 지난다
+  const apiSrc = readFileSync(new URL("../src/lib/api.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const direct = [...apiSrc.matchAll(/await fetch\(`\$\{BASE\}([^`]*)`/g)].map((m) => m.index);
+  for (const at of direct) {
+    assert.match(apiSrc.slice(at, at + 600), /noticeUnauthorized\(res,/, `fetch 를 직접 부르고 401 을 알리지 않는 곳: ${apiSrc.slice(at, at + 60)}`);
+  }
 
   const auth = readFileSync(new URL("../src/store/auth.ts", import.meta.url), "utf8");
   assert.match(auth, /setUnauthorizedHandler\(\(\) => \{/, "인증 상태가 401 알림을 받지 않는다");
