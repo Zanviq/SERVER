@@ -347,15 +347,19 @@ export function Notes() {
 
   const joinPath = (folder: string, name: string) => (folder ? `${folder}/${name}` : name);
 
+  // 만들기 창은 **서버가 받아 준 뒤에** 닫는다(이름 바꾸기 창과 같다). 먼저 닫던 때는 서버가 이름을 거절하면
+  // (`회의: 요약` 처럼 쓸 수 없는 글자 — 78차) 적은 이름이 사라져, 한 글자를 고치려고 창을 다시 열어 처음부터
+  // 쳐야 했다(디자인 18차). 도는 동안 Enter 를 또 눌러도 한 번만 보낸다.
+  const creating = useRef(false);
   const createNote = async () => {
     const name = newName.trim();
-    if (!name) return;
-    setNewNoteOpen(false);
-    setNewName("");
+    if (!name || creating.current) return;
     const path = joinPath(curFolder, name);
     // 같은 이름이 이미 있으면 **덮지 않는다**. 덮어쓰기는 휴지통을 거치지 않아
     // 되돌릴 수 없다 — 있던 문서를 그냥 열어 준다.
     if (notes.some((n) => n.path === path)) {
+      setNewNoteOpen(false);
+      setNewName("");
       toast.error(`'${name}' 문서가 이미 있습니다. 그 문서를 엽니다.`);
       openNote(path);
       return;
@@ -366,11 +370,16 @@ export function Notes() {
     const isMd = /\.(md|markdown)$/i.test(name);
     // 만들기만 한다(makeDoc) — 위 확인은 이 화면의 목록이라 낡았을 수 있다(다른 기기가 방금 만든 것).
     // 서버가 거절하면(같은 이름 등) 열지 않는다 — 없는 문서를 열어 404 를 또 띄운다
-    const made = await makeDoc(path, isMd ? `# ${name.replace(/\.[^.]+$/, "")}\n\n` : "");
+    creating.current = true;
+    const made = await makeDoc(path, isMd ? `# ${name.replace(/\.[^.]+$/, "")}\n\n` : "").finally(() => {
+      creating.current = false;
+    });
     if (!made.ok) {
-      toast.error(made.message);
+      toast.error(made.message); // 창은 그대로 — 적은 이름을 고쳐 다시 만든다
       return;
     }
+    setNewNoteOpen(false);
+    setNewName("");
     await reloadTree();
     if (curFolder) setExpanded((s) => new Set(s).add(curFolder));
     openNote(path);
@@ -378,18 +387,21 @@ export function Notes() {
 
   const createFolder = async () => {
     const name = newName.trim();
-    if (!name) return;
-    setNewFolderOpen(false);
-    setNewName("");
+    if (!name || creating.current) return;
     const path = joinPath(curFolder, name);
+    creating.current = true;
     try {
       await api.noteFolderCreate(path);
+      setNewFolderOpen(false); // 받아 준 뒤에 닫는다(createNote 와 같은 까닭)
+      setNewName("");
       await reloadTree();
       setExpanded((s) => new Set(s).add(path));
       setCurFolder(path);
       toast.ok("폴더 생성됨");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "폴더 생성 실패");
+    } finally {
+      creating.current = false;
     }
   };
 
