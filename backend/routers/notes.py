@@ -196,16 +196,17 @@ _SERVER_FAULT_ERRNOS = {
 
 
 @contextmanager
-def _fs_errors_are_bad_requests(what: str):  # noqa: D401
-    """파일시스템이 이름을 거부하면 500이 아니라 400으로 돌려준다.
+def _fs_errors_explained(what: str):  # noqa: D401
+    """파일시스템 오류를 **까닭에 맞는** 응답으로 — 이름 탓이면 400, 디스크 탓이면 그 말(507·500).
 
     무엇이 유효한 이름인지는 OS마다 다르다 — 리눅스는 `...`·`CON`을 그냥
     파일로 만들지만 Windows는 거부한다. 플랫폼별 금지 목록을 들고 있으면
     한쪽에서 멀쩡한 이름을 막게 되므로, **실제로 해 보고 실패하면** 사용자
     입력 오류로 돌려준다(경로 탈출은 safe_join이 이미 막는다).
 
-    단 디스크가 찼거나 권한이 없는 것은 이름 탓이 아니다. 그건 500으로 두고
-    스택까지 남긴다 — 사용자에게 "이름을 바꿔 보라"고 하면 안 된다.
+    단 디스크가 찼거나 권한이 없는 것은 이름 탓이 아니다. 사용자에게 "이름을 바꿔 보라"고 하면
+    안 된다 — disk_errors 의 말(가득 참·읽기 전용…)로 알리고 스택까지 남긴다.
+    (예전 이름은 _fs_errors_are_bad_requests — 53차부터 400 만 내지 않아 하는 일에 맞췄다.)
     """
     try:
         yield
@@ -319,7 +320,7 @@ def create_folder(
         raise HTTPException(status_code=400, detail="폴더 이름이 비어 있습니다.")
     if target.exists():
         raise HTTPException(status_code=409, detail="이미 존재합니다.")
-    with _fs_errors_are_bad_requests("폴더 생성"):
+    with _fs_errors_explained("폴더 생성"):
         target.mkdir(parents=True)
     return {"ok": True, "path": to_rel(root, target)}
 
@@ -462,7 +463,7 @@ async def upload(
     safe_name = _sanitize_filename(file.filename)
     dest = safe_join(root, f"{to_rel(root, dest_dir)}/{safe_name}")
 
-    with _fs_errors_are_bad_requests("업로드 폴더 생성"):
+    with _fs_errors_explained("업로드 폴더 생성"):
         dest_dir.mkdir(parents=True, exist_ok=True)
 
     # 같은 이름의 폴더가 이미 있으면 열기부터 실패한다. 미리 걸러야 "서버 오류"가
@@ -479,7 +480,7 @@ async def upload(
     tmp = dest.with_name(f"{dest.name}.upload{os.getpid()}.{uuid.uuid4().hex[:8]}")
     written = 0
     try:
-        with _fs_errors_are_bad_requests("업로드"):
+        with _fs_errors_explained("업로드"):
             with tmp.open("wb") as out:
                 while chunk := await file.read(1024 * 1024):
                     written += len(chunk)
@@ -551,7 +552,7 @@ def save_note(
                 status_code=409,
                 detail="이 문서가 다른 곳에서 바뀌었습니다. 새로 고쳐 확인한 뒤 저장하세요.",
             )
-    with _fs_errors_are_bad_requests("문서 저장"):
+    with _fs_errors_explained("문서 저장"):
         target.parent.mkdir(parents=True, exist_ok=True)
         # AI 쓰기와 같은 락·원자성 규약을 쓴다(자동저장과 AI append가 서로 덮어썼다)
         with lock_for(target):
@@ -629,7 +630,7 @@ def _relocate(user: SessionUser, settings: Settings, root: Path, src: Path, dst:
     문서(폴더면 그 안 전부)의 옛 링크만 죽는다.
     """
     old_rel, was_dir = src.relative_to(root).as_posix(), src.is_dir()
-    with _fs_errors_are_bad_requests(what):
+    with _fs_errors_explained(what):
         dst.parent.mkdir(parents=True, exist_ok=True)
         src.rename(dst)
     moved.record(user, settings, old_rel, dst_rel, folder=was_dir)
