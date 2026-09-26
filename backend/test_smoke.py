@@ -1097,6 +1097,29 @@ def test_a_wiki_link_goes_to_the_nearest_of_same_titled_notes():
         client.delete("/api/notes/folder", params={"path": top})
 
 
+def test_a_wiki_link_by_the_old_title_still_counts_as_a_backlink():
+    """이름을 바꾼 문서를 옛 제목으로 가리키는 `[[메모]]` 도 역링크·그래프에 센다(74차).
+
+    누르면 옮김 기록을 따라 새 이름으로 열리는데(10차), 역링크·그래프는 옮김 기록을 경로 링크에만 따라가(48차)
+    위키 링크만 있는 문서는 이름을 바꾸는 순간 역링크에서 사라졌다(실측: ['출발'] → [], 간선 1 → 0).
+    """
+    _login()
+    top = "위키74"
+    save = lambda p, c: client.put("/api/notes/save", json={"path": p, "content": c}).status_code  # noqa: E731
+    assert save(f"{top}/메모74.md", "본문") == 200
+    assert save(f"{top}/출발.md", "[[메모74]] 그리고 [[아직없는글74]]") == 200
+    try:
+        assert client.post("/api/notes/rename", json={"path": f"{top}/메모74.md", "new_name": "회의74"}).status_code == 200
+        d = client.get("/api/notes/get", params={"path": f"{top}/회의74.md"}).json()
+        assert d["backlinks"] == ["출발"], d["backlinks"]
+        g = client.get("/api/notes/graph", params={"folder": top}).json()
+        assert len(g["links"]) == 1, g["links"]
+        # 누르면 열리는 곳과 같다
+        assert client.get("/api/notes/moved", params={"title": "메모74"}).json()["path"] == f"{top}/회의74.md"
+    finally:
+        client.delete("/api/notes/folder", params={"path": top})
+
+
 def test_an_embedded_picture_is_found_after_it_is_renamed():
     """그림 이름을 바꿔도 그 그림을 넣어 둔 문서(`![[사진.png]]`)에서 계속 보인다(73차).
 

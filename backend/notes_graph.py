@@ -134,6 +134,7 @@ class _Lookup:
         self.by_rel: dict = {}
         self._notes_dir = notes_dir
         self._moved: list[dict] | None = None  # 옮김 기록 — 못 찾은 경로 링크가 있을 때만 읽는다
+        self._olds: set[str] | None = None     # 그 기록의 옛 제목들
 
     def add(self, path: Path, value) -> None:
         rel = path.relative_to(self._notes_dir).as_posix()
@@ -151,11 +152,30 @@ class _Lookup:
             cands = self.by_title.get(doc_title(title).lower())
         if not cands:
             # `[[폴더/제목]]` — 제목이 겹칠 때 옵시디언이 쓰는 꼴. 경로로 찾는다(66차, 화면 pickByTitle 과 같다)
-            return self.by_rel.get(title.strip("/").lower()) if "/" in title else None
+            if "/" in title:
+                return self.by_rel.get(title.strip("/").lower())
+            # 이름을 바꾼 문서의 옛 제목 — 누르면 열리는 것과 같은 규칙(moved.follow_title, 74차). 없는 문서를
+            # 가리키는 링크(`[[나중에 쓸 글]]`)는 흔하다 — 옛 제목에 없는 것은 기록을 훑지 않는다.
+            if title.strip().lower() not in self._old_titles():
+                return None
+            now = moved.follow_title_rows(self._moved_rows(), title, lambda r: r.lower() in self.by_rel)
+            return self.by_rel.get(now.lower()) if now else None
         if len(cands) == 1:
             return cands[0][1]
         pick = nearest([r for r, _ in cands], from_rel)
         return next(v for r, v in cands if r == pick)
+
+    def _moved_rows(self) -> list[dict]:
+        """옮김 기록 — 못 찾은 링크가 있을 때만 한 번 읽는다(경로 링크·옛 제목 위키 링크가 같이 쓴다)."""
+        if self._moved is None:
+            self._moved = moved.rows_beside(self._notes_dir)
+        return self._moved
+
+    def _old_titles(self) -> set[str]:
+        """옮김 기록에 옛 이름으로 남은 문서 제목들(소문자) — 한 번 만든다."""
+        if self._olds is None:
+            self._olds = {doc_title(r["from"]).lower() for r in self._moved_rows() if not r["from"].endswith("/")}
+        return self._olds
 
     def rel(self, f: WalkedFile) -> str:
         """문서 루트 기준 경로 — 훑은 뿌리(폴더 그래프면 그 폴더)가 아니라 문서 루트가 기준이다."""
@@ -178,9 +198,7 @@ class _Lookup:
         """이름을 바꾸거나 옮긴 문서를 옛 경로로 가리키는 링크 — 누르면 옮김 기록을 따라 열리므로(links.resolve)
         역링크·지도도 같은 기록을 따라가 센다(48차). 예전엔 누르면 열리는데 역링크에는 없었다.
         남의 문서의 링크를 고쳐 쓰지 않는다는 규칙(moved.py)은 그대로다."""
-        if self._moved is None:
-            self._moved = moved.rows_beside(self._notes_dir)
-        if not self._moved:
+        if not self._moved_rows():
             return None
         exists = lambda r: r.lower() in self.by_rel  # noqa: E731
         for cand in (rel, f"{rel}.md"):  # 확장자 없이 적은 옛 링크도(링크 열기와 같은 규칙)

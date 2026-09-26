@@ -113,8 +113,17 @@ def follow_title(user: SessionUser, settings: Settings, title: str,
     위키링크는 제목(확장자 뺀 이름)으로 찾고 대소문자를 가리지 않는다(그래프와 같은 규칙).
     옛 제목이 같은 문서가 둘 이상 옮겨 갔으면 고르지 않는다 — 엉뚱한 것을 여느니 만든다.
     """
+    return follow_title_rows(_rows(user, settings), title, exists)
+
+
+def follow_title_rows(rows: list[dict], title: str, exists: Callable[[str], bool]) -> str | None:
+    """follow_title 의 알맹이 — 기록을 이미 읽어 둔 쪽(문서 그래프의 역링크)이 쓴다. 규칙은 follow_title.
+
+    74차: 누르면 옛 제목의 `[[메모]]` 가 새 이름의 문서로 열리는데(이 규칙), 역링크·그래프는 옮김 기록을 경로
+    링크에만 따라가(48차) 위키 링크는 이름을 바꾸면 역링크에서 사라졌다. 두 곳이 같은 규칙을 쓰게 나눴다.
+    """
     want = title.strip().lower()
-    olds = {r["from"] for r in _rows(user, settings)
+    olds = {r["from"] for r in rows
             if not r["from"].endswith("/") and doc_title(r["from"]).lower() == want}
-    found = {x for x in (follow(user, settings, o, exists) for o in olds) if x}
+    found = {x for x in (follow_rows(rows, o, exists) for o in olds) if x}
     return found.pop() if len(found) == 1 else None
