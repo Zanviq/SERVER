@@ -10,6 +10,7 @@
  * 두 렌더러가 각자 확장자 목록·경로 규칙을 들고 있으면 반드시 어긋나므로
  * (한쪽에서만 이미지가 보이는 식) 여기 한 곳에서만 정한다.
  */
+import { stripMarkdownExt } from "./notePath";
 
 const IMAGE_EXT = new Set([
   "png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "ico", "svg",
@@ -112,5 +113,5 @@ export function embedMarkdownFor(path: string, files?: { path: string }[]): stri
     !!files && files.filter((f) => (f.path.split("/").pop() ?? f.path) === name).length > 1;
   const target = ambiguous ? path : name;
   // 마크다운 확장자는 대소문자·`.markdown` 까지 뗀다(72차 — `.md` 만 떼면 `[[메모.MD]]` 가 들어갔다)
-  return isImagePath(path) ? `![[${target}]]` : `[[${target.replace(/\.(md|markdown)$/i, "")}]]`;
+  return isImagePath(path) ? `![[${target}]]` : `[[${stripMarkdownExt(target)}]]`;
 }

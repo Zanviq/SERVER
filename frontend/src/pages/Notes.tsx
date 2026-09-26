@@ -15,7 +15,7 @@ import { NOTE_PATH_MIME } from "../components/notes/dragTypes";
 import { Modal } from "../components/ui/Modal";
 import { api, ApiError, isConflict, isGone, movedTo, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
 import { looksLikeExtension } from "../lib/names";
-import { ancestorsOf, fileName, isMarkdownPath, parentDir, pickByTitle } from "../lib/notePath";
+import { ancestorsOf, fileName, isMarkdownPath, parentDir, pickByTitle, stripMarkdownExt } from "../lib/notePath";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { Draft, draftAgeText, dropDraft, keepDraft, moveDraft, moveDraftsUnder, readDraft } from "../lib/draftBackup";
 import { EditorBanner } from "../components/ui/EditorBanner";
@@ -1240,7 +1240,7 @@ export function Notes() {
       <Modal open={delOpen} onClose={() => setDelOpen(false)} title="노트 삭제" width="max-w-sm">
         <div className="space-y-4">
           <p className="text-[13.5px] text-fg2">
-            <span className="font-mono text-danger">{current?.replace(/\.(md|markdown)$/i, "")}</span> 노트를 휴지통으로 옮길까요? 휴지통에서 복원할 수 있습니다.
+            <span className="font-mono text-danger">{current && stripMarkdownExt(current)}</span> 노트를 휴지통으로 옮길까요? 휴지통에서 복원할 수 있습니다.
           </p>
           <div className="flex justify-end gap-2">
             <button onClick={() => setDelOpen(false)} className="btn btn-ghost">취소</button>

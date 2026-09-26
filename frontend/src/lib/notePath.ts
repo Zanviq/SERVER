@@ -11,6 +11,9 @@ export const fileName = (path: string) => path.split("/").pop() ?? path;
  */
 export const isMarkdownPath = (path: string) => /\.(md|markdown)$/i.test(path);
 
+/** 마크다운 확장자를 뗀 이름(`.MD`·`.markdown` 도 — 72차). 마크다운이 아니면 그대로. `[[제목]]`·확인 문구에 쓴다. */
+export const stripMarkdownExt = (path: string) => path.replace(/\.(md|markdown)$/i, "");
+
 /** 문서가 들어 있는 폴더 경로(루트면 빈 문자열). */
 export function parentDir(path: string): string {
   const i = path.lastIndexOf("/");
