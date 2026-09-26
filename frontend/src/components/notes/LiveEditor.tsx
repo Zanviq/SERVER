@@ -7,7 +7,10 @@ import type { Extension, Range } from "@codemirror/state";
 import {
   history, historyKeymap, defaultKeymap, indentMore, indentLess,
 } from "@codemirror/commands";
-import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import {
+  deleteMarkupBackward, insertNewlineContinueMarkupCommand, markdown, markdownLanguage,
+} from "@codemirror/lang-markdown";
+import { endsBlock } from "../../lib/mdInput";
 import { languages } from "@codemirror/language-data";
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
@@ -202,25 +205,42 @@ class CopyBtn extends WidgetType {
 }
 
 /**
- * 빈 인용문 줄에서 Enter → 인용에서 빠져나온다.
+ * 빈 항목·빈 인용 줄에서 Enter → 그 목록·인용을 **끝낸다**(입력칸과 같은 규칙 — lib/mdInput.endsBlock).
  *
- * markdownKeymap 은 목록에서는 빈 항목을 지우고 나가지만 인용문에서는
- * `>` 를 계속 이어 붙인다. 그러면 콜아웃을 쓰다가 밖으로 나올 방법이
- * Backspace 밖에 없다(노션·옵시디언은 Enter 두 번이면 나온다).
+ * - 인용: markdownKeymap 은 `>` 를 계속 이어 붙여 콜아웃을 쓰다 밖으로 나올 방법이 Backspace 밖에 없었다
+ *   (노션·옵시디언은 Enter 두 번이면 나온다).
+ * - 71차: 예전엔 표시만 지워 다음 글이 위 항목·인용에 **붙었다**(게으른 이어짐 — `> 말\n밖` 은 인용 안의
+ *   "말 밖"). 목록은 CM6 가 항목 하나뿐인 목록의 빈 둘째 항목에서 목록을 끝내지 않고 **빈 줄을 넣어 느슨한
+ *   목록**으로 만들어, Enter 두 번 뒤 쓴 글이 **새 항목**이 됐다(`- 하나\n\n- 밖`). 둘 다 실측. 이제 표시를
+ *   지우고 위와 빈 줄 하나를 둔다.
+ * - 들여쓴 빈 항목은 여기서 다루지 않는다 — CM6 가 한 단계 바깥 목록의 표시를 다시 붙이고 번호를 고친다
+ *   (nonTightLists: false 로 부른다 — 아래 keymap).
  */
-const exitEmptyQuote = (view: EditorView): boolean => {
-  const sel = view.state.selection.main;
+const exitEmptyBlock = (view: EditorView): boolean => {
+  const { state } = view;
+  const sel = state.selection.main;
   if (!sel.empty) return false;
-  const line = view.state.doc.lineAt(sel.head);
-  // `>`·`> `·`> > ` 처럼 내용이 없는 인용 줄이고, 커서가 그 끝일 때만
-  if (sel.head !== line.to || !/^\s*(?:>\s*)+$/.test(line.text)) return false;
+  const line = state.doc.lineAt(sel.head);
+  if (sel.head !== line.to) return false;
+  // 값싼 앞 거르기 — 표시만 있는 줄일 때만 문서를 읽는다. 들여쓴 목록 항목은 CM6 에 맡긴다.
+  if (!/^(?:\s*(?:>\s*)+|(?:[-*+]|\d{1,9}[.)])\s+(?:\[[ xX]\]\s*)?)$/.test(line.text)) return false;
+  const edit = endsBlock(state.doc.sliceString(0, line.to), line.to);
+  if (!edit) return false;
   view.dispatch({
-    changes: { from: line.from, to: line.to, insert: "" },
-    selection: { anchor: line.from },
+    changes: { from: line.from, to: line.to, insert: edit.text.slice(line.from) },
+    selection: { anchor: edit.caret },
+    scrollIntoView: true,
     userEvent: "input",
   });
   return true;
 };
+
+/** 목록·인용 이어쓰기 Enter — CM6 기본에서 '항목 하나짜리 목록의 빈 둘째 항목 → 느슨한 목록' 만 끈다(71차).
+ *  그 동작이 들여쓴 목록에도 걸려, 안쪽 목록에서 Enter 두 번이 바깥으로 나가지 않고 빈 줄만 생겼다. */
+const markdownEnterKeymap = [
+  { key: "Enter", run: insertNewlineContinueMarkupCommand({ nonTightLists: false }) },
+  { key: "Backspace", run: deleteMarkupBackward },
+];
 
 const lineDeco = (cls: string) => Decoration.line({ class: cls });
 
@@ -825,10 +845,11 @@ export function LiveEditor({
       doc: value,
       extensions: [
         history(),
-        // 빈 인용문 탈출은 markdown() 의 Prec.high 이어쓰기보다 먼저 와야 한다.
-        // 조건이 아주 좁아서(내용 없는 `>` 줄 + 커서가 줄 끝) 다른 Enter 를
-        // 가로채지 않는다.
-        ...md(Prec.highest(keymap.of([{ key: "Enter", run: exitEmptyQuote }]))),
+        // 빈 항목·빈 인용 탈출은 목록 이어쓰기(Prec.high)보다 먼저 와야 한다.
+        // 조건이 아주 좁아서(표시만 있는 줄 + 커서가 줄 끝) 다른 Enter 를 가로채지 않는다.
+        ...md(Prec.highest(keymap.of([{ key: "Enter", run: exitEmptyBlock }]))),
+        // markdown() 의 기본 keymap 대신(addKeymap: false) — 까닭은 markdownEnterKeymap
+        ...md(Prec.high(keymap.of(markdownEnterKeymap))),
         keymap.of([
           { key: "Mod-s", run: () => { cbs.current.onSave?.(); return true; } },
           ...closeBracketsKeymap,
@@ -845,6 +866,7 @@ export function LiveEditor({
         ...md(markdown({
           base: markdownLanguage,
           codeLanguages: languages,
+          addKeymap: false,
           // 형광펜(==강조==)은 표준 마크다운에 없다. 읽기 뷰와 같은 규칙을 쓴다.
           // 한글 친화 강조(`**중요!**라고`)도 읽기 뷰와 같은 규칙(markdownExtras, 69차).
           extensions: [cmHighlightExtension, cmCjkFriendly(markdownLanguage.parser)],
