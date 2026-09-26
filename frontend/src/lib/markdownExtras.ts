@@ -49,6 +49,23 @@ export function cjkEmphasisSides(marker: number, before: number | null, twoBefor
 }
 
 type InlineParse = (cx: InlineContext, next: number, pos: number) => number;
+type Delimiter = { from: number; to: number; side: number };
+
+/** lezer 내부에 손대는 곳은 이 둘뿐이다 — 공개 API 에 없는 칸(인라인 해석기 표·구분자 목록)이라, 모양이
+ *  바뀌면(lezer 올림) 조용히 표준 규칙으로 물러난다. 편집기 파서가 예외를 던지면 편집기 전체가 멈춘다.
+ *  물러났는지는 test/cjkEmphasis 가 잡는다(한국어 사례가 깨진다). */
+function originalInline(base: object, name: string): InlineParse | null {
+  const p = base as { inlineParsers?: unknown; inlineNames?: unknown };
+  if (!Array.isArray(p.inlineParsers) || !Array.isArray(p.inlineNames)) return null;
+  const f = p.inlineParsers[p.inlineNames.indexOf(name)];
+  return typeof f === "function" ? (f as InlineParse) : null;
+}
+function lastDelimiter(cx: InlineContext, start: number): Delimiter | null {
+  const parts = (cx as unknown as { parts?: unknown }).parts;
+  if (!Array.isArray(parts)) return null;
+  const d = parts[parts.length - 1] as Partial<Delimiter> | null | undefined;
+  return d && d.from === start && typeof d.to === "number" && typeof d.side === "number" ? (d as Delimiter) : null;
+}
 /** 인라인 문단 안의 한 코드 포인트(없으면 null — 문단 경계는 공백으로 본다). */
 function pointBefore(cx: InlineContext, pos: number): number | null {
   const s = cx.slice(Math.max(cx.offset, pos - 2), pos);
@@ -67,16 +84,14 @@ function pointAfter(cx: InlineContext, pos: number): number | null {
  * 것은 CodeMirror 가 그 파서를 일반 Parser 로 내놓아서다(쓰는 것은 어차피 내부 칸이다).
  */
 export function cmCjkFriendly(base: object): MarkdownConfig {
-  const p = base as unknown as { inlineParsers: (InlineParse | undefined)[]; inlineNames: string[] };
   const wrap = (name: string, markers: number[]) => {
-    const original = p.inlineParsers[p.inlineNames.indexOf(name)];
-    if (!original) throw new Error(`마크다운 파서에 ${name} 가 없다`);
+    const original = originalInline(base, name);
+    if (!original) return null; // 모양이 바뀌었다 — 기본 해석기를 그대로 둔다
     const parse: InlineParse = (cx, next, start) => {
       const end = original(cx, next, start);
       if (end < 0 || !markers.includes(next)) return end;
-      const parts = (cx as unknown as { parts: ({ from: number; to: number; side: number } | null)[] }).parts;
-      const d = parts[parts.length - 1];
-      if (!d || d.from !== start || typeof d.side !== "number") return end;
+      const d = lastDelimiter(cx, start);
+      if (!d) return end;
       const before = pointBefore(cx, d.from);
       const twoBefore = before === null ? null : pointBefore(cx, d.from - (before > 0xffff ? 2 : 1));
       const s = cjkEmphasisSides(next, before, twoBefore, pointAfter(cx, d.to));
@@ -85,7 +100,8 @@ export function cmCjkFriendly(base: object): MarkdownConfig {
     };
     return { name, parse };
   };
-  return { parseInline: [wrap("Emphasis", [42, 95]), wrap("Strikethrough", [126])] };
+  const parsers = [wrap("Emphasis", [42, 95]), wrap("Strikethrough", [126])];
+  return { parseInline: parsers.filter((x): x is { name: string; parse: InlineParse } => x !== null) };
 }
 
 /** 형광펜 구간에 붙는 커스텀 태그(에디터 하이라이트 스타일이 이걸 잡는다). */
