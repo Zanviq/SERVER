@@ -11818,7 +11818,7 @@ def test_app_links_count_as_backlinks_and_graph_edges():
         assert back2 == ["괄호가리킴"], back2
         g = client.get("/api/notes/graph", params={"folder": box}).json()
         assert {"source": "A", "target": "B"} in g["links"], g["links"]
-        assert not any(l["source"] == "설명" for l in g["links"]), "코드 안의 링크를 셌다"
+        assert not any(e["source"] == "설명" for e in g["links"]), "코드 안의 링크를 셌다"
     finally:
         client.request("DELETE", "/api/notes/folder", params={"path": box})
 

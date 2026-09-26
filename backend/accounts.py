@@ -197,6 +197,32 @@ def _save(rows: list[dict], settings: Settings) -> None:
     write_atomic(_path(settings), rows)
 
 
+def _rows_locked(p: Path, *, empty_if_missing: bool = False) -> list[dict]:
+    """계정 잠금을 **쥔 채** 목록을 읽는다(부르는 쪽이 `with lock_for(p)` 안이어야 한다).
+
+    _load 를 쓰면 안 된다 — origin 을 채울 행이 보이면 같은 잠금을 다시 잡고(다시 들어갈 수 없는 Lock)
+    이 스레드와 로그인 전부가 멈춘다(61차, 시험이 지킨다). 못 읽으면(손상) 503 — 그 위에 쓰면 모든
+    계정이 사라진다. empty_if_missing 은 파일이 **아직 없을** 때만 빈 목록(가입이 파일을 처음 만든다).
+    """
+    rows = read_json(p, None)
+    if rows is None and empty_if_missing and not p.exists():
+        return []
+    if not isinstance(rows, list):
+        raise HTTPException(
+            status_code=503,
+            detail="계정 파일을 읽을 수 없습니다. 손상됐을 수 있어 아무것도 덮어쓰지 않았습니다.",
+        )
+    return rows
+
+
+def _check_password_length(pw: str | None, what: str) -> None:
+    """가입·비밀번호 바꾸기가 같은 길이 규칙을 쓴다(what 은 안내에 쓰는 이름)."""
+    if len(pw or "") < MIN_PASSWORD:
+        raise HTTPException(status_code=400, detail=f"{what}는 {MIN_PASSWORD}자 이상이어야 합니다.")
+    if len(pw or "") > MAX_PASSWORD:
+        raise HTTPException(status_code=400, detail=f"{what}는 {MAX_PASSWORD}자까지입니다.")
+
+
 def _to_account(row: dict) -> Account:
     return Account(
         username=row["username"],
@@ -380,10 +406,7 @@ def change_password(username: str, current: str, new: str, settings: Settings) -
     가입·승인 같은 다른 쓰기가 줄을 선다. 잠금 안에서는 확인한 해시가 그대로인지만 보고 쓴다.
     세션 세대(session_gen)를 새로 뽑는다(_fresh_gen) — 그 전 세대로 발급된 세션은 모두 무효(auth._verify).
     """
-    if len(new or "") < MIN_PASSWORD:
-        raise HTTPException(status_code=400, detail=f"새 비밀번호는 {MIN_PASSWORD}자 이상이어야 합니다.")
-    if len(new) > MAX_PASSWORD:
-        raise HTTPException(status_code=400, detail=f"새 비밀번호는 {MAX_PASSWORD}자까지입니다.")
+    _check_password_length(new, "새 비밀번호")
     row = next((r for r in _load(settings) if r.get("username") == username), None)
     if row is None:
         raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
@@ -395,14 +418,7 @@ def change_password(username: str, current: str, new: str, settings: Settings) -
     fresh = hash_password(new)
     p = _path(settings)
     with lock_for(p):
-        # 잠금 안에서는 read_json 으로만 읽는다 — _load 는 origin 을 채울 행이 보이면 같은 잠금을 다시
-        # 잡고(다시 들어갈 수 없는 Lock) 이 스레드와 로그인 전부가 멈춘다(61차, 시험이 지킨다).
-        rows = read_json(p, None)
-        if not isinstance(rows, list):
-            raise HTTPException(
-                status_code=503,
-                detail="계정 파일을 읽을 수 없습니다. 손상됐을 수 있어 아무것도 덮어쓰지 않았습니다.",
-            )
+        rows = _rows_locked(p)
         row = next((r for r in rows if isinstance(r, dict) and r.get("username") == username), None)
         if row is None:
             raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
@@ -437,12 +453,7 @@ def reset_password(username: str, settings: Settings) -> tuple[dict, str]:
     fresh = hash_password(temp)  # 잠금 밖에서(파이에서 한 번에 1초 가까이)
     p = _path(settings)
     with lock_for(p):
-        rows = read_json(p, None)
-        if not isinstance(rows, list):
-            raise HTTPException(
-                status_code=503,
-                detail="계정 파일을 읽을 수 없습니다. 손상됐을 수 있어 아무것도 덮어쓰지 않았습니다.",
-            )
+        rows = _rows_locked(p)
         row = _match(rows, username)
         if row is None:
             raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
@@ -480,10 +491,7 @@ def signup(username: str, password: str, display_name: str, settings: Settings) 
             status_code=400,
             detail="아이디는 영문 소문자·숫자·_·- 3~32자여야 합니다.",
         )
-    if len(password or "") < MIN_PASSWORD:
-        raise HTTPException(status_code=400, detail=f"비밀번호는 {MIN_PASSWORD}자 이상이어야 합니다.")
-    if len(password) > MAX_PASSWORD:
-        raise HTTPException(status_code=400, detail=f"비밀번호는 {MAX_PASSWORD}자까지입니다.")
+    _check_password_length(password, "비밀번호")
     if len((display_name or "").strip()) > MAX_DISPLAY_NAME:
         raise HTTPException(status_code=400, detail=f"표시 이름은 {MAX_DISPLAY_NAME}자까지입니다.")
 
@@ -498,20 +506,8 @@ def signup(username: str, password: str, display_name: str, settings: Settings) 
         # read_json 은 깨진 JSON 에도 기본값([])을 준다. 그대로 쓰면 손상된 계정
         # 파일 위에 **새 신청자 한 명만 담아** 덮어쓰면서 201 "접수되었습니다"를
         # 돌려준다 — 모든 계정이 사라진다. 로그인 경로(_load)는 같은 상황을
-        # 503 으로 막는데, 여기만 그 방어를 안 쓰고 있었다.
-        rows = read_json(p, None)
-        if rows is None:
-            if p.exists():
-                raise HTTPException(
-                    status_code=503,
-                    detail="계정 파일을 읽을 수 없습니다. 손상됐을 수 있어 아무것도 덮어쓰지 않았습니다.",
-                )
-            rows = []
-        elif not isinstance(rows, list):
-            raise HTTPException(
-                status_code=503,
-                detail="계정 파일을 읽을 수 없습니다. 손상됐을 수 있어 아무것도 덮어쓰지 않았습니다.",
-            )
+        # 503 으로 막는데, 여기만 그 방어를 안 쓰고 있었다. 파일이 아직 없을 때만 빈 목록.
+        rows = _rows_locked(p, empty_if_missing=True)
         # 대소문자만 다른 아이디는 같은 것으로 본다 — 조회가 그렇게 찾기 때문이다.
         if _match(rows, username) is not None:
             raise HTTPException(status_code=409, detail="이미 사용 중인 아이디입니다.")
