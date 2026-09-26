@@ -18,6 +18,7 @@ import { looksLikeExtension } from "../lib/names";
 import { ancestorsOf, fileName, isMarkdownPath, parentDir } from "../lib/notePath";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { Draft, draftAgeText, dropDraft, keepDraft, moveDraft, moveDraftsUnder, readDraft } from "../lib/draftBackup";
+import { EditorBanner } from "../components/ui/EditorBanner";
 import { isSubmitEnter } from "../lib/keys";
 import { embedMarkdownFor, makeResolver } from "../lib/embeds";
 import { toast } from "../store/toast";
@@ -999,11 +1000,10 @@ export function Notes() {
           </div>
           {/* 다른 기기에서 같은 문서를 고쳤다. 어느 쪽을 남길지는 사용자가 고른다. */}
           {conflict && conflict === current && (
-            <div className="flex flex-wrap items-center gap-2 border-b border-line bg-[rgb(var(--danger)/0.1)] px-3 py-2 text-[12.5px]">
-              <span className="min-w-0 flex-1">
-                이 문서가 <b>다른 곳에서도 바뀌었습니다.</b> 지금 화면의 글로 덮어쓰거나,
-                저쪽 내용을 불러올 수 있습니다.
-              </span>
+            <EditorBanner tone="danger" message={<>
+              이 문서가 <b>다른 곳에서도 바뀌었습니다.</b> 지금 화면의 글로 덮어쓰거나,
+              저쪽 내용을 불러올 수 있습니다.
+            </>}>
               <button
                 onClick={async () => {
                   // 기준을 지우고 다시 저장하면 검사를 건너뛴다(사용자가 고른 것이다)
@@ -1021,15 +1021,14 @@ export function Notes() {
               >
                 저쪽 내용 불러오기
               </button>
-            </div>
+            </EditorBanner>
           )}
           {/* 다른 기기·탭에서 이 문서를 지웠다(63차). 자동저장이 조용히 되살리지 않는다 — 고르게 한다.
               고르기 전엔 이 글이 서버에 없으니 다른 문서로도 옮기지 못한다(openNote 가 막는다). */}
           {gone && gone === current && (
-            <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-line bg-[rgb(var(--danger)/0.1)] px-3 py-2 text-[12.5px]">
-              <span className="min-w-0 flex-1">
-                이 문서는 <b>다른 곳에서 지워졌습니다.</b> 지금 화면의 글로 다시 만들거나, 버리고 닫을 수 있습니다.
-              </span>
+            <EditorBanner tone="danger" role="alert" message={<>
+              이 문서는 <b>다른 곳에서 지워졌습니다.</b> 지금 화면의 글로 다시 만들거나, 버리고 닫을 수 있습니다.
+            </>}>
               <button
                 onClick={async () => {
                   // 기준을 지우면 서버가 새로 만든다(사용자가 고른 것이다)
@@ -1053,15 +1052,12 @@ export function Notes() {
               >
                 버리고 닫기
               </button>
-            </div>
+            </EditorBanner>
           )}
           {/* 서버에 닿지 못한 편집. 자동으로 되살리지 않는다 — 다른 기기에서 고친
               글을 조용히 덮어쓰는 편이 잃는 것보다 나쁘다. */}
           {draft && current && (
-            <div className="flex flex-wrap items-center gap-2 border-b border-line bg-[rgb(var(--warning)/0.12)] px-3 py-2 text-[12.5px]">
-              <span className="min-w-0 flex-1">
-                저장되지 못한 편집이 이 브라우저에 남아 있습니다({draftAgeText(draft.at)}).
-              </span>
+            <EditorBanner tone="warning" message={<>저장되지 못한 편집이 이 브라우저에 남아 있습니다({draftAgeText(draft.at)}).</>}>
               <button
                 onClick={() => {
                   setContent(draft.text);
@@ -1079,7 +1075,7 @@ export function Notes() {
               >
                 버리기
               </button>
-            </div>
+            </EditorBanner>
           )}
           {!current ? (
             <div className="flex flex-1 items-center justify-center px-4 text-center text-[13px] text-fg-muted">

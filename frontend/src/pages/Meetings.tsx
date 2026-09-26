@@ -17,6 +17,7 @@ import { api, Meeting, MeetingDocSummary } from "../lib/api";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
 import { isConflict, isGone } from "../lib/api";
+import { EditorBanner } from "../components/ui/EditorBanner";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { Draft, draftAgeText, dropDraft, keepDraft, readDraft } from "../lib/draftBackup";
 
@@ -439,10 +440,9 @@ export function Meetings() {
             </div>
             {/* 다른 곳(다른 기기·AI)이 같은 문서를 고쳤다 */}
             {conflict && docOpen && (
-              <div className="flex flex-wrap items-center gap-2 border-b border-line bg-[rgb(var(--danger)/0.1)] px-3 py-2 text-[12.5px]">
-                <span className="min-w-0 flex-1">
-                  이 문서가 <b>다른 곳에서도 바뀌었습니다.</b> (AI 가 다시 썼을 수도 있습니다)
-                </span>
+              <EditorBanner tone="danger" message={<>
+                이 문서가 <b>다른 곳에서도 바뀌었습니다.</b> (AI 가 다시 썼을 수도 있습니다)
+              </>}>
                 <button
                   onClick={async () => {
                     baseRef.current[docKey(selected.id, tab)] = 0;   // 검사를 건너뛴다
@@ -459,14 +459,13 @@ export function Meetings() {
                 >
                   저쪽 내용 불러오기
                 </button>
-              </div>
+              </EditorBanner>
             )}
             {/* 다른 곳에서 지웠거나 이름을 바꿨다(63차). 되살릴지 버릴지 고른다(노트와 같다). */}
             {gone && docOpen && (
-              <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-line bg-[rgb(var(--danger)/0.1)] px-3 py-2 text-[12.5px]">
-                <span className="min-w-0 flex-1">
-                  이 문서는 <b>다른 곳에서 지워졌거나 이름이 바뀌었습니다.</b> 지금 화면의 글로 다시 만들거나, 버리고 닫을 수 있습니다.
-                </span>
+              <EditorBanner tone="danger" role="alert" message={<>
+                이 문서는 <b>다른 곳에서 지워졌거나 이름이 바뀌었습니다.</b> 지금 화면의 글로 다시 만들거나, 버리고 닫을 수 있습니다.
+              </>}>
                 <button
                   onClick={async () => {
                     baseRef.current[docKey(selected.id, tab)] = 0;   // 기준 없이 = 새로 만든다
@@ -491,14 +490,11 @@ export function Meetings() {
                 >
                   버리고 닫기
                 </button>
-              </div>
+              </EditorBanner>
             )}
             {/* 서버에 닿지 못한 편집. 자동으로 덮어쓰지 않고 사용자가 고른다(노트와 같다). */}
             {draft && docOpen && (
-              <div className="flex flex-wrap items-center gap-2 border-b border-line bg-[rgb(var(--warning)/0.12)] px-3 py-2 text-[12.5px]">
-                <span className="min-w-0 flex-1">
-                  저장되지 못한 편집이 이 브라우저에 남아 있습니다({draftAgeText(draft.at)}).
-                </span>
+              <EditorBanner tone="warning" message={<>저장되지 못한 편집이 이 브라우저에 남아 있습니다({draftAgeText(draft.at)}).</>}>
                 <button
                   onClick={() => {
                     setContent(draft.text);
@@ -516,7 +512,7 @@ export function Meetings() {
                 >
                   버리기
                 </button>
-              </div>
+              </EditorBanner>
             )}
             {!docOpen ? (
               <TranscriptView meeting={selected} onSeek={seek} onRetry={() => retry(selected)}
