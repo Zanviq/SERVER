@@ -1003,6 +1003,46 @@ def test_deleted_account_data_is_not_inherited():
     client.delete("/api/admin/users/leaver")
 
 
+def test_old_sessions_do_not_outlive_the_account_state_they_were_issued_for():
+    """세션은 **그 계정의 그 시기**에만 통해야 한다(60차).
+
+    ① 지운 계정의 쿠키가, 같은 아이디로 새로 가입·승인된 **다른 사람**의 계정에 그대로 들어갔다 —
+    토큰에는 아이디만 있고 새 계정의 세대도 0 이라 구별할 수 없었다(격리 서버에서 새 사람의 문서
+    트리를 읽음). 데이터 폴더는 치웠지만(위 시험) 세션은 이어졌다.
+    ② 비활성화로 끊은 세션이 다시 활성화하면 되살아났다 — 샌 쿠키 때문에 막았다면 막은 뜻이 없다.
+    세대를 +1 로 올리면 ①이 안 막힌다: 지운 계정도 승인 때 1 이 됐으므로 새 계정의 1 과 같아진다.
+    """
+    login_guard.reset()
+    _login()
+    name = "reuser"
+
+    def join(pw):
+        assert TestClient(app).post("/api/auth/signup", json={"username": name, "password": pw}).status_code == 201
+        assert client.post(f"/api/admin/users/{name}/approve").status_code == 200
+        c = TestClient(app)
+        assert c.post("/api/auth/login", json={"username": name, "password": pw}).status_code == 200
+        return c
+
+    try:
+        first = join("first-person-pw")
+        assert first.get("/api/auth/session").status_code == 200
+        assert client.delete(f"/api/admin/users/{name}").status_code == 200
+        second = join("second-person-pw")
+        assert second.put("/api/notes/save", json={"path": "둘째비밀.md", "content": "x"}).status_code == 200
+        assert first.get("/api/auth/session").status_code == 401, "지운 계정의 쿠키가 새 계정에 들어갔다"
+        assert first.get("/api/notes/list").status_code == 401
+
+        assert client.post(f"/api/admin/users/{name}/disable").status_code == 200
+        assert second.get("/api/auth/session").status_code == 401
+        assert client.post(f"/api/admin/users/{name}/approve").status_code == 200
+        assert second.get("/api/auth/session").status_code == 401, "비활성화로 끊은 세션이 되살아났다"
+        third = TestClient(app)
+        assert third.post("/api/auth/login", json={"username": name, "password": "second-person-pw"}).status_code == 200
+        assert third.get("/api/auth/session").status_code == 200
+    finally:
+        client.delete(f"/api/admin/users/{name}")
+
+
 def test_moving_one_occurrence_splits_it_out():
     """한 회차만 시간을 옮기면 그 회차만 떨어져 나와야 한다.
 

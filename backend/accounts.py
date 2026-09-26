@@ -18,6 +18,7 @@ import hmac
 import logging
 import os
 import re
+import secrets
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -215,6 +216,16 @@ def _gen(row: dict) -> int:
         return 0
 
 
+def _fresh_gen() -> int:
+    """이 계정의 **새 시기**를 여는 세대 — 그 전에 발급된 세션은 모두 무효가 된다(auth._verify).
+
+    +1 이 아니라 새로 뽑는다(60차). 계정을 지우면 행이 사라져 세대 기록도 함께 사라지고, 같은 아이디로
+    다시 가입한 **다른 사람**의 계정은 다시 0 에서 시작한다 — 세고 올리면 지운 계정의 세대와 겹쳐
+    그 사람의 쿠키가 새 계정에 들어간다(실측). 0 은 뽑지 않는다(옛 토큰의 '세대 없음'과 같은 값).
+    """
+    return secrets.randbelow(2**48) + 1
+
+
 def ensure_seed(settings: Settings) -> None:
     """저장소가 비어 있으면 .env의 AUTH_USERS를 해시로 변환해 1회 이관.
 
@@ -367,7 +378,7 @@ def change_password(username: str, current: str, new: str, settings: Settings) -
 
     해시(수십만 번 반복)는 **잠금 밖에서** 계산한다 — 파이에서 한 번에 몇 초라, 잠금 안에서 하면 그동안
     가입·승인 같은 다른 쓰기가 줄을 선다. 잠금 안에서는 확인한 해시가 그대로인지만 보고 쓴다.
-    세션 세대(session_gen)를 하나 올린다 — 그 전 세대로 발급된 세션은 모두 무효(auth._verify).
+    세션 세대(session_gen)를 새로 뽑는다(_fresh_gen) — 그 전 세대로 발급된 세션은 모두 무효(auth._verify).
     """
     if len(new or "") < MIN_PASSWORD:
         raise HTTPException(status_code=400, detail=f"새 비밀번호는 {MIN_PASSWORD}자 이상이어야 합니다.")
@@ -391,7 +402,7 @@ def change_password(username: str, current: str, new: str, settings: Settings) -
         if row.get("password_hash", "") != seen:
             raise HTTPException(status_code=409, detail="그 사이 비밀번호가 바뀌었습니다. 다시 해 주세요.")
         row["password_hash"] = fresh
-        row["session_gen"] = _gen(row) + 1
+        row["session_gen"] = _fresh_gen()
         _save(rows, settings)
         return _to_account(row)
 
@@ -522,6 +533,11 @@ def set_status(username: str, status: str, actor: str, settings: Settings) -> di
             raise HTTPException(status_code=400, detail="마지막 관리자는 비활성화할 수 없습니다.")
         if status != STATUS_ACTIVE and _is_last_owner(row, rows):
             raise HTTPException(status_code=400, detail="마지막 서버 관리자는 비활성화할 수 없습니다.")
+        if row.get("status") != status:
+            # 상태가 바뀌면 그 전 시기의 세션은 끝난다(60차). 안 그러면 ① 비활성화로 끊은 세션이
+            # 다시 활성화할 때 되살아나고 ② 지운 계정의 쿠키가 같은 아이디로 새로 가입·승인된
+            # 다른 사람의 계정에 들어간다(승인도 상태 변화라 여기서 새 세대를 받는다).
+            row["session_gen"] = _fresh_gen()
         row["status"] = status
         if status == STATUS_ACTIVE:
             row["approved_at"] = time.time()
