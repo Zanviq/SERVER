@@ -525,7 +525,15 @@ const editorTheme = EditorView.theme({
     backgroundColor: "rgb(var(--accent) / 0.18)",
     color: "rgb(var(--fg))",
   },
-  ".cm-tooltip-autocomplete ul li": { padding: "3px 10px" },
+  // CM 기본 테마의 선택자(`.cm-tooltip.cm-tooltip-autocomplete > ul > li`)와 같은 세기로 적어야 이긴다 — 짧게 적던
+  // 때는 이 여백이 한 번도 먹지 않았다(줄 19px, 디자인 16차 실측).
+  ".cm-tooltip.cm-tooltip-autocomplete > ul > li": { padding: "3px 10px" },
+  // 손가락 화면: '/' 메뉴·'[[' 후보 줄이 19px 이라 원하는 줄을 누르기 어려웠다(디자인 16차). 줄을 키우고 목록도
+  // 조금 높인다(안에서 구른다).
+  "@media (pointer: coarse)": {
+    ".cm-tooltip.cm-tooltip-autocomplete > ul > li": { padding: "10px 12px" },
+    ".cm-tooltip.cm-tooltip-autocomplete > ul": { maxHeight: "min(16em, 40vh)" },
+  },
   // 코드블록 박스(편집 모드): 각 줄 배경 + 좌우 테두리, 첫/끝 줄에 상/하 테두리·라운드
   ".cm-mdcode": {
     backgroundColor: "rgb(var(--bg-subtle))",
@@ -988,6 +996,9 @@ export function LiveEditor({
             override: [wikiComplete, linkCompletionSource, slashSource],
             // 슬래시 메뉴는 고르는 목록이라 첫 항목이 미리 선택돼 있어야 Enter로 바로 넣는다
             defaultKeymap: true,
+            // CM 기본 아이콘을 끈다 — '/' 메뉴의 type "keyword" 는 줄마다 열쇠(🔑) 모양을, '[[' 후보는 빈 아이콘 자리를
+            // 달아, 뜻 없는 그림과 들여쓰기만 생겼다(디자인 16차).
+            icons: false,
           }),
           // 표준 링크 `[글](대상)` — Ctrl(⌘)+클릭으로 연다(79차)
           mdLinkClick((target) => {

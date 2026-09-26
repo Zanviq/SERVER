@@ -104,3 +104,13 @@ test("남은 작은 단추들 — 대화 고르기·그래프 전환·컨텍스�
   assert.match(read("../src/pages/Context.tsx"), /text-left text-\[12\.5px\] coarse:py-2\.5 \$\{/, "컨텍스트 공간 줄이 31px");
   assert.equal(read("../src/pages/English.tsx").match(/text-\[12px\] coarse:py-2 /g)?.length, 2, "영어 대화/단어장 전환");
 });
+
+test("편집기의 '/' 메뉴·'[[' 후보는 손가락 크기이고 뜻 없는 아이콘이 없다(디자인 16차)", () => {
+  const ed = read("../src/components/notes/LiveEditor.tsx");
+  // CM 기본 테마와 같은 세기의 선택자여야 이긴다 — 짧게 적던 때는 여백이 한 번도 먹지 않았다(줄 19px)
+  assert.match(ed, /"\.cm-tooltip\.cm-tooltip-autocomplete > ul > li": \{ padding: "3px 10px" \}/);
+  assert.doesNotMatch(ed, /"\.cm-tooltip-autocomplete ul li": \{ padding/, "기본 테마에 지는 짧은 선택자");
+  const coarse = ed.slice(ed.indexOf('"@media (pointer: coarse)"'), ed.indexOf('"@media (pointer: coarse)"') + 300);
+  assert.match(coarse, /"\.cm-tooltip\.cm-tooltip-autocomplete > ul > li": \{ padding: "10px 12px" \}/, "손가락 화면에서 줄이 19px");
+  assert.match(ed, /icons: false,/, "'/' 메뉴 줄마다 열쇠 아이콘이 붙는다");
+});
