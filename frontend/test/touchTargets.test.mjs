@@ -58,3 +58,29 @@ test("좁은 화면의 전환 단추는 넉넉하다", () => {
   const sw = src.slice(src.indexOf("function MobileSwitch"), src.indexOf("function MobileSwitch") + 1400);
   assert.match(sw, /h-10/, "h-8 이면 테두리 안쪽이 27px 이라 손가락에 작다");
 });
+
+test("문서 트리는 손가락 화면에서 줄이 넉넉하고, 줄 끝 단추가 붐비지 않는다(디자인 1차)", () => {
+  const config = read("../tailwind.config.js");
+  assert.match(config, /addVariant\("coarse", "@media \(pointer: coarse\)"\)/, "coarse: 가 손가락 화면에만 걸리지 않는다");
+  const notes = read("../src/pages/Notes.tsx");
+  // 폴더 줄·문서 줄 모두 — 32px 이던 줄이 손가락으로는 40px
+  assert.equal(notes.match(/py-1\.5 text-left coarse:py-2\.5/g)?.length, 2, "트리 줄이 손가락 화면에서 넓어지지 않는다");
+  // 줄마다 늘 뜨던 폴더 받기는 휴대폰에서 감춘다(머리의 '폴더 받기'가 같은 일)
+  assert.match(notes, /aria-label="폴더 다운로드"|title="폴더를 zip으로 내려받기"/);
+  const dl = notes.slice(notes.indexOf("api.noteArchiveUrl(child.path)"), notes.indexOf('aria-label="폴더 다운로드"'));
+  assert.match(dl, /\bhidden\b[^`]*\bsm:grid\b/, "휴대폰의 폴더 줄마다 받기 아이콘이 다시 뜬다");
+  const menu = read("../src/components/notes/RowMenu.tsx");
+  assert.match(menu, /className=\{`tap grid h-7 w-7/, "트리 줄 끝 … 에 .tap 이 없다");
+  assert.match(menu, /coarse:py-3/, "메뉴 항목이 손가락 화면에서 좁다");
+  assert.match(menu, /m\.offsetHeight/, "높아진 메뉴를 어림값으로 놓으면 위로 열 때 단추를 덮는다");
+});
+
+test("문서 머리는 꺾이지 않고, 좁으면 폴더 쪽부터 줄인다(디자인 1차)", () => {
+  const notes = read("../src/pages/Notes.tsx");
+  assert.match(notes, /<div className="flex shrink-0 items-center gap-1 whitespace-nowrap">/,
+    "머리 오른쪽 묶음이 줄어들면 휴대폰에서 '저장됨'·'편집' 이 두 줄로 꺾인다");
+  assert.match(notes, /<span className="max-w-full shrink-0 truncate">\{fileName\(current\)\}<\/span>/,
+    "문서 이름이 폴더보다 먼저 잘린다");
+  // 한 칸 화면에서 백링크는 접힌다 — 넓은 화면은 늘 펼침
+  assert.match(notes, /lg:flex lg:max-h-none lg:overflow-visible \$\{linksOpen \? "flex" : "hidden"\}/);
+});

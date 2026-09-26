@@ -41,6 +41,17 @@ export function RowMenu({ onRename, onMove, onTrash }: {
     if (open) place();
   }, [open, place]);
 
+  // 그려진 뒤 **실제 높이**로 한 번 더 맞춘다 — 손가락 화면은 줄이 더 높아(coarse:py-3) MENU_H 로 어림하면
+  // 위로 뒤집을 때 메뉴가 단추를 덮는다(디자인 1차). 같은 값이면 다시 정하지 않으므로 한 번에 멈춘다.
+  useLayoutEffect(() => {
+    const m = menuRef.current;
+    const b = btnRef.current?.getBoundingClientRect();
+    if (!open || !pos || !m || !b) return;
+    const h = m.offsetHeight;
+    const top = window.innerHeight - b.bottom >= h + 8 ? b.bottom + 4 : Math.max(8, b.top - h - 4);
+    if (top !== pos.top) setPos({ top, left: pos.left });
+  }, [open, pos]);
+
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
@@ -69,8 +80,9 @@ export function RowMenu({ onRename, onMove, onTrash }: {
         ref={btnRef}
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
         title="더보기" aria-label="더보기" aria-expanded={open}
-        // 보이는 때의 까닭은 REVEAL_ON_ROW. 열려 있는 동안은 늘 보인다.
-        className={`grid h-7 w-7 place-items-center rounded text-fg-muted transition-opacity hover:text-fg ${
+        // 보이는 때의 까닭은 REVEAL_ON_ROW. 열려 있는 동안은 늘 보인다. 손가락으로는 .tap 으로 44px 을 누른다
+        // (28px 이던 것 — 목록 줄마다 있는 주된 조작이다, 디자인 1차).
+        className={`tap grid h-7 w-7 place-items-center rounded text-fg-muted transition-opacity hover:text-fg ${
           open ? "" : REVEAL_ON_ROW
         }`}
       >
@@ -100,7 +112,7 @@ function MenuItem({ icon: Icon, label, onClick, danger }: {
 }) {
   return (
     <button onClick={onClick} role="menuitem"
-      className={`flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] hover:bg-hovered ${danger ? "text-danger" : "text-fg2"}`}>
+      className={`flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] hover:bg-hovered coarse:py-3 ${danger ? "text-danger" : "text-fg2"}`}>
       <Icon size={13} className="shrink-0" /> {label}
     </button>
   );

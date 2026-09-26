@@ -127,6 +127,7 @@ export function Notes() {
   const pendingRef = useRef<PendingSave>();
   const pending = (pendingRef.current ??= new PendingSave());
   const [reading, setReading] = useState(false); // 편집(라이브 프리뷰) ↔ 읽기 뷰
+  const [linksOpen, setLinksOpen] = useState(false); // 한 칸 화면에서 백링크를 펼쳤는가(넓은 화면은 늘 펼침)
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<NoteSearchHit[] | null>(null);
   const searchTimer = useRef<number | null>(null);
@@ -732,7 +733,7 @@ export function Notes() {
             style={{ paddingLeft: depth * 12 + 4 }}
           >
             <button onClick={() => toggleFolder(child.path)}
-              className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 text-left">
+              className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 text-left coarse:py-2.5">
               {isOpen ? <ChevronDown size={13} className="shrink-0 text-fg-muted" />
                 : <ChevronRight size={13} className="shrink-0 text-fg-muted" />}
               {/* 다른 화면이 관리하는 폴더(논문·회의)는 색과 아이콘을 달리해
@@ -753,8 +754,9 @@ export function Notes() {
                 <a href={api.noteArchiveUrl(child.path)} download
                   onClick={(e) => e.stopPropagation()}
                   // 누를 자리는 … 단추와 같은 28px(붙은 단추가 작으면 휴대폰에서 옆 것이 눌린다).
-                  // 보이는 때의 까닭은 REVEAL_ON_ROW.
-                  className={`grid h-7 w-7 shrink-0 place-items-center rounded text-fg-muted transition-opacity hover:text-accent ${REVEAL_ON_ROW}`}
+                  // 보이는 때의 까닭은 REVEAL_ON_ROW. 휴대폰에서는 감춘다 — 폴더를 누르면 머리의 '폴더 받기'가
+                  // 같은 일을 하는데, 줄마다 늘 떠 있어 목록이 아이콘으로 붐비고 바로 옆 … 를 잘못 누르게 했다(디자인 1차).
+                  className={`hidden h-7 w-7 shrink-0 place-items-center rounded text-fg-muted transition-opacity hover:text-accent sm:grid ${REVEAL_ON_ROW}`}
                   title="폴더를 zip으로 내려받기" aria-label="폴더 다운로드">
                   <Download size={13} />
                 </a>
@@ -796,7 +798,7 @@ export function Notes() {
           <div className={`group flex items-center gap-1 rounded-md pr-1 text-[13px] ${current === n.path ? "bg-accent-muted text-accent-fg" : "hover:bg-hovered"}`}
             style={{ paddingLeft: depth * 12 + 22 }}>
             <button onClick={() => openNote(n.path)}
-              className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left">
+              className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left coarse:py-2.5">
               <FileText size={14} className="shrink-0 text-fg-muted" />
               <span className="truncate">{fileName(n.path)}</span>
             </button>
@@ -1030,23 +1032,30 @@ export function Notes() {
             카드가 문서 길이만큼 자랐고(5600px), 그러면 absolute인 첨부 버튼과
             헤더(뒤로가기·읽기전환·삭제)가 문서 맨 끝/맨 앞에만 있어 못 쓴다. */}
         <div className="card relative flex h-view-11 flex-col overflow-hidden lg:h-auto lg:min-h-0">
-          <div className="flex items-center justify-between border-b border-line px-3 py-2">
-            <span className="flex min-w-0 items-center gap-1.5 truncate text-[13px] font-medium">
+          <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
+            <span className="flex min-w-0 items-center gap-1.5 text-[13px] font-medium">
               {/* 모바일은 목록과 문서를 번갈아 보여주므로 돌아갈 길이 필요하다 */}
               <button
                 onClick={closeNote}
                 aria-label="문서 목록으로"
-                className="-ml-1 shrink-0 rounded p-1 text-fg-muted hover:bg-hovered hover:text-fg lg:hidden"
+                className="tap -ml-1 shrink-0 rounded p-1 text-fg-muted hover:bg-hovered hover:text-fg lg:hidden"
               >
                 <ChevronLeft size={16} />
               </button>
               <NotebookPen size={14} className="hidden shrink-0 text-accent lg:block" />
-              <span className="truncate">
-                {/* 확장자를 떼지 않는다 — 무엇을 열고 있는지가 확장자로 갈린다 */}
-                {current ?? "문서를 선택하세요"}
-              </span>
+              {/* 확장자를 떼지 않는다 — 무엇을 열고 있는지가 확장자로 갈린다. 좁으면 **폴더 쪽부터** 줄인다:
+                  휴대폰에서 `폴더00/하위0/노트 0000 분…` 처럼 정작 문서 이름이 잘렸다(디자인 1차). */}
+              {current ? (
+                <span className="flex min-w-0 items-baseline" title={current}>
+                  {parentDir(current) && (
+                    <span className="min-w-0 truncate font-normal text-fg-muted">{parentDir(current)}/</span>
+                  )}
+                  <span className="max-w-full shrink-0 truncate">{fileName(current)}</span>
+                </span>
+              ) : <span className="truncate">문서를 선택하세요</span>}
             </span>
-            <div className="flex items-center gap-1">
+            {/* 줄어들지 않는다 — 줄던 때는 휴대폰에서 '저장됨'·'편집' 이 두 줄로 꺾였다(디자인 1차) */}
+            <div className="flex shrink-0 items-center gap-1 whitespace-nowrap">
               {saving ? <Loader2 size={13} className="animate-spin text-fg-muted" />
                 : dirty ? <Save size={13} className="text-warning" />
                 : current && isEditable ? <span className="label text-positive">저장됨</span> : null}
@@ -1059,7 +1068,7 @@ export function Notes() {
                     if (next && current) api.noteGet(current).then(setDetail).catch(() => {});
                   }}
                   title="편집 / 읽기 전환"
-                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                  className={`tap inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors ${
                     reading ? "border-accent/40 bg-accent-muted text-accent-fg" : "border-line text-fg-muted hover:text-fg"
                   }`}>
                   {reading ? <><Eye size={11} /> 읽기</> : <><Pencil size={11} /> 편집</>}
@@ -1200,8 +1209,14 @@ export function Notes() {
           {/* current도 본다 — 닫은 뒤 늦게 도착한 save 응답이 detail을 다시 채울 수 있다 */}
           {current && detail && detail.backlinks.length > 0 && (
             <div className="border-t border-line p-3">
-              <span className="label flex items-center gap-1.5"><Link2 size={12} /> 백링크 {detail.backlinks.length}</span>
-              <div className="mt-2 flex flex-wrap gap-1.5">
+              {/* 한 칸 화면(휴대폰)에서는 접어 둔다 — 펼쳐 두면 칩 여남은 개가 편집 칸 아래를 170px 넘게 차지해,
+                  자판이 올라오면 글 쓸 자리가 몇 줄 남지 않았다(디자인 1차). 넓은 화면은 늘 펼친다. */}
+              <button type="button" onClick={() => setLinksOpen((v) => !v)} aria-expanded={linksOpen}
+                className="label tap flex items-center gap-1.5 lg:pointer-events-none">
+                <Link2 size={12} /> 백링크 {detail.backlinks.length}
+                <ChevronDown size={12} className={`transition-transform lg:hidden ${linksOpen ? "" : "-rotate-90"}`} />
+              </button>
+              <div className={`mt-2 max-h-40 flex-wrap gap-1.5 overflow-y-auto lg:flex lg:max-h-none lg:overflow-visible ${linksOpen ? "flex" : "hidden"}`}>
                 {/* 경로로 연다 — 제목으로 다시 찾으면 같은 제목의 다른 문서가 열릴 수 있다(65차) */}
                 {detail.backlinks.map((b, i) => {
                   const at = detail.backlink_paths?.[i];

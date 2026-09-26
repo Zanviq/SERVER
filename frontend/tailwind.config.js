@@ -62,5 +62,9 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // `coarse:` — 손가락으로 쓰는 화면에서만(마우스 화면의 모양은 그대로 둔다). 목록 줄·작은 단추를 손가락 크기로
+    // 넓힐 때 쓴다 — 화면 너비(sm:)로 가르면 넓은 태블릿은 마우스 크기로, 좁은 창의 마우스는 손가락 크기로 갈린다.
+    ({ addVariant }) => addVariant("coarse", "@media (pointer: coarse)"),
+  ],
 };
