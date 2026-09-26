@@ -1058,6 +1058,45 @@ def test_deleted_account_data_is_not_inherited():
     client.delete("/api/admin/users/leaver")
 
 
+def test_a_wiki_link_goes_to_the_nearest_of_same_titled_notes():
+    """제목이 같은 문서가 여러 폴더에 있으면 `[[제목]]` 은 **링크를 적은 문서에서 가까운 것**이다(65차).
+
+    예전엔 서버는 먼저 훑은 것을 골랐고 링크를 적은 자리를 보지 않았다. 실측: `나/출발` 의 `[[메모]]` 가
+    `가/메모`·`나/메모` **둘 다의 역링크**로 떴고, 화면에서 누르면 `가/메모` 가 열렸다. 규칙은 화면
+    (lib/notePath.pickByTitle, test/notePath)과 같아야 한다 — 같은 폴더 → 얕은 경로 → 경로 순서.
+    """
+    from backend import notes_graph
+
+    assert notes_graph.nearest(["가/메모.md", "나/메모.md"], "나/출발.md") == "나/메모.md"
+    assert notes_graph.nearest(["가/메모.md", "나/메모.md"], "다/출발.md") == "가/메모.md"
+    assert notes_graph.nearest(["가/깊은/메모.md", "메모.md"], "나/출발.md") == "메모.md"
+    assert notes_graph.nearest(["가/메모.md", "메모.md"], "출발.md") == "메모.md"
+
+    _login()
+    top = "겹제목65"
+    files = {f"{top}/가/메모.md": "가", f"{top}/나/메모.md": "나", f"{top}/나/출발.md": "[[메모]] [[메모#절|별칭]]",
+             f"{top}/다/멀리.md": "[[메모]]"}
+    for p, c in files.items():
+        assert client.put("/api/notes/save", json={"path": p, "content": c}).status_code == 200
+    try:
+        def back(p):
+            d = client.get("/api/notes/get", params={"path": p}).json()
+            return sorted(zip(d["backlinks"], d["backlink_paths"]))
+
+        assert back(f"{top}/나/메모.md") == [("출발", f"{top}/나/출발.md")], "같은 폴더의 링크가 이 문서로 오지 않았다"
+        # `다/멀리` 는 같은 폴더에 메모가 없다 — 얕은 경로, 같으면 경로 순서(가 < 나)로 `가/메모`
+        assert back(f"{top}/가/메모.md") == [("멀리", f"{top}/다/멀리.md")], "다른 폴더의 링크가 섞였다"
+        g = client.get("/api/notes/graph", params={"folder": top}).json()
+        ids = {n["path"]: n["id"] for n in g["nodes"]}
+        assert ids[f"{top}/가/메모.md"] != ids[f"{top}/나/메모.md"], "같은 제목의 두 문서가 한 노드로 합쳐졌다"
+        edges = {(e["source"], e["target"]) for e in g["links"]}
+        assert (ids[f"{top}/나/출발.md"], ids[f"{top}/나/메모.md"]) in edges
+        assert (ids[f"{top}/다/멀리.md"], ids[f"{top}/가/메모.md"]) in edges
+        assert len(edges) == 2, edges
+    finally:
+        client.delete("/api/notes/folder", params={"path": top})
+
+
 def test_names_from_a_mac_are_stored_the_way_a_keyboard_types_them():
     """맥에서 온 이름(NFD, 자모가 풀린 한글)은 자판으로 친 이름(NFC)으로 적힌다(64차).
 

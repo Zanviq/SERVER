@@ -17,6 +17,33 @@ export function parentDir(path: string): string {
   return i >= 0 ? path.slice(0, i) : "";
 }
 
+const depth = (path: string) => path.split("/").length;
+const byPath = (a: { path: string }, b: { path: string }) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+
+/**
+ * `[[제목]]` 이 가리키는 문서(65차). 제목이 같은 문서가 여럿이면 **링크를 적은 문서(from)에서 가까운 것** —
+ * 같은 폴더 → 경로가 얕은 것 → 경로 순서. **서버(notes_graph.nearest)와 같은 규칙**이어야 한다: 예전엔
+ * 화면은 목록의 첫 것을, 서버는 먼저 훑은 것을 골라 `나/출발` 의 `[[메모]]` 를 누르면 `가/메모` 가 열리고
+ * 역링크는 둘 다에 떴다. 제목이 안 맞으면 예전처럼 경로·파일명으로 찾는다.
+ */
+export function pickByTitle<T extends { path: string; title: string }>(
+  notes: T[], title: string, from?: string | null,
+): T | undefined {
+  const key = title.toLowerCase();
+  const same = notes.filter((n) => n.title.toLowerCase() === key);
+  if (same.length === 1) return same[0];
+  if (same.length > 1) {
+    if (from != null) {
+      const here = parentDir(from);
+      const near = same.filter((n) => parentDir(n.path) === here).sort(byPath)[0];
+      if (near) return near;
+    }
+    return [...same].sort((a, b) => depth(a.path) - depth(b.path) || byPath(a, b))[0];
+  }
+  return notes.find((n) => n.path.toLowerCase() === key)
+    ?? notes.find((n) => fileName(n.path).toLowerCase() === key);
+}
+
 /**
  * 문서 경로(`서버/설정/기록.md`)의 조상 폴더들 — 가까운 쪽이 뒤에 온다.
  * `서버/설정/기록.md` → ["서버", "서버/설정"]. 트리에서 그 문서가 보이려면 이것을 모두 펼쳐야 한다.

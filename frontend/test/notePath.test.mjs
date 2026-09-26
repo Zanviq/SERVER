@@ -12,7 +12,22 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { ancestorsOf, fileName, parentDir } from "../src/lib/notePath.ts";
+import { ancestorsOf, fileName, parentDir, pickByTitle } from "../src/lib/notePath.ts";
+
+test("[[제목]] 은 같은 제목 중 링크를 적은 문서에서 가까운 것 — 서버 nearest 와 같은 사례(65차)", () => {
+  const n = (path) => ({ path, title: fileName(path).replace(/\.md$/, "") });
+  const two = [n("가/메모.md"), n("나/메모.md")];
+  assert.equal(pickByTitle(two, "메모", "나/출발.md")?.path, "나/메모.md");   // 같은 폴더
+  assert.equal(pickByTitle(two, "메모", "다/출발.md")?.path, "가/메모.md");   // 없으면 얕은 것, 같으면 경로 순서
+  assert.equal(pickByTitle([n("가/깊은/메모.md"), n("메모.md")], "메모", "나/출발.md")?.path, "메모.md");
+  assert.equal(pickByTitle([n("가/메모.md"), n("메모.md")], "메모", "출발.md")?.path, "메모.md");
+  assert.equal(pickByTitle(two, "메모", null)?.path, "가/메모.md");          // 다른 화면에서 온 것(자리 없음)
+  assert.equal(pickByTitle([n("가/하나.md")], "하나", "나/x.md")?.path, "가/하나.md");
+  assert.equal(pickByTitle([n("가/todo.txt")], "가/todo.txt")?.path, "가/todo.txt"); // 경로로도
+  assert.equal(pickByTitle(two, "없음", "나/x.md"), undefined);
+  const src = readFileSync(new URL("../src/pages/Notes.tsx", import.meta.url), "utf8");
+  assert.match(src, /pickByTitle\(notes, title, from\)/, "문서 화면이 이 규칙으로 찾지 않는다");
+});
 
 test("파일명·부모 폴더", () => {
   assert.equal(fileName("서버/설정/기록.md"), "기록.md");

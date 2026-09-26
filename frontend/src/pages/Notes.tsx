@@ -15,7 +15,7 @@ import { NOTE_PATH_MIME } from "../components/notes/dragTypes";
 import { Modal } from "../components/ui/Modal";
 import { api, ApiError, isConflict, isGone, movedTo, NoteSummary, NoteDetail, NoteSearchHit } from "../lib/api";
 import { looksLikeExtension } from "../lib/names";
-import { ancestorsOf, fileName, isMarkdownPath, parentDir } from "../lib/notePath";
+import { ancestorsOf, fileName, isMarkdownPath, parentDir, pickByTitle } from "../lib/notePath";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { Draft, draftAgeText, dropDraft, keepDraft, moveDraft, moveDraftsUnder, readDraft } from "../lib/draftBackup";
 import { EditorBanner } from "../components/ui/EditorBanner";
@@ -430,13 +430,11 @@ export function Notes() {
     }, 300);
   };
 
+  /** `[[제목]]` 열기. from 은 링크를 적은 문서 — 제목이 같은 문서가 여럿이면 거기서 가까운 것(pickByTitle,
+   *  서버의 역링크·그래프와 같은 규칙). 다른 화면에서 주소(?open=)로 온 것은 자리가 없다(null). */
   const openByTitle = useCallback(
-    (title: string, create = true) => {
-      const key = title.toLowerCase();
-      const found =
-        notes.find((n) => n.title.toLowerCase() === key) ??
-        notes.find((n) => n.path.toLowerCase() === key) ??
-        notes.find((n) => fileName(n.path).toLowerCase() === key);
+    (title: string, create = true, from: string | null = null) => {
+      const found = pickByTitle(notes, title, from);
       if (found) {
         openNote(found.path);
         return;
@@ -471,6 +469,8 @@ export function Notes() {
     },
     [notes, openNote, save, reloadTree],
   );
+  /** 열린 문서 안의 링크(읽기 보기·편집기) — 이 문서를 기준으로 가까운 것을 연다 */
+  const openFromHere = useCallback((title: string) => openByTitle(title, true, current), [openByTitle, current]);
 
   useEffect(() => {
     const open = params.get("open");
@@ -1094,7 +1094,7 @@ export function Notes() {
             </div>
           ) : reading && isMarkdown ? (
             <div className="flex-1 overflow-auto p-4">
-              <MarkdownView content={content} onWikiClick={openByTitle} resolveEmbed={resolveEmbed} />
+              <MarkdownView content={content} onWikiClick={openFromHere} resolveEmbed={resolveEmbed} />
             </div>
           ) : (
             <LiveEditor
@@ -1112,7 +1112,7 @@ export function Notes() {
               // 그림·문서 링크를 마크다운으로 넣는 것들 — 평문에는 넘기지 않는다(첨부 단추도 사라진다)
               {...(isMarkdown ? { onDropFiles, onDropPath, onCreateDoc } : {})}
               // 읽기 뷰와 같은 동작 — 편집 화면에서도 `[[제목]]` 을 누르면 연다
-              onOpenTitle={openByTitle}
+              onOpenTitle={openFromHere}
             />
           )}
           {/* current도 본다 — 닫은 뒤 늦게 도착한 save 응답이 detail을 다시 채울 수 있다 */}
@@ -1120,9 +1120,14 @@ export function Notes() {
             <div className="border-t border-line p-3">
               <span className="label flex items-center gap-1.5"><Link2 size={12} /> 백링크 {detail.backlinks.length}</span>
               <div className="mt-2 flex flex-wrap gap-1.5">
-                {detail.backlinks.map((b) => (
-                  <button key={b} onClick={() => openByTitle(b)} className="badge badge-accent hover:bg-accent-soft">{b}</button>
-                ))}
+                {/* 경로로 연다 — 제목으로 다시 찾으면 같은 제목의 다른 문서가 열릴 수 있다(65차) */}
+                {detail.backlinks.map((b, i) => {
+                  const at = detail.backlink_paths?.[i];
+                  return (
+                    <button key={at || b} onClick={() => (at ? openNote(at) : openByTitle(b, true, current))}
+                            title={at || b} className="badge badge-accent hover:bg-accent-soft">{b}</button>
+                  );
+                })}
               </div>
             </div>
           )}

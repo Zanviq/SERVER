@@ -837,6 +837,8 @@ export interface NoteDetail {
   content: string;
   links: string[];
   backlinks: string[];
+  /** backlinks 와 같은 차례의 경로(붙여 온 문서면 빈 문자열) — 제목으로 다시 찾지 않고 이 경로로 연다 */
+  backlink_paths?: string[];
   kind: DocKind;
   /** 이 내용을 읽은 시점의 수정시각. 저장할 때 되돌려 보내 충돌을 잡는다. */
   modified: number;

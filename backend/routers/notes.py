@@ -28,7 +28,7 @@ from ..file_kinds import (
     BadName, doc_title, inline_media_type, is_editable, kind_of, looks_like_extension, nfc, renamed,
     split_ext,
 )
-from ..notes_graph import backlinks_for, build_graph, parse_wikilinks
+from ..notes_graph import backlinks_for, backlinks_of, build_graph, parse_wikilinks
 from ..security_paths import safe_join, to_rel
 from ..storage import resolve, taken_by_another, user_data_root, walk_all, walk_files
 from ..trash import move_to_trash
@@ -56,6 +56,8 @@ class NoteDetail(BaseModel):
     content: str
     links: list[str]
     backlinks: list[str]
+    #: backlinks 와 같은 차례의 경로 — 화면이 제목으로 다시 찾으면 같은 제목의 다른 문서가 열릴 수 있다(65차)
+    backlink_paths: list[str] = []
     kind: str = "md"
     #: 이 내용을 읽은 시점의 수정시각. 저장할 때 되돌려 보내면 그 사이 다른
     #: 기기에서 바뀐 것을 알아챌 수 있다(0 이면 확인하지 않는다).
@@ -379,14 +381,21 @@ def get_note(
             status_code=415,
             detail="UTF-8 로 읽을 수 없는 파일입니다(편집하면 원본이 깨집니다). 내려받아 확인하세요.",
         ) from e
+    rel = hit.rel if hit else to_rel(root, target)
+    # 이 문서를 실제로 가리키는 것만(같은 제목의 다른 문서로 간 링크는 빼고). 붙여 온 파일(논문·회의)은
+    # 문서 그래프에 없으므로 예전처럼 제목으로 센다.
+    found = backlinks_of(root, rel)
+    if found is None:
+        found = [(t, "") for t in backlinks_for(root, doc_title(target.name))]
     return NoteDetail(
         # 붙여 온 파일은 **붙은 자리**가 곧 경로다(실제 위치는 문서 루트 밖이라
         # to_rel 이 쓸 수 없다)
-        path=hit.rel if hit else to_rel(root, target),
+        path=rel,
         title=doc_title(target.name),
         content=content,
         links=parse_wikilinks(content),
-        backlinks=backlinks_for(root, doc_title(target.name)),
+        backlinks=[t for t, _ in found],
+        backlink_paths=[p for _, p in found],
         kind=kind_of(target.name),
         modified=target.stat().st_mtime,
     )

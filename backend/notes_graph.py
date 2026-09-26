@@ -11,7 +11,7 @@ import hashlib
 import logging
 import re
 import threading
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import NamedTuple
 
@@ -103,30 +103,58 @@ def _links_of(f: WalkedFile) -> NoteLinks:
     return found
 
 
+def nearest(rels: list[str], from_rel: str | None) -> str | None:
+    """제목이 같은 문서가 여럿일 때 `[[제목]]` 이 가리키는 것(65차). **화면(lib/notePath.pickByTitle)과 같은 규칙**:
+    링크를 적은 문서와 같은 폴더의 것 → 없으면 경로가 얕은 것 → 같으면 경로 순서가 앞선 것.
+
+    예전엔 서버는 먼저 훑은 것, 화면은 목록의 첫 것을 골랐고 둘 다 링크를 적은 자리를 보지 않았다 —
+    `나/출발` 의 `[[메모]]` 를 누르면 `가/메모` 가 열리고, 역링크는 `가/메모`·`나/메모` 둘 다에 떴다(실측).
+    """
+    if not rels:
+        return None
+    if from_rel is not None:
+        here = from_rel.rpartition("/")[0]
+        same = sorted(r for r in rels if r.rpartition("/")[0] == here)
+        if same:
+            return same[0]
+    return min(rels, key=lambda r: (r.count("/"), r))
+
+
 class _Lookup:
     """링크로 노트를 찾는 표 — 위키링크는 제목(stem)으로, `[note/경로]` 는 문서 루트 기준 경로로.
 
     링크 그래프와 폴더 지도가 같은 표를 쓴다(두 벌로 만들면 한쪽만 규칙이 바뀐다). 값은 부르는
-    쪽이 정한다(그래프는 stem, 폴더 지도는 Path). 같은 열쇠는 먼저 넣은 것이 이긴다.
+    쪽이 정한다(그래프는 노드 id, 폴더 지도는 Path). 같은 경로는 먼저 넣은 것이 이긴다. 같은
+    제목은 모두 담아 두고, 링크를 적은 문서에서 가까운 것을 고른다(nearest).
     """
 
     def __init__(self, notes_dir: Path) -> None:
-        self.by_title: dict = {}
+        self.by_title: dict[str, list[tuple[str, object]]] = {}
         self.by_rel: dict = {}
         self._notes_dir = notes_dir
         self._moved: list[dict] | None = None  # 옮김 기록 — 못 찾은 경로 링크가 있을 때만 읽는다
 
     def add(self, path: Path, value) -> None:
-        self.by_title.setdefault(path.stem.lower(), value)
+        rel = path.relative_to(self._notes_dir).as_posix()
+        self.by_title.setdefault(path.stem.lower(), []).append((rel, value))
         # 경로는 확장자를 붙여도 떼어도 같은 문서다(링크 열기와 같은 규칙)
-        key = path.relative_to(self._notes_dir).as_posix().lower()
+        key = rel.lower()
         self.by_rel.setdefault(key, value)
         if key.endswith(".md"):
             self.by_rel.setdefault(key[:-3], value)
 
-    def targets(self, ln: NoteLinks) -> list:
-        """노트 하나의 링크가 닿는 것들(못 찾은 것은 None)."""
-        out = [self.by_title.get(t.lower()) for t in ln.titles]
+    def _title(self, title: str, from_rel: str | None):
+        cands = self.by_title.get(title.lower())
+        if not cands:
+            return None
+        if len(cands) == 1:
+            return cands[0][1]
+        pick = nearest([r for r, _ in cands], from_rel)
+        return next(v for r, v in cands if r == pick)
+
+    def targets(self, ln: NoteLinks, from_rel: str | None = None) -> list:
+        """노트 하나의 링크가 닿는 것들(못 찾은 것은 None). from_rel 은 그 노트의 경로(문서 루트 기준)."""
+        out = [self._title(t, from_rel) for t in ln.titles]
         for p in ln.paths:
             rel = p.strip("/")
             hit = self.by_rel.get(rel.lower())
@@ -293,17 +321,25 @@ def build_graph(
 def _link_graph(notes_dir: Path, files: list[WalkedFile]) -> dict:
     """노트 사이의 링크 그래프(위키링크·경로 링크). 폴더 지도(_folder_graph)와 짝이다."""
     notes = [f for f in files if f.rel.endswith(".md")]
+    rel_of = {f.abspath: f.path.relative_to(notes_dir).as_posix() for f in notes}
+    # 노드 id 는 제목이다 — 다만 제목이 겹치면 경로로(65차). 제목만 쓰면 두 문서가 한 노드로 합쳐져
+    # 어느 쪽을 가리킨 간선인지 사라진다. 겹치지 않는 문서의 id 는 예전 그대로다.
+    many = Counter(f.path.stem.lower() for f in notes)
+
+    def node_id(f: WalkedFile) -> str:
+        stem = f.path.stem
+        return stem if many[stem.lower()] == 1 else rel_of[f.abspath].removesuffix(".md")
+
     find = _Lookup(notes_dir)
     nodes = []
     for f in notes:
-        p = f.path
-        stem = p.stem
-        find.add(p, stem)
+        nid = node_id(f)
+        find.add(f.path, nid)
         nodes.append(
             {
-                "id": stem,
-                "title": stem,
-                "path": p.relative_to(notes_dir).as_posix(),
+                "id": nid,
+                "title": f.path.stem,
+                "path": rel_of[f.abspath],
                 "type": "note",
             }
         )
@@ -311,8 +347,8 @@ def _link_graph(notes_dir: Path, files: list[WalkedFile]) -> dict:
     links = []
     seen = set()
     for f in notes:
-        src = f.path.stem
-        for tgt in find.targets(_links_of(f)):
+        src = node_id(f)
+        for tgt in find.targets(_links_of(f), rel_of[f.abspath]):
             if tgt and tgt != src:
                 key = (src, tgt)
                 if key not in seen:
@@ -395,7 +431,7 @@ def _folder_graph(notes_dir: Path, base: Path) -> dict:
         g_src = group_of(f.path)
         if g_src not in valid_ids:
             continue
-        for tp in find.targets(_links_of(f)):
+        for tp in find.targets(_links_of(f), f.path.relative_to(notes_dir).as_posix()):
             if not tp:
                 continue
             g_tgt = group_of(tp)
@@ -423,10 +459,31 @@ def warm_up(roots: list[Path]) -> None:
 
 
 def backlinks_for(notes_dir: Path, stem: str) -> list[str]:
-    """주어진 노트(stem)를 가리키는 다른 노트들의 stem 목록."""
+    """제목(stem)이 이것인 노트 **어느 것이든** 가리키는 다른 노트들의 제목 — 제목만 아는 쪽(AI 스킬).
+    문서 하나를 아는 쪽은 backlinks_of 를 쓴다(같은 제목의 다른 문서로 간 링크는 빼야 한다)."""
     graph = build_graph(notes_dir)
+    title = {n["id"]: n["title"] for n in graph["nodes"]}
     return [
-        link["source"]
+        title.get(link["source"], link["source"])
         for link in graph["links"]
-        if link["target"].lower() == stem.lower()
+        if title.get(link["target"], link["target"]).lower() == stem.lower()
+    ]
+
+
+def backlinks_of(notes_dir: Path, rel: str) -> list[tuple[str, str]] | None:
+    """이 문서(rel, 문서 루트 기준)를 가리키는 다른 문서들의 (제목, 경로). 그래프에 없는 문서면 None.
+
+    65차: 예전엔 제목으로만 셌다 — `나/출발` 의 `[[메모]]` 가 `가/메모`·`나/메모` 둘 다의 역링크로
+    떴다. 링크가 실제로 가는 곳(nearest)으로 센다. 경로를 함께 주는 까닭: 화면이 제목으로 다시 찾으면
+    같은 제목의 다른 문서를 열 수 있다.
+    """
+    graph = build_graph(notes_dir)
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    me = next((n["id"] for n in graph["nodes"] if n["path"] == rel), None)
+    if me is None:
+        return None
+    return [
+        (by_id[link["source"]]["title"], by_id[link["source"]]["path"])
+        for link in graph["links"]
+        if link["target"] == me and link["source"] in by_id
     ]
