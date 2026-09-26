@@ -1034,7 +1034,22 @@ export function Notes() {
                 ))
               )
             ) : notes.length === 0 && folders.length === 0 ? (
-              <li className="px-2 py-6 text-center text-[12px] text-fg-muted">노트가 없습니다</li>
+              // 처음 온 사람에게 첫걸음을 바로 준다 — "노트가 없습니다" 한 줄뿐이던 때는 위의 작은 아이콘 둘이 만들기인
+              // 줄 알기 어려웠고, 올리기는 머리에만 있었다(디자인 20차, 새 회원으로 실측).
+              <li className="flex flex-col items-center gap-3 px-3 py-8 text-center">
+                <NotebookPen size={22} className="text-fg-subtle" />
+                <span className="text-[12.5px] text-fg-muted">아직 문서가 없습니다.</span>
+                <div className="flex flex-wrap justify-center gap-2">
+                  <button onClick={() => { setNewName(""); setNewNoteOpen(true); }} className="btn btn-primary h-9">
+                    <FilePlus size={14} /> 새 노트
+                  </button>
+                  <label className="btn btn-secondary h-9 cursor-pointer">
+                    <Upload size={14} /> 파일 올리기
+                    <input type="file" multiple className="hidden"
+                      onChange={(e) => { doUpload(e.target.files); e.currentTarget.value = ""; }} />
+                  </label>
+                </div>
+              </li>
             ) : (
               renderNode(tree, 0)
             )}

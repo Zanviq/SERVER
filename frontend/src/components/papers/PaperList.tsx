@@ -7,6 +7,7 @@ import { Paper } from "../../lib/api";
 import { DropdownItem } from "../ui/Dropdown";
 import { RowMoreMenu } from "../ui/RowMoreMenu";
 import { ListState } from "../ui/ListState";
+import { useTouch } from "../../lib/useMediaQuery";
 
 interface Props {
   papers: Paper[];
@@ -53,6 +54,7 @@ export function PaperList({
   const [closed, setClosed] = useState<Set<string>>(() => new Set());
   const fileRef = useRef<HTMLInputElement>(null);
   const depth = useRef(0);
+  const touch = useTouch();
 
   const list = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -227,7 +229,8 @@ export function PaperList({
               {papers.length === 0 ? (
                 <>
                   <FileText size={22} className="mx-auto mb-2 text-fg-subtle" />
-                  PDF를 여기로 끌어다 놓으세요.
+                  {/* 손가락 화면에는 끌어 놓을 것이 없다 — 위의 'PDF' 단추로 안내한다(디자인 20차) */}
+                  {touch ? "위의 'PDF' 단추로 논문을 올리세요." : "PDF를 여기로 끌어다 놓으세요."}
                   <span className="mt-1 block text-[11.5px] text-fg-subtle">올리면 AI가 제목·요약·핵심 발견을 뽑아 둡니다.</span>
                 </>
               ) : "검색 결과가 없습니다."}
