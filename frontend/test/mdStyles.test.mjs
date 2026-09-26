@@ -67,6 +67,17 @@ test("할 일 목록·각주가 쓰는 클래스에 규칙이 있다", () => {
   }
 });
 
+test("체크박스와 보통 항목이 섞인 목록에서 보통 항목의 점이 사라지지 않는다 — 67차", () => {
+  // GFM 은 체크박스 항목이 하나라도 있으면 목록 전체에 contains-task-list 를 붙인다. 그 목록에서
+  // 점을 빼면 섞인 `- 글머리` 까지 점이 사라진다. 점은 체크박스 항목(task-list-item)에서만 뺀다.
+  const html = render("- [ ] 할 일\n- 글머리");
+  assert.match(html, /<ul class="contains-task-list">/);
+  assert.match(html, /<li>글머리<\/li>/, "보통 항목에 task-list-item 이 붙었다 — 표본이 무의미하다");
+  const rule = (sel) => css.match(new RegExp(`\\.prose-server ${sel.replace(".", "\\.")} \\{([^}]*)\\}`))?.[1] ?? "";
+  assert.doesNotMatch(rule("ul.contains-task-list"), /list-none/, "목록 전체의 점을 뺀다");
+  assert.match(rule("li.task-list-item"), /list-none/, "체크박스 항목의 점을 빼지 않는다");
+});
+
 test("표는 감싸는 칸이 가로 넘침을 맡는다", () => {
   // 표 자체를 block 스크롤로 만들면 너비 100%가 안 먹혀 좁은 표가 쪼그라든다.
   const view = readFileSync(

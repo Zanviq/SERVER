@@ -253,12 +253,15 @@
     @apply mt-1.5;
   }
   /* 할 일 목록(- [ ]) — 체크박스 옆에 글머리 점까지 찍히면 표시가 둘이다.
-     GFM 이 붙여 주는 클래스를 그대로 쓴다. */
+     GFM 이 붙여 주는 클래스를 그대로 쓴다. 점은 **체크박스 항목에서만** 뺀다(67차) — 예전엔 목록
+     전체(ul.contains-task-list)에서 뺐는데, 같은 목록에 섞인 보통 항목(`- 글머리`)의 점까지 사라져
+     목록이 아니라 그냥 글줄처럼 보였다(할 일 설명 미리보기에서 실측). 목록은 보통 목록처럼 두고,
+     체크박스 항목은 점 자리만큼(-ml-4) 왼쪽으로 당겨 예전 자리(pl-1)에 그대로 둔다. */
   .prose-server ul.contains-task-list {
-    @apply list-none pl-1;
+    @apply pl-5;
   }
   .prose-server li.task-list-item {
-    @apply flex items-start gap-1.5;
+    @apply -ml-4 flex list-none items-start gap-1.5;
   }
   .prose-server li.task-list-item > input[type="checkbox"] {
     @apply mt-[3px] shrink-0 accent-[rgb(var(--accent))];
