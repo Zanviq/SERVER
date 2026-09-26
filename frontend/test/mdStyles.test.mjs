@@ -138,3 +138,11 @@ test("강조색 말풍선 안의 코드 칠은 글자색을 따른다 — 51차"
   // 보통 바탕의 칠은 그대로 — 말풍선 밖(AI 답)은 색으로 가른다
   assert.match(css, /\.prose-server \.hljs-keyword,[\s\S]{0,120}color: rgb\(var\(--accent\)\)/);
 });
+
+test("표 칸은 최소 폭이 있어 칸이 많은 표가 짓눌리지 않고 상자 안에서 구른다(디자인 23차)", () => {
+  // 칸 글은 overflow-wrap:anywhere 라 한 글자까지 줄 수 있다 — 최소 폭이 없으면 휴대폰에서 여덟 칸 표가
+  // "가나/다라/마바/사" 처럼 두 글자씩 꺾였다. 넓어지면 .table-wrap(overflow-x-auto)이 구른다.
+  const cells = css.match(/\.prose-server th,\s*\.prose-server td \{([^}]*)\}/)?.[1] ?? "";
+  assert.match(cells, /min-width: 4\.5rem;/);
+  assert.match(ruleBody(".table-wrap"), /overflow-x-auto/, "넓어진 표를 굴릴 상자가 없다");
+});

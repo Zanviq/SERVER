@@ -368,6 +368,10 @@
   .prose-server th,
   .prose-server td {
     @apply border border-line px-2 py-1;
+    /* 칸의 최소 폭. 칸 글은 overflow-wrap:anywhere 라 한 글자까지 줄 수 있어, 휴대폰에서 여덟 칸 표가 폭 100% 에
+       맞춰 짓눌려 "가나/다라/마바/사" 처럼 두 글자씩 꺾였다(디자인 23차). 최소 폭을 두면 넓은 표는 감싼 상자
+       (.table-wrap) 안에서 옆으로 구르고, 칸이 적은 표는 전처럼 폭을 다 쓴다. */
+    min-width: 4.5rem;
   }
   .prose-server hr {
     @apply my-4 border-line;
