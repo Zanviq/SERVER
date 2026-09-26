@@ -235,7 +235,7 @@ export function Context() {
                 return (
                   <li key={sp.space}>
                     <button type="button" onClick={() => toggle(sp.space)} aria-expanded={isOpen}
-                      className={`flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-[12.5px] ${
+                      className={`flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-[12.5px] coarse:py-2.5 ${
                         sp.space === space ? "bg-accent-muted text-accent-fg" : "hover:bg-hovered"}`}>
                       {isOpen ? <ChevronDown size={13} className="shrink-0" /> : <ChevronRight size={13} className="shrink-0" />}
                       <Icon size={13} className="shrink-0 text-fg-muted" />

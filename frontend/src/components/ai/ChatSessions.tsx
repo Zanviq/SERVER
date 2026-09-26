@@ -145,7 +145,7 @@ export function ChatSessionPicker({
       <div className="flex items-center gap-1">
         <button type="button" onClick={() => setOpen((v) => !v)}
           aria-label="대화 고르기" aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-fg2 hover:bg-hovered">
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-fg2 hover:bg-hovered coarse:py-2">
           <MessageSquare size={13} className="shrink-0 text-accent" />
           <span className="min-w-0 truncate">{cur?.title ?? "새 대화"}</span>
           {sessions.length > 1 && (

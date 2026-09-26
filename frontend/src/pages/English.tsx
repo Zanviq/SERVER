@@ -49,11 +49,11 @@ export function English() {
     <>
       <div className="flex rounded-md border border-line p-0.5 lg:hidden" role="tablist">
         <button role="tab" aria-selected={mobileView === "chat"} onClick={() => setMobileView("chat")}
-          className={`rounded-sm px-2 py-1 text-[12px] coarse:py-1.5 ${mobileView === "chat" ? "bg-accent-muted text-accent-fg" : "text-fg-muted"}`}>
+          className={`rounded-sm px-2 py-1 text-[12px] coarse:py-2 ${mobileView === "chat" ? "bg-accent-muted text-accent-fg" : "text-fg-muted"}`}>
           <MessageSquare size={13} className="mr-1 inline" />대화
         </button>
         <button role="tab" aria-selected={mobileView === "vocab"} onClick={() => setMobileView("vocab")}
-          className={`rounded-sm px-2 py-1 text-[12px] coarse:py-1.5 ${mobileView === "vocab" ? "bg-accent-muted text-accent-fg" : "text-fg-muted"}`}>
+          className={`rounded-sm px-2 py-1 text-[12px] coarse:py-2 ${mobileView === "vocab" ? "bg-accent-muted text-accent-fg" : "text-fg-muted"}`}>
           <BookMarked size={13} className="mr-1 inline" />단어장
         </button>
       </div>

@@ -154,12 +154,12 @@ export function Graph() {
 
   const modeToggle = (
     <div className="inline-flex rounded-md border border-line bg-subtle p-0.5">
-      <button onClick={() => setMode("links")}
-        className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-[13px] font-medium ${mode === "links" ? "bg-surface text-accent shadow-sm" : "text-fg-muted hover:text-fg"}`}>
+      <button onClick={() => setMode("links")} aria-pressed={mode === "links"}
+        className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-[13px] font-medium coarse:py-1.5 ${mode === "links" ? "bg-surface text-accent shadow-sm" : "text-fg-muted hover:text-fg"}`}>
         <Link2 size={14} /> 링크
       </button>
-      <button onClick={() => setMode("folders")}
-        className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-[13px] font-medium ${mode === "folders" ? "bg-surface text-accent shadow-sm" : "text-fg-muted hover:text-fg"}`}>
+      <button onClick={() => setMode("folders")} aria-pressed={mode === "folders"}
+        className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-[13px] font-medium coarse:py-1.5 ${mode === "folders" ? "bg-surface text-accent shadow-sm" : "text-fg-muted hover:text-fg"}`}>
         <FolderTree size={14} /> 폴더 구조
       </button>
     </div>
@@ -173,7 +173,7 @@ export function Graph() {
       {/* 브레드크럼 (노트 폴더 진입 시) */}
       <div className="mb-3 flex items-center gap-1 text-[13px]">
         <button onClick={() => setFolder("")}
-          className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 ${folder ? "text-fg-muted hover:text-accent" : "font-semibold text-accent"}`}>
+          className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 coarse:py-1.5 ${folder ? "text-fg-muted hover:text-accent" : "font-semibold text-accent"}`}>
           <Home size={13} /> 루트
         </button>
         {crumbs.map((c, i) => (

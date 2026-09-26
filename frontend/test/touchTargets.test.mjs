@@ -93,3 +93,14 @@ test("더보기 시트의 테마 단추는 손가락 크기, 줄 끝 메뉴는 �
   assert.equal(notes.match(/<RowMenu\s+name=\{/g)?.length, 2, "폴더 줄·문서 줄 모두 이름을 넘겨야 한다");
   assert.match(read("../src/components/layout/Sidebar.tsx"), /<nav aria-label="화면 이동"/, "아래 탭바가 이름 없는 목록이다");
 });
+
+test("남은 작은 단추들 — 대화 고르기·그래프 전환·컨텍스트 줄·영어 전환(디자인 10차)", () => {
+  assert.match(read("../src/components/ai/ChatSessions.tsx"), /text-fg2 hover:bg-hovered coarse:py-2"/, "대화 고르기(다섯 화면)가 27px");
+  const graph = read("../src/pages/Graph.tsx");
+  assert.equal(graph.match(/font-medium coarse:py-1\.5 \$\{mode ===/g)?.length, 2, "그래프 링크·폴더 구조 전환이 28px");
+  // 고른 쪽이 색으로만 드러나면 화면 읽기로는 무엇이 켜졌는지 모른다
+  assert.match(graph, /aria-pressed=\{mode === "links"\}/);
+  assert.match(graph, /aria-pressed=\{mode === "folders"\}/);
+  assert.match(read("../src/pages/Context.tsx"), /text-left text-\[12\.5px\] coarse:py-2\.5 \$\{/, "컨텍스트 공간 줄이 31px");
+  assert.equal(read("../src/pages/English.tsx").match(/text-\[12px\] coarse:py-2 /g)?.length, 2, "영어 대화/단어장 전환");
+});
