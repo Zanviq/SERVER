@@ -32,13 +32,16 @@ const ADMIN_TAB = { id: "members", label: "계정 관리", icon: Users };
 function Row({ label, desc, children }: { label: string; desc?: string; children: ReactNode }) {
   const id = useId();
   return (
+    // 이름 칸은 최소 9rem 을 지키고, 옆에 자리가 없으면 **조작이 아랫줄로** 내려간다(flex-wrap). 이름 칸이 min-w-0 이고
+    // 조작이 shrink-0 이던 때는 휴대폰에서 넓은 조작(색 열한 개·모델 고르기)이 이름을 짓눌러 "기/본/색/상" 이 한 글자씩
+    // 세로로 섰고, 설명은 "상위 모/델일수록/…" 으로 부서졌다(디자인 12차). 넓은 화면은 한 줄 그대로다.
     <div role="group" aria-labelledby={`${id}-l`} aria-describedby={desc ? `${id}-d` : undefined}
-      className="flex items-center justify-between gap-4 border-b border-line py-3">
-      <div className="min-w-0">
+      className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line py-3">
+      <div className="min-w-[9rem] flex-1">
         <p id={`${id}-l`} className="text-[13.5px] font-medium">{label}</p>
         {desc && <p id={`${id}-d`} className="text-[12px] text-fg-muted">{desc}</p>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="max-w-full shrink-0">{children}</div>
     </div>
   );
 }
@@ -294,11 +297,13 @@ export function Settings() {
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[180px_1fr]">
         {/* 좁은 폭에서는 줄바꿈시킨다. 예전엔 가로 스크롤이라 '계정 관리'가 화면 밖으로
             나가고, flex 기본 축소 때문에 '캘린더'가 캘/린/더로 세로로 깨졌다. */}
-        <nav className="flex flex-wrap gap-1 md:flex-col md:flex-nowrap">
+        {/* 고른 칸은 색으로만 드러나 화면 읽기로는 어느 것이 열렸는지 몰랐다 — aria-current(디자인 12차) */}
+        <nav aria-label="설정 분류" className="flex flex-wrap gap-1 md:flex-col md:flex-nowrap">
           {tabs.map((t) => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
+              aria-current={tab === t.id ? "true" : undefined}
               className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-left text-[13.5px] font-medium transition-colors md:w-full ${
                 tab === t.id ? "bg-surface text-fg shadow-sm" : "text-fg-muted hover:bg-hovered hover:text-fg"
               }`}
@@ -389,7 +394,7 @@ export function Settings() {
                   {Object.entries(GCAL_COLORS).map(([id, hex]) => (
                     <button key={id} onClick={() => update({ calendar: { default_color: id } })}
                       aria-label={GCAL_COLOR_NAMES[id]} title={GCAL_COLOR_NAMES[id]} aria-pressed={s.calendar.default_color === id}
-                      className={`h-6 w-6 rounded-full border-2 ${s.calendar.default_color === id ? "border-fg" : "border-transparent"}`}
+                      className={`h-6 w-6 rounded-full border-2 coarse:h-8 coarse:w-8 ${s.calendar.default_color === id ? "border-fg" : "border-transparent"}`}
                       style={{ background: hex }} />
                   ))}
                 </div>
