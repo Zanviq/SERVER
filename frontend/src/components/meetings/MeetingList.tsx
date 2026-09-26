@@ -174,7 +174,7 @@ export function MeetingList({
                             <DropdownItem onClick={() => { onRetry(m); close(); }}>
                               <RefreshCw size={13} /> 다시 받아쓰기
                             </DropdownItem>
-                            <DropdownItem onClick={() => { onDelete(m); close(); }} className="text-danger">
+                            <DropdownItem onClick={() => { onDelete(m); close(); }} danger>
                               <Trash2 size={13} /> 휴지통으로
                             </DropdownItem>
                           </>

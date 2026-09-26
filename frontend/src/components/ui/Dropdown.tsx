@@ -118,22 +118,24 @@ export function Dropdown({
   );
 }
 
-/** 드롭다운 안의 한 줄 항목(공용 모양). */
+/** 드롭다운 안의 한 줄 항목(공용 모양). `danger` 는 지우기처럼 되돌리기 어려운 것 — 문서 트리의 … 메뉴(RowMenu)와
+ *  같은 붉은 글이다(디자인 29차: 논문·회의 메뉴의 '휴지통으로'만 보통 글이었다). 손가락 화면에서는 줄을 키운다. */
 export function DropdownItem({
-  active, onClick, children, className = "",
+  active, onClick, children, className = "", danger = false,
 }: {
   active?: boolean;
   onClick: () => void;
   children: ReactNode;
   className?: string;
+  danger?: boolean;
 }) {
   return (
     <button
       type="button"
       role="menuitem"
       onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] ${
-        active ? "bg-accent-muted text-accent-fg" : "text-fg hover:bg-hovered"
+      className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] coarse:py-2.5 ${
+        active ? "bg-accent-muted text-accent-fg" : danger ? "text-danger hover:bg-danger/10" : "text-fg hover:bg-hovered"
       } ${className}`}
     >
       {children}

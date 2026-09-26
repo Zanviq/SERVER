@@ -181,7 +181,7 @@ export function PaperList({
                   <DropdownItem onClick={() => { onRetry(p); close(); }}>
                     <RefreshCw size={13} /> 정보 다시 추출
                   </DropdownItem>
-                  <DropdownItem onClick={() => { onDelete(p); close(); }} className="text-danger">
+                  <DropdownItem onClick={() => { onDelete(p); close(); }} danger>
                     <Trash2 size={13} /> 휴지통으로
                   </DropdownItem>
                 </>

@@ -130,3 +130,22 @@ test("떠 있는 첨부 단추가 있으면 편집기 글 끝에 그만큼 자�
   assert.match(css, /\[data-fab\] \.cm-content \{\s*padding-bottom: 4\.5rem !important;/,
     "문서 끝까지 내려도 마지막 줄의 오른쪽이 첨부 단추 밑에 남는다");
 });
+
+test("드롭다운 항목은 손가락 크기이고, 지우기는 danger 로 붉다 — 색 클래스를 덧대면 기본색에 진다(디자인 29차)", async () => {
+  const dd = read("../src/components/ui/Dropdown.tsx");
+  assert.match(dd, /text-\[13px\] coarse:py-2\.5 \$\{/);
+  assert.match(dd, /danger \? "text-danger hover:bg-danger\/10"/);
+  // className="text-danger" 는 기본 text-fg 와 부딪쳐 **스타일시트 차례**로 갈렸다 — 논문·회의 메뉴의 '휴지통으로'가 보통 글이었다
+  const { readdirSync, statSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const root = new URL("../src/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  const bad = [];
+  (function walk(d) {
+    for (const n of readdirSync(d)) {
+      const p = join(d, n);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (/\.tsx$/.test(n) && /<DropdownItem\b[^>]*className="[^"]*\btext-/.test(readFileSync(p, "utf8"))) bad.push(n);
+    }
+  })(root);
+  assert.deepEqual(bad, [], "DropdownItem 에 글자색 클래스를 덧대지 말고 danger 를 쓸 것");
+});
