@@ -21,7 +21,7 @@ import rehypeSlug from "rehype-slug";
 import rehypeHighlight from "rehype-highlight";
 import rehypeStringify from "rehype-stringify";
 
-const { remarkHighlight, remarkCjkPlugins } = await import("../src/lib/markdownExtras.ts");
+const { remarkHighlight, remarkCjkPlugins, remarkKoreanUrlTail } = await import("../src/lib/markdownExtras.ts");
 const { mdSanitizeSchema } = await import("../src/lib/sanitizeSchema.ts");
 const { transformWiki } = await import("../src/lib/wikiTransform.ts");
 
@@ -32,6 +32,7 @@ export function render(md, { wiki = false, resolve } = {}) {
     .use(remarkGfm, { singleTilde: false });
   for (const p of remarkCjkPlugins) proc.use(...(Array.isArray(p) ? p : [p]));
   proc
+    .use(remarkKoreanUrlTail)
     .use(remarkBreaks)
     .use(remarkHighlight)
     .use(remarkMath)

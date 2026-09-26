@@ -207,6 +207,55 @@ function walk(node: MdNode): void {
   if (changed) node.children = out;
 }
 
+/**
+ * 자동 링크(주소를 그냥 적은 것) 끝에 붙은 **조사**를 링크 밖으로 뺀다(70차).
+ *
+ * GFM 의 자동 링크는 공백까지를 주소로 본다. 한국어는 주소 바로 뒤에 조사를 붙여 쓰므로
+ * `https://example.com에서` 가 `https://example.com%EC%97%90%EC%84%9C` 로 가는 **깨진 링크**가 됐다(주소 칸까지
+ * 망가져 열리지 않는다). `www.…에`·`?b=1이고`·`(https://…)을` 도 같았다(실측). AI 답에 흔한 꼴이다.
+ *
+ * 한글이 **ASCII 글자·숫자·닫는 괄호·따옴표 바로 뒤**에 이어 붙어 끝나면 조사로 보고 뗀다. `/`·`=` 뒤의
+ * 한글(`/wiki/서울`)은 주소의 일부일 수 있어 그대로 둔다 — `/문서를` 처럼 한글 경로 끝의 조사는 가를 수
+ * 없다(한계). 떼고 나서 짝 없는 `)` 가 끝에 남으면 GFM 처럼 그것도 링크 밖으로.
+ * 적어 준 링크(`[글](주소)`)는 손대지 않는다 — 원문 길이가 글자와 같은 것만 자동 링크다.
+ */
+export function remarkKoreanUrlTail() {
+  return (tree: MdNode) => trimUrlTails(tree);
+}
+
+const URL_TAIL = /([A-Za-z0-9)\]'"’”])([ᄀ-ᇿ㄰-㆏가-힣]+)$/;
+
+function trimUrlTails(node: MdNode): void {
+  const kids = node.children;
+  if (!Array.isArray(kids)) return;
+  for (let i = 0; i < kids.length; i++) {
+    const link = kids[i];
+    const text = link.children?.length === 1 ? link.children[0] : null;
+    const pos = link.position as { start?: { offset?: number }; end?: { offset?: number } } | undefined;
+    const url = typeof link.url === "string" ? link.url : "";
+    const auto = link.type === "link" && text?.type === "text" && typeof text.value === "string"
+      && pos?.start?.offset !== undefined && pos.end?.offset !== undefined
+      && pos.end.offset - pos.start.offset === text.value.length && url.endsWith(text.value);
+    if (!auto || !text || typeof text.value !== "string") {
+      trimUrlTails(link);
+      continue;
+    }
+    const m = URL_TAIL.exec(text.value);
+    if (!m) continue;
+    let keep = text.value.slice(0, text.value.length - m[2].length);
+    let tail = m[2];
+    // 짝 없는 닫는 괄호는 주소가 아니다(GFM 과 같은 규칙) — `(https://…)을`
+    while (keep.endsWith(")") && (keep.match(/\(/g)?.length ?? 0) < (keep.match(/\)/g)?.length ?? 0)) {
+      keep = keep.slice(0, -1);
+      tail = ")" + tail;
+    }
+    link.url = url.slice(0, url.length - (text.value.length - keep.length));
+    text.value = keep;
+    kids.splice(i + 1, 0, { type: "text", value: tail });
+    i++;
+  }
+}
+
 function splitHighlights(value: string): MdNode[] {
   HIGHLIGHT_RE.lastIndex = 0;
   const out: MdNode[] = [];

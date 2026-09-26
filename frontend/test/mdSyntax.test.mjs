@@ -21,11 +21,31 @@ test("이 시험의 파이프라인이 화면의 것과 같다", () => {
   const view = readFileSync(new URL("./components/notes/MarkdownView.tsx", src), "utf8") +
     readFileSync(new URL("./components/notes/richPlugins.ts", src), "utf8");
   const harness = readFileSync(new URL("./mdPipeline.mjs", import.meta.url), "utf8");
-  for (const p of ["remarkGfm", "remarkCjkPlugins", "remarkBreaks", "remarkHighlight", "remarkMath",
+  for (const p of ["remarkGfm", "remarkCjkPlugins", "remarkKoreanUrlTail", "remarkBreaks", "remarkHighlight", "remarkMath",
                    "rehypeRaw", "rehypeSanitize", "rehypeKatex"]) {
     assert.ok(view.includes(p), `MarkdownView 가 ${p} 를 안 쓴다 — 시험 구성을 맞춰라`);
     assert.ok(harness.includes(p), `시험 파이프라인에 ${p} 가 빠졌다`);
   }
+});
+
+test("주소 바로 뒤에 붙은 조사는 자동 링크 밖이다 — 70차", () => {
+  // 예전엔 `https://example.com에서` 가 `…com%EC%97%90%EC%84%9C` 로 가는 깨진 링크였다(주소 칸째 망가짐)
+  const links = (md) => [...render(md).matchAll(/<a href="([^"]*)"[^>]*>([^<]*)<\/a>/g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(links("https://example.com에서 찾았다"), [["https://example.com", "https://example.com"]]);
+  assert.match(norm(render("https://example.com에서 찾았다")), /<\/a>에서 찾았다/, "뗀 조사가 사라졌다");
+  assert.deepEqual(links("www.example.com에 들어가"), [["http://www.example.com", "www.example.com"]]);
+  assert.deepEqual(links("주소는 https://example.com/a?b=1이고"), [["https://example.com/a?b=1", "https://example.com/a?b=1"]]);
+  assert.match(norm(render("(https://example.com)을 참고")),
+    /\(<a href="https:\/\/example\.com">https:\/\/example\.com<\/a>\)을 참고/, "괄호 안 주소 뒤의 `)을`");
+  // 경로의 한글은 주소의 일부다(`/` 뒤) — 건드리지 않는다
+  assert.deepEqual(links("https://ko.wikipedia.org/wiki/서울 문서"),
+    [["https://ko.wikipedia.org/wiki/%EC%84%9C%EC%9A%B8", "https://ko.wikipedia.org/wiki/서울"]]);
+  // 적어 준 링크는 적은 그대로
+  assert.deepEqual(links("[https://a.com에서](https://a.com에서)"),
+    [["https://a.com%EC%97%90%EC%84%9C", "https://a.com에서"]]);
+  // 영어·띄어 쓴 것은 예전과 같다
+  assert.deepEqual(links("see https://example.com."), [["https://example.com", "https://example.com"]]);
+  assert.deepEqual(links("https://example.com 에서"), [["https://example.com", "https://example.com"]]);
 });
 
 test("목록 — 대시·별표·더하기·번호", () => {
