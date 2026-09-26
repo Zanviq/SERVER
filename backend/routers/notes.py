@@ -25,8 +25,8 @@ from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..json_store import lock_for, write_text_atomic
 from ..file_kinds import (
-    BadName, doc_title, inline_media_type, is_editable, kind_of, looks_like_extension, nfc, renamed,
-    split_ext,
+    BadName, check_new_path, doc_title, inline_media_type, is_editable, kind_of, looks_like_extension, nfc,
+    renamed, split_ext,
 )
 from ..notes_graph import backlinks_for, backlinks_of, build_graph, nearest, parse_wikilinks
 from ..security_paths import safe_join, to_rel
@@ -261,6 +261,14 @@ def _free_name(dest: Path) -> Path:
     raise HTTPException(status_code=409, detail="같은 이름의 파일이 너무 많습니다.")
 
 
+def _check_new_path(root: Path, target: Path) -> None:
+    """새로 생길 문서·폴더 이름 검사(file_kinds.check_new_path — 중간 폴더까지) — 쓸 수 없으면 400."""
+    try:
+        check_new_path(root, target)
+    except BadName as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 def _sanitize_filename(name: str) -> str:
     base = nfc(Path(name).name)  # 맥의 NFD 이름을 자판으로 친 이름과 같게(file_kinds.nfc)
     cleaned = _ILLEGAL_FILENAME.sub("_", base).strip().strip(".")
@@ -335,6 +343,7 @@ def create_folder(
         raise HTTPException(status_code=400, detail="폴더 이름이 비어 있습니다.")
     if target.exists():
         raise HTTPException(status_code=409, detail="이미 존재합니다.")
+    _check_new_path(root, target)  # 윈도우가 못 쓰는 이름(78차)
     with _fs_errors_explained("폴더 생성"):
         target.mkdir(parents=True)
     return {"ok": True, "path": to_rel(root, target)}
@@ -569,6 +578,7 @@ def save_note(
     target = safe_join(root, req.path)
     if req.base_modified and not target.exists():
         _refuse_vanished(user, settings, root, target)
+    _check_new_path(root, target)  # 새로 생기는 이름만(78차 — 있던 것은 그대로 고친다)
     if not target.exists() and not looks_like_extension(req.path):
         twin = safe_join(root, f"{req.path}.md")
         if twin.exists():
@@ -750,6 +760,7 @@ def move_note(
         return _summary(root, src)
     if dst.exists():
         raise HTTPException(status_code=409, detail="대상 폴더에 같은 이름의 문서가 있습니다.")
+    _check_new_path(root, dst.parent)  # 없는 대상 폴더는 만들어진다 — 그 이름만(파일 이름은 원래 것 그대로)
     return _relocate(user, settings, root, src, dst, dst_rel, "문서 이동")
 
 

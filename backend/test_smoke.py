@@ -5929,6 +5929,61 @@ def test_rename_document_does_not_invent_extensions_from_dates():
     assert got.status_code == 200, got.text
 
 
+def test_new_names_refuse_characters_windows_cannot_use():
+    """78차: `회의: 요약`·`무엇?`·`끝.` 같은 **새** 이름은 받지 않는다 — 화면(저장·새 폴더·이름 바꾸기)과 AI 스킬 모두.
+
+    파이는 그런 이름을 그대로 만들지만 윈도우에서는 '전체 받기' 백업이 풀리지 않고, 윈도우에서 서버를 돌리면
+    `시험: 콜론.md` 저장이 오류를 내면서도 콜론 앞 `시험` 이라는 빈 파일을 남겼다(NTFS 대체 데이터 스트림, 실측).
+    끝 이름만 보면 `a:b/c.md` 가 중간 폴더 `a:b` 를 만들므로 새로 생기는 조각을 모두 본다. 이미 있는 것은 그대로 쓴다.
+    """
+    from backend.ai.skill_registry import default_registry
+    from backend.storage import user_data_root
+
+    _login()
+    root = user_data_root(_tester(), get_settings())
+    before = {p.name for p in root.iterdir()}
+    for path in ["시험78: 콜론.md", "시험78 무엇?.md", "시험78*별.md", "시험78 끝.", "시험78 공백 ", "시험78a:b/안.md"]:
+        r = client.put("/api/notes/save", json={"path": path, "content": "x"})
+        assert r.status_code == 400, (path, r.status_code, r.text)
+    for path in ["시험78|막대", "시험78 폴더.", "시험78b?/아래"]:
+        r = client.post("/api/notes/folder", json={"path": path})
+        assert r.status_code == 400, (path, r.status_code, r.text)
+    # 남은 것이 없다(윈도우에서는 콜론 앞 이름의 빈 파일이 생기곤 했다)
+    assert {p.name for p in root.iterdir()} == before
+
+    ok = client.put("/api/notes/save", json={"path": "시험78 정상.md", "content": "x"})
+    assert ok.status_code == 200, ok.text
+    for bad in ["시험78<꺾쇠>", "시험78 끝."]:
+        r = client.post("/api/notes/rename", json={"path": "시험78 정상.md", "new_name": bad})
+        assert r.status_code == 400, (bad, r.status_code, r.text)
+    # 점이 가운데 있는 이름·날짜 이름은 그대로 된다
+    r = client.post("/api/notes/rename", json={"path": "시험78 정상.md", "new_name": "시험78 v1.2 - 9월"})
+    assert r.status_code == 200, r.text
+    # 옮기기도 없는 대상 폴더를 만든다 — 그 이름도 본다
+    mv = client.post("/api/notes/move", json={"path": r.json()["path"], "target_folder": "시험78 보관?"})
+    assert mv.status_code == 400, (mv.status_code, mv.text)
+    assert {p.name for p in root.iterdir()} == before | {"시험78 v1.2 - 9월.md"}
+    client.delete("/api/notes/delete?path=" + r.json()["path"])
+
+    reg = default_registry()
+    _u, ctx, st = _cal_ctx("newname78")
+    for skill, args in [
+        ("write_document", {"path": "회의록: 9월 26일", "content": "# 내용"}),
+        ("append_document", {"path": "할 일?", "content": "- 하나"}),
+        ("create_folder", {"path": "보관*함"}),
+        ("write_document", {"path": "새 폴더?/안", "content": "# 내용"}),
+    ]:
+        res = reg.dispatch(skill, args, ctx)
+        assert not res.ok and res.error_code == "invalid", (skill, args, res)
+        assert "쓸 수 없는" in res.message, res.message
+    uroot = user_data_root(_u, st)
+    assert not uroot.exists() or not any(uroot.iterdir()), list(uroot.iterdir())
+    assert reg.dispatch("write_document", {"path": "회의록 - 9월 26일", "content": "# 내용"}, ctx).ok
+    res = reg.dispatch("move_document", {"path": "회의록 - 9월 26일", "target_folder": "보관|함"}, ctx)
+    assert not res.ok and res.error_code == "invalid", res
+    assert sorted(p.name for p in uroot.iterdir()) == ["회의록 - 9월 26일.md"]
+
+
 def test_saving_over_a_folder_is_a_clean_conflict():
     """폴더와 같은 이름으로 저장하면 500이 아니라 409."""
     _login()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from pathlib import Path
 
 MARKDOWN = {".md", ".markdown"}
 
@@ -90,6 +91,37 @@ class BadName(ValueError):
     """사용자가 준 새 이름을 쓸 수 없다(빈 이름·경로 조각)."""
 
 
+#: 새 이름에 쓸 수 없는 글자 — 윈도우가 파일 이름에 못 쓰는 것들. 올리기는 전부터 이것을 `_` 로 바꿨다
+#: (notes._sanitize_filename). 제어 문자는 safe_join 이 먼저 막는다.
+_WINDOWS_BAD = re.compile(r'[<>:"|?*]')
+
+
+def check_new_name(name: str) -> None:
+    """**새로 만드는** 이름(문서·폴더·이름 바꾸기)을 본다 — 쓸 수 없으면 BadName(78차).
+
+    파이(리눅스)는 `회의: 요약`·`무엇?` 을 그대로 만들지만, 주인이 윈도우에서 '전체 받기' 백업을 풀 때 그런 이름은
+    풀리지 않는다. 윈도우에서 서버를 돌리면 더 나쁘다 — `시험: 콜론.md` 는 400 이 나면서도 콜론 앞 `시험` 이라는 빈
+    파일이 남았다(NTFS 의 대체 데이터 스트림, 실측). 끝의 점·공백도 윈도우가 떼어 버려 이름이 바뀐다.
+    이미 있는 파일은 읽기·고치기를 막지 않는다 — 새로 생기는 이름만 본다.
+    """
+    if _WINDOWS_BAD.search(name):
+        raise BadName('이름에 쓸 수 없는 글자(< > : " | ? *)가 있습니다 — 다른 글자로 바꿔 주세요.')
+    if name != name.rstrip(" ."):
+        raise BadName("이름 끝에 점이나 공백은 쓸 수 없습니다.")
+
+
+def check_new_path(root: Path, target: Path) -> None:
+    """root 에서 target 까지 **아직 없는** 조각(새로 생길 폴더들과 끝 이름)을 모두 check_new_name 으로 본다.
+
+    끝 이름만 보면 `회의: 9월/요약.md` 저장이나 `a/b?/c` 폴더 만들기가 중간 폴더를 그대로 만든다
+    (저장·폴더 만들기 모두 mkdir(parents=True)). 이미 있는 조각은 보지 않는다 — 있던 것은 그대로 쓴다.
+    """
+    p = target
+    while p != root and root in p.parents and not p.exists():
+        check_new_name(p.name)
+        p = p.parent
+
+
 def renamed(old_name: str, new_name: str, *, folder: bool = False) -> str:
     """이름 바꾸기의 **결과 이름**. 문서 화면과 AI 스킬이 이것 하나를 쓴다.
 
@@ -107,6 +139,7 @@ def renamed(old_name: str, new_name: str, *, folder: bool = False) -> str:
     new = nfc((new_name or "").strip())  # 맥에서 복사해 붙인 이름도 자판으로 친 것과 같게(nfc)
     if not new or "/" in new or "\\" in new or ".." in new:
         raise BadName("잘못된 이름입니다.")
+    check_new_name(new)  # 윈도우가 못 쓰는 글자·끝의 점(78차)
     # 폴더에는 확장자가 없다 — 적은 이름 그대로. 확장자 규칙을 걸던 때는 `project.v1` 폴더를
     # `proj` 로 바꾸면 `proj.v1` 이 됐다(36차, 폴더 이름 바꾸기를 화면에 붙이며 찾았다).
     if folder:

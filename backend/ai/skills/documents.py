@@ -16,7 +16,9 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from ... import doc_cache, mounts, moved
-from ...file_kinds import BadName, doc_title, is_editable, is_markdown, kind_of, looks_like_extension, renamed
+from ...file_kinds import (
+    BadName, check_new_path, doc_title, is_editable, is_markdown, kind_of, looks_like_extension, renamed,
+)
 from ...json_store import lock_for, write_text_atomic
 from ...notes_graph import backlinks_for
 from ...security_paths import safe_join, to_rel
@@ -357,6 +359,17 @@ class ReadDocument(SkillBase):
         )
 
 
+def _bad_new_name(root: Path, target: Path) -> SkillResult | None:
+    """**새로 생길** 문서·폴더 이름에 쓸 수 없는 글자가 있으면 모델에게 돌려줄 거절(78차 — 화면과 같은 규칙,
+    file_kinds.check_new_path). 모델은 `회의록: 9월 26일` 같은 제목을 흔히 짓는다 — 까닭을 받고 다른 이름으로
+    다시 부른다. 이미 있는 문서를 고치는 것은 막지 않는다."""
+    try:
+        check_new_path(root, target)
+    except BadName as e:
+        return SkillResult(ok=False, message=f"{e} (예: 콜론 대신 ' - ')", error_code="invalid")
+    return None
+
+
 def _unasked_new_doc(ctx, target: Path, args: dict) -> SkillResult | None:
     """사람이 문서로 남겨 달라고 하지 않았는데 **새** 문서를 만들려 하는가.
 
@@ -418,6 +431,9 @@ class WriteDocument(SkillBase):
             if not target.exists():
                 what += f" '{target.name}' 대신 .md 나 .txt 로 이름을 지어 주세요."
             return SkillResult(ok=False, message=what, error_code="unsupported")
+        bad = _bad_new_name(root, target)
+        if bad:
+            return bad
         unasked = _unasked_new_doc(ctx, target, args)
         if unasked:
             return unasked
@@ -505,6 +521,9 @@ class AppendDocument(SkillBase):
             if not target.exists():
                 what += f" '{target.name}' 대신 .md 나 .txt 로 이름을 지어 주세요."
             return SkillResult(ok=False, message=what, error_code="unsupported")
+        bad = _bad_new_name(root, target)
+        if bad:
+            return bad
         unasked = _unasked_new_doc(ctx, target, args)
         if unasked:
             return unasked
@@ -632,6 +651,9 @@ class MoveDocument(SkillBase):
             return SkillResult(ok=True, message="이미 그 위치입니다.", data={"path": _ident(root, src)})
         if dst.exists():
             return SkillResult(ok=False, message="대상 폴더에 같은 이름의 문서가 있습니다.", error_code="exists")
+        bad = _bad_new_name(root, dst.parent)  # 없는 대상 폴더는 만들어진다
+        if bad:
+            return bad
         dst.parent.mkdir(parents=True, exist_ok=True)
         old_rel = to_rel(root, src)
         src.rename(dst)
@@ -659,6 +681,9 @@ class CreateFolder(SkillBase):
             return blocked
         if target.exists():
             return SkillResult(ok=False, message="이미 존재합니다.", error_code="exists")
+        bad = _bad_new_name(root, target)
+        if bad:
+            return bad
         target.mkdir(parents=True)
         return SkillResult(ok=True, message=f"폴더 생성: {to_rel(root, target)}", data={"path": to_rel(root, target)})
 
