@@ -28,6 +28,17 @@ test("오른쪽 칸은 두 크기 모두 높이가 못 박혀 있다 — 목록�
   assert.match(src, /const timeline = \(\s*<div className="min-h-0 flex-1 overflow-auto/);
 });
 
+test("완료한 할 일 보기/숨기기 — 고른 것이 남고, 검색으로 온 완료 항목은 가리지 않는다", () => {
+  assert.match(src, /const SHOW_DONE_KEY = "todo\.showDone";/);
+  assert.match(src, /localStorage\.getItem\(SHOW_DONE_KEY\) !== "0"/, "처음에는 지금처럼 모두 보인다");
+  assert.match(src, /showDone \? inCategory : inCategory\.filter\(\(t\) => !t\.done\)/);
+  // 목록이 그리는 것은 걸러진 visible 이다
+  const tl = src.slice(src.indexOf("const timeline = ("), src.indexOf("const detailPane"));
+  assert.match(tl, /\{visible\.map\(/);
+  assert.match(src, /aria-pressed=\{showDone\}/);
+  assert.match(src, /if \(target\.done\) setShowDoneState\(true\);/, "?t= 로 온 완료 항목이 목록에서 사라진다");
+});
+
 test("기한이 없는 할 일에는 둘째 줄을 두지 않는다", () => {
   const tl = src.slice(src.indexOf("const timeline = ("), src.indexOf("const detailPane"));
   assert.match(tl, /\{t\.due && \(/, "기한 줄이 기한 없는 할 일에도 그려진다(줄마다 '기한 없음')");

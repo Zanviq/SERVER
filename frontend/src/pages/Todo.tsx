@@ -4,6 +4,8 @@ import {
   ChevronRight,
   Circle,
   CheckCircle2,
+  Eye,
+  EyeOff,
   Trash2,
   FolderPlus,
   Loader2,
@@ -24,6 +26,7 @@ import { useMediaQuery } from "../lib/useMediaQuery";
 
 /** 미분류를 담는 가짜 카테고리 id. 실제 저장값은 ""이다. */
 const UNCATEGORIZED = "";
+const SHOW_DONE_KEY = "todo.showDone";
 
 /** 마감 문자열 → 사람이 읽는 형태. 값이 없으면 빈 문자열. */
 function dueLabel(due: string, allDay: boolean): string {
@@ -194,6 +197,12 @@ export function Todo() {
   const [loadFailed, setLoadFailed] = useState(false);   // 목록을 못 받아왔는가
   const [busy, setBusy] = useState(false);
   const isNarrow = useMediaQuery("(max-width: 1023px)");
+  // 완료한 할 일을 목록에 둘지. 한 번 고르면 다음에 와도 그대로다.
+  const [showDone, setShowDoneState] = useState(() => localStorage.getItem(SHOW_DONE_KEY) !== "0");
+  const setShowDone = (v: boolean) => {
+    setShowDoneState(v);
+    localStorage.setItem(SHOW_DONE_KEY, v ? "1" : "0");
+  };
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -272,11 +281,17 @@ export function Todo() {
     [cats],
   );
 
-  const visible = useMemo(() => {
+  /** 고른 카테고리(와 하위)의 할 일 — 완료를 숨기기 전. 숨긴 개수를 세는 데도 쓴다. */
+  const inCategory = useMemo(() => {
     if (selectedCat === null) return todos;
     const ids = descendantIds(selectedCat);
     return todos.filter((t) => ids.has(t.category_id || UNCATEGORIZED));
   }, [todos, selectedCat, descendantIds]);
+  const doneInCategory = useMemo(() => inCategory.filter((t) => t.done).length, [inCategory]);
+  const visible = useMemo(
+    () => (showDone ? inCategory : inCategory.filter((t) => !t.done)),
+    [inCategory, showDone],
+  );
 
   const detail = useMemo(
     () => todos.find((t) => t.id === selectedTodo) ?? null,
@@ -284,8 +299,11 @@ export function Todo() {
   );
 
   useEffect(() => {
-    if (!focusTodo || !todos.some((t) => t.id === focusTodo)) return;
+    const target = todos.find((t) => t.id === focusTodo);
+    if (!focusTodo || !target) return;
     setSelectedCat(null);
+    // 검색으로 찾아온 것이 완료한 할 일이면 숨김을 이번만 푼다(고른 설정은 그대로 둔다)
+    if (target.done) setShowDoneState(true);
     setSelectedTodo(focusTodo);
     const timer = setTimeout(() => {
       document.querySelector(`[data-todo-id="${CSS.escape(focusTodo)}"]`)
@@ -558,7 +576,9 @@ export function Todo() {
     <div className="min-h-0 flex-1 overflow-auto pr-1">
       {visible.length === 0 ? (
         <ListState failed={loadFailed} onRetry={() => void reload()}>
-          할 일이 없습니다. 아래에서 추가하세요.
+          {!showDone && doneInCategory > 0
+            ? `남은 할 일이 없습니다. 완료한 ${doneInCategory}개는 숨겨 두었습니다.`
+            : "할 일이 없습니다. 아래에서 추가하세요."}
         </ListState>
       ) : (
         <ol className="relative ml-2 border-l border-line pl-4">
@@ -790,7 +810,7 @@ export function Todo() {
             <span className="text-sm font-semibold">할 일 상세</span>
           </>
         ) : (
-          <span className="text-sm font-semibold">
+          <span className="min-w-0 truncate text-sm font-semibold">
             {selectedCat === null
               ? "전체"
               : selectedCat === UNCATEGORIZED
@@ -800,6 +820,18 @@ export function Todo() {
           </span>
         )}
         {loading && <Loader2 size={13} className="ml-auto animate-spin text-fg-muted" />}
+        {!detail && (
+          <button
+            type="button"
+            onClick={() => setShowDone(!showDone)}
+            aria-pressed={showDone}
+            title={showDone ? "완료한 할 일 숨기기" : "완료한 할 일 보기"}
+            className={`${loading ? "" : "ml-auto "}flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 text-[12px] text-fg-muted hover:bg-hovered hover:text-fg coarse:h-9`}
+          >
+            {showDone ? <EyeOff size={13} /> : <Eye size={13} />}
+            {showDone ? "완료 숨기기" : `완료 보기${doneInCategory > 0 ? ` (${doneInCategory})` : ""}`}
+          </button>
+        )}
       </div>
 
       {detail ? detailPane : timeline}
