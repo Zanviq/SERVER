@@ -29,6 +29,7 @@ import { TOUCH, useMediaQuery } from "../../lib/useMediaQuery";
 import { NOTE_PATH_MIME, isOurDrag } from "./dragTypes";
 import { itemLinks, linkCompletionSource } from "../links/cmLinks";
 import { mdLinkClick } from "./mdLinkClick";
+import { headingFlash, jumpToHeading } from "./headingJump";
 import { openLink } from "../links/linkFetch";
 
 /**
@@ -707,10 +708,15 @@ export interface LiveEditorProps {
   onDropPath?: (path: string) => string;
   /** `/` 메뉴의 "새 문서 만들어 링크" — 만든 문서 제목을 돌려준다(취소면 null) */
   onCreateDoc?: () => Promise<string | null>;
-  /** `[[제목]]` 칩을 눌렀을 때. 없으면 위키링크는 칩으로 바꾸지 않는다. */
-  onOpenTitle?: (title: string) => void;
-  /** 표준 링크 `[글](다른 문서.md)` 을 Ctrl(⌘)+클릭했을 때 — 대상은 적힌 그대로(읽기 보기의 onDocLink 와 같다). */
-  onOpenLink?: (target: string) => void;
+  /** `[[제목]]` 칩을 눌렀을 때. 없으면 위키링크는 칩으로 바꾸지 않는다. `[[제목#섹션]]` 이면 section, `[[#섹션]]` 은 title 이 빈다. */
+  onOpenTitle?: (title: string, section: string | null) => void;
+  /** 표준 링크 `[글](다른 문서.md)` 을 Ctrl(⌘)+클릭했을 때 — 대상은 적힌 그대로(읽기 보기의 onDocLink 와 같다).
+   *  `#섹션` 은 section 으로, 같은 문서 안 제목(`[차례](#결론)`)은 target 이 빈다. */
+  onOpenLink?: (target: string, section: string | null) => void;
+  /** 이 제목(섹션)으로 굴린다 — 바뀔 때마다 한 번(n 이 다르면 같은 섹션도 다시). 글이 들어온 뒤에 찾는다. */
+  jumpTo?: { section: string; n: number } | null;
+  /** jumpTo 를 처리했다 — 그 제목이 있었는가 */
+  onJumped?: (found: boolean) => void;
   /**
    * 평문(.txt·.py·.json…) — 마크다운으로 해석하지 않고 **글자를 그대로** 보인다(50차). 예전엔 모든
    * 글을 마크다운으로 열어, 평문 파일의 `# 주석` 이 제목으로 커지고 `- ` 가 •로, `**kwargs` 의 별표가
@@ -732,6 +738,8 @@ export function LiveEditor({
   onCreateDoc,
   onOpenTitle,
   onOpenLink,
+  jumpTo,
+  onJumped,
   plain = false,
 }: LiveEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -739,11 +747,11 @@ export function LiveEditor({
   const navigate = useNavigate();
   const cbs = useRef({
     onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey, onCreateDoc, navigate,
-    onOpenTitle, onOpenLink,
+    onOpenTitle, onOpenLink, onJumped,
   });
   cbs.current = {
     onChange, onSave, titles, onDropFiles, onDropPath, resolveEmbed, docKey, onCreateDoc, navigate,
-    onOpenTitle, onOpenLink,
+    onOpenTitle, onOpenLink, onJumped,
   };
   const fileRef = useRef<HTMLInputElement>(null);
   // 터치 기기이거나 화면이 좁을 때. 터치엔 드래그앤드롭이 없고, 좁은 창에서는
@@ -989,7 +997,7 @@ export function LiveEditor({
           itemLinks({
             item: (path) => void openLink(path, (href) => cbs.current.navigate(href)),
             // 위키링크 칩은 여는 곳이 있을 때만(회의록 편집기 등은 문서를 열 자리가 없다)
-            wiki: onOpenTitle ? (t) => cbs.current.onOpenTitle?.(t) : undefined,
+            wiki: onOpenTitle ? (t, s) => cbs.current.onOpenTitle?.(t, s) : undefined,
           }),
           autocompletion({
             // `[` 는 항목 링크 후보, `[[` 는 위키링크 후보(서로 겹치지 않는다)
@@ -1001,12 +1009,14 @@ export function LiveEditor({
             icons: false,
           }),
           // 표준 링크 `[글](대상)` — Ctrl(⌘)+클릭으로 연다(79차)
-          mdLinkClick((target) => {
+          mdLinkClick((target, section) => {
             const open = cbs.current.onOpenLink;
             if (!open) return false;
-            open(target);
+            open(target, section);
             return true;
           }),
+          // 제목(섹션) 링크로 온 줄을 잠깐 칠한다(jumpTo)
+          headingFlash,
         ),
         EditorView.updateListener.of((u) => {
           if (!u.docChanged) return;
@@ -1042,6 +1052,13 @@ export function LiveEditor({
     view.dispatch({ changes: { from: 0, to: cur.length, insert: value } });
     applyingExternal.current = false;
   }, [value]);
+
+  // 제목(섹션) 링크로 왔다 — 위 효과가 글을 넣은 **뒤**라야 제목을 찾는다(효과는 적힌 차례로 돈다)
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !jumpTo) return;
+    cbs.current.onJumped?.(jumpToHeading(view, jumpTo.section));
+  }, [jumpTo]);
 
   /** 파일 선택 → 업로드 → 커서 위치에 임베드 삽입. 드롭·붙여넣기와 같은 일을 한다. */
   const attach = (files: FileList | null) => {

@@ -9,6 +9,7 @@ import type { DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import type { EditorState, Range } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
+import { splitSection } from "../../lib/headings";
 import { linkLabel, refRegex, splitLink } from "../../lib/links";
 
 export const linkMark = Decoration.mark({
@@ -69,8 +70,8 @@ function inCode(state: EditorState, pos: number): boolean {
 export interface LinkOpeners {
   /** `[note/…]` 항목 링크를 연다 */
   item: (path: string) => void;
-  /** `[[제목]]` 위키링크를 연다(없으면 링크를 칠하기만 한다) */
-  wiki?: (title: string) => void;
+  /** `[[제목]]` 위키링크를 연다(없으면 링크를 칠하기만 한다). `[[제목#섹션]]` 이면 section, `[[#섹션]]` 은 title 이 빈다(이 문서). */
+  wiki?: (title: string, section: string | null) => void;
 }
 
 /**
@@ -119,12 +120,14 @@ export function linkDecorations(
         const s = line.from + (m.index ?? 0);
         if (inCode(state, s)) continue;
         const [target, alias] = m[1].split("|");
-        const title = target.split("#")[0].trim();
-        if (!title) continue;
+        // 읽기 보기(wikiTransform)와 같은 규칙 — 섹션도 넘기고, 갈 곳이 없는 `[[#]]` 만 칩으로 만들지 않는다
+        const { doc: title, section } = splitSection(target);
+        if (!title && !section) continue;
         const go = open.wiki;
+        const where = section ? `${title || "이 문서"} › ${section}` : title;
         out.push(Decoration.replace({
-          widget: new LinkWidget((alias ?? target).trim(), `${title} — 눌러서 열기`,
-                                 "cm-linkchip-wiki", () => go(title)),
+          widget: new LinkWidget((alias ?? target).trim(), `${where} — 눌러서 열기`,
+                                 "cm-linkchip-wiki", () => go(title, section)),
         }).range(s, s + m[0].length));
       }
     }

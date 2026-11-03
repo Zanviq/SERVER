@@ -51,6 +51,17 @@ export function pickByTitle<T extends { path: string; title: string }>(
 }
 
 /**
+ * 문서 화면 밖(대화·단어 카드·컨텍스트)에서 `[[제목]]`·`[[제목#섹션]]` 을 눌렀을 때 갈 주소 — 없는 문서는 만들지
+ * 않는다(create=0: 읽으러 가는 것이다). 문서 화면이 `section` 을 읽어 그 제목으로 굴린다. 제목이 비면(`[[#섹션]]` —
+ * 가리키는 '이 문서'가 없는 자리) null.
+ */
+export function wikiHref(title: string, section?: string | null): string | null {
+  if (!title.trim()) return null;
+  const sec = section ? `&section=${encodeURIComponent(section)}` : "";
+  return `/notes?open=${encodeURIComponent(title)}&create=0${sec}`;
+}
+
+/**
  * 문서 경로(`서버/설정/기록.md`)의 조상 폴더들 — 가까운 쪽이 뒤에 온다.
  * `서버/설정/기록.md` → ["서버", "서버/설정"]. 트리에서 그 문서가 보이려면 이것을 모두 펼쳐야 한다.
  */

@@ -1,10 +1,11 @@
-import { ReactNode, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { Copy, Check } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import { decodeTarget, docLinkTarget, isVaultTarget, type EmbedResolver } from "../../lib/embeds";
+import { findHeading, hrefSection } from "../../lib/headings";
 import { stripMarkdownExt } from "../../lib/notePath";
 import { transformWiki } from "../../lib/wikiTransform";
 import { remarkPlugins } from "../../lib/mdPlugins";
@@ -47,11 +48,17 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 
 export interface MarkdownViewProps {
   content: string;
-  onWikiClick: (title: string) => void;
+  /** `[[제목]]` 을 눌렀을 때. `[[제목#섹션]]` 이면 section, `[[#섹션]]`(이 문서 안)은 title 이 빈다. */
+  onWikiClick: (title: string, section?: string | null) => void;
   /** ![[대상]]·상대경로 이미지를 실제 URL로 바꾼다(문서 목록 기준). */
   resolveEmbed?: EmbedResolver;
-  /** 표준 링크 `[글](다른 문서.md)` 를 눌렀을 때 — 대상은 적힌 그대로(lib/embeds.docLinkTarget). 없으면 onWikiClick. */
-  onDocLink?: (target: string) => void;
+  /** 표준 링크 `[글](다른 문서.md)` 를 눌렀을 때 — 대상은 적힌 그대로(lib/embeds.docLinkTarget), `#섹션` 은 section.
+   *  같은 문서 안 제목(`[차례](#결론)`)은 target 이 빈다. 없으면 onWikiClick(같은 문서 안 앵커는 브라우저 그대로). */
+  onDocLink?: (target: string, section: string | null) => void;
+  /** 이 제목(섹션)으로 굴린다 — 바뀔 때마다 한 번(n 이 다르면 같은 섹션도 다시). */
+  jumpTo?: { section: string; n: number } | null;
+  /** jumpTo 를 처리했다 — 그 제목이 있었는가 */
+  onJumped?: (found: boolean) => void;
 }
 
 export function MarkdownView({
@@ -59,10 +66,29 @@ export function MarkdownView({
   onWikiClick,
   resolveEmbed,
   onDocLink,
+  jumpTo,
+  onJumped,
 }: MarkdownViewProps) {
   const rich = useRichPlugins(content);
+  const box = useRef<HTMLDivElement>(null);
+  const jumped = useRef(onJumped);
+  jumped.current = onJumped;
+  // 제목(섹션) 링크로 왔다 — 그려진 제목(h1~h6)의 글·id 로 고른다. 편집기와 같은 규칙(lib/headings.findHeading).
+  useEffect(() => {
+    if (!jumpTo || !box.current) return;
+    const hs = [...box.current.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")];
+    const i = findHeading(hs.map((h) => h.textContent ?? ""), jumpTo.section, hs.map((h) => h.id));
+    const el = hs[i];
+    if (el) {
+      const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      el.scrollIntoView({ block: "start", behavior: calm ? "auto" : "smooth" });
+      el.classList.add("jump-flash");
+      window.setTimeout(() => el.classList.remove("jump-flash"), 1600);
+    }
+    jumped.current?.(!!el);
+  }, [jumpTo]);
   return (
-    <div className="prose-server">
+    <div ref={box} className="prose-server">
       <ReactMarkdown
         // 마크다운 문법 단계는 시험 파이프라인과 같은 한 목록(lib/mdPlugins — 차례와 까닭은 거기)
         remarkPlugins={remarkPlugins}
@@ -145,10 +171,13 @@ export function MarkdownView({
               return <LinkChip path={decodeTarget(href.slice(6))}>{children}</LinkChip>;
             }
             if (href?.startsWith("#wiki/")) {
-              const title = decodeTarget(href.slice(6));
+              // `#wiki/제목#섹션` — 제목·섹션은 퍼센트로 적혀 있어 `#` 이 섞이지 않는다(wikiTransform)
+              const [t, s] = href.slice(6).split("#");
+              const title = decodeTarget(t);
+              const section = s ? decodeTarget(s) : null;
               return (
                 <button
-                  onClick={() => onWikiClick(title)}
+                  onClick={() => onWikiClick(title, section)}
                   className="rounded bg-accent-muted px-1 font-medium text-accent-fg hover:bg-accent-soft"
                 >
                   {children}
@@ -160,19 +189,24 @@ export function MarkdownView({
             // 여는 쪽이 없으면(대화·단어장 등) 위키링크처럼 제목으로 넘긴다.
             const doc = docLinkTarget(href);
             if (doc !== null) {
-              const open = onDocLink ?? ((t: string) => onWikiClick(stripMarkdownExt(t)));
+              const section = hrefSection(href!);
+              const open = onDocLink ?? ((t: string, s: string | null) => onWikiClick(stripMarkdownExt(t), s));
               return (
-                <a {...rest} href={href} onClick={(e) => { e.preventDefault(); open(doc); }}
+                <a {...rest} href={href} onClick={(e) => { e.preventDefault(); open(doc, section); }}
                    className="text-info underline">
                   {children}
                 </a>
               );
             }
             // 같은 문서 안 앵커(각주 등)는 새 탭으로 열면 안 된다 — 빈 탭만 뜨고
-            // 정작 각주로 이동하지 않는다.
+            // 정작 각주로 이동하지 않는다. 제목 앵커(`[차례](#설치-방법)`)는 문서 화면이면 편집기와 같은 길로
+            // 간다(글로도 찾고 칠해 준다 — 브라우저는 id 가 꼭 같아야 가고 주소에 `#…` 를 남긴다). 각주는 브라우저 그대로.
             if (href?.startsWith("#")) {
+              const section = hrefSection(href);
+              const jump = onDocLink && section && !href.startsWith("#user-content-") ? onDocLink : null;
               return (
-                <a {...rest} href={href} className="text-info underline">
+                <a {...rest} href={href} className="text-info underline"
+                   onClick={jump ? (e) => { e.preventDefault(); jump("", section); } : undefined}>
                   {children}
                 </a>
               );

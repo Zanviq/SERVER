@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useWikiOpener } from "../lib/useWikiOpener";
 import {
   Bot, CalendarDays, ChevronDown, ChevronRight, GraduationCap, History, Languages,
   List, Loader2, MessageSquare, Search, Terminal, Trash2, User, X, AudioLines, ExternalLink,
@@ -413,7 +414,7 @@ function PreviewPanel({ space }: { space: string }) {
 /** 대화 한 턴. 사용자는 오른쪽 말풍선, AI 는 왼쪽 카드(대화 화면과 같은 규칙). */
 function Turn({ msg, onDelete }: { msg: ChatMessage; onDelete: () => void }) {
   const tools = msg.meta?.tools ?? [];
-  const navigate = useNavigate();
+  const openWiki = useWikiOpener();
   if (msg.role === "user") {
     return (
       <div className="flex flex-col items-end gap-1">
@@ -435,7 +436,7 @@ function Turn({ msg, onDelete }: { msg: ChatMessage; onDelete: () => void }) {
         {/* 대화 화면과 같이 마크다운으로(`[note/…]` 링크도 눌린다) */}
         <AccentBubble className="px-3.5 py-2 text-[13px]">
           <MarkdownView content={msg.text}
-            onWikiClick={(t) => navigate(`/notes?open=${encodeURIComponent(t)}&create=0`)} />
+            onWikiClick={openWiki} />
         </AccentBubble>
         <TurnFoot ts={msg.ts} onDelete={onDelete} />
       </div>
@@ -453,7 +454,7 @@ function Turn({ msg, onDelete }: { msg: ChatMessage; onDelete: () => void }) {
             {/* 지난 대화에서 문서를 언급했으면 여기서도 눌러 열 수 있어야 한다
                 (없는 문서를 만들지는 않는다 — 읽으러 온 화면이다). */}
             <MarkdownView content={msg.text}
-              onWikiClick={(t) => navigate(`/notes?open=${encodeURIComponent(t)}&create=0`)} />
+              onWikiClick={openWiki} />
           </div>
         )}
         <TurnFoot ts={msg.ts} onDelete={onDelete} />

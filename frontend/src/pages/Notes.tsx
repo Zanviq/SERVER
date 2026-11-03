@@ -154,6 +154,26 @@ export function Notes() {
   const [params, setParams] = useSearchParams();
   /** 주소의 path 중 이미 다룬 것(열었거나, 열린 문서를 따라 이 화면이 적은 것) — 다시 열지 않는다 */
   const handledPath = useRef<string | null>(null);
+  /**
+   * 제목(섹션) 링크가 가리킨 자리 — 그 문서가 열리면 편집기·읽기 보기가 그 제목으로 굴리고 onJumped 로 알린다
+   * (lib/headings). 문서를 여는 것보다 **먼저** 적어 둔다: 열기는 기다림이 있고, 열린 문서가 이 path 일 때만 넘긴다.
+   * n 은 같은 섹션을 다시 눌러도 다시 굴리게 한다.
+   */
+  const [jump, setJump] = useState<{ path: string; section: string; n: number } | null>(null);
+  const jumpSeq = useRef(0);
+  const jumpTo = useCallback((path: string, section: string | null | undefined) => {
+    if (section) setJump({ path, section, n: ++jumpSeq.current });
+  }, []);
+  const onJumped = useCallback((found: boolean) => {
+    if (!found && jump) toast.error(`'${jump.section}' 제목을 이 문서에서 찾지 못했습니다`);
+    setJump(null);
+  }, [jump]);
+  // 링크가 가리킨 문서가 아닌 다른 문서가 열렸다(그 문서를 못 열었거나 그새 다른 것을 눌렀다) — 남은 섹션을 버린다.
+  // 안 버리면 나중에 그 문서를 손으로 열 때 엉뚱한 자리로 굴러간다.
+  useEffect(() => {
+    setJump((j) => (j && j.path !== current ? null : j));
+  }, [current]);
+  const jumpHere = jump && jump.path === current ? jump : null;
 
   const autosaveMs = prefs?.autosave_ms ?? 900;
   const tree = useMemo(() => buildTree(folders, notes, pinned), [folders, notes, pinned]);
@@ -474,12 +494,20 @@ export function Notes() {
   };
 
   /** `[[제목]]` 열기. from 은 링크를 적은 문서 — 제목이 같은 문서가 여럿이면 거기서 가까운 것(pickByTitle,
-   *  서버의 역링크·그래프와 같은 규칙). 다른 화면에서 주소(?open=)로 온 것은 자리가 없다(null). */
+   *  서버의 역링크·그래프와 같은 규칙). 다른 화면에서 주소(?open=)로 온 것은 자리가 없다(null).
+   *  section(`[[제목#섹션]]`)이면 열린 뒤 그 제목으로 굴린다 — 이미 열린 문서면 다시 열지 않고 굴리기만. */
   const openByTitle = useCallback(
-    (title: string, create = true, from: string | null = null) => {
+    (title: string, create = true, from: string | null = null, section: string | null = null) => {
+      // `[[#섹션]]` — 제목 칸이 비면 링크를 적은 이 문서 안이다. 예전엔 빈 제목으로 찾다 못 찾아 '없으면 만들기'로
+      // 가서, 누를 때마다 문서 맨 위에 이름 없는 `.md` 를 만들었다(서버가 받아 준다 — 실측).
+      if (!title.trim()) {
+        if (from) jumpTo(from, section);
+        return;
+      }
       const found = pickByTitle(notes, title, from);
       if (found) {
-        openNote(found.path);
+        jumpTo(found.path, section);
+        if (!(section && found.path === current)) openNote(found.path);
         return;
       }
       void (async () => {
@@ -488,6 +516,7 @@ export function Notes() {
         const moved = await api.noteMoved(title).catch(() => null);
         if (moved?.path) {
           toast.ok(`'${title}' 은 이름이 바뀌었습니다 → ${moved.path}`);
+          jumpTo(moved.path, section);
           openNote(moved.path);
           return;
         }
@@ -512,22 +541,31 @@ export function Notes() {
           toast.error(made.message);
           return;
         }
-        // 만들었거나 이미 있다 — 이미 있으면 덮지 않고 그것을 연다
+        // 만들었거나 이미 있다 — 이미 있으면 덮지 않고 그것을 연다(이미 있었으면 그 섹션으로)
         await reloadTree();
+        if (!made.ok) jumpTo(path, section);
         openNote(path);
       })();
     },
-    [notes, openNote, reloadTree],
+    [notes, openNote, reloadTree, current, jumpTo],
   );
   /** 열린 문서 안의 링크(읽기 보기·편집기) — 이 문서를 기준으로 가까운 것을 연다 */
-  const openFromHere = useCallback((title: string) => openByTitle(title, true, current), [openByTitle, current]);
+  const openFromHere = useCallback(
+    (title: string, section?: string | null) => openByTitle(title, true, current, section ?? null),
+    [openByTitle, current],
+  );
   /**
    * 표준 링크 `[글](대상)`(79차 — 전엔 읽기 보기는 새 탭의 모르는 주소로, 편집기는 아무 일도 없었다).
    * 링크를 적은 문서의 폴더 기준 경로(joinVaultPath)에서 찾고, 이름만 적었으면 가까운 같은 이름(옵시디언과 같다),
    * 그다음 옮겨 간 자리(옮김 기록 — 경로라 제목으로 묻는 noteMoved 가 아니라 그림과 같은 noteEmbedLocations),
    * 그래도 없으면 `[[제목]]` 처럼 그 자리에 만든다(마크다운이 아닌 없는 파일은 알리기만).
+   * `#섹션`(section)이면 열린 뒤 그 제목으로, 대상이 비면(`[차례](#결론)`) 이 문서 안에서 굴리기만 한다.
    */
-  const openDocLink = useCallback((target: string) => {
+  const openDocLink = useCallback((target: string, section: string | null = null) => {
+    if (!target) {
+      if (current) jumpTo(current, section);
+      return;
+    }
     const path = joinVaultPath(target, current);
     if (!path) {
       toast.error(`문서 공간 밖을 가리키는 링크입니다: ${target}`);
@@ -537,7 +575,8 @@ export function Notes() {
     const at = notes.find((n) => n.path === path) ?? (bare ? notes.find((n) => n.path === `${path}.md`) : undefined);
     const near = at ?? (target.includes("/") ? undefined : pickByTitle(notes, stripMarkdownExt(target), current));
     if (near) {
-      openNote(near.path);
+      jumpTo(near.path, section);
+      if (!(section && near.path === current)) openNote(near.path);
       return;
     }
     const name = bare ? `${path}.md` : path;
@@ -545,6 +584,7 @@ export function Notes() {
       const moved = (await api.noteEmbedLocations([name], current ?? "").catch(() => null))?.moved[name];
       if (moved) {
         toast.ok(`'${target}' 은 옮겨졌습니다 → ${moved}`);
+        jumpTo(moved, section);
         openNote(moved);
         return;
       }
@@ -558,14 +598,16 @@ export function Notes() {
         return;
       }
       await reloadTree();
+      if (!made.ok) jumpTo(name, section);
       openNote(name);
     })();
-  }, [notes, current, openNote, reloadTree]);
+  }, [notes, current, openNote, reloadTree, jumpTo]);
 
   useEffect(() => {
     const open = params.get("open");
     const path = params.get("path");
     const folder = params.get("folder");
+    const section = params.get("section");
     if (folder !== null) {
       // 폴더 링크(`[note/서버]`)로 들어왔다 — 그 폴더를 펼치고 새 문서의 자리로 삼는다.
       // 예전에는 이 값을 아무도 읽지 않아서, 링크를 눌러도 문서 화면만 뜨고 아무 일도
@@ -586,14 +628,24 @@ export function Notes() {
         handledPath.current = path;
         if (path !== current) openNote(path);
       }
+      // `&section=` — 그 제목으로 굴린다. 섹션은 한 번 쓰고 지운다(path 와 달리 열린 자리를 따라 적지 않는다)
+      if (section) {
+        jumpTo(path, section);
+        params.delete("section");
+        setParams(params, { replace: true });
+      }
     } else if (open && notes.length) {
-      // create=0 이면 없는 문서를 만들지 않는다(AI 답변 속 링크로 들어온 경우)
-      openByTitle(open, params.get("create") !== "0");
+      // create=0 이면 없는 문서를 만들지 않는다(AI 답변 속 링크로 들어온 경우). section 은 `[[문서#섹션]]`(lib/notePath.wikiHref)
+      openByTitle(open, params.get("create") !== "0", null, section);
       params.delete("open");
       params.delete("create");
+      params.delete("section");
+      // 이미 열린 문서를 가리켰으면(곁칸 AI 답의 `[[이 문서#섹션]]`) 열린 문서가 바뀌지 않아 아래 효과가 path 를 다시
+      // 적지 않는다 — 지우기만 하면 주소에 열린 문서가 없어 새로고침이 빈 화면이 됐다. 다른 문서가 열리면 아래가 고쳐 적는다.
+      if (current) params.set("path", current);
       setParams(params, { replace: true });
     }
-  }, [params, notes, openByTitle, openNote, setParams, current]);
+  }, [params, notes, openByTitle, openNote, setParams, current, jumpTo]);
 
   // 주소가 열린 문서를 따라간다 — 열기·이름 바꾸기·옮기기·닫기 모두(49차). 이름을 바꿔도 주소가 옛
   // 경로면 새로고침이 없는 문서를 연다. 적은 값을 handledPath 에 남겨 위 효과가 그것을 "새로 온 주소"로
@@ -1235,7 +1287,7 @@ export function Notes() {
           ) : reading && isMarkdown ? (
             <div className="flex-1 overflow-auto p-4">
               <MarkdownView content={content} onWikiClick={openFromHere} resolveEmbed={resolveEmbed}
-                            onDocLink={openDocLink} />
+                            onDocLink={openDocLink} jumpTo={jumpHere} onJumped={onJumped} />
             </div>
           ) : (
             <LiveEditor
@@ -1255,6 +1307,9 @@ export function Notes() {
               // 읽기 뷰와 같은 동작 — 편집 화면에서도 `[[제목]]` 을 누르면 연다
               onOpenTitle={openFromHere}
               onOpenLink={openDocLink}
+              // 제목(섹션) 링크로 왔으면 그 제목으로 굴린다
+              jumpTo={jumpHere}
+              onJumped={onJumped}
             />
           )}
           {/* current도 본다 — 닫은 뒤 늦게 도착한 save 응답이 detail을 다시 채울 수 있다 */}

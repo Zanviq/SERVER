@@ -12,6 +12,7 @@
 import { parseWikiEmbed } from "./embeds";
 import { closesFence } from "./fence";
 import type { EmbedResolver } from "./embeds";
+import { splitSection } from "./headings";
 import { transformLinks } from "./links";
 
 /** 코드가 아닌 구간만 바꾼다. 울타리(```)와 인라인 코드(`…`)는 건드리지 않는다. */
@@ -117,10 +118,14 @@ export function transformWiki(text: string, resolve?: EmbedResolver): string {
       const title = e.width ? `${e.target}|${e.width}` : e.target;
       return `![${title}](${hit.url})`;
     });
-    const withWiki = withEmbeds.replace(/\[\[([^\[\]]+?)\]\]/g, (_m, inner: string) => {
+    const withWiki = withEmbeds.replace(/\[\[([^\[\]]+?)\]\]/g, (m, inner: string) => {
       const [target, alias] = inner.split("|");
-      const t = target.split("#")[0].trim();
-      return `[${(alias ?? target).trim()}](#wiki/${encodeURIComponent(t)})`;
+      // `#섹션` 은 떼지 않고 실어 보낸다 — `#wiki/제목#섹션`(제목은 퍼센트로 적어 `#` 이 섞이지 않는다). `[[#섹션]]` 은
+      // 이 문서 안의 제목이다(제목 칸이 빈다). 예전엔 섹션을 버려, 그것을 누르면 이름 없는 `.md` 문서가 생겼다.
+      const { doc, section } = splitSection(target);
+      if (!doc && !section) return m; // `[[#]]`·`[[#^블록]]` — 갈 곳이 없다: 적은 글자 그대로
+      const sec = section ? `#${encodeURIComponent(section)}` : "";
+      return `[${(alias ?? target).trim()}](#wiki/${encodeURIComponent(doc)}${sec})`;
     });
     // `[note/서버/기록.md]` 같은 항목 링크. 위키링크 **뒤에** 바꾼다 —
     // `[[note/x]]` 가 먼저 `[note/x](#wiki/…)` 가 되어 여기서는 건드리지 않는다.

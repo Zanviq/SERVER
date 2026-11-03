@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { useWikiOpener } from "../../lib/useWikiOpener";
 import { ChevronDown, ChevronRight, Pencil, Trash2, Tag, Quote } from "lucide-react";
 import { VocabWord } from "../../lib/api";
 import { MarkdownView } from "../notes/LazyMarkdownView";
@@ -46,7 +46,7 @@ interface Props {
 export function WordCard({ word: w, open, onToggle, onEdit, onDelete, onTag, activeTag, anchorId }: Props) {
   const due = isDue(w);
   const kind = kindOf(w);
-  const navigate = useNavigate();
+  const openWiki = useWikiOpener();
   return (
     <li data-word-id={anchorId}
       className={`rounded-md border transition-colors ${open ? "border-line-strong bg-surface" : "border-transparent hover:bg-hovered"}`}>
@@ -122,7 +122,7 @@ export function WordCard({ word: w, open, onToggle, onEdit, onDelete, onTag, act
               {/* 고칠 때 마크다운·`[vocab/…]` 링크를 쓸 수 있으므로 그렇게 그린다 */}
               <div className="md-compact">
                 <MarkdownView content={w.notes}
-                  onWikiClick={(t) => navigate(`/notes?open=${encodeURIComponent(t)}&create=0`)} />
+                  onWikiClick={openWiki} />
               </div>
             </Section>
           )}

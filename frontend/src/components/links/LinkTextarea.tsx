@@ -1,5 +1,5 @@
 import { forwardRef, TextareaHTMLAttributes, useImperativeHandle, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useWikiOpener } from "../../lib/useWikiOpener";
 import { Eye, Pencil } from "lucide-react";
 import { MarkdownView } from "../notes/LazyMarkdownView";
 import { useMarkdownInput } from "./useMarkdownInput";
@@ -28,7 +28,7 @@ export const LinkTextarea = forwardRef<HTMLTextAreaElement, Props>(function Link
   const ref = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(outer, () => ref.current as HTMLTextAreaElement, []);
   const panel = useMarkdownInput(ref);
-  const navigate = useNavigate();
+  const openWiki = useWikiOpener();
   const [showing, setShowing] = useState(false);
   // 미리보기로 바꿀 때의 글. 제어되지 않는 칸(defaultValue)도 있어서 DOM 에서 읽는다.
   const [text, setText] = useState("");
@@ -62,7 +62,7 @@ export const LinkTextarea = forwardRef<HTMLTextAreaElement, Props>(function Link
           {text.trim() ? (
             <MarkdownView
               content={text}
-              onWikiClick={(t) => navigate(`/notes?open=${encodeURIComponent(t)}&create=0`)}
+              onWikiClick={openWiki}
             />
           ) : (
             <p className="text-fg-subtle">(비어 있음)</p>

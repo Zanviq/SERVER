@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { MarkdownView } from "../notes/LazyMarkdownView";
 import { AccentBubble } from "../ui/AccentBubble";
-import { useNavigate } from "react-router-dom";
+import { useWikiOpener } from "../../lib/useWikiOpener";
 import { aiChatStream, api, AiEvent, ChatMessage } from "../../lib/api";
 import { isSubmitEnter } from "../../lib/keys";
 import { toast } from "../../store/toast";
@@ -301,7 +301,7 @@ function asTree(msgs: Msg[]): TreeMessage[] {
 /** 사용자 말풍선 — 함께 보낸 것·못 찾은 링크·답을 못 받은 까닭·가지 옮기기까지. */
 function UserBubble({ m, openDoc, branches, onGo, onEdit, busy }: {
   m: Msg;
-  openDoc: (title: string) => void;
+  openDoc: (title: string, section?: string | null) => void;
   /** 같은 자리에서 갈라진 형제들(하나뿐이면 빈 배열) */
   branches: TreeMessage[];
   onGo: (id: string) => void;
@@ -355,7 +355,7 @@ function UserBubble({ m, openDoc, branches, onGo, onEdit, busy }: {
 /** AI 말풍선 — 스킬 단계·답(쓰는 중이면 커서)·단어 후보. */
 function AssistantBubble({ m, openDoc, vocabTags, space }: {
   m: Msg;
-  openDoc: (title: string) => void;
+  openDoc: (title: string, section?: string | null) => void;
   vocabTags?: string[];
   space?: string;
 }) {
@@ -463,7 +463,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);   // 중단 버튼
-  const navigate = useNavigate();
   // 화면 폭이 아니라 입력 방식으로 판단한다 — 태블릿 가로처럼 넓어도 소프트 키보드다.
   const touch = useTouch();
   // `[` 를 치면 입력칸 위로 링크 후보(문서·논문·회의·할 일…)가 뜬다. 목록은 줄을 바꿀 때
@@ -747,13 +746,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
-  /** 답 속의 `[[문서 제목]]` 을 눌렀을 때. 문서 화면이 제목으로 찾아 연다
-   *  (`?open=`). 이미 문서 화면이면 그 안에서 열리고, 다른 화면이면 옮겨 간다. */
-  const openDoc = useCallback((title: string) => {
-    // create=0 — 없는 문서를 만들지는 않는다. 여기서 누르는 것은 "읽으러 가기"지
-    // "만들기"가 아니다(편집기 안의 위키링크는 없으면 만드는 것이 맞다).
-    navigate(`/notes?open=${encodeURIComponent(title)}&create=0`);
-  }, [navigate]);
+  /** 답 속의 `[[문서 제목]]`·`[[문서#섹션]]` 을 눌렀을 때. 문서 화면이 제목으로 찾아 연다
+   *  (`?open=`, 섹션이면 `&section=`). 이미 문서 화면이면 그 안에서 열리고, 다른 화면이면 옮겨 간다.
+   *  없는 문서를 만들지는 않는다(create=0) — 여기서 누르는 것은 "읽으러 가기"다(lib/notePath.wikiHref). */
+  const openDoc = useWikiOpener();
 
   const clear = useCallback(async () => {
     if (space) await api.aiSpaceClear(space);

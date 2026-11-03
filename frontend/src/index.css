@@ -659,6 +659,31 @@
   }
 }
 
+/* 제목(섹션) 링크로 온 자리 — 잠깐 칠했다가 바랜다(읽기 보기의 h·편집기의 줄). 움직임을 줄인 설정에서는
+   바래지 않고 칠한 채로 있다가 꺼진다(클래스는 1.6초 뒤 뗀다 — lib/headings 를 쓰는 두 곳). treeSpin 처럼
+   @layer 밖이다: 소스에 글자로 안 나오는 선택자(.cm-jumpFlash 는 CM 장식이 단다)를 Tailwind 가 지우지 않게. */
+.jump-flash,
+.cm-jumpFlash {
+  animation: jumpFlash 1.6s ease-out;
+  border-radius: 4px;
+}
+@keyframes jumpFlash {
+  from,
+  35% {
+    background-color: rgb(var(--accent-soft));
+  }
+  to {
+    background-color: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jump-flash,
+  .cm-jumpFlash {
+    animation: none;
+    background-color: rgb(var(--accent-muted));
+  }
+}
+
 /* FullCalendar 더보기(+N) 팝오버.
    포탈 대상은 body가 아니라 가장 가까운 .fc-view-harness다(= .fc-server 안쪽).
    따라서 .fc-server 하위 규칙이 팝오버에도 걸린다 — 모바일 규칙을 넣을 때 주의.
