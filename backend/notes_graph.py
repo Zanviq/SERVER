@@ -1,9 +1,11 @@
 """노트 링크 파싱 + 그래프 빌드 (옵시디언식).
 
-노트는 .md 파일. 다른 노트를 가리키는 길은 둘이다:
+노트는 .md 파일. 다른 노트를 가리키는 길은 셋이다:
 - `[[제목]]`·`[[제목|별칭]]` — 파일명(확장자 제외, stem)으로 매칭한다.
 - `[note/경로]` — 이 앱의 링크(입력칸에서 `[` 를 치면 넣어 주는 것). 문서 루트 기준 경로로 매칭한다.
   예전엔 위키링크만 세어, 앱이 넣어 준 링크로 이은 문서는 역링크에도 지도에도 나오지 않았다(46차).
+- `[글](다른 문서.md)` — 표준 마크다운 링크. **링크를 적은 문서의 폴더** 기준 경로다(화면 lib/embeds.joinVaultPath).
+  79차에 누르면 열리게 했는데 역링크·지도는 앞의 둘만 셌다.
 """
 from __future__ import annotations
 
@@ -14,9 +16,10 @@ import threading
 from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import NamedTuple
+from urllib.parse import unquote
 
 from . import doc_cache, moved
-from .file_kinds import doc_title, is_markdown, split_ext
+from .file_kinds import doc_title, is_markdown, looks_like_extension, split_ext
 from .storage import WalkedFile, walk_all, walk_files
 
 logger = logging.getLogger("server.graph")
@@ -46,9 +49,11 @@ _CACHE_MAX = 32
 #: 무효화는 doc_cache 와 같다 — mtime·크기가 그대로면 같은 내용으로 본다(저장은
 #: os.replace 로 갈아 끼우므로 내용이 바뀌면 mtime 이 반드시 바뀐다).
 class NoteLinks(NamedTuple):
-    """노트 하나가 가리키는 것 — 위키링크 제목과 `[note/…]` 경로(문서 루트 기준, 되돌린 이름)."""
+    """노트 하나가 가리키는 것 — 위키링크 제목, `[note/…]` 경로(문서 루트 기준, 되돌린 이름), 표준 링크 대상
+    (적힌 그대로 — 이 노트의 폴더 기준이라 자리를 알 때 푼다, _Lookup._doc)."""
     titles: tuple[str, ...] = ()
     paths: tuple[str, ...] = ()
+    docs: tuple[str, ...] = ()
 
 
 _LINKS: "OrderedDict[str, tuple[int, int, NoteLinks]]" = OrderedDict()
@@ -95,7 +100,7 @@ def _links_of(f: WalkedFile) -> NoteLinks:
     # 전에는 read_text 로 읽었다 — 줄바꿈을 모두 \n 으로 바꿔 준다. 코드 구간 판정
     # (빈 줄은 못 넘는다)이 \n 만 보므로, CRLF 문서에서 결과가 달라지지 않게 맞춘다.
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    found = NoteLinks(tuple(parse_wikilinks(text)), tuple(parse_note_links(text)))
+    found = NoteLinks(tuple(parse_wikilinks(text)), tuple(parse_note_links(text)), tuple(parse_doc_links(text)))
     with _links_lock:
         _LINKS.pop(key, None)
         _LINKS[key] = (fp[0], fp[1], found)
@@ -196,7 +201,19 @@ class _Lookup:
             rel = p.strip("/")
             hit = self.by_rel.get(rel.lower())
             out.append(hit if hit is not None else self._follow(rel))
+        out.extend(self._doc(t, from_rel) for t in ln.docs)
         return out
+
+    def _doc(self, target: str, from_rel: str):
+        """표준 링크 `[글](대상)` 이 닿는 노트 — 누르면 여는 것(화면 Notes.openDocLink)과 같은 차례:
+        적은 문서 폴더 기준 경로 → 이름만 적었으면 가까운 같은 이름 → 옮김 기록."""
+        rel = join_vault_path(target, from_rel)
+        if rel is None:
+            return None
+        hit = self.by_rel.get(rel.lower())  # 확장자 없이 적은 것도(by_rel 에 뗀 열쇠가 있다)
+        if hit is None and "/" not in target:
+            hit = self._title(doc_title(target) if is_markdown(target) else target, from_rel)
+        return hit if hit is not None else self._follow(rel)
 
     def _follow(self, rel: str):
         """이름을 바꾸거나 옮긴 문서를 옛 경로로 가리키는 링크 — 누르면 옮김 기록을 따라 열리므로(links.resolve)
@@ -310,6 +327,69 @@ def parse_wikilinks(text: str) -> list[str]:
         target = raw.split("|", 1)[0]  # [[제목|별칭]] → 제목
         target = target.split("#", 1)[0]  # [[제목#섹션]] → 제목
         target = target.strip()
+        if target and target not in out:
+            out.append(target)
+    return out
+
+
+#: 표준 링크 `[글](대상)` — 그림 `![](…)` 은 아니다. 꺾쇠(`<띄운 이름.md>`)·제목(`"…"`)·괄호 한 겹(`회의(1).md`)까지.
+#: `[` 바로 앞이 `[` 인 것은 위키링크 `[[메모]](…)` 의 안쪽이다 — 읽기 보기는 위키링크를 먼저 바꿔 그것을 링크로 그리지 않는다.
+_MD_LINK = re.compile(
+    r"(?<![!\[])\[[^\[\]\n]*\]\(\s*(?:<([^<>\n]+)>|((?:[^()\s]|\([^()\s]*\))+))"
+    r"(?:\s+(?:\"[^\"\n]*\"|'[^'\n]*'|\([^()\n]*\)))?\s*\)"
+)
+#: 스킴이 있는 주소(`https:`·`mailto:`)
+_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
+
+
+def _decode(s: str) -> str:
+    """`%` 로 적은 이름을 푼다 — 화면(lib/embeds.decodeTarget)처럼 잘못 적힌 `%` 가 있으면 통째로 그대로 둔다."""
+    if re.search(r"%(?![0-9A-Fa-f]{2})", s):
+        return s
+    try:
+        return unquote(s, errors="strict")
+    except UnicodeDecodeError:
+        return s
+
+
+def doc_link_target(href: str) -> str | None:
+    """표준 링크의 대상이 **벌트 안 문서**면 그 경로(풀어 쓴 것, `#섹션` 뗀 것) — 아니면 None.
+    화면(lib/embeds.docLinkTarget)과 같은 규칙: 주소·같은 문서 앵커·`/api/`·`?` 가 든 것·확장자 없는 맨 위 경로
+    (`/calendar` 같은 앱 화면)는 아니다."""
+    if not href or href.startswith(("#", "//")) or _SCHEME.match(href):
+        return None
+    path = href.split("#", 1)[0]
+    if not path or "?" in path or path.startswith("/api/"):
+        return None
+    if path.startswith("/") and not looks_like_extension(path):
+        return None
+    return _decode(path)
+
+
+def join_vault_path(target: str, from_rel: str | None) -> str | None:
+    """링크 대상을 문서 루트 기준 경로로 — 링크를 적은 문서의 폴더 기준(`/` 로 시작하면 맨 위 기준), `.`·`..` 을
+    풀어서. 루트 밖으로 나가거나 비면 None. 화면(lib/embeds.joinVaultPath)과 같다."""
+    parts = [] if target.startswith("/") or not from_rel else [p for p in from_rel.rpartition("/")[0].split("/") if p]
+    for seg in target.split("/"):
+        if not seg or seg == ".":
+            continue
+        if seg == "..":
+            if not parts:
+                return None
+            parts.pop()
+        else:
+            parts.append(seg)
+    return "/".join(parts) or None
+
+
+def parse_doc_links(text: str) -> list[str]:
+    """본문의 표준 링크 가운데 벌트 안 문서를 가리키는 것들의 대상(doc_link_target — 적힌 그대로, 나온 순서, 중복 없이).
+    코드 안의 것은 뺀다(위키링크와 같은 _without_code)."""
+    if "](" not in text:
+        return []
+    out: list[str] = []
+    for m in _MD_LINK.finditer(_without_code(text)):
+        target = doc_link_target(m.group(1) or m.group(2))
         if target and target not in out:
             out.append(target)
     return out

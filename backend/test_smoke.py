@@ -12345,6 +12345,72 @@ def test_backlinks_follow_a_renamed_note_like_the_link_does():
         client.request("DELETE", "/api/notes/folder", params={"path": box})
 
 
+def test_standard_md_links_count_as_backlinks_and_graph_edges():
+    """표준 링크 `[글](다른 문서.md)` 로 이은 문서도 역링크·문서 지도에 나온다.
+
+    79차에 이런 링크를 누르면 열리게 했지만(읽기 보기·편집기), 역링크·지도는 `[[…]]`·`[note/…]` 만 셌다 —
+    누르면 가는데 가 닿은 문서의 역링크에는 없었다. 경로는 여는 쪽(lib/embeds.joinVaultPath·Notes.openDocLink)과
+    같은 규칙: 링크를 적은 문서의 폴더 기준, `/` 로 시작하면 맨 위 기준, `..` 은 위로, 이름만 적고 그 자리에 없으면
+    가까운 같은 이름. 안 세는 것은 종류마다 따로 둔다 — 한 문서에 섞으면 하나가 세어져 다른 결함이 가려진다.
+    """
+    _login()
+    box = "표준링크"
+    docs = {
+        "대상/표준B.md": "# 표준B",
+        "대상/띄운 이름.md": "# 띄움",
+        "대상/옆.md": "[같은 폴더](표준B.md)",
+        "A.md": "[하위](대상/표준B.md) 와 [꺾쇠](<대상/띄운 이름.md>)",
+        "퍼센트.md": "[퍼센트](대상/띄운%20이름.md)",
+        "깊이/위로.md": "[위로](../대상/표준B.md)",
+        "루트.md": f"[맨 위](/{box}/대상/표준B.md)",
+        "확장자없이.md": "[없이](대상/표준B)",
+        "섹션.md": "[섹션](대상/표준B.md#결론 '제목')",
+        "이름만.md": "[이름만](표준B.md)",          # 같은 폴더에 표준B 가 없다 → 가까운 같은 이름
+        # 안 세는 것
+        "그림.md": "![그림](대상/표준B.md)",
+        "코드.md": "쓰는 법: `[코드](대상/표준B.md)`",
+        "밖.md": "[밖](../../../대상/표준B.md)",
+        "웹.md": "[웹](https://example.com/대상/표준B.md)",
+        "앵커.md": "[앵커](#표준B)",
+        "앱주소.md": "[앱](/calendar)",
+    }
+    for rel, content in docs.items():
+        assert client.put("/api/notes/save", json={"path": f"{box}/{rel}", "content": content}).status_code == 200
+    try:
+        back = client.get("/api/notes/get", params={"path": f"{box}/대상/표준B.md"}).json()["backlinks"]
+        assert sorted(back) == sorted(["옆", "A", "위로", "루트", "확장자없이", "섹션", "이름만"]), back
+        spaced = client.get("/api/notes/get", params={"path": f"{box}/대상/띄운 이름.md"}).json()["backlinks"]
+        assert sorted(spaced) == ["A", "퍼센트"], spaced
+        g = client.get("/api/notes/graph", params={"folder": box}).json()
+        assert {"source": "A", "target": "표준B"} in g["links"], g["links"]
+        assert {"source": "위로", "target": "표준B"} in g["links"], g["links"]
+        # 옮김 기록도 따라간다 — 누르면 열리는 것과 같다(48차)
+        assert client.post("/api/notes/rename", json={"path": f"{box}/대상/표준B.md", "new_name": "표준B2.md"}).status_code == 200
+        moved_back = client.get("/api/notes/get", params={"path": f"{box}/대상/표준B2.md"}).json()["backlinks"]
+        assert "A" in moved_back and "위로" in moved_back, moved_back
+    finally:
+        client.request("DELETE", "/api/notes/folder", params={"path": box})
+
+
+def test_doc_link_rules_match_the_screen():
+    """서버가 표준 링크를 가리는 규칙(notes_graph)이 화면(lib/embeds.docLinkTarget·joinVaultPath)과 같다."""
+    from backend.notes_graph import doc_link_target, join_vault_path
+
+    assert doc_link_target("보고서.md") == "보고서.md"
+    assert doc_link_target("내%20문서.md") == "내 문서.md"
+    assert doc_link_target("보고서.md#결론") == "보고서.md"
+    assert doc_link_target("/폴더/보고서.md") == "/폴더/보고서.md"
+    for not_doc in ("#결론", "https://a.b/c.md", "mailto:x@y", "//cdn/x.md", "/api/notes/raw?path=a",
+                    "/calendar", "a.md?x=1", ""):
+        assert doc_link_target(not_doc) is None, not_doc
+    assert doc_link_target("100%.md") == "100%.md"  # 잘못된 % 는 그대로(화면 decodeTarget 과 같다)
+    assert join_vault_path("B.md", "가/나/A.md") == "가/나/B.md"
+    assert join_vault_path("../B.md", "가/나/A.md") == "가/B.md"
+    assert join_vault_path("/B.md", "가/나/A.md") == "B.md"
+    assert join_vault_path("./x/../B.md", "A.md") == "B.md"
+    assert join_vault_path("../B.md", "A.md") is None
+
+
 def test_note_graphs_are_warmed_when_the_server_starts():
     """서버가 뜨면 활성 사용자의 문서 그래프를 뒤에서 미리 만든다(47차).
 
