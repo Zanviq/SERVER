@@ -202,7 +202,7 @@ export function TodoComposer({ cats, selectedCat, busy, onSubmit }: Props) {
                 />
               </label>
               {draft.date && (
-                <DropdownItem onClick={() => { set({ date: "", time: "" }); close(); }} className="text-fg-muted">
+                <DropdownItem onClick={() => { set({ date: "", time: "" }); close(); }} muted>
                   기한 없음
                 </DropdownItem>
               )}
@@ -259,7 +259,7 @@ export function TodoComposer({ cats, selectedCat, busy, onSubmit }: Props) {
                 />
               </label>
               {draft.time && (
-                <DropdownItem onClick={() => { set({ time: "" }); close(); }} className="text-fg-muted">
+                <DropdownItem onClick={() => { set({ time: "" }); close(); }} muted>
                   시각 없음(종일)
                 </DropdownItem>
               )}

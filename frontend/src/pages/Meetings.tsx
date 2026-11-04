@@ -1,4 +1,4 @@
-import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   AudioLines, Bot, ChevronLeft, Eye, FileText, List, Loader2, MoreHorizontal, Pencil, Plus, RefreshCw, Save, Trash2,
@@ -12,12 +12,13 @@ import { Modal } from "../components/ui/Modal";
 import { Dropdown, DropdownItem } from "../components/ui/Dropdown";
 import { MeetingList, meetingTitle } from "../components/meetings/MeetingList";
 import { Recorder } from "../components/meetings/Recorder";
-import { TranscriptView } from "../components/meetings/TranscriptView";
+import { BODY_MIN, TranscriptView } from "../components/meetings/TranscriptView";
 import { api, Meeting, MeetingDocSummary } from "../lib/api";
 import { toast } from "../store/toast";
 import { useSettings } from "../store/settings";
 import { isConflict, isGone } from "../lib/api";
 import { EditorBanner } from "../components/ui/EditorBanner";
+import { isSubmitEnter } from "../lib/keys";
 import { LatestWins, PendingSave } from "../lib/pendingSave";
 import { Draft, draftAgeText, dropDraft, keepDraft, readDraft } from "../lib/draftBackup";
 
@@ -397,7 +398,10 @@ export function Meetings() {
           uploading={uploading} className="h-view-11 lg:h-auto" />
 
         {selected ? (
-          <div className="card relative flex h-view-11 flex-col overflow-hidden lg:h-auto lg:min-h-0">
+          // 좁은 화면에서는 카드가 굴러간다 — 아래 받아쓰기·문서 칸은 최소 높이(BODY_MIN)를 지키고, 모자란 만큼 머리
+          // (제목·날짜·재생·문서 탭)가 위로 밀려 올라간다. 예전엔 카드 높이(화면 − 11rem)를 머리가 먼저 차지해 받아쓰기가
+          // 남은 자리로 줄었다: 375×667 에서 137px, 320×568 에서 38px(한 줄).
+          <div className="card relative flex h-view-11 flex-col overflow-y-auto overflow-x-hidden lg:h-auto lg:min-h-0 lg:overflow-hidden">
             <MeetingHeader key={selected.id} meeting={selected} categories={categories}
               onBack={() => select("")} onUpdate={(b) => update(selected, b)} onRetry={() => retry(selected)} />
             <div className="shrink-0 border-b border-line px-3 py-2">
@@ -425,7 +429,7 @@ export function Meetings() {
                   <button
                     onClick={() => setReading((v) => !v)}
                     title="편집 / 읽기 전환"
-                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                    className={`tap inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors ${
                       reading ? "border-accent/40 bg-accent-muted text-accent-fg" : "border-line text-fg-muted hover:text-fg"
                     }`}>
                     {reading ? <><Eye size={11} /> 읽기</> : <><Pencil size={11} /> 편집</>}
@@ -436,7 +440,7 @@ export function Meetings() {
                         <DropdownItem onClick={() => { setRenameFor(tab); setRenameName(tab); close(); }}>
                           <Pencil size={13} /> 이름 변경
                         </DropdownItem>
-                        <DropdownItem onClick={() => { void deleteDoc(tab); close(); }} className="text-danger">
+                        <DropdownItem onClick={() => { void deleteDoc(tab); close(); }} danger>
                           <Trash2 size={13} /> 삭제
                         </DropdownItem>
                       </>
@@ -525,18 +529,20 @@ export function Meetings() {
               <TranscriptView meeting={selected} onSeek={seek} onRetry={() => retry(selected)}
                 onRenameSpeaker={(label, name) => update(selected, { speakers: { ...(selected.speakers ?? {}), [label]: name } })} />
             ) : reading ? (
-              <div className="flex-1 overflow-auto p-4">
+              <div className={`${BODY_MIN} flex-1 overflow-auto p-4`}>
                 <MarkdownView content={content} onWikiClick={() => {}} />
               </div>
             ) : (
-              <LiveEditor
-                // 문서마다 편집기를 새로 만든다 — 되돌리기 이력이 다른 문서로 넘어가면 안 된다
-                key={`${selected.id}/${tab}`}
-                value={content}
-                onChange={onEdit}
-                onSave={() => { void saveDoc(selected.id, tab, content); }}
-                docKey={`${selected.id}/${tab}`}
-              />
+              <div className={`${BODY_MIN} flex flex-1 flex-col`}>
+                <LiveEditor
+                  // 문서마다 편집기를 새로 만든다 — 되돌리기 이력이 다른 문서로 넘어가면 안 된다
+                  key={`${selected.id}/${tab}`}
+                  value={content}
+                  onChange={onEdit}
+                  onSave={() => { void saveDoc(selected.id, tab, content); }}
+                  docKey={`${selected.id}/${tab}`}
+                />
+              </div>
             )}
           </div>
         ) : (
@@ -612,15 +618,39 @@ function MeetingHeader({ meeting, categories, onBack, onUpdate, onRetry }: {
   const commitTitle = () => { const t = title.trim(); if (t !== meeting.title) onUpdate({ title: t }); };
   const commitCategory = () => { const c = category.trim(); if (c !== meeting.category) onUpdate({ category: c }); };
 
+  // 제목은 글에 맞춰 줄을 늘린다. 한 줄 입력칸일 때는 휴대폰(375px)에서 긴 제목이 "…모바일 레이아웃 재" 처럼 글자
+  // 중간에서 잘린 채 끝을 볼 길이 없었다. 폭이 바뀌면(화면 돌리기·곁칸 열기) 줄 수도 바뀌므로 칸 자신의 폭을 본다 —
+  // 감싼 줄을 보면 줄 폭은 그대로인데 칸 폭만 바뀌는 때(칸이 펼쳐진 뒤 날짜가 옆줄로 옮겨 감)를 놓쳐 두 줄 높이가 남았다.
+  const titleRef = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = titleRef.current;
+    if (!el) return;
+    const fit = () => {
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 96)}px`;
+    };
+    fit();
+    let width = el.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth === width) return; // 높이만 바뀐 것(fit 이 바꿨다) — 다시 재면 같은 값이다
+      width = el.clientWidth;
+      fit();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [title]);
+
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-3 py-2">
       <button onClick={onBack} aria-label="회의 목록으로" className="tap -ml-1 shrink-0 rounded p-1 text-fg-muted hover:bg-hovered hover:text-fg lg:hidden">
         <ChevronLeft size={16} />
       </button>
-      <input value={title} onChange={(e) => setTitle(e.target.value)} onBlur={commitTitle}
-        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+      {/* 한 줄짜리 이름이다 — Enter 는 줄바꿈이 아니라 확정(한글 조합 중 Enter 는 글자만 확정), 붙여 넣은 줄바꿈은 띄어쓰기로 */}
+      <textarea ref={titleRef} rows={1} value={title} onChange={(e) => setTitle(e.target.value.replace(/\s*\n\s*/g, " "))}
+        onBlur={commitTitle}
+        onKeyDown={(e) => { if (isSubmitEnter(e)) { e.preventDefault(); e.currentTarget.blur(); } }}
         placeholder={meetingTitle(meeting)} aria-label="회의 제목"
-        className="min-w-0 flex-1 basis-40 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-[14px] font-semibold hover:border-line focus:border-accent focus:outline-none" />
+        className="min-w-0 flex-1 basis-40 resize-none overflow-hidden rounded-md border border-transparent bg-transparent px-1.5 py-1 text-[14px] font-semibold leading-snug hover:border-line focus:border-accent focus:outline-none" />
       <input type="date" value={meeting.date} onChange={(e) => { if (e.target.value) onUpdate({ date: e.target.value }); }}
         aria-label="회의 날짜" className="input h-7 w-[9.5rem] px-2 text-[12px]" />
       <input value={category} onChange={(e) => setCategory(e.target.value)} onBlur={commitCategory}

@@ -81,20 +81,24 @@ export function AccountAdmin({ me }: { me: string }) {
         ) : (
           <ul className="space-y-2">
             {pending.map((u) => (
+              // 좁은 화면에서는 단추가 아랫줄로 내려가고 이름은 다 보인다. 한 줄에 우겨 넣던 때는 휴대폰(375px)에서
+              // 이름이 "승인을 기다리는 아…" 로 잘려 누구를 받아들이는지 읽을 수 없었다.
               <li key={u.username}
-                  className="flex items-center gap-3 rounded-md border border-warning/30 bg-warning/5 px-3 py-2.5">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13.5px] font-medium">{u.display_name}</p>
-                  <p className="truncate text-[11.5px] text-fg-muted">@{u.username}</p>
+                  className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-warning/30 bg-warning/5 px-3 py-2.5">
+                <div className="min-w-[12rem] flex-1">
+                  <p className="break-words text-[13.5px] font-medium">{u.display_name}</p>
+                  <p className="break-all text-[11.5px] text-fg-muted">@{u.username}</p>
                 </div>
-                <button disabled={busy === u.username} className="btn btn-primary h-8"
-                  onClick={() => act(u.username, () => api.adminApprove(u.username), `${u.username} 승인됨`)}>
-                  <Check size={14} /> 승인
-                </button>
-                <button disabled={busy === u.username} className="btn btn-ghost h-8 hover:text-danger"
-                  onClick={() => act(u.username, () => api.adminReject(u.username), `${u.username} 거절됨`)}>
-                  <X size={14} /> 거절
-                </button>
+                <div className="ml-auto flex shrink-0 items-center gap-2">
+                  <button disabled={busy === u.username} className="btn btn-primary h-8"
+                    onClick={() => act(u.username, () => api.adminApprove(u.username), `${u.username} 승인됨`)}>
+                    <Check size={14} /> 승인
+                  </button>
+                  <button disabled={busy === u.username} className="btn btn-ghost h-8 hover:text-danger"
+                    onClick={() => act(u.username, () => api.adminReject(u.username), `${u.username} 거절됨`)}>
+                    <X size={14} /> 거절
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
@@ -135,16 +139,17 @@ export function AccountAdmin({ me }: { me: string }) {
         )}
         <ul className="divide-y divide-line">
           {users.map((u) => (
-            <li key={u.username} className="flex items-center gap-3 py-2.5">
+            // 승인 대기 줄과 같다 — 좁은 화면에서는 조작이 아랫줄로, 이름·상태("사용 중")는 잘리지 않는다
+            <li key={u.username} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
               {/* 이름을 누르면 그 사람의 **수치** 화면으로. 목록에는 이번 달
                   토큰 말고 아무 수치도 싣지 않는다(자료는 어느 쪽에도 없다). */}
               <button
                 type="button"
                 onClick={() => navigate(`/analytics?u=${encodeURIComponent(u.username)}`)}
-                className="min-w-0 flex-1 rounded-md px-1 py-0.5 text-left hover:bg-hovered"
+                className="min-w-[12rem] flex-1 rounded-md px-1 py-0.5 text-left hover:bg-hovered"
                 title={`${u.username} 사용량 보기`}
               >
-                <p className="truncate text-[13.5px] font-medium">
+                <p className="break-words text-[13.5px] font-medium">
                   {u.display_name}
                   {u.username === me && <span className="ml-1.5 text-[11px] text-accent">(나)</span>}
                   <span className="ml-2 text-[11px] font-normal tabular-nums text-fg-muted">
@@ -153,17 +158,28 @@ export function AccountAdmin({ me }: { me: string }) {
                       : `이번 달 ${tokens[u.username].toLocaleString()} 토큰`}
                   </span>
                 </p>
-                <p className="truncate text-[11.5px] text-fg-muted">
+                <p className="break-words text-[11.5px] text-fg-muted">
                   @{u.username} · {u.role === "admin" ? "관리자" : "사용자"} · {STATUS_LABEL[u.status]}
                 </p>
               </button>
+              {/* 조작은 그림 단추다 — 뜻이 title 풍선에만 있으면 손가락 화면에서는 볼 길이 없어(⊘·열쇠·휴지통) 손가락
+                  화면에서는 글로도 적는다(coarse). 이름(aria-label)은 늘 단다. */}
+              <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1">
               {/* 내 줄에는 비활성화·삭제를 두지 않는다 — 서버가 자기 자신은 거절한다(_not_self, 400). 두던 때는
                   "계정을 삭제할까요?" 를 묻고 확인하면 늘 오류가 났다(디자인 31차). */}
               {u.status === "active" && u.username !== me && (
                 <button disabled={busy === u.username} className="btn btn-ghost h-8 hover:text-danger"
-                  title="비활성화 (세션도 즉시 만료됩니다)"
-                  onClick={() => act(u.username, () => api.adminDisable(u.username), `${u.username} 비활성화됨`)}>
-                  <Ban size={14} />
+                  title="비활성화 (세션도 즉시 만료됩니다)" aria-label={`${u.username} 비활성화`}
+                  onClick={() => {
+                    // 묻고 한다 — 그 사람은 모든 기기에서 바로 로그아웃된다. 예전엔 누르는 즉시 끊었다(삭제·임시 비밀번호는
+                    // 물었는데 이것만 안 물었다). 휴대폰에서는 ⊘ 가 무엇인지도 알 수 없었다.
+                    if (!confirm(
+                      `'${u.username}' 계정을 비활성화할까요?\n\n` +
+                      `이 사람은 모든 기기에서 바로 로그아웃되고, 다시 승인할 때까지 로그인할 수 없습니다.`,
+                    )) return;
+                    act(u.username, () => api.adminDisable(u.username), `${u.username} 비활성화됨`);
+                  }}>
+                  <Ban size={14} /> <span className="hidden coarse:inline">비활성화</span>
                 </button>
               )}
               {/* 서버 주인 계정(나·다른 주인)은 여기서 바꾸지 않는다 — 설정에서 지금 비밀번호로(서버도 400) */}
@@ -181,14 +197,14 @@ export function AccountAdmin({ me }: { me: string }) {
                       setIssued({ username: r.username, password: r.temporary_password });
                     }, `${u.username} 임시 비밀번호를 만들었습니다`);
                   }}>
-                  <KeyRound size={14} />
+                  <KeyRound size={14} /> <span className="hidden coarse:inline">임시 비밀번호</span>
                 </button>
               )}
               {u.status !== "active" && (
                 <button disabled={busy === u.username} className="btn btn-ghost h-8"
-                  title="다시 승인"
+                  title="다시 승인" aria-label={`${u.username} 다시 승인`}
                   onClick={() => act(u.username, () => api.adminApprove(u.username), `${u.username} 승인됨`)}>
-                  <Check size={14} />
+                  <Check size={14} /> <span className="hidden coarse:inline">다시 승인</span>
                 </button>
               )}
               {/* 문구는 **실제 동작**을 말해야 한다. 예전에는 "문서는 남습니다"였는데,
@@ -196,7 +212,7 @@ export function AccountAdmin({ me }: { me: string }) {
                   앱에서는 사라지고, 되돌리는 버튼도 없다. */}
               {u.username !== me && (
               <button disabled={busy === u.username} className="btn btn-ghost h-8 hover:text-danger"
-                title="계정 삭제 (문서·일정·할 일이 앱에서 사라집니다)"
+                title="계정 삭제 (문서·일정·할 일이 앱에서 사라집니다)" aria-label={`${u.username} 계정 삭제`}
                 onClick={() => {
                   if (!confirm(
                     `'${u.username}' 계정을 삭제할까요?\n\n` +
@@ -211,9 +227,10 @@ export function AccountAdmin({ me }: { me: string }) {
                     return r;
                   }, `${u.username} 삭제됨`);
                 }}>
-                <Trash2 size={14} />
+                <Trash2 size={14} /> <span className="hidden coarse:inline">삭제</span>
               </button>
               )}
+              </div>
             </li>
           ))}
         </ul>

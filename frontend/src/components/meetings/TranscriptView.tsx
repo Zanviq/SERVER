@@ -12,6 +12,13 @@ interface Props {
   onRetry: () => void;
 }
 
+/**
+ * 회의 카드의 아래 칸(받아쓰기·문서)이 좁은 화면에서 지키는 최소 높이 — 모자라면 카드가 굴러간다(Meetings 의 카드).
+ * 이것 없이는 머리(제목·날짜·재생·문서 탭, 221px)가 먼저 자리를 차지해 짧은 휴대폰에서 받아쓰기가 한 줄(38px)이 됐다.
+ * 넓은 화면(lg)은 칸 높이가 따로 정해지므로 풀어 준다.
+ */
+export const BODY_MIN = "min-h-[18rem] lg:min-h-0";
+
 const SPEAKER_COLORS = [
   "text-accent-fg bg-accent-muted",
   "text-info bg-info/10",
@@ -82,7 +89,7 @@ export function TranscriptView({ meeting, onSeek, onRenameSpeaker, onRetry }: Pr
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className={`${BODY_MIN} flex flex-1 flex-col`}>
       {(meeting.summary || labels.length > 0) && (
         <div className="shrink-0 space-y-2 border-b border-line px-4 py-3">
           {meeting.summary && <p className="text-[13px] leading-relaxed text-fg2">{meeting.summary}</p>}

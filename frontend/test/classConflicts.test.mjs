@@ -32,6 +32,26 @@ test("검사기 자체가 부딪침을 잡는다(자기 점검)", () => {
   assert.deepEqual(clashes('text-[13px] ${on ? "text-accent" : ""}'), [], "글자 크기는 색이 아니다");
 });
 
+test("기본 글자색을 가진 컴포넌트에 className 으로 글자색을 덧대지 않는다 — 위험한 메뉴는 danger 로", () => {
+  // 29차와 같은 모양이 회의 문서 메뉴의 '삭제'에 남아 있었다(DropdownItem 기본 text-fg 와 부딪쳐 보통 글). 위 검사는
+  // 한 템플릿 안만 봐서 컴포넌트 기본색 + 넘긴 className 은 못 봤다.
+  const bad = [];
+  (function walk(d) {
+    for (const n of readdirSync(d)) {
+      const p = join(d, n);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (/\.tsx$/.test(n)) {
+        const src = readFileSync(p, "utf8");
+        // 꼬리표 안에서 `>` 를 만나면 멈추되 화살표 함수의 `=>` 는 넘는다 — onClick={() => …} 다음의 className 을 놓쳤다
+        for (const m of src.matchAll(/<DropdownItem\b(?:[^>]|=>)*?className=(?:"([^"]*)"|\{`([^`]*)`\})/g)) {
+          if (colorRe("text").test(` ${m[1] ?? m[2]} `)) bad.push(`${p.slice(SRC.length)}:${src.slice(0, m.index).split("\n").length}`);
+        }
+      }
+    }
+  })(SRC);
+  assert.deepEqual(bad, []);
+});
+
 test("소스 어디에도 고정 색 위에 갈래 색을 덧대는 className 이 없다", () => {
   const files = [];
   (function walk(d) {
