@@ -12426,6 +12426,32 @@ def test_standard_md_links_count_as_backlinks_and_graph_edges():
         client.request("DELETE", "/api/notes/folder", params={"path": box})
 
 
+def test_reference_style_links_count_as_backlinks():
+    """참조식 링크 `[글][이름]` + `[이름]: 문서.md` 도 역링크에 센다 — 읽기 보기는 이것을 보통 링크로 그려 누르면 열린다.
+    쓰이지 않은 정의는 링크가 아니다(그려지는 것이 없다). 축약 `[이름][]`·`[이름]` 도, 이름은 대소문자·띄어쓰기를 가리지 않는다."""
+    from backend.notes_graph import parse_doc_links
+
+    assert parse_doc_links("[보고서][R 1]\n\n[r  1]: <대상/내 문서.md#결론> \"제목\"\n") == ["대상/내 문서.md"]
+    assert parse_doc_links("[축약][] 과 [짧게]\n\n[축약]: 가.md\n[짧게]: 나.md\n") == ["가.md", "나.md"]
+    assert parse_doc_links("정의만 있다\n\n[안씀]: 가.md\n") == []
+    assert parse_doc_links("![그림][g]\n\n[g]: 가.md\n") == []
+    assert parse_doc_links("`[코드][c]`\n\n[c]: 가.md\n") == []
+    assert parse_doc_links("[[위키]] 와 [note/가.md]\n\n[위키]: 나.md\n") == []
+    assert parse_doc_links("[웹][w]\n\n[w]: https://example.com/가.md\n") == []
+    # 첫 정의가 이긴다(CommonMark)
+    assert parse_doc_links("[a][x]\n\n[x]: 첫.md\n[x]: 둘.md\n") == ["첫.md"]
+
+    _login()
+    box = "참조링크"
+    client.put("/api/notes/save", json={"path": f"{box}/대상/참조B.md", "content": "# B"})
+    client.put("/api/notes/save", json={"path": f"{box}/A.md", "content": "보라 [여기][b]\n\n[b]: 대상/참조B.md\n"})
+    try:
+        back = client.get("/api/notes/get", params={"path": f"{box}/대상/참조B.md"}).json()["backlinks"]
+        assert back == ["A"], back
+    finally:
+        client.request("DELETE", "/api/notes/folder", params={"path": box})
+
+
 def test_doc_link_rules_match_the_screen():
     """서버가 표준 링크를 가리는 규칙(notes_graph)이 화면(lib/embeds.docLinkTarget·joinVaultPath)과 같다."""
     from backend.notes_graph import doc_link_target, join_vault_path

@@ -9,22 +9,36 @@ import { decodeTarget } from "./embeds";
 
 /**
  * 링크 대상에서 `#섹션` 을 뗀다. `문서#가#나` 는 옵시디언의 하위 제목 사슬이라 마지막 조각이 가는 곳이다.
- * `#^abc` 같은 블록 참조는 제목이 아니다 — 문서만 연다(section 은 null).
+ * `#^abc` 는 블록 참조다 — section 이 `^abc` 로 온다(blockIdOf). 블록 id 꼴이 아닌 `^…` 은 갈 곳이 없다(null).
  */
 export function splitSection(target: string): { doc: string; section: string | null } {
   const i = target.indexOf("#");
   if (i < 0) return { doc: target.trim(), section: null };
   const chain = target.slice(i + 1).split("#").map((s) => s.trim()).filter(Boolean);
-  const last = chain[chain.length - 1] ?? null;
-  return { doc: target.slice(0, i).trim(), section: last && !last.startsWith("^") ? last : null };
+  return { doc: target.slice(0, i).trim(), section: usable(chain[chain.length - 1] ?? null) };
 }
 
-/** 표준 링크 주소의 `#섹션`(퍼센트를 푼 것) — `보고서.md#결론`·`#설치-방법`. 없거나 비면 null. */
+/** 표준 링크 주소의 `#섹션`(퍼센트를 푼 것) — `보고서.md#결론`·`#설치-방법`·`#^abc`. 없거나 비면 null. */
 export function hrefSection(href: string): string | null {
   const i = href.indexOf("#");
   if (i < 0) return null;
-  const s = decodeTarget(href.slice(i + 1)).trim();
-  return s && !s.startsWith("^") ? s : null;
+  return usable(decodeTarget(href.slice(i + 1)).trim());
+}
+
+const usable = (s: string | null): string | null => (!s || (s.startsWith("^") && !blockIdOf(s)) ? null : s);
+
+/**
+ * `^abc` 꼴(옵시디언 블록 참조)이면 그 id, 아니면 null. 블록 id 는 영문·숫자·`-` 다 — 옵시디언이 만드는 것도,
+ * 손으로 붙이는 것도. 블록은 ` ^abc` 로 끝나는 줄이다(endsWithBlockId).
+ */
+export function blockIdOf(section: string): string | null {
+  const m = /^\^([A-Za-z0-9-]+)$/.exec(section.trim());
+  return m ? m[1] : null;
+}
+
+/** 글(줄 하나·그려진 블록 하나)이 블록 id ` ^abc` 로 끝나는가 — 문단·항목 끝에 붙이거나, 표·인용 다음 줄에 홀로 둔다. */
+export function endsWithBlockId(text: string, id: string): boolean {
+  return new RegExp(`(?:^|\\s)\\^${id}$`).test(text.trimEnd());
 }
 
 /**

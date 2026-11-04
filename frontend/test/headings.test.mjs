@@ -11,8 +11,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
-import { findHeading, headingText, hrefSection, slugsOf, splitSection } from "../src/lib/headings.ts";
-import { headingsIn } from "../src/components/notes/headingJump.ts";
+import { blockIdOf, endsWithBlockId, findHeading, headingText, hrefSection, slugsOf, splitSection } from "../src/lib/headings.ts";
+import { blockLineIn, headingsIn, sectionLineIn } from "../src/components/notes/headingJump.ts";
 import { linkDecorations } from "../src/components/links/cmLinkDeco.ts";
 import { wikiHref } from "../src/lib/notePath.ts";
 import { transformWiki } from "../src/lib/wikiTransform.ts";
@@ -27,11 +27,13 @@ function rendered(md, wiki = false) {
   ]);
 }
 
-test("섹션 떼기: 하위 제목 사슬은 마지막 조각, 블록 참조는 섹션이 아니다", () => {
+test("섹션 떼기: 하위 제목 사슬은 마지막 조각, 블록 참조는 `^id` 로, 블록 id 꼴이 아니면 섹션 없음", () => {
   assert.deepEqual(splitSection("문서#결론"), { doc: "문서", section: "결론" });
   assert.deepEqual(splitSection("#결론"), { doc: "", section: "결론" });
   assert.deepEqual(splitSection("문서#가#나"), { doc: "문서", section: "나" });
-  assert.deepEqual(splitSection("문서#^abc12"), { doc: "문서", section: null });
+  assert.deepEqual(splitSection("문서#^abc12"), { doc: "문서", section: "^abc12" });
+  assert.deepEqual(splitSection("문서#^이건 아님"), { doc: "문서", section: null });  // 블록 id 꼴이 아니다
+  assert.equal(hrefSection("보고서.md#%5Eq1"), "^q1");
   assert.deepEqual(splitSection("문서"), { doc: "문서", section: null });
   assert.deepEqual(splitSection("문서#"), { doc: "문서", section: null });
   assert.equal(hrefSection("보고서.md#%EA%B2%B0%EB%A1%A0"), "결론");
@@ -82,12 +84,31 @@ test("편집기 제목 목록: 구문 나무로 — 코드 안의 `#` 은 제목
   assert.equal(doc.slice(hs[2].from).split("\n")[0], "## **둘째** 제목 ##");
 });
 
+test("블록 참조 `^id`: 편집기는 그 id 로 끝나는 줄(코드 안은 아님), 읽기 보기도 같은 글로 끝나는 블록", () => {
+  assert.equal(blockIdOf("^abc-1"), "abc-1");
+  assert.equal(blockIdOf("결론"), null);
+  assert.ok(endsWithBlockId("결정한 것은 이것이다 ^q1", "q1"));
+  assert.ok(endsWithBlockId("^q1", "q1"));
+  assert.ok(!endsWithBlockId("값^q1", "q1"));      // 붙여 쓴 것은 블록 표시가 아니다(옵시디언과 같다)
+  assert.ok(!endsWithBlockId("^q12", "q1"));
+  const doc = ["# 문서", "", "```", "예시 ^q1", "```", "", "- 항목 하나", "- 결정 사항 ^q1", "", "| a | b |", "|---|---|",
+               "| 1 | 2 |", "", "^tbl"].join("\n");
+  const state = EditorState.create({ doc, extensions: [markdown()] });
+  assert.equal(doc.slice(blockLineIn(state, "q1")).split("\n")[0], "- 결정 사항 ^q1");  // 코드 속 것을 건너뛴다
+  assert.equal(doc.slice(sectionLineIn(state, "^tbl")).split("\n")[0], "^tbl");
+  assert.equal(sectionLineIn(state, "^없음"), null);
+  assert.equal(doc.slice(sectionLineIn(state, "문서")).split("\n")[0], "# 문서");
+  // 읽기 보기가 그린 글에도 `^id` 가 그대로 남아 같은 기준으로 찾는다(위첨자 따위로 바뀌지 않는다)
+  assert.match(render("결정한 것 ^q1"), /<p>결정한 것 \^q1<\/p>/);
+});
+
 test("읽기 보기: `[[문서#섹션]]` 은 섹션을 싣고, `[[#섹션]]` 은 이 문서, 갈 곳 없는 `[[#]]` 은 글자 그대로", () => {
   const href = (md) => transformWiki(md).match(/\]\((#wiki\/[^)]*)\)/)?.[1] ?? null;
   assert.equal(href("[[설치 안내#2단계 설정]]"),
                `#wiki/${encodeURIComponent("설치 안내")}#${encodeURIComponent("2단계 설정")}`);
   assert.equal(href("[[#결론]]"), `#wiki/#${encodeURIComponent("결론")}`);
-  assert.equal(href("[[문서#^abc]]"), `#wiki/${encodeURIComponent("문서")}`);
+  assert.equal(href("[[문서#^abc]]"), `#wiki/${encodeURIComponent("문서")}#${encodeURIComponent("^abc")}`);
+  assert.equal(href("[[#^abc]]"), `#wiki/#${encodeURIComponent("^abc")}`);
   assert.equal(href("[[문서]]"), `#wiki/${encodeURIComponent("문서")}`);
   // 갈 곳이 없는 것은 적은 글자 그대로 — 예전엔 빈 제목 링크가 되어 누르면 `.md` 문서를 만들었다
   assert.equal(transformWiki("[[#]]"), "[[#]]");

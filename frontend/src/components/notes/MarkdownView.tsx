@@ -5,7 +5,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import { decodeTarget, docLinkTarget, isVaultTarget, type EmbedResolver } from "../../lib/embeds";
-import { findHeading, hrefSection } from "../../lib/headings";
+import { blockIdOf, endsWithBlockId, findHeading, hrefSection } from "../../lib/headings";
 import { stripMarkdownExt } from "../../lib/notePath";
 import { transformWiki } from "../../lib/wikiTransform";
 import { remarkPlugins } from "../../lib/mdPlugins";
@@ -46,6 +46,21 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 }
 
 
+/**
+ * 그려진 글에서 section 이 가리키는 것 — 제목(h1~h6 의 글·id, lib/headings.findHeading) 또는 블록 `^id`(그 글로 끝나는
+ * 가장 안쪽 블록: 문단·항목·칸·인용). 편집기(headingJump.sectionLineIn)와 같은 규칙이다.
+ */
+function sectionElement(root: HTMLElement, section: string): HTMLElement | undefined {
+  const block = blockIdOf(section);
+  if (block) {
+    const hits = [...root.querySelectorAll<HTMLElement>("p, li, td, th, blockquote, dd, h1, h2, h3, h4, h5, h6")]
+      .filter((el) => endsWithBlockId(el.textContent ?? "", block));
+    return hits.find((el) => !hits.some((o) => o !== el && el.contains(o)));
+  }
+  const hs = [...root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")];
+  return hs[findHeading(hs.map((h) => h.textContent ?? ""), section, hs.map((h) => h.id))];
+}
+
 export interface MarkdownViewProps {
   content: string;
   /** `[[제목]]` 을 눌렀을 때. `[[제목#섹션]]` 이면 section, `[[#섹션]]`(이 문서 안)은 title 이 빈다. */
@@ -76,9 +91,7 @@ export function MarkdownView({
   // 제목(섹션) 링크로 왔다 — 그려진 제목(h1~h6)의 글·id 로 고른다. 편집기와 같은 규칙(lib/headings.findHeading).
   useEffect(() => {
     if (!jumpTo || !box.current) return;
-    const hs = [...box.current.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")];
-    const i = findHeading(hs.map((h) => h.textContent ?? ""), jumpTo.section, hs.map((h) => h.id));
-    const el = hs[i];
+    const el = sectionElement(box.current, jumpTo.section);
     if (el) {
       const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
       el.scrollIntoView({ block: "start", behavior: calm ? "auto" : "smooth" });

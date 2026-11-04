@@ -165,7 +165,9 @@ export function Notes() {
     if (section) setJump({ path, section, n: ++jumpSeq.current });
   }, []);
   const onJumped = useCallback((found: boolean) => {
-    if (!found && jump) toast.error(`'${jump.section}' 제목을 이 문서에서 찾지 못했습니다`);
+    if (!found && jump) {
+      toast.error(`'${jump.section}' ${jump.section.startsWith("^") ? "블록" : "제목"}을 이 문서에서 찾지 못했습니다`);
+    }
     setJump(null);
   }, [jump]);
   // 링크가 가리킨 문서가 아닌 다른 문서가 열렸다(그 문서를 못 열었거나 그새 다른 것을 눌렀다) — 남은 섹션을 버린다.

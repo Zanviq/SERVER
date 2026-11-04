@@ -74,6 +74,21 @@ test("편집기: 누른 자리의 표준 링크 대상을 구문 나무에서 �
   assert.equal(at("가 "), null);
 });
 
+test("참조식 링크 `[글][이름]` — 읽기 보기는 정의의 주소로 그리고, 편집기 Ctrl+클릭도 같은 주소를 얻는다", () => {
+  const defs = "\n\n[R 1]: <내 보고서.md#결론> \"제목\"\n[축약]: 다른.md\n";
+  assert.equal(hrefOf(`[보고서][r  1]${defs}`), "%EB%82%B4%20%EB%B3%B4%EA%B3%A0%EC%84%9C.md#%EA%B2%B0%EB%A1%A0");
+  assert.equal(docLinkTarget(hrefOf(`[보고서][r  1]${defs}`)), "내 보고서.md");
+  const doc = `가 [보고서][r  1] 나 [축약][] 다 [축약] 라 [note/a.md] 마 [없음][x]${defs}`;
+  const state = EditorState.create({ doc, extensions: [markdown()] });
+  ensureSyntaxTree(state, doc.length, 5000);
+  const at = (needle, off = 1) => linkUrlAt(state, doc.indexOf(needle) + off);
+  assert.equal(at("[보고서]"), "내 보고서.md#결론");  // 대소문자·띄어쓰기가 달라도 같은 이름
+  assert.equal(at("[축약][]"), "다른.md");
+  assert.equal(at("다 [축약]", 3), "다른.md");
+  assert.equal(at("[note/a.md]"), null);                // 정의가 없는 대괄호(앱 항목 링크)는 여기서 열지 않는다
+  assert.equal(at("[없음]"), null);
+});
+
 test("문서 화면이 두 보기에 같은 여는 함수를 넘긴다", () => {
   const notes = readFileSync(new URL("../src/pages/Notes.tsx", import.meta.url), "utf8");
   assert.match(notes, /onDocLink=\{openDocLink\}/, "읽기 보기가 문서 링크를 여는 함수를 못 받는다");

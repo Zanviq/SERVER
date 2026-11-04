@@ -338,8 +338,18 @@ _MD_LINK = re.compile(
     r"(?<![!\[])\[[^\[\]\n]*\]\(\s*(?:<([^<>\n]+)>|((?:[^()\s]|\([^()\s]*\))+))"
     r"(?:\s+(?:\"[^\"\n]*\"|'[^'\n]*'|\([^()\n]*\)))?\s*\)"
 )
+#: 참조식 링크의 정의 `[이름]: 대상` — 줄 맨 앞(세 칸까지 들여쓰기)
+_MD_DEF = re.compile(r"^ {0,3}\[([^\[\]\n]+)\]:[ \t]*(?:<([^<>\n]+)>|(\S+))", re.MULTILINE)
+#: 참조식 링크 `[글][이름]`·`[이름][]`·`[이름]` — 그림(`![…][…]`)·위키링크 안쪽(`[[…]]`)·보통 링크(`[…](…)`)·정의(`[…]:`)는 아니다.
+#: `]` 바로 뒤의 `[` 에서는 시작하지 않는다 — 그림 `![그림][g]` 의 뒤쪽 `[g]` 를 따로 집으면 그림이 링크로 세어졌다.
+_MD_REF = re.compile(r"(?<![!\[\]])\[([^\[\]\n]+)\](?:\[([^\[\]\n]*)\])?(?![(:\]])")
 #: 스킴이 있는 주소(`https:`·`mailto:`)
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
+
+
+def _label(s: str) -> str:
+    """참조 이름 맞대기 — 대소문자·띄어쓰기 차이는 같은 이름이다(CommonMark)."""
+    return " ".join(s.split()).casefold()
 
 
 def _decode(s: str) -> str:
@@ -384,12 +394,23 @@ def join_vault_path(target: str, from_rel: str | None) -> str | None:
 
 def parse_doc_links(text: str) -> list[str]:
     """본문의 표준 링크 가운데 벌트 안 문서를 가리키는 것들의 대상(doc_link_target — 적힌 그대로, 나온 순서, 중복 없이).
-    코드 안의 것은 뺀다(위키링크와 같은 _without_code)."""
-    if "](" not in text:
+    보통 링크 `[글](대상)` 다음에 참조식 `[글][이름]`(정의 `[이름]: 대상` 이 있을 때만 — 쓰이지 않은 정의는 그려지는 것이
+    없다). 코드 안의 것은 뺀다(위키링크와 같은 _without_code)."""
+    inline, refs = "](" in text, "]:" in text
+    if not inline and not refs:
         return []
+    body = _without_code(text)
+    found: list[str | None] = []
+    if inline:
+        found += [m.group(1) or m.group(2) for m in _MD_LINK.finditer(body)]
+    if refs:
+        defs: dict[str, str] = {}
+        for m in _MD_DEF.finditer(body):
+            defs.setdefault(_label(m.group(1)), m.group(2) or m.group(3))
+        found += [defs.get(_label(m.group(2) or m.group(1))) for m in _MD_REF.finditer(body)]
     out: list[str] = []
-    for m in _MD_LINK.finditer(_without_code(text)):
-        target = doc_link_target(m.group(1) or m.group(2))
+    for href in found:
+        target = doc_link_target(href) if href else None
         if target and target not in out:
             out.append(target)
     return out
