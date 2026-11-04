@@ -24,8 +24,8 @@ from ..auth import SessionUser, require_session
 from ..config import Settings, get_settings
 from ..json_store import lock_for, write_text_atomic
 from ..file_kinds import (
-    UNSAFE_CHARS, BadName, check_new_path, doc_title, inline_media_type, is_editable, kind_of, looks_like_extension, nfc,
-    renamed, split_ext,
+    BadName, check_new_path, doc_title, inline_media_type, is_editable, kind_of, looks_like_extension, nfc,
+    renamed, split_ext, tidy_name,
 )
 from ..notes_graph import backlinks_for, backlinks_of, build_graph, nearest, parse_wikilinks
 from ..security_paths import safe_join, to_rel
@@ -270,8 +270,7 @@ def _check_new_path(root: Path, target: Path) -> None:
 
 def _sanitize_filename(name: str) -> str:
     base = nfc(Path(name).name)  # 맥의 NFD 이름을 자판으로 친 이름과 같게(file_kinds.nfc)
-    cleaned = UNSAFE_CHARS.sub("_", base).strip().strip(".")
-    return cleaned or "untitled"
+    return tidy_name(base) or "untitled"
 
 
 @router.get("/list", response_model=list[NoteSummary])

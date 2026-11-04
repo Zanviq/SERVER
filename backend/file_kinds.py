@@ -95,6 +95,19 @@ class BadName(ValueError):
 #: 올리기(notes·논문·회의)와 마운트 폴더 이름은 이것을 `_` 로 바꾸고, 새 이름 검사(check_new_name)는 거절한다.
 #: 예전에는 같은 정규식이 네 모듈에 따로 복사돼 있었다.
 UNSAFE_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+#: 이름 앞뒤의 공백·점 덩어리
+_EDGE_DOTS_SPACES = re.compile(r"^[\s.]+|[\s.]+$")
+
+
+def tidy_name(name: str) -> str:
+    """**받은** 이름(올린 파일·회의 문서 이름)을 쓸 수 있게 다듬는다 — 못 쓰는 글자는 `_`, 앞뒤의 공백·점은 모두 뗀다.
+    결과가 비면 빈 문자열(부르는 쪽이 기본 이름을 정한다).
+
+    새 이름 검사(check_new_name)가 거절하는 꼴을 여기서 만들지 않는다. 예전엔 `.strip().strip(".")` 이라 `보고서 .` 이
+    `보고서 `(끝 공백)로 남았다 — 윈도우는 그런 이름을 못 만들어 '전체 받기' 백업이 풀리지 않는다. 같은 정리가 네 곳에
+    복사돼 있었다.
+    """
+    return _EDGE_DOTS_SPACES.sub("", UNSAFE_CHARS.sub("_", name))
 
 
 def check_new_name(name: str) -> None:

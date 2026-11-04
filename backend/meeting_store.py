@@ -29,7 +29,7 @@ from fastapi import HTTPException
 from . import json_store, renamed_items, storage
 from .auth import SessionUser
 from .config import Settings
-from .file_kinds import UNSAFE_CHARS
+from .file_kinds import tidy_name
 
 CHAT_NAME = "chat.json"
 TRANSCRIPT_NAME = "transcript.json"
@@ -64,8 +64,7 @@ _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 def sanitize_filename(name: str) -> str:
     base = Path(str(name or "")).name
-    cleaned = UNSAFE_CHARS.sub("_", base).strip().strip(".")
-    return (cleaned or "recording")[:200]
+    return (tidy_name(base) or "recording")[:200]
 
 
 def audio_mime(ext: str) -> str:
@@ -391,8 +390,8 @@ def doc_name(name: str) -> str:
     """문서 이름 → 파일 이름(.md). 경로 구분자·제어문자는 막는다."""
     base = str(name or "").strip()
     base = re.sub(r"\.md$", "", base, flags=re.I)
-    base = UNSAFE_CHARS.sub("_", base).strip().strip(".")
-    if not base or base in (".", ".."):
+    base = tidy_name(base)
+    if not base:
         raise HTTPException(status_code=400, detail="문서 이름이 비어 있습니다.")
     return base[:120]
 

@@ -31,7 +31,7 @@ from . import json_store, renamed_items, storage
 from .auth import SessionUser
 from .config import Settings
 from .edit_conflict import refuse_if_changed
-from .file_kinds import UNSAFE_CHARS
+from .file_kinds import tidy_name
 
 logger = logging.getLogger("server.papers")
 
@@ -52,8 +52,7 @@ STATUS_FAILED = "failed"
 
 def sanitize_filename(name: str) -> str:
     base = Path(str(name or "")).name
-    cleaned = UNSAFE_CHARS.sub("_", base).strip().strip(".")
-    return (cleaned or "paper.pdf")[:200]
+    return (tidy_name(base) or "paper.pdf")[:200]
 
 
 def root(user: SessionUser, settings: Settings) -> Path:

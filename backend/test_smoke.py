@@ -6074,6 +6074,40 @@ def test_unsafe_filename_characters_live_in_one_place():
     assert copies == [], copies
 
 
+def test_uploaded_names_never_end_in_a_dot_or_space():
+    """올린 파일 이름의 끝 점·공백은 모두 뗀다 — 새 이름 검사(check_new_name)가 거절하는 꼴을 올리기가 만들지 않게.
+
+    예전 정리는 `.strip().strip(".")` 라 `보고서 .` 이 `보고서 `(끝 공백)로 남았다(78차에 남긴 것) — 윈도우는 그런
+    이름을 만들지 못해 '전체 받기' 백업이 풀리지 않는다. 같은 정리가 네 곳(문서·논문·녹음 올리기, 회의 문서 이름)에
+    복사돼 있었다 → file_kinds.tidy_name 하나.
+    """
+    from backend import meeting_store, paper_store
+    from backend.file_kinds import BadName, check_new_name, tidy_name
+
+    for raw, want in [("보고서 .", "보고서"), ("a . .", "a"), ("  메모.txt  ", "메모.txt"), (". 숨김", "숨김"),
+                      ("회의: 9월?.md", "회의_ 9월_.md"), ("보고서 .pdf", "보고서 .pdf"), (" . ", "")]:
+        assert tidy_name(raw) == want, (raw, tidy_name(raw))
+        if want:
+            check_new_name(want)  # 다듬은 이름은 새 이름 검사를 늘 통과한다
+    try:
+        check_new_name("보고서 ")
+        raise AssertionError("끝 공백 이름을 받아 줬다")
+    except BadName:
+        pass
+    assert paper_store.sanitize_filename("논문 .") == "논문"
+    assert meeting_store.sanitize_filename("녹음 . ") == "녹음"
+    assert meeting_store.doc_name("요약 .") == "요약"
+
+    _login()
+    r = client.post("/api/notes/upload", params={"path": "끝공백"},
+                    files={"file": ("보고서 .", io.BytesIO(b"x"), "text/plain")})
+    try:
+        assert r.status_code == 200, r.text
+        assert r.json()["path"] == "끝공백/보고서", r.json()
+    finally:
+        client.request("DELETE", "/api/notes/folder", params={"path": "끝공백"})
+
+
 def test_saving_over_a_folder_is_a_clean_conflict():
     """폴더와 같은 이름으로 저장하면 500이 아니라 409."""
     _login()
