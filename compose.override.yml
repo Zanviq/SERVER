@@ -1,0 +1,13 @@
+# 로컬 개발용 덧붙임. `docker compose up` 이 docker-compose.yml 옆의 이 파일을 자동으로 겹쳐 읽는다.
+# TwoMES Hosting 은 -f docker-compose.yml 로 본 파일만 지정하므로 서버 배포에는 붙지 않는다.
+#
+# 127.0.0.1 에만 묶는다. LAN 에 백엔드 8000 을 열면 nginx 를 거치지 않고 X-Client-IP 를
+# 지어 보낼 수 있어 로그인 시도 제한을 우회할 수 있다(README '로그인과 계정').
+services:
+  backend:
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  frontend:
+    ports:
+      - "127.0.0.1:80:80"

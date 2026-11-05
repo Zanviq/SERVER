@@ -59,24 +59,28 @@ npm run dev                        # http://localhost:5173
 
 로컬에서는 `STORAGE_ROOT=./data` 처럼 저장소를 프로젝트 안에 두면 편하다.
 
-### 도커 (라즈베리파이)
+### 도커
 
 ```bash
 cp .env.example .env               # 값 채우기
-docker compose up -d --build       # backend + frontend
+docker compose up -d --build       # backend + frontend → http://localhost (백엔드 http://localhost:8000)
 ```
+
+로컬에서는 `compose.override.yml`이 자동으로 겹쳐 읽혀 포트를 `127.0.0.1`에만 연다.
+서버(라즈베리파이) 배포는 TwoMES Hosting이 맡는다 — [TwoMES Hosting 으로 배포](#twomes-hosting-으로-배포).
+서버에서는 호스트 포트를 열지 않고, 바깥 접속은 플랫폼 터널의 도메인으로만 들어온다.
 
 프로필로 선택 기능을 켠다.
 
 | 프로필 | 켜지는 것 |
 |---|---|
-| `--profile tunnel` | Cloudflare Tunnel (외부 접속). `CF_TUNNEL_TOKEN` 필요 |
 | `--profile terminal` | 웹 터미널 컨테이너. `ENABLE_TERMINAL=true` 도 함께 필요 |
 
-데이터는 호스트의 `/mnt/server`에 두고 컨테이너에 그대로 마운트한다. 외장하드를 쓴다면
+데이터는 `${HOSTING_DATA_DIR}`(비우면 `./data`)를 컨테이너의 `/mnt/server`에 마운트한다.
+서버에서는 플랫폼이 이 값을 기존 저장공간 `/mnt/server`로 넣어 준다. 외장하드를 쓴다면
 NTFS 위에 직접 두지 말고 ext4 loop 이미지를 올려 마운트한다 — NTFS는 `os.replace`의
 원자성이 보장되지 않아 저장 도중 파일이 잠깐 사라지고, 그 순간 읽기가 빈 값을 받아
-문서나 일정이 유실될 수 있다(실측 300회 중 38회).
+문서나 일정이 유실될 수 있다(실측 300회 중 38회). 지금의 `/mnt/server`는 이렇게 만들었다.
 
 ```bash
 sudo truncate -s 200G /mnt/HDD/server/server.img
@@ -105,7 +109,8 @@ python scripts/live_check.py                # 돌고 있는 서버에 **진짜 �
 
 ## 환경변수
 
-`.env.example`을 복사해서 쓴다. 굵은 것만 채우면 일단 돈다.
+`.env.example`을 복사해서 쓴다. 굵은 것만 채우면 일단 돈다. 서버에서는 같은 이름들을
+TwoMES Hosting 대시보드의 환경변수 탭에 넣는다(플랫폼이 배포 때 `.env`로 써 준다).
 
 ### 반드시 설정
 
@@ -113,7 +118,7 @@ python scripts/live_check.py                # 돌고 있는 서버에 **진짜 �
 |---|---|
 | `SESSION_SECRET` | 세션 토큰 서명 키. 길고 무작위로. 비어 있으면 로그인이 503으로 거부된다 |
 | `AUTH_USERS` | 최초 주인 계정. `[{"username":"me","password":"...","display_name":"나"}]` 형식 |
-| `STORAGE_ROOT` | 데이터 루트. 파이는 `/mnt/server`, 로컬은 `./data` |
+| `STORAGE_ROOT` | 데이터 루트. 도커 밖(uvicorn)에서 돌릴 때 쓴다 — 로컬은 `./data`. 컨테이너에서는 compose가 `/mnt/server`로 고정하고, 호스트 쪽 경로는 `HOSTING_DATA_DIR`가 정한다 |
 
 `AUTH_USERS`는 **`accounts.json`이 아예 없을 때 한 번만** 쓰인다. 이관된 뒤에는 계정의
 단일 출처가 `accounts.json`이고, 여기 값을 바꿔 재시작해도 무시된다. 계정 추가는 웹에서
@@ -136,7 +141,6 @@ python scripts/live_check.py                # 돌고 있는 서버에 **진짜 �
 
 | 변수 | 설명 |
 |---|---|
-| `CF_TUNNEL_TOKEN` | Cloudflare Tunnel 토큰. `--profile tunnel`과 함께 |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | Google Calendar 웹 OAuth. 설정하면 설정 화면에 연동 버튼이 생긴다 |
 | `ENABLE_TERMINAL` | 웹 터미널 노출 여부. 기본 `false` |
 | `TERMINAL_ADMINS` | 터미널을 쓸 수 있는 계정 이름 (콤마 구분) |
@@ -144,7 +148,8 @@ python scripts/live_check.py                # 돌고 있는 서버에 **진짜 �
 | `SSH_PUBLIC_HOSTNAME` | Cloudflare Tunnel 로 내보낸 SSH 호스트 이름(`ssh.example.com`). 적으면 대시보드에 클라이언트 설정이 뜬다 |
 | `SSH_USER` | 위 안내에 넣을 파이 계정 이름 |
 
-`.env`는 프로세스마다 한 번만 읽는다. 값을 바꿨으면 컨테이너를 다시 띄워야 한다.
+`.env`는 프로세스마다 한 번만 읽는다. 값을 바꿨으면 컨테이너를 다시 띄워야 한다(서버에서는
+대시보드에서 환경변수를 바꾼 뒤 다시 배포).
 
 ---
 
@@ -736,8 +741,10 @@ AI 비서는 지금 보는 회의의 정보와 자동 요약, 화자 이름, 다
 공유하고 권한 제한 없이 돌기 때문에 컨테이너 안이 아니라 파이 본체에 명령이 그대로
 적용된다.
 
-기본은 꺼져 있다. 켜려면 `.env`에 `ENABLE_TERMINAL=true`를 넣고
-`docker compose --profile terminal up -d --build`로 올려야 한다.
+기본은 꺼져 있다. 켜려면 환경변수 `ENABLE_TERMINAL=true`를 넣고 compose 프로필 `terminal`을
+켠다(TwoMES Hosting 앱 설정의 프로필, 로컬은 `docker compose --profile terminal up -d --build`).
+이 컨테이너는 `privileged`·`pid: host`라 플랫폼의 member 배포 정책에는 걸린다 — 서버
+주인(owner)이 만든 앱을 owner 가 배포할 때(웹훅 포함)만 뜬다.
 
 화면에 보이는 조건은 "환경변수로 켜져 있음"과 "주인이면서 `TERMINAL_ADMINS` 목록에 있음"
 둘 다이다. 실제 권한 경계는 터미널 컨테이너 쪽이며, 웹소켓 접속의 세션 쿠키를 백엔드와
@@ -751,15 +758,19 @@ AI 비서는 지금 보는 회의의 정보와 자동 요약, 화자 이름, 다
 ### 외부 SSH 접속 (선택)
 
 집 밖에서 파이에 SSH로 들어오는 길이다. 공유기 포트를 열지 않는다 — 이미 돌고 있는
-Cloudflare Tunnel(`--profile tunnel`)이 밖으로 연결만 유지하고, 그 터널에 SSH용 공개
-호스트 이름을 하나 더 얹는다. `cloudflared` 컨테이너에는
+TwoMES Hosting 플랫폼 터널(`hosting-tunnel` 컨테이너)이 밖으로 연결만 유지하고, 그 터널에
+SSH용 공개 호스트 이름을 하나 더 얹는다. 그 컨테이너에는
 `extra_hosts: host.docker.internal:host-gateway`가 붙어 있어 컨테이너에서 파이 본체의
-22번에 닿는다.
+22번에 닿는다. (이 저장소에는 터널 컨테이너가 없다.)
 
-1. Cloudflare 대시보드 → Zero Trust → Networks → Tunnels → 이 터널 → **Public Hostname**
-   추가: `ssh.<도메인>` → 서비스 `ssh://host.docker.internal:22`.
-2. `.env`에 `SSH_PUBLIC_HOSTNAME=ssh.<도메인>`, `SSH_USER=<파이 계정>`을 적고 백엔드를
-   다시 띄운다. 대시보드 맨 아래 **외부 SSH 접속** 카드에 클라이언트 설정이 뜬다.
+1. 플랫폼 터널의 ingress 는 플랫폼이 **통째로 갈아 끼우므로** Cloudflare 대시보드에서
+   Public Hostname 을 손으로 더하면 다음 동기화 때 지워진다. 대신 플랫폼의 `.env`
+   (`/home/zanviq/twomes-hosting/.env`)에
+   `HOSTING_EXTRA_INGRESS=ssh.<도메인>=ssh://host.docker.internal:22`를 적고 플랫폼을 다시
+   띄운 뒤(`docker compose up -d hosting`), 대시보드 **설정 → Cloudflare 터널 → 동기화**.
+   DNS 의 `ssh.<도메인>` CNAME 은 플랫폼 터널(`<터널 id>.cfargotunnel.com`)을 가리켜야 한다.
+2. 환경변수에 `SSH_PUBLIC_HOSTNAME=ssh.<도메인>`, `SSH_USER=<파이 계정>`을 적고 다시
+   배포한다. 대시보드 맨 아래 **외부 SSH 접속** 카드에 클라이언트 설정이 뜬다.
 3. 클라이언트 PC에 `cloudflared`를 설치하고 `~/.ssh/config`에 카드의 내용을 넣는다.
 
 ```
@@ -810,7 +821,7 @@ Access를 걸어도 파이의 sshd 인증은 그대로 남는다. **키만 받�
 파이 안의 cloudflared는 토큰이 없으니 그쪽에서 찔러 본다.
 
 ```bash
-ssh -o ProxyCommand="docker exec -i server-tunnel cloudflared access tcp --hostname ssh.<도메인>" \
+ssh -o ProxyCommand="docker exec -i hosting-tunnel cloudflared access tcp --hostname ssh.<도메인>" \
     -o BatchMode=yes zanviq@ssh.<도메인> true
 ```
 
@@ -855,15 +866,63 @@ JSON 저장은 전부 같은 폴더의 임시 파일에 쓴 뒤 `os.replace`로 
 
 ---
 
-## 배포
+## TwoMES Hosting 으로 배포
 
-`main`에 push하면 파이의 셀프호스티드 러너가 최신 코드로 컨테이너를 재빌드한다.
-재빌드 전에 직전 이미지를 `twoems-prev:*`로 태그해 두고, 배포 후 확인이 실패하면
-되돌리는 명령을 로그에 남긴다. 확인은 둘이다 — 백엔드 `/api/health`, 그리고 **화면이
-실제로 뜨는지**(`index.html` 에 스크립트가 들어 있는지). 백엔드만 보면 빌드 산출물이
-비었거나 nginx 설정이 깨졌을 때 초록불인데 사용자에게는 흰 화면이다.
+배포는 TwoMES Hosting(https://github.com/Zanviq/HOSTING) 의 docs/app-contract.md 규칙을 따른다.
+`main`에 push하면 플랫폼이 웹훅을 받아 파이에서 `docker-compose.yml`을 빌드·배포한다.
+GitHub Actions(`.github/workflows/ci.yml`)는 시험만 돈다(백엔드 스모크, 프런트 시험·빌드,
+compose 규칙 검사) — 배포와 무관하다.
 
-수동 실행은 `bash scripts/deploy.sh`.
+배포 성공 판정은 healthcheck 다. 모든 컨테이너가 5초 간격 두 번 연속 `healthy`(healthcheck 가
+없는 terminal 은 `running`)여야 성공이다. 확인은 둘이다 — 백엔드 `/api/health`, 그리고 **화면이
+실제로 뜨는지**(frontend 의 `index.html`에 빌드된 번들 `/assets/…`이 들어 있는지). 백엔드만
+보면 빌드 산출물이 비었거나 nginx 설정이 깨졌을 때 초록불인데 사용자에게는 흰 화면이다.
 
-자세한 설정은 [docs/auto-deploy.md](docs/auto-deploy.md), 작업 내역은
-[docs/REPORT.md](docs/REPORT.md) 참고.
+### 등록 설정
+
+- 새 앱 → GitHub Zanviq/SERVER @ main, 빌드 compose, 프로필 terminal
+- 저장공간: 기존 /mnt/server 그대로 사용(데이터 이동 없음)
+- 도메인: server.zanviq.dev → 서비스 frontend:80 (지금 'server' 터널에서 가져오기)
+- 환경변수: 서버의 `/home/zanviq/SERVER/.env`를 환경변수 탭에 붙여 넣되 `CF_TUNNEL_TOKEN`
+  줄은 뺀다(터널은 플랫폼이 맡는다). 이름 목록은 `.env.example`.
+
+저장공간을 **기존 /mnt/server 로 등록하지 않으면** `HOSTING_DATA_DIR`가 비어 데이터 자리가
+저장소 안의 `./data`(빈 폴더)가 된다. 원래 데이터는 그대로지만 앱은 빈 상태로 뜨고,
+`AUTH_USERS`로 새 관리자 계정을 만들어 버린다.
+
+호스트 포트를 열지 않으므로 LAN 의 `http://192.168.0.43`(80)·`:8000` 직접 접속은 없어진다.
+접속은 `https://server.zanviq.dev`로만 한다. 그래서 `TERMINAL_ORIGINS`에서
+`http://192.168.0.43`은 빼도 되고, `COOKIE_SECURE=true`로 둘 수 있다.
+
+### 옮기는 순서 (자체 러너 배포 → TwoMES Hosting)
+
+옛 배포는 `server` compose 프로젝트(`container_name` 고정, `cloudflared` 포함)다. 플랫폼은 같은
+이름의 compose 프로젝트가 서버에 있으면 slug `server`로 앱을 만들지 않으므로 옛 프로젝트를
+먼저 내려야 하고, 그 프로젝트의 `server-tunnel`이 **ssh.zanviq.dev 도 맡고 있으므로 SSH 를 먼저
+옮긴다.** 2~4 사이에는 server.zanviq.dev 가 내려가 있다(파이에서 빌드하는 시간). LAN 에서
+(`ssh -i ~/.ssh/zanviq_server zanviq@192.168.0.43`) 작업하는 편이 안전하다.
+
+1. **SSH 경로 옮기기.** `/home/zanviq/twomes-hosting/.env`에
+   `HOSTING_EXTRA_INGRESS=ssh.zanviq.dev=ssh://host.docker.internal:22` → 그 폴더에서
+   `docker compose up -d hosting` → 대시보드 **설정 → Cloudflare 터널 → 동기화** →
+   Cloudflare DNS 에서 `ssh.zanviq.dev` CNAME 을 플랫폼 터널(`<터널 id>.cfargotunnel.com`)로
+   바꾼다(Access 앱은 호스트 이름에 걸려 있어 그대로 남는다). 밖에서 `ssh ssh.zanviq.dev`가
+   되는지 확인한다.
+2. **옛 프로젝트 내리기.** `/home/zanviq/SERVER`에서
+   `docker compose -p server --profile terminal --profile tunnel down --remove-orphans`
+   — 컨테이너만 지워진다. `/mnt/server` 데이터와 이미지는 남는다.
+3. **새 앱 만들고 배포.** 위 등록 설정대로. 도메인을 붙일 때 '다른 터널에서 가져오기'를
+   확인하면 CNAME 이 플랫폼 터널로 바뀌고 옛 'server' 터널 ingress 에서 그 줄이 빠진다.
+4. **확인.** `https://server.zanviq.dev` 로그인, 문서·일정이 그대로인지, 웹 터미널, 대시보드의
+   외부 SSH 카드.
+5. **정리.** Cloudflare 의 옛 'server' 터널(남은 ingress 가 없는지 본 뒤) 삭제, 파이의 자체
+   러너(`actions.runner.Zanviq-SERVER.zanviq.service`)를 러너 폴더에서 `sudo ./svc.sh uninstall`
+   → `./config.sh remove` 로 해제하고 GitHub Settings → Actions → Runners 에서도 지운다.
+   `/home/zanviq/SERVER`는 `.env`(와 `.env.bak.*`)를 보관한 뒤 더 쓰지 않는다.
+
+3 에서 배포가 실패하면: 플랫폼에서 앱을 지운다(기존 저장공간은 플랫폼이 만들지도 지우지도
+않는다) → `/home/zanviq/SERVER`에서 `docker compose --profile terminal --profile tunnel up -d`
+로 옛 구성을 다시 띄우고(이미지 `server-*`가 남아 있으면 그대로 쓰고, 없으면 빌드한다 — 앱
+코드는 이 전환에서 바뀌지 않았다), server.zanviq.dev CNAME 과 'server' 터널 ingress 를 되돌린다.
+
+작업 내역은 [docs/REPORT.md](docs/REPORT.md) 참고.

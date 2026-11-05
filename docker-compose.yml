@@ -1,21 +1,29 @@
+# 배포는 TwoMES Hosting(https://github.com/Zanviq/HOSTING) 의 docs/app-contract.md 규칙을 따른다.
+#
+#  - 호스트 포트를 열지 않는다(ports 없음). 바깥에서는 플랫폼 터널이 도메인을
+#    frontend:80 에 잇는다. 플랫폼이 frontend 만 공용 네트워크(hosting-edge)에 붙이고,
+#    backend·terminal 은 이 프로젝트의 기본 네트워크에만 있다.
+#  - container_name 을 고정하지 않는다(플랫폼이 <slug>-<service>-1 로 붙인다).
+#  - 데이터는 ${HOSTING_DATA_DIR} 에 둔다. 서버에서는 플랫폼이 등록한 저장공간 경로
+#    (기존 /mnt/server 를 그대로 쓴다)를 .env 로 넣어 주고, 로컬에서는 ./data 가 된다.
+#  - 로컬에서 브라우저로 열 포트는 compose.override.yml 에 있다. `docker compose up` 은
+#    그 파일을 자동으로 겹쳐 읽지만, 플랫폼은 -f 로 이 파일만 지정하므로 서버에는 붙지 않는다.
 services:
   backend:
     build: ./backend
-    container_name: server-backend
     restart: unless-stopped
     expose:
       - "8000"
-    ports:
-      - "8000:8000" # 로컬/LAN 직접 접근용 (원하면 제거)
     # .env 전체를 전달 (AUTH_USERS/SESSION_SECRET/<id>_GOOGLE_* 등 동적 키 포함).
+    # 서버에서는 플랫폼이 대시보드 환경변수 탭의 값으로 이 .env 를 배포 때마다 다시 쓴다.
     # environment가 env_file보다 우선하므로, 백엔드에 불필요한 값은 여기서 덮어 제거.
     env_file:
       - .env
     environment:
-      # 실제 외장하드(삼성 2TB) 위의 ext4 loop 이미지가 /mnt/server로 마운트된다.
-      # 이전 경로 /mnt/hdd 는 SD카드였고, NTFS 직접 사용은 os.replace 원자성이
-      # 깨져(저장 중 파일이 사라져) 노트·일정 JSON이 유실될 수 있어 쓰지 않는다.
-      # (하위에 users/<id>/ 생성)
+      # 컨테이너 안의 데이터 루트는 언제나 /mnt/server 다. 호스트 쪽 경로는 아래
+      # volumes 가 정한다. 서버의 실제 저장소는 외장하드(삼성 2TB) 위의 ext4 loop
+      # 이미지다 — NTFS 직접 사용은 os.replace 원자성이 깨져(저장 중 파일이 사라져)
+      # 노트·일정 JSON이 유실될 수 있어 쓰지 않는다. (하위에 users/<id>/ 생성)
       STORAGE_ROOT: /mnt/server
       # **컨테이너 시계를 한국 시간으로.** 저장·표시되는 시각은 전부 타임존 없는
       # 한국 시간인데, 컨테이너 기본값은 UTC 다. 그래서 서버가 아는 '지금'이
@@ -23,29 +31,48 @@ services:
       # 알림도 그만큼 어긋난다(실측: 실제 09-03 00:32 인데 서버는 09-02 15:32).
       # 저장된 데이터는 클라이언트가 보낸 문자열이라 이 값에 영향받지 않는다.
       TZ: ${TZ:-Asia/Seoul}
-      # 터널 토큰은 cloudflared 서비스만 사용 → 백엔드엔 노출하지 않음(최소권한)
-      CF_TUNNEL_TOKEN: ""
     volumes:
-      # 서비스 데이터 볼륨만 마운트 → 컨테이너가 호스트 전체를 보지 않음(최소권한)
-      - /mnt/server:/mnt/server
+      # 서비스 데이터 볼륨만 마운트 → 컨테이너가 호스트 전체를 보지 않음(최소권한).
+      # 하위 폴더가 아니라 저장공간 루트를 그대로 붙인다 — 기존 /mnt/server 의
+      # accounts.json·users/·logs/ 가 루트에 있으므로 데이터를 옮기지 않아도 된다.
+      - ${HOSTING_DATA_DIR:-./data}:/mnt/server
+    healthcheck:
+      # 배포 성공 판정에 쓴다. 이미지(python:3.11-slim)에 curl 이 없어 파이썬으로 찌른다.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
 
   frontend:
     build: ./frontend
-    container_name: server-frontend
     restart: unless-stopped
     depends_on:
       - backend
-    ports:
-      - "80:80"
+    # 플랫폼 도메인이 붙는 곳: server.zanviq.dev → frontend:80 (nginx 가 /api 를 backend 로 넘긴다)
+    expose:
+      - "80"
+    healthcheck:
+      # 백엔드가 살아 있어도 **화면이 안 뜨는** 배포가 있을 수 있다(빌드 산출물이 비었거나
+      # nginx 설정이 깨진 경우). index.html 이 오고 그 안에 빌드된 번들(/assets/…)이 있는지 본다.
+      # nginx 는 IPv4 80 만 들으므로 localhost(::1 일 수 있다) 대신 127.0.0.1 로 묻는다.
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/ | grep -q /assets/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
 
   # 웹 터미널 (admin 전용, 옵트인). 켜려면:
-  #   .env에 ENABLE_TERMINAL=true, 그리고
-  #   docker compose --profile terminal up -d --build
+  #   환경변수 ENABLE_TERMINAL=true, 그리고 compose 프로필 terminal
+  #   (TwoMES Hosting 앱 설정의 프로필에 terminal / 로컬은 docker compose --profile terminal up -d --build)
   # ⚠️ pid:host + privileged + nsenter로 호스트(라즈베리파이) 루트 셸에 접근한다.
   #    외부 노출 시 admin 비밀번호를 반드시 강하게 설정할 것.
+  #    TwoMES Hosting 의 member 배포 정책은 privileged·pid:host 를 막는다 — 서버 주인(owner)이
+  #    만든 앱·owner 의 배포에서만 뜬다.
   terminal:
     build: ./terminal
-    container_name: server-terminal
     restart: unless-stopped
     profiles: ["terminal"]
     pid: "host"
@@ -56,7 +83,7 @@ services:
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-3600}
       TERMINAL_ADMINS: ${TERMINAL_ADMINS:-admin}
       # CSWSH 방지용 허용 Origin(쉼표구분). 비우면 요청 Host와 동일 출처만 허용.
-      # 예) https://server.zanviq.dev,http://192.168.0.43
+      # 예) https://server.zanviq.dev
       TERMINAL_ORIGINS: ${TERMINAL_ORIGINS:-}
       ACCOUNTS_FILE: /srv/server/accounts.json
       TZ: ${TZ:-Asia/Seoul}  # 셸 프롬프트·로그의 시각도 한국 시간으로
@@ -69,24 +96,8 @@ services:
       # 그 뒤의 변경을 영영 보지 못한다 — 계정을 비활성·강등해도 이 컨테이너는
       # 옛 내용을 계속 읽어 열린 셸을 끊지 않는다.
       # (이 컨테이너는 이미 nsenter 로 호스트 루트에 접근하므로 노출이 늘지 않는다)
-      - /mnt/server:/srv/server:ro
+      - ${HOSTING_DATA_DIR:-./data}:/srv/server:ro
 
-  # 4단계: 포트포워딩 없이 외부 접속 (Cloudflare Tunnel)
-  # 사용하려면: 대시보드에서 터널 생성 후 토큰을 .env의 CF_TUNNEL_TOKEN에 넣고
-  #   docker compose --profile tunnel up -d
-  #
-  # SSH 도 같은 터널로 내보낸다. 대시보드 Public Hostname 에
-  #   ssh.<도메인>  →  ssh://host.docker.internal:22
-  # 를 추가하면 된다. host.docker.internal 이 라즈베리파이(호스트)의 sshd 를
-  # 가리키려면 아래 extra_hosts 가 필요하다(리눅스 도커는 기본으로 안 만든다).
-  # 클라이언트 쪽 설정은 README '외부 SSH 접속' 또는 대시보드 SSH 카드 참고.
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: server-tunnel
-    restart: unless-stopped
-    profiles: ["tunnel"]
-    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    depends_on:
-      - frontend
+# Cloudflare Tunnel(cloudflared) 서비스는 두지 않는다. server.zanviq.dev 는 플랫폼 터널이
+# 맡고, 외부 SSH(ssh.zanviq.dev)도 플랫폼 터널의 HOSTING_EXTRA_INGRESS 로 옮긴다
+# (README 'TwoMES Hosting 으로 배포').
