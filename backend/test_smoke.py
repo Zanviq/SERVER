@@ -11171,8 +11171,17 @@ def test_archive_zips_are_capped_and_never_left_behind():
     assert not made.exists(), "받다 끊은 임시 zip 이 남았다"
 
     async def full_download(resp):
+        # 실제 서버처럼 요청 본문을 한 번 준 뒤에는 연결이 끊길 때까지 기다린다. 기다리지 않고
+        # http.request 를 끝없이 돌려주면, 끊김을 듣는 starlette 1.10+ 의 FileResponse 가 이벤트 루프를
+        # 놓지 않아 보내기가 영영 돌지 못한다(CI 의 starlette 1.10.0 에서 이 시험이 멈췄다).
+        sent = []
+
         async def receive():
-            return {"type": "http.request"}
+            if not sent:
+                sent.append(1)
+                return {"type": "http.request", "body": b"", "more_body": False}
+            await asyncio.Event().wait()
+            return {"type": "http.disconnect"}
 
         async def send(msg):
             pass
